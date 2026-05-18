@@ -179,11 +179,7 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
           const uint8_t darkness = renderer.getTextDarkness();
 
           if (renderMode == GfxRenderer::BW) {
-            // Keep the first BW pass of Normal slightly less aggressive so it
-            // looks closer to the later AA/grayscale result. Darker modes keep
-            // the stronger fill to preserve their bolder appearance.
-            const uint8_t bwThreshold = (darkness == 0) ? 2 : 3;
-            if (bmpVal < bwThreshold) {
+            if (bmpVal < 3) {
               renderer.drawPixel(screenX, screenY, pixelState);
             }
           } else {
@@ -191,19 +187,19 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
             bool hitLsb = false;
 
             switch (darkness) {
-              case 1:  // Legacy BW: classic BW fill and classic AA mapping.
+              case 1:  // Crisp: keep the old lighter grayscale overlay.
                 hitMsb = (bmpVal == 2);
                 hitLsb = (bmpVal == 1);
                 break;
-              case 0:  // Normal: stronger baseline, close to the old "Dark"
+              case 0:  // Normal: CrossInk-style solid text with smooth AA.
                 hitMsb = (bmpVal == 1 || bmpVal == 2);
                 hitLsb = (bmpVal == 1);
                 break;
-              case 2:  // Dark: darken both AA buckets further
+              case 2:  // Dark: promote both AA buckets to darker ink.
                 hitMsb = (bmpVal == 1 || bmpVal == 2);
                 hitLsb = (bmpVal == 1 || bmpVal == 2);
                 break;
-              default:  // Extra Dark: keep the strongest AA mapping
+              default:  // Extra Dark: keep maximum AA darkening without touching white.
                 hitMsb = (bmpVal == 1 || bmpVal == 2);
                 hitLsb = (bmpVal == 1 || bmpVal == 2);
                 break;
