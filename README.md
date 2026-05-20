@@ -44,10 +44,10 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex) build | [`1.3.0.7-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.7-cpr-vcodex) |
+| Current release (CPR-vCodex) build | [`1.3.0.8-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.8-cpr-vcodex) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
-| Latest release notes | - Fixed sleep-screen rendering so blank, default, custom, cached, PNG, and cover sleep screens clear pending refresh overrides and perform the intended full refresh before sleep.<br>- Restored renderer dark-mode state after sleep-screen rendering, including custom/cover sleep paths that previously returned early.<br>- Fixed long localized Settings tabs so all five tabs remain visible without wasting width on ellipses.<br>- Improved Vietnamese language selection by rendering the language list with a Vietnamese-capable UI font and restoring the selected UI font on exit.<br>- Reduced unnecessary full refreshes when changing reader render-only options such as `Text Darkness`; full refresh is still kept for dark mode, orientation, and pagination changes.<br>- Removed the duplicate legacy `Stats` shortcut from Home/Apps configuration, keeping `Reading Stats` and migrating old `Stats` placements to it. |
+| Latest release notes | - Merged PR [#62](https://github.com/franssjz/cpr-vcodex/pull/62) to fix a Lyra Carousel ghost-screen case after cancelling the Home delete-from-recents/favorites confirmation.<br>- Invalidates the resident carousel frame marker when returning from that confirmation, so Home no longer trusts a framebuffer that was overwritten by the prompt.<br>- Forces an immediate repaint on the cancel path, restoring the cached carousel frame promptly on e-ink. |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
 | Latest official commit reviewed | [`0af0ad5`](https://github.com/crosspoint-reader/crosspoint-reader/commit/0af0ad5) |
 | Latest official commit incorporated | Selected 1.3.0 reader, SDK, font-manager, SD-font rendering, hyphenation, and tooling updates through [`0af0ad5`](https://github.com/crosspoint-reader/crosspoint-reader/commit/0af0ad5) |
@@ -499,7 +499,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.7-cpr-vcodex`
+- current release build style: `1.3.0.8-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -569,10 +569,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.7-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.8-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.7-cpr-vcodex`
+- push a stable tag named like `1.3.0.8-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not
