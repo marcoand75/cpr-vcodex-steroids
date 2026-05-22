@@ -71,6 +71,19 @@ jobs:
           echo "revision=$NEXT" >> "$GITHUB_OUTPUT"
           echo "versioned=${BASE}-r${NEXT}" >> "$GITHUB_OUTPUT"
 
+      - name: Keep font releases out of firmware latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release list --repo "${{ github.repository }}" --limit 1000 \
+            --json tagName --jq '.[] | select(.tagName | startswith("sd-fonts-")) | .tagName' |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            gh release edit "$tag" --repo "${{ github.repository }}" --prerelease
+          done
+
       - name: Generate manifest
         run: |
           python3 scripts/generate-font-manifest.py \
@@ -120,6 +133,7 @@ jobs:
           gh release create "$VERSIONED" dist/* \
             --repo "${{ github.repository }}" \
             --title "$TITLE" \
+            --prerelease \
             --notes-file release-notes.md
 
       - name: Update stable tag for device downloads
@@ -143,4 +157,5 @@ jobs:
           gh release create "$BASE" dist/* \
             --repo "${{ github.repository }}" \
             --title "SD Card Fonts (${BASE#sd-fonts-})" \
+            --prerelease \
             --notes-file release-notes.md
