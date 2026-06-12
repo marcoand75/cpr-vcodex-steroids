@@ -19,8 +19,7 @@ constexpr int ACTION_CLEAR_HISTORY = 1;
 
 void DictionaryActivity::onEnter() {
   Activity::onEnter();
-  DICTIONARIES.loadConfig();
-  DICTIONARIES.scan();
+  DICTIONARIES.ensureScanned();
   const int activeIndex = DICTIONARIES.getActiveIndex();
   selectedIndex = activeIndex >= 0 ? activeIndex + DICTIONARY_ACTION_COUNT : 0;
   requestUpdate();

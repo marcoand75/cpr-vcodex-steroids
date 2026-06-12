@@ -54,6 +54,7 @@ class DictionaryStore {
   void loadConfig();
   bool saveConfig() const;
   void scan();
+  void ensureScanned();
   const std::vector<DictionaryEntry>& getEntries() const { return entries; }
   int getActiveIndex() const { return activeIndex; }
   bool setActiveIndex(int index);
@@ -94,7 +95,6 @@ class DictionaryStore {
   bool scanned = false;
   uint8_t definitionTextSize = DEF_TEXT_MEDIUM;
 
-  void ensureScanned();
   DictionaryEntry* activeEntry();
   const DictionaryEntry* activeEntry() const;
   bool ensurePrepared(DictionaryEntry& entry, const std::function<void(int percent)>& onProgress = nullptr);

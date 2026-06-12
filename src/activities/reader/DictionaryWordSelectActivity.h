@@ -2,6 +2,8 @@
 
 #include <Epub/Page.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,6 +21,7 @@ class DictionaryWordSelectActivity final : public Activity {
         marginTop(marginTop) {}
 
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
   bool isReaderActivity() const override { return true; }
@@ -48,10 +51,20 @@ class DictionaryWordSelectActivity final : public Activity {
   std::vector<Row> rows;
   int currentRow = 0;
   int currentWordInRow = 0;
+  bool baseScreenBufferStored = false;
+  uint8_t* baseScreenBuffer = nullptr;
+  size_t baseScreenBufferSize = 0;
 
   void extractWords();
   void mergeHyphenatedWords();
   void moveRow(int delta);
   void moveWord(int delta);
   void lookupSelectedWord();
+  void updateSelectionHighlight();
+  bool redrawSelectionFast();
+  bool storeBaseScreenBuffer();
+  bool restoreBaseScreenBuffer();
+  void invalidateBaseScreenBuffer();
+  void freeBaseScreenBuffer();
+  void drawSelectionHighlight();
 };
