@@ -818,7 +818,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                  overlayMarginTop),
                              [this](const ActivityResult&) {
                                READING_STATS.resumeSession();
-                               requestCurrentPageFullRefresh();
+                               ReaderUtils::requestReaderUiTransitionRefresh(renderer);
+                               requestUpdate();
                              });
       break;
     }
@@ -836,7 +837,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                  overlayMarginTop),
                              [this](const ActivityResult&) {
                                READING_STATS.resumeSession();
-                               requestCurrentPageFullRefresh();
+                               ReaderUtils::requestReaderUiTransitionRefresh(renderer);
+                               requestUpdate();
                              });
       break;
     }
@@ -845,7 +847,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       startActivityForResult(std::make_unique<DictionaryActivity>(renderer, mappedInput),
                              [this](const ActivityResult&) {
                                READING_STATS.resumeSession();
-                               requestCurrentPageFullRefresh();
+                               ReaderUtils::requestReaderUiTransitionRefresh(renderer);
+                               requestUpdate();
                              });
       break;
     }
