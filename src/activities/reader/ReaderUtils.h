@@ -72,6 +72,11 @@ inline bool hasNonConfirmNavigationInput(const MappedInputManager& input) {
          input.wasPressed(MappedInputManager::Button::Power) || input.wasReleased(MappedInputManager::Button::Power);
 }
 
+inline bool shouldToggleStatusBar(const MappedInputManager& input) {
+  return SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::TOGGLE_STATUS_BAR &&
+         input.wasReleased(MappedInputManager::Button::Power);
+}
+
 inline bool registerConfirmDoubleClick(bool& waitingForSecondClick, unsigned long& firstClickMs, const unsigned long nowMs) {
   if (waitingForSecondClick && nowMs - firstClickMs <= CONFIRM_DOUBLE_CLICK_MS) {
     waitingForSecondClick = false;

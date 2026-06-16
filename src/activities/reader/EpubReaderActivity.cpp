@@ -359,6 +359,11 @@ void EpubReaderActivity::loop() {
     }
   }
 
+  if (ReaderUtils::shouldToggleStatusBar(mappedInput)) {
+    toggleTemporaryStatusBar();
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= bookmarkToggleMs) {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
@@ -533,6 +538,21 @@ void EpubReaderActivity::loop() {
 
 void EpubReaderActivity::requestCurrentPageFullRefresh() {
   READING_STATS.noteActivity();
+  pendingForceFullRefresh = true;
+  requestUpdate();
+}
+
+void EpubReaderActivity::toggleTemporaryStatusBar() {
+  READING_STATS.noteActivity();
+  statusBarTemporarilyHidden = !statusBarTemporarilyHidden;
+  invalidateCurrentOverlayPageCache();
+  RenderLock lock(*this);
+  if (section) {
+    cachedSpineIndex = currentSpineIndex;
+    cachedChapterTotalPageCount = section->pageCount;
+    nextPageNumber = section->currentPage;
+  }
+  section.reset();
   pendingForceFullRefresh = true;
   requestUpdate();
 }
@@ -1045,7 +1065,7 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption
   pageTurnDuration = (1UL * 60 * 1000) / PAGE_TURN_RATES[selectedPageTurnOption];
   automaticPageTurnActive = true;
 
-  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  const uint8_t statusBarHeight = statusBarTemporarilyHidden ? 0 : UITheme::getInstance().getStatusBarHeight();
   // resets cached section so that space is reserved for auto page turn indicator when None or progress bar only
   if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
     // Preserve current reading position so we can restore after reflow.
@@ -1557,6 +1577,10 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
 }
 
 void EpubReaderActivity::renderStatusBar() const {
+  if (statusBarTemporarilyHidden) {
+    return;
+  }
+
   // Calculate progress in book
   const int currentPage = section->currentPage + 1;
   const float pageCount = section->pageCount;

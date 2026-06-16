@@ -36,6 +36,7 @@ class TxtReaderActivity final : public Activity {
   int linesPerPage = 0;
   int viewportWidth = 0;
   bool initialized = false;
+  bool statusBarTemporarilyHidden = false;
   std::string stableBookId;
   bool pendingForceFullRefresh = false;
   bool waitingForConfirmSecondClick = false;
@@ -61,6 +62,7 @@ class TxtReaderActivity final : public Activity {
   void saveProgress() const;
   void loadProgress();
   void requestCurrentPageFullRefresh();
+  void toggleTemporaryStatusBar();
   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
 

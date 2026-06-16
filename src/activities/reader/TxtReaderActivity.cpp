@@ -345,6 +345,11 @@ void TxtReaderActivity::loop() {
     return;
   }
 
+  if (ReaderUtils::shouldToggleStatusBar(mappedInput)) {
+    toggleTemporaryStatusBar();
+    return;
+  }
+
   // Long press BACK (1s+) goes to file selection
   if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
     const std::string fileBrowserPath = moveCompletedBookIfEnabled();
@@ -389,6 +394,16 @@ void TxtReaderActivity::loop() {
 
 void TxtReaderActivity::requestCurrentPageFullRefresh() {
   READING_STATS.noteActivity();
+  pendingForceFullRefresh = true;
+  requestUpdate();
+}
+
+void TxtReaderActivity::toggleTemporaryStatusBar() {
+  READING_STATS.noteActivity();
+  statusBarTemporarilyHidden = !statusBarTemporarilyHidden;
+  initialized = false;
+  pageOffsets.clear();
+  currentPageLines.clear();
   pendingForceFullRefresh = true;
   requestUpdate();
 }
@@ -438,8 +453,8 @@ void TxtReaderActivity::initializeReader() {
   cachedOrientedMarginTop += cachedScreenMargin;
   cachedOrientedMarginLeft += cachedScreenMargin;
   cachedOrientedMarginRight += cachedScreenMargin;
-  cachedOrientedMarginBottom +=
-      std::max(cachedScreenMargin, static_cast<uint8_t>(UITheme::getInstance().getStatusBarHeight()));
+  const uint8_t statusBarHeight = statusBarTemporarilyHidden ? 0 : UITheme::getInstance().getStatusBarHeight();
+  cachedOrientedMarginBottom += std::max(cachedScreenMargin, statusBarHeight);
 
   viewportWidth = renderer.getScreenWidth() - cachedOrientedMarginLeft - cachedOrientedMarginRight;
   const int viewportHeight = renderer.getScreenHeight() - cachedOrientedMarginTop - cachedOrientedMarginBottom;
@@ -761,6 +776,10 @@ void TxtReaderActivity::renderPage() {
 }
 
 void TxtReaderActivity::renderStatusBar() const {
+  if (statusBarTemporarilyHidden) {
+    return;
+  }
+
   const float progress = totalPages > 0 ? (currentPage + 1) * 100.0f / totalPages : 0;
   std::string title;
   if (SETTINGS.statusBarTitle != CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE) {
