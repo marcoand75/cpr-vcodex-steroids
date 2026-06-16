@@ -32,6 +32,13 @@ class ChapterHtmlSlimParser {
   };
 
  private:
+  static constexpr uint8_t MAX_SIMPLE_TABLE_COLUMNS = 8;
+  static constexpr uint16_t MAX_SIMPLE_TABLE_ROWS = 64;
+  static constexpr uint16_t MAX_SIMPLE_TABLE_CELLS = 64;
+  static constexpr uint16_t MAX_SIMPLE_TABLE_CELL_WORDS = 160;
+  static constexpr uint8_t MAX_GRID_TABLES_PER_CHAPTER = 4;
+  static constexpr uint8_t TABLE_CELL_PADDING = 6;
+
   std::shared_ptr<Epub> epub;
   const std::string& filepath;
   GfxRenderer& renderer;
@@ -90,9 +97,36 @@ class ChapterHtmlSlimParser {
   bool effectiveStrikeThrough = false;
   bool effectiveSup = false;
   bool effectiveSub = false;
+
+  struct BufferedTableCell {
+    std::unique_ptr<ParsedText> text;
+    std::vector<std::pair<int, FootnoteEntry>> footnotes;
+    bool isHeader = false;
+    uint8_t colSpan = 1;
+  };
+
+  struct BufferedTableRow {
+    std::vector<BufferedTableCell> cells;
+    bool hasHeaderCell = false;
+    bool hasDataCell = false;
+    uint16_t effectiveColumnCount = 0;
+  };
+
+  struct BufferedTable {
+    BlockStyle blockStyle;
+    std::vector<BufferedTableRow> rows;
+    uint16_t maxCols = 0;
+    uint16_t totalCells = 0;
+    bool unsupported = false;
+  };
+
   int tableDepth = 0;
   int tableRowIndex = 0;
   int tableColIndex = 0;
+  uint8_t tableGridCandidatesInChapter = 0;
+  bool currentTableCellIsHeader = false;
+  uint8_t currentTableCellColSpan = 1;
+  std::unique_ptr<BufferedTable> currentTableBuffer = nullptr;
 
   // Anchor-to-page mapping: tracks which page each HTML id attribute lands on
   int completedPageCount = 0;
@@ -126,6 +160,12 @@ class ChapterHtmlSlimParser {
   void makePages();
   void emitPage(uint32_t xhtmlByteOffset);
   void emitHorizontalRule(const BlockStyle& blockStyle);
+  void finalizeCurrentTableCell();
+  void emitBufferedTableAsParagraphs(BufferedTable& table);
+  void emitBufferedTableAsFragments(BufferedTable& table);
+  void emitCurrentTableBuffer();
+  void fallbackCurrentTableBufferToParagraphs(const char* reason);
+  void fallbackCurrentTableBufferIfNeeded(const char* stage);
   // XML callbacks
   static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void XMLCALL characterData(void* userData, const XML_Char* s, int len);

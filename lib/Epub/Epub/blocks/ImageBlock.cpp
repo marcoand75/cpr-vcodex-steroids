@@ -4,6 +4,9 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 #include <Serialization.h>
+#include <ZipFile.h>
+
+#include <utility>
 
 #include "../converters/DirectPixelWriter.h"
 #include "../converters/ImageDecoderFactory.h"
@@ -15,6 +18,14 @@
 
 ImageBlock::ImageBlock(const std::string& imagePath, int16_t width, int16_t height)
     : imagePath(imagePath), width(width), height(height) {}
+
+ImageBlock::ImageBlock(const std::string& imagePath, int16_t width, int16_t height, std::string sourceEpubPath,
+                       std::string sourceItemHref)
+    : imagePath(imagePath),
+      sourceEpubPath(std::move(sourceEpubPath)),
+      sourceItemHref(std::move(sourceItemHref)),
+      width(width),
+      height(height) {}
 
 bool ImageBlock::imageExists() const { return Storage.exists(imagePath.c_str()); }
 
@@ -119,6 +130,42 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
 }  // namespace
 
+bool ImageBlock::extractLazyImageIfNeeded() {
+  if (Storage.exists(imagePath.c_str())) {
+    FsFile existing;
+    if (Storage.openFileForRead("IMG", imagePath, existing)) {
+      const bool valid = existing.size() > 0;
+      existing.close();
+      if (valid) {
+        return true;
+      }
+    }
+    Storage.remove(imagePath.c_str());
+  }
+
+  if (sourceEpubPath.empty() || sourceItemHref.empty()) {
+    return false;
+  }
+
+  FsFile cachedImageFile;
+  if (!Storage.openFileForWrite("IMG", imagePath, cachedImageFile)) {
+    LOG_ERR("IMG", "Failed to open lazy image cache: %s", imagePath.c_str());
+    return false;
+  }
+
+  const bool extracted = ZipFile(sourceEpubPath).readFileToStream(sourceItemHref.c_str(), cachedImageFile, 4096);
+  cachedImageFile.flush();
+  cachedImageFile.close();
+  if (!extracted) {
+    LOG_ERR("IMG", "Failed to lazy-extract image: %s", sourceItemHref.c_str());
+    Storage.remove(imagePath.c_str());
+    return false;
+  }
+
+  LOG_DBG("IMG", "Lazy image extracted: %s", imagePath.c_str());
+  return true;
+}
+
 void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // The font-prewarm scan pass only accumulates glyphs; an image contributes
   // none, and its DirectPixelWriter output bypasses the renderer's scan-mode
@@ -146,11 +193,16 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     return;  // Successfully rendered from cache
   }
 
-  // No cache - need to decode the image
-  // Check if image file exists
+  // No pixel cache - need to decode the image. If the image was deferred during
+  // EPUB indexing, extract it from the EPUB now, only for the page being shown.
+  if (!extractLazyImageIfNeeded()) {
+    LOG_ERR("IMG", "Image file not found: %s", imagePath.c_str());
+    return;
+  }
+
   FsFile file;
   if (!Storage.openFileForRead("IMG", imagePath, file)) {
-    LOG_ERR("IMG", "Image file not found: %s", imagePath.c_str());
+    LOG_ERR("IMG", "Image file not readable: %s", imagePath.c_str());
     return;
   }
   size_t fileSize = file.size();
@@ -195,6 +247,12 @@ bool ImageBlock::serialize(FsFile& file) {
   serialization::writeString(file, imagePath);
   serialization::writePod(file, width);
   serialization::writePod(file, height);
+  const bool hasLazySource = !sourceEpubPath.empty() && !sourceItemHref.empty();
+  serialization::writePod(file, hasLazySource);
+  if (hasLazySource) {
+    serialization::writeString(file, sourceEpubPath);
+    serialization::writeString(file, sourceItemHref);
+  }
   return true;
 }
 
@@ -204,5 +262,14 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(FsFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
+  bool hasLazySource = false;
+  serialization::readPod(file, hasLazySource);
+  if (hasLazySource) {
+    std::string sourceEpubPath;
+    std::string sourceItemHref;
+    serialization::readString(file, sourceEpubPath);
+    serialization::readString(file, sourceItemHref);
+    return std::unique_ptr<ImageBlock>(new ImageBlock(path, w, h, std::move(sourceEpubPath), std::move(sourceItemHref)));
+  }
   return std::unique_ptr<ImageBlock>(new ImageBlock(path, w, h));
 }

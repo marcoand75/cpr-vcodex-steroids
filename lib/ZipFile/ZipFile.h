@@ -70,6 +70,8 @@ class ZipFile {
   // These functions will open and close the zip as needed
   uint8_t* readFileToMemory(const char* filename, size_t* size = nullptr, bool trailingNullByte = false);
   bool readFileToStream(const char* filename, Print& out, size_t chunkSize);
+  bool readFilePrefixToBuffer(const char* filename, uint8_t* out, size_t maxBytes, size_t* bytesRead,
+                              size_t chunkSize);
 
   template <typename F>
   bool enumerateFilePaths(F&& callback) {
