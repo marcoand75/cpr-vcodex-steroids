@@ -23,6 +23,7 @@ constexpr char READING_STATS_BACKUP_FILE_JSON[] = "/.crosspoint/reading_stats.js
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_BACKUP_EXPORT_PREFIX[] = "/exports/stats_backup_";
 constexpr char READING_STATS_BACKUP_EXPORT_FILE_PREFIX[] = "stats_backup_";
+constexpr size_t MAX_READING_STATS_AUTO_BACKUPS = 30;
 constexpr unsigned long MAX_READING_GAP_MS = 30UL * 60UL * 1000UL;
 constexpr unsigned long SESSION_HEARTBEAT_MS = 60UL * 1000UL;
 constexpr unsigned long DEFERRED_SAVE_INTERVAL_MS = 30UL * 1000UL;
@@ -228,6 +229,82 @@ uint32_t getLatestAutoBackupDayOrdinal() {
   }
   dir.close();
   return latestDayOrdinal;
+}
+
+size_t countAutoBackupFiles() {
+  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) {
+      dir.close();
+    }
+    return 0;
+  }
+
+  size_t count = 0;
+  char name[256];
+  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    if (entry.isDirectory()) {
+      entry.close();
+      continue;
+    }
+
+    entry.getName(name, sizeof(name));
+    entry.close();
+
+    uint32_t dayOrdinal = 0;
+    if (parseAutoBackupDayOrdinal(name, dayOrdinal)) {
+      ++count;
+    }
+  }
+  dir.close();
+  return count;
+}
+
+bool findOldestAutoBackupPath(std::string& oldestPath) {
+  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) {
+      dir.close();
+    }
+    return false;
+  }
+
+  uint32_t oldestDayOrdinal = 0;
+  char name[256];
+  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    if (entry.isDirectory()) {
+      entry.close();
+      continue;
+    }
+
+    entry.getName(name, sizeof(name));
+    entry.close();
+
+    uint32_t dayOrdinal = 0;
+    if (!parseAutoBackupDayOrdinal(name, dayOrdinal)) {
+      continue;
+    }
+    if (oldestDayOrdinal == 0 || dayOrdinal < oldestDayOrdinal) {
+      oldestDayOrdinal = dayOrdinal;
+      oldestPath = std::string(READING_STATS_EXPORT_DIR) + "/" + name;
+    }
+  }
+  dir.close();
+  return oldestDayOrdinal != 0 && !oldestPath.empty();
+}
+
+void pruneAutoBackupsToLimit(const size_t maxBackups) {
+  while (countAutoBackupFiles() > maxBackups) {
+    std::string oldestPath;
+    if (!findOldestAutoBackupPath(oldestPath)) {
+      break;
+    }
+    if (!Storage.remove(oldestPath.c_str())) {
+      LOG_ERR("RST", "Failed to prune old reading stats backup %s", oldestPath.c_str());
+      break;
+    }
+    LOG_DBG("RST", "Pruned old reading stats backup %s", oldestPath.c_str());
+  }
 }
 
 std::string toLowerAscii(std::string value) {
@@ -897,6 +974,7 @@ bool ReadingStatsStore::maybeCreateAutoBackup(const bool force) const {
 
   const bool saved = JsonSettingsIO::saveReadingStats(*this, backupPath.c_str());
   if (saved) {
+    pruneAutoBackupsToLimit(MAX_READING_STATS_AUTO_BACKUPS);
     APP_STATE.lastReadingStatsBackupDayOrdinal = dayOrdinal;
     APP_STATE.saveToFile();
     LOG_DBG("RST", "Auto-backed up reading stats to %s", backupPath.c_str());

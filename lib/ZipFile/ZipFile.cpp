@@ -515,9 +515,13 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
     bool success = false;
     size_t totalProduced = 0;
+    uint8_t noProgressLoops = 0;
 
     while (true) {
       size_t produced;
+      const size_t beforeRemaining = ctx.fileRemaining;
+      const uint8_t* beforeSource = ctx.reader.raw()->source;
+      const uint8_t* beforeLimit = ctx.reader.raw()->source_limit;
       const InflateStatus status = ctx.reader.readAtMost(outputBuffer, chunkSize, &produced);
 
       totalProduced += produced;
@@ -547,6 +551,17 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
       if (status == InflateStatus::Error) {
         LOG_ERR("ZIP", "Decompression failed");
+        break;
+      }
+
+      const bool madeProgress = produced > 0 || ctx.fileRemaining != beforeRemaining ||
+                                ctx.reader.raw()->source != beforeSource ||
+                                ctx.reader.raw()->source_limit != beforeLimit;
+      if (madeProgress) {
+        noProgressLoops = 0;
+      } else if (++noProgressLoops >= 8) {
+        LOG_ERR("ZIP", "Decompression stalled for %s after %zu/%zu bytes", filename, totalProduced,
+                static_cast<size_t>(inflatedDataSize));
         break;
       }
       // InflateStatus::Ok: output buffer full, continue
@@ -626,9 +641,13 @@ bool ZipFile::readFilePrefixToBuffer(const char* filename, uint8_t* out, const s
 
     bool success = false;
     size_t totalProduced = 0;
+    uint8_t noProgressLoops = 0;
 
     while (copied < maxBytes) {
       size_t produced = 0;
+      const size_t beforeRemaining = ctx.fileRemaining;
+      const uint8_t* beforeSource = ctx.reader.raw()->source;
+      const uint8_t* beforeLimit = ctx.reader.raw()->source_limit;
       const InflateStatus status = ctx.reader.readAtMost(outputBuffer, chunkSize, &produced);
       totalProduced += produced;
       if (totalProduced > static_cast<size_t>(inflatedDataSize)) {
@@ -655,6 +674,17 @@ bool ZipFile::readFilePrefixToBuffer(const char* filename, uint8_t* out, const s
 
       if (status == InflateStatus::Error) {
         LOG_ERR("ZIP", "Prefix decompression failed");
+        break;
+      }
+
+      const bool madeProgress = produced > 0 || ctx.fileRemaining != beforeRemaining ||
+                                ctx.reader.raw()->source != beforeSource ||
+                                ctx.reader.raw()->source_limit != beforeLimit;
+      if (madeProgress) {
+        noProgressLoops = 0;
+      } else if (++noProgressLoops >= 8) {
+        LOG_ERR("ZIP", "Prefix decompression stalled for %s after %zu/%zu bytes", filename, totalProduced,
+                static_cast<size_t>(inflatedDataSize));
         break;
       }
     }

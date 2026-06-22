@@ -24,6 +24,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
+#include "ReadingStatsImportActivity.h"
 #include "ReadingStatsStore.h"
 #include "SdCardFontGlobals.h"
 #include "SdFirmwareUpdateActivity.h"
@@ -277,8 +278,8 @@ std::string utf8LimitChars(std::string text, const size_t maxChars) {
 }
 
 std::string getLatestReadingStatsImportPath() {
-  const std::string path = getReadingStatsExportPath();
-  return Storage.exists(path.c_str()) ? path : std::string();
+  const auto paths = ReadingStatsImportActivity::getImportPaths();
+  return paths.empty() ? std::string() : paths.front();
 }
 
 std::string getReadingStatsExportFileName() { return fileNameFromPath(getReadingStatsExportPath()); }
@@ -703,25 +704,29 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       }
       case SettingAction::ImportReadingStats:
-        startActivityForResult(
-            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_IMPORT_READING_STATS_CONFIRM), ""),
-            [this](const ActivityResult& result) {
-              if (!result.isCancelled) {
-                const std::string importPath = getLatestReadingStatsImportPath();
-                if (importPath.empty()) {
-                  showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
-                } else {
-                  showTransientPopup(tr(STR_IMPORTING), 20, 120);
-                  const bool imported = READING_STATS.importFromFile(importPath);
-                  if (imported) {
-                    ACHIEVEMENTS.rebuildProgressFromCurrentStats();
-                  }
-                  showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED), imported ? 100 : -1,
-                                     imported ? 350 : 700);
-                }
-              }
-              requestUpdate(true);
-            });
+        if (ReadingStatsImportActivity::getImportPaths().empty()) {
+          showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
+          requestUpdate(true);
+          break;
+        }
+        startActivityForResult(std::make_unique<ReadingStatsImportActivity>(renderer, mappedInput),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled) {
+                                   const auto* path = std::get_if<FilePathResult>(&result.data);
+                                   if (path == nullptr || path->path.empty()) {
+                                     showTransientPopup(tr(STR_IMPORT_FAILED), -1, 700);
+                                   } else {
+                                     showTransientPopup(tr(STR_IMPORTING), 20, 120);
+                                     const bool imported = READING_STATS.importFromFile(path->path);
+                                     if (imported) {
+                                       ACHIEVEMENTS.rebuildProgressFromCurrentStats();
+                                     }
+                                     showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
+                                                        imported ? 100 : -1, imported ? 350 : 700);
+                                   }
+                                 }
+                                 requestUpdate(true);
+                               });
         break;
       case SettingAction::ClearReadingStatsBackups:
         startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
