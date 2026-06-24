@@ -10,18 +10,21 @@
 
 BookContextMenuActivity::BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                  const std::string& bookTitle, const bool isFavorite,
-                                                 const bool isCompleted, const bool isEpubFormat)
+                                                 const bool isCompleted, const bool isEpubFormat, const bool isLibraryMode)
     : Activity("BookContextMenu", renderer, mappedInput),
-      menuItems(buildMenuItems(isFavorite, isCompleted, isEpubFormat)),
+      menuItems(buildMenuItems(isFavorite, isCompleted, isEpubFormat, isLibraryMode)),
       bookTitle(bookTitle) {}
 
 std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMenuItems(const bool isFavorite,
                                                                                        const bool isCompleted,
-                                                                                       const bool isEpubFormat) {
+                                                                                       const bool isEpubFormat,
+                                                                                       const bool isLibraryMode) {
   std::vector<MenuItem> items;
-  items.reserve(7);
+  items.reserve(isLibraryMode ? 10 : 7);
   items.push_back({MenuAction::OPEN_BOOK, StrId::STR_OPEN});
-  items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS});
+  if (!isLibraryMode) {
+    items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS});
+  }
   items.push_back({MenuAction::VIEW_STATS, StrId::STR_READING_STATS});
   items.push_back({MenuAction::VIEW_METADATA, StrId::STR_VIEW_METADATA});
   items.push_back(
@@ -30,6 +33,11 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
       {MenuAction::MARK_READ_UNREAD, isCompleted ? StrId::STR_MARK_AS_NOT_FINISHED : StrId::STR_MARK_AS_FINISHED});
   if (isEpubFormat) {
     items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+  }
+  if (isLibraryMode) {
+    items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER});
+    items.push_back({MenuAction::DELETE_PAGE_COVER_THUMBS, StrId::STR_LIBRARY_DELETE_PAGE_COVERS});
+    items.push_back({MenuAction::DELETE_ALL_LIBRARY_COVERS, StrId::STR_LIBRARY_DELETE_ALL_COVERS});
   }
   return items;
 }

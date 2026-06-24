@@ -10,7 +10,13 @@
 #include <cstdio>
 #include <vector>
 
+#include "../home/BookContextMenuActivity.h"
+#include "../home/BookMetadataActivity.h"
+#include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
+#include "FavoritesStore.h"
+#include "ReadingStatsStore.h"
+#include "activities/apps/ReadingStatsDetailActivity.h"
 #include "Epub.h"
 #include "MappedInputManager.h"
 #include "Txt.h"
@@ -343,9 +349,90 @@ void LibraryActivity::loop() {
     return;
   }
 
-  // Confirm opens selected book
+  // Confirm opens selected book (short press) or context menu (long press)
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (total > 0 && selectorIndex_ < total) {
+      const unsigned long held = mappedInput.getHeldTime();
+      if (held >= 800) {
+        // Long press — show context menu (same pattern as HomeActivity)
+        const int idx = selectorIndex_;
+        const std::string& path = entries_[idx].path;
+        const std::string title = entries_[idx].title.empty() ? filenameWithoutExtension(path) : entries_[idx].title;
+        const bool isEpub = FsHelpers::hasEpubExtension(path);
+        const bool isFav = FAVORITES.isFavorite(path);
+        const auto* stats = READING_STATS.findBook(path);
+        const bool isCompleted = stats && stats->completed;
+
+        startActivityForResult(
+            std::make_unique<BookContextMenuActivity>(renderer, mappedInput, title, isFav, isCompleted, isEpub, true),
+            [this, idx, path, isEpub, isFav, isCompleted](const ActivityResult& result) {
+              if (result.isCancelled) {
+                requestUpdate();
+                return;
+              }
+              const auto* menuResult = std::get_if<MenuResult>(&result.data);
+              if (!menuResult) {
+                requestUpdate();
+                return;
+              }
+              const int action = menuResult->action;
+              switch (action) {
+                case static_cast<int>(BookContextMenuActivity::MenuAction::OPEN_BOOK):
+                  onSelectBook(path);
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::VIEW_STATS):
+                  activityManager.replaceActivity(
+                      std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path));
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::VIEW_METADATA):
+                  startActivityForResult(
+                      std::make_unique<BookMetadataActivity>(renderer, mappedInput, path),
+                      [this](const ActivityResult&) {
+                        requestUpdate();
+                      });
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES):
+                  FAVORITES.toggleBook(path);
+                  requestUpdate();
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::MARK_READ_UNREAD):
+                  READING_STATS.updateProgress(0, !isCompleted);
+                  requestUpdate();
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_CACHE):
+                  if (isEpub) {
+                    Epub epub(path, "/.crosspoint");
+                    epub.load(false, true);
+                    epub.clearCache();
+                  }
+                  requestUpdate();
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB):
+                  deleteLibraryCovers(path);
+                  coversComplete_ = false;
+                  coverGenIndex_ = -1;
+                  requestUpdate();
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_PAGE_COVER_THUMBS):
+                  deletePageCovers();
+                  coversComplete_ = false;
+                  coverGenIndex_ = -1;
+                  requestUpdate();
+                  return;
+                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_ALL_LIBRARY_COVERS):
+                  deleteAllLibraryCovers();
+                  coversComplete_ = false;
+                  coverGenIndex_ = -1;
+                  requestUpdate();
+                  return;
+                default:
+                  requestUpdate();
+                  return;
+              }
+            });
+        return;
+      }
+      // Short press — open book directly
       onSelectBook(entries_[selectorIndex_].path);
       return;
     }
@@ -462,16 +549,22 @@ void LibraryActivity::render(RenderLock&&) {
 
     bool drawn = false;
     const auto& cp = entries_[idx].coverPath;
-    if (!cp.empty() && Storage.exists(cp.c_str())) {
-      FsFile file;
-      if (Storage.openFileForRead("LIB", cp, file)) {
-        Bitmap bmp(file);
-        if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-          renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
-          renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, 0, 0);
-          drawn = true;
+    if (!cp.empty()) {
+      // Check if bitmap is still valid without re-checking disk
+      if (!entries_[idx].coverReady && !Storage.exists(cp.c_str())) {
+        entries_[idx].coverPath.clear();
+      } else {
+        FsFile file;
+        if (Storage.openFileForRead("LIB", cp, file)) {
+          Bitmap bmp(file);
+          if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+            renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
+            renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, 0, 0);
+            drawn = true;
+            entries_[idx].coverReady = true;  // mark as valid for next renders
+          }
+          file.close();
         }
-        file.close();
       }
     }
 
@@ -511,7 +604,7 @@ void LibraryActivity::render(RenderLock&&) {
     }
   }
 
-  // Draw popup ON TOP of grid while covers are generating (per-page counter)
+  // Draw popup ON TOP at header area while covers are generating (per-page counter)
   if (!coversComplete_) {
     char pb[48];
     int pageStartIdx = (curPage - 1) * gridsPerPage_;
@@ -526,14 +619,67 @@ void LibraryActivity::render(RenderLock&&) {
     }
     int done = pageCountHere - missingOnPage;
     snprintf(pb, sizeof(pb), "Copertine %d/%d", done, pageCountHere);
-    GUI.drawPopup(renderer, tr(STR_INDEXING));
-    int tx = metrics.contentSidePadding + 40;
-    int ty = contentTop + 110;
-    renderer.drawText(UI_10_FONT_ID, tx, ty, pb, true, EpdFontFamily::REGULAR);
+    Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
+    if (popupRect.width > 0 && popupRect.height > 0) {
+      GUI.fillPopupProgress(renderer, popupRect, done * 100 / std::max(1, pageCountHere));
+    }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   renderer.displayBuffer();
+}
+
+void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {
+  std::string path = libraryCoverPath(bookPath);
+  if (Storage.exists(path.c_str())) {
+    Storage.remove(path.c_str());
+  }
+  // Clear entry cover path so it gets regenerated
+  for (auto& e : entries_) {
+    if (e.path == bookPath) {
+      e.coverPath.clear();
+      e.coverReady = false;
+      e.coverFailed = false;
+      break;
+    }
+  }
+}
+
+void LibraryActivity::deletePageCovers() {
+  int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+  int pageEnd = std::min(pageStart + gridsPerPage_, static_cast<int>(entries_.size()));
+  for (int i = pageStart; i < pageEnd; ++i) {
+    std::string path = libraryCoverPath(entries_[i].path);
+    if (Storage.exists(path.c_str())) Storage.remove(path.c_str());
+    entries_[i].coverPath.clear();
+    entries_[i].coverReady = false;
+    entries_[i].coverFailed = false;
+  }
+}
+
+void LibraryActivity::deleteAllLibraryCovers() {
+  auto d = Storage.open(libraryCoverDir().c_str());
+  if (d && d.isDirectory()) {
+    d.rewindDirectory();
+    char nb[256];
+    for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+      f.getName(nb, sizeof(nb));
+      if (!f.isDirectory()) {
+        std::string full = libraryCoverDir() + "/" + nb;
+        f.close();
+        Storage.remove(full.c_str());
+      } else {
+        f.close();
+      }
+    }
+    d.close();
+  }
+  for (auto& e : entries_) {
+    e.coverPath.clear();
+    e.coverReady = false;
+    e.coverFailed = false;
+  }
 }

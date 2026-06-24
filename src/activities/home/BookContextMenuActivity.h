@@ -16,12 +16,15 @@ class BookContextMenuActivity final : public Activity {
     VIEW_METADATA,
     VIEW_STATS,
     MARK_READ_UNREAD,
-    DELETE_CACHE
+    DELETE_CACHE,
+    DELETE_COVER_THUMB,
+    DELETE_PAGE_COVER_THUMBS,
+    DELETE_ALL_LIBRARY_COVERS
   };
 
   explicit BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                    const std::string& bookTitle, bool isFavorite, bool isCompleted,
-                                   bool isEpubFormat);
+                                   bool isEpubFormat, bool isLibraryMode = false);
 
   void onEnter() override;
   void loop() override;
@@ -33,7 +36,7 @@ class BookContextMenuActivity final : public Activity {
     StrId labelId;
   };
 
-  static std::vector<MenuItem> buildMenuItems(bool isFavorite, bool isCompleted, bool isEpubFormat);
+  static std::vector<MenuItem> buildMenuItems(bool isFavorite, bool isCompleted, bool isEpubFormat, bool isLibraryMode = false);
 
   const std::vector<MenuItem> menuItems;
   const std::string bookTitle;

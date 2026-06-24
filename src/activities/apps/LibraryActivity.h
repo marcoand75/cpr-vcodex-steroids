@@ -11,6 +11,7 @@ struct LibraryEntry {
   std::string title;
   std::string coverPath;
   bool coverFailed = false;
+  bool coverReady = false;  // true after first successful load, skips SD checks
 };
 
 class LibraryActivity final : public Activity {
@@ -29,6 +30,9 @@ class LibraryActivity final : public Activity {
   void scanSd();
   void generateCoverForEntry(int index);
   std::string libraryCoverPath(const std::string& bookPath) const;
+  void deleteLibraryCovers(const std::string& bookPath);
+  void deletePageCovers();
+  void deleteAllLibraryCovers();
 
  public:
   explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
