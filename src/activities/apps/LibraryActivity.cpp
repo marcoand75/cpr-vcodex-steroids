@@ -8,19 +8,21 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 #include "../home/BookContextMenuActivity.h"
 #include "../home/BookMetadataActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
-#include "FavoritesStore.h"
-#include "ReadingStatsStore.h"
-#include "activities/apps/ReadingStatsDetailActivity.h"
 #include "Epub.h"
+#include "FavoritesStore.h"
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
+#include "RecentBooksStore.h"
 #include "Txt.h"
 #include "Xtc.h"
+#include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -78,25 +80,6 @@ std::string libraryCoverPathFor(const std::string& bookPath, int w, int h) {
   return buf;
 }
 
-void cleanupTempEpubThumbs(const std::string& bookPath, int coverH) {
-  if (!FsHelpers::hasEpubExtension(bookPath)) return;
-  // EPUB thumb generation writes a temporary BMP at a hash-derived path.
-  // After copying to our library_covers dir, remove the temp source.
-  Epub epub(bookPath, "/.crosspoint");
-  std::string src = UITheme::getCoverThumbPath(epub.getThumbBmpPath(), coverH);
-  if (!src.empty() && Storage.exists(src.c_str())) {
-    FsFile f;
-    if (Storage.openFileForRead("LIB", src, f)) {
-      size_t sz = f.size();
-      f.close();
-      if (sz == 0) {
-        Storage.remove(src.c_str());
-        LOG_DBG("LIB", "Removed zero-size temp thumb: %s", src.c_str());
-      }
-    }
-  }
-}
-
 bool generateOneCover(const std::string& bookPath, int coverH, const std::string& destFile) {
   std::string fname = bookPath;
   size_t slash = fname.find_last_of('/');
@@ -111,11 +94,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     FsFile fin;
     if (!Storage.openFileForRead("LIB", src, fin)) return false;
     size_t sz = fin.size();
-    if (sz == 0) {
-      fin.close();
-      Storage.remove(src.c_str());
-      return false;
-    }
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
     std::vector<uint8_t> buf(sz);
     fin.read(buf.data(), sz);
     fin.close();
@@ -123,11 +102,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
     size_t written = fout.write(buf.data(), sz);
     fout.close();
-    if (written != sz) {
-      Storage.remove(destFile.c_str());
-      return false;
-    }
-    // Clean up the temp thumb so it doesn't accumulate
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
     Storage.remove(src.c_str());
     return true;
   }
@@ -141,11 +116,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     FsFile fin;
     if (!Storage.openFileForRead("LIB", src, fin)) return false;
     size_t sz = fin.size();
-    if (sz == 0) {
-      fin.close();
-      Storage.remove(src.c_str());
-      return false;
-    }
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
     std::vector<uint8_t> buf(sz);
     fin.read(buf.data(), sz);
     fin.close();
@@ -153,10 +124,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
     size_t written = fout.write(buf.data(), sz);
     fout.close();
-    if (written != sz) {
-      Storage.remove(destFile.c_str());
-      return false;
-    }
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
     Storage.remove(src.c_str());
     return true;
   }
@@ -170,11 +138,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     FsFile fin;
     if (!Storage.openFileForRead("LIB", src, fin)) return false;
     size_t sz = fin.size();
-    if (sz == 0) {
-      fin.close();
-      Storage.remove(src.c_str());
-      return false;
-    }
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
     std::vector<uint8_t> buf(sz);
     fin.read(buf.data(), sz);
     fin.close();
@@ -182,10 +146,7 @@ bool generateOneCover(const std::string& bookPath, int coverH, const std::string
     if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
     size_t written = fout.write(buf.data(), sz);
     fout.close();
-    if (written != sz) {
-      Storage.remove(destFile.c_str());
-      return false;
-    }
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
     Storage.remove(src.c_str());
     return true;
   }
@@ -200,19 +161,17 @@ std::string LibraryActivity::libraryCoverPath(const std::string& bookPath) const
 
 void LibraryActivity::applyLayoutFromSettings() {
   switch (SETTINGS.libraryLayout) {
-    case CrossPointSettings::LIBRARY_LAYOUT_2X2:
-      gridColumns_ = 2; coverWidth_ = 220; coverHeight_ = 320; break;
-    case CrossPointSettings::LIBRARY_LAYOUT_3X3:
-      gridColumns_ = 3; coverWidth_ = 130; coverHeight_ = 190; break;
+    case CrossPointSettings::LIBRARY_LAYOUT_2X2: gridColumns_ = 2; coverWidth_ = 220; coverHeight_ = 320; break;
+    case CrossPointSettings::LIBRARY_LAYOUT_3X3: gridColumns_ = 3; coverWidth_ = 130; coverHeight_ = 190; break;
     case CrossPointSettings::LIBRARY_LAYOUT_4X4:
-    default:
-      gridColumns_ = 4; coverWidth_ = 100; coverHeight_ = 150; break;
+    default: gridColumns_ = 4; coverWidth_ = 100; coverHeight_ = 150; break;
   }
   gridsPerPage_ = gridColumns_ * gridColumns_;
 }
 
-void LibraryActivity::scanSd() {
-  entries_.clear();
+void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
+  // Full rescan to get all possible entries
+  std::vector<LibraryEntry> allEntries;
   Storage.mkdir(libraryCoverDir().c_str());
 
   std::function<void(const std::string&)> walk;
@@ -227,19 +186,13 @@ void LibraryActivity::scanSd() {
       std::string entry = dir + nb;
       if (f.isDirectory()) { f.close(); walk(entry + '/'); }
       else if (isEbookExtension(nb)) {
-        // Skip known non-ebook text files
-        if (strcmp(nb, "if_found.txt") == 0 || strcmp(nb, "crash_report.txt") == 0) {
-          f.close();
-          continue;
-        }
+        if (strcmp(nb, "if_found.txt") == 0 || strcmp(nb, "crash_report.txt") == 0) { f.close(); continue; }
         LibraryEntry e;
         e.path = entry;
         e.title = filenameWithoutExtension(entry);
         std::string cv = libraryCoverPath(entry);
         if (Storage.exists(cv.c_str())) e.coverPath = cv;
-        // If no cover exists AND a zero-size file doesn't exist, mark as needing gen
-        // (coverFailed stays false because we haven't tried yet)
-        entries_.push_back(std::move(e));
+        allEntries.push_back(std::move(e));
       }
       f.close();
     }
@@ -247,33 +200,53 @@ void LibraryActivity::scanSd() {
   };
 
   walk("/");
-  std::sort(entries_.begin(), entries_.end(), [](auto& a, auto& b) { return a.path < b.path; });
+  std::sort(allEntries.begin(), allEntries.end(), [](auto& a, auto& b) { return a.path < b.path; });
+
+  entries_.clear();
+  if (filter == CrossPointSettings::LIBRARY_FILTER_ALL) {
+    entries_ = std::move(allEntries);
+  } else if (filter == CrossPointSettings::LIBRARY_FILTER_FAVOURITES) {
+    for (auto& e : allEntries) {
+      if (FAVORITES.isFavorite(e.path)) entries_.push_back(std::move(e));
+    }
+  } else if (filter == CrossPointSettings::LIBRARY_FILTER_LATEST_READ) {
+    const auto& recent = RECENT_BOOKS.getBooks();
+    for (auto& e : allEntries) {
+      for (const auto& rb : recent) {
+        if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) {
+          entries_.push_back(std::move(e));
+          break;
+        }
+      }
+    }
+  }
+
+  currentFilter_ = filter;
+  selectorIndex_ = 0;
+  coversComplete_ = false;
+  coverGenIndex_ = -1;
+}
+
+void LibraryActivity::scanSd() {
+  currentFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(SETTINGS.libraryFilter);
+  rebuildForFilter(currentFilter_);
 }
 
 void LibraryActivity::generateCoverForEntry(int index) {
   if (index < 0 || index >= static_cast<int>(entries_.size())) return;
   LibraryEntry& e = entries_[index];
-  if (e.coverFailed) return;  // already tried and failed — don't retry
+  if (e.coverFailed) return;
   std::string dest = libraryCoverPath(e.path);
-  // Check if existing thumb is valid (non-zero size)
   if (Storage.exists(dest.c_str())) {
     FsFile check;
     if (Storage.openFileForRead("LIB", dest, check)) {
-      if (check.size() > 0) {
-        check.close();
-        e.coverPath = dest;
-        return;
-      }
+      if (check.size() > 0) { check.close(); e.coverPath = dest; return; }
       check.close();
     }
-    // Zero-size or unreadable — delete and regenerate
     Storage.remove(dest.c_str());
   }
-  if (generateOneCover(e.path, coverHeight_, dest)) {
-    e.coverPath = dest;
-  } else {
-    e.coverFailed = true;
-  }
+  if (generateOneCover(e.path, coverHeight_, dest)) e.coverPath = dest;
+  else e.coverFailed = true;
 }
 
 void LibraryActivity::onEnter() {
@@ -302,23 +275,17 @@ void LibraryActivity::loop() {
     int pageCount = std::min(gridsPerPage_, total - pageStart);
     int pageEnd = pageStart + pageCount;
 
-    // Find first missing cover on this page
     if (coverGenIndex_ < pageStart || coverGenIndex_ >= pageEnd) {
       coverGenIndex_ = pageStart;
-      // Skip already-existing covers
       while (coverGenIndex_ < pageEnd) {
         if (entries_[coverGenIndex_].coverFailed) { coverGenIndex_++; continue; }
         std::string dest = libraryCoverPath(entries_[coverGenIndex_].path);
         if (!Storage.exists(dest.c_str()) || !entries_[coverGenIndex_].coverPath.empty() == false) {
-          // Need to check if truly missing
           bool missing = true;
           if (Storage.exists(dest.c_str())) {
             FsFile check;
             if (Storage.openFileForRead("LIB", dest, check)) {
-              if (check.size() > 0) {
-                entries_[coverGenIndex_].coverPath = dest;
-                missing = false;
-              }
+              if (check.size() > 0) { entries_[coverGenIndex_].coverPath = dest; missing = false; }
               check.close();
             }
             if (missing) Storage.remove(dest.c_str());
@@ -334,27 +301,22 @@ void LibraryActivity::loop() {
       coverGenIndex_++;
     }
 
-    // Check if all covers on this page are done (or have failed)
     bool allDone = true;
     for (int i = pageStart; i < pageEnd; ++i) {
-      if (entries_[i].coverFailed) continue;  // failed covers count as "done"
+      if (entries_[i].coverFailed) continue;
       std::string dest = libraryCoverPath(entries_[i].path);
-      if (entries_[i].coverPath.empty() || !Storage.exists(dest.c_str())) {
-        allDone = false;
-        break;
-      }
+      if (entries_[i].coverPath.empty() || !Storage.exists(dest.c_str())) { allDone = false; break; }
     }
     coversComplete_ = allDone;
     requestUpdate();
     return;
   }
 
-  // Confirm opens selected book (short press) or context menu (long press)
+  // Confirm: short press opens book, long press opens context menu
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (total > 0 && selectorIndex_ < total) {
       const unsigned long held = mappedInput.getHeldTime();
       if (held >= 800) {
-        // Long press — show context menu (same pattern as HomeActivity)
         const int idx = selectorIndex_;
         const std::string& path = entries_[idx].path;
         const std::string title = entries_[idx].title.empty() ? filenameWithoutExtension(path) : entries_[idx].title;
@@ -365,155 +327,104 @@ void LibraryActivity::loop() {
 
         startActivityForResult(
             std::make_unique<BookContextMenuActivity>(renderer, mappedInput, title, isFav, isCompleted, isEpub, true),
-            [this, idx, path, isEpub, isFav, isCompleted](const ActivityResult& result) {
-              if (result.isCancelled) {
-                requestUpdate();
-                return;
-              }
+            [this, idx, path, isEpub](const ActivityResult& result) {
+              if (result.isCancelled) { requestUpdate(); return; }
               const auto* menuResult = std::get_if<MenuResult>(&result.data);
-              if (!menuResult) {
-                requestUpdate();
-                return;
-              }
-              const int action = menuResult->action;
-              switch (action) {
-                case static_cast<int>(BookContextMenuActivity::MenuAction::OPEN_BOOK):
-                  onSelectBook(path);
+              if (!menuResult) { requestUpdate(); return; }
+              switch (static_cast<BookContextMenuActivity::MenuAction>(menuResult->action)) {
+                case BookContextMenuActivity::MenuAction::OPEN_BOOK:
+                  onSelectBook(path); return;
+                case BookContextMenuActivity::MenuAction::VIEW_STATS:
+                  activityManager.replaceActivity(std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path));
                   return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::VIEW_STATS):
-                  activityManager.replaceActivity(
-                      std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path));
+                case BookContextMenuActivity::MenuAction::VIEW_METADATA:
+                  startActivityForResult(std::make_unique<BookMetadataActivity>(renderer, mappedInput, path),
+                                         [this](const ActivityResult&) { requestUpdate(); });
                   return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::VIEW_METADATA):
-                  startActivityForResult(
-                      std::make_unique<BookMetadataActivity>(renderer, mappedInput, path),
-                      [this](const ActivityResult&) {
-                        requestUpdate();
-                      });
-                  return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES):
-                  FAVORITES.toggleBook(path);
+                case BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES:
+                  FAVORITES.toggleBook(path); requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::MARK_READ_UNREAD: {
+                  const auto* s = READING_STATS.findBook(path);
+                  const bool wasCompleted = s && s->completed;
+                  READING_STATS.updateProgress(wasCompleted ? 0 : 100, !wasCompleted);
                   requestUpdate();
                   return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::MARK_READ_UNREAD):
-                  READING_STATS.updateProgress(0, !isCompleted);
-                  requestUpdate();
-                  return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_CACHE):
-                  if (isEpub) {
-                    Epub epub(path, "/.crosspoint");
-                    epub.load(false, true);
-                    epub.clearCache();
-                  }
-                  requestUpdate();
-                  return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB):
-                  deleteLibraryCovers(path);
-                  coversComplete_ = false;
-                  coverGenIndex_ = -1;
-                  requestUpdate();
-                  return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_PAGE_COVER_THUMBS):
-                  deletePageCovers();
-                  coversComplete_ = false;
-                  coverGenIndex_ = -1;
-                  requestUpdate();
-                  return;
-                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_ALL_LIBRARY_COVERS):
-                  deleteAllLibraryCovers();
-                  coversComplete_ = false;
-                  coverGenIndex_ = -1;
-                  requestUpdate();
-                  return;
+                }
+                case BookContextMenuActivity::MenuAction::DELETE_CACHE:
+                  if (isEpub) { Epub epub(path, "/.crosspoint"); epub.load(false, true); epub.clearCache(); }
+                  requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB:
+                  deleteLibraryCovers(path); coversComplete_ = false; coverGenIndex_ = -1; requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::DELETE_PAGE_COVER_THUMBS:
+                  deletePageCovers(); coversComplete_ = false; coverGenIndex_ = -1; requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::DELETE_ALL_LIBRARY_COVERS:
+                  deleteAllLibraryCovers(); coversComplete_ = false; coverGenIndex_ = -1; requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::FILTER_ALL_BOOKS:
+                  rebuildForFilter(CrossPointSettings::LIBRARY_FILTER_ALL); requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::FILTER_FAVOURITES:
+                  rebuildForFilter(CrossPointSettings::LIBRARY_FILTER_FAVOURITES); requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::FILTER_LATEST_READ:
+                  rebuildForFilter(CrossPointSettings::LIBRARY_FILTER_LATEST_READ); requestUpdate(); return;
                 default:
-                  requestUpdate();
-                  return;
+                  requestUpdate(); return;
               }
             });
         return;
       }
-      // Short press — open book directly
       onSelectBook(entries_[selectorIndex_].path);
       return;
     }
   }
 
-  // Back returns to home
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    onGoHome();
-    return;
-  }
-
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) { onGoHome(); return; }
   if (total <= 0) return;
 
   bool moved = false;
-
-  // LEFT: previous item, wraps to last if at start
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     selectorIndex_ = (selectorIndex_ > 0) ? selectorIndex_ - 1 : total - 1;
     moved = true;
   }
-
-  // RIGHT: next item, wraps to first if at end
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     selectorIndex_ = (selectorIndex_ < total - 1) ? selectorIndex_ + 1 : 0;
     moved = true;
   }
-
-  // UP: go up one row; if at top row, go to previous page's bottom row
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    int pageStartIdx = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-    int rowInPage = (selectorIndex_ - pageStartIdx) / gridColumns_;
-    int col = selectorIndex_ % gridColumns_;
-    if (rowInPage == 0) {
-      int prevStart = pageStartIdx - gridsPerPage_;
-      if (prevStart < 0) prevStart = ((total + gridsPerPage_ - 1) / gridsPerPage_ - 1) * gridsPerPage_;
-      int itemsOnPrev = std::min(gridsPerPage_, total - prevStart);
-      int rows = itemsOnPrev / gridColumns_;
-      int lastColItems = itemsOnPrev - rows * gridColumns_;
-      int tc = col;
-      if (tc >= lastColItems && lastColItems > 0) tc = lastColItems - 1;
-      selectorIndex_ = prevStart + (rows - 1) * gridColumns_ + tc;
-    } else {
-      selectorIndex_ -= gridColumns_;
-    }
+    int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+    int r = (selectorIndex_ - ps) / gridColumns_;
+    int c = selectorIndex_ % gridColumns_;
+    if (r == 0) {
+      int prev = ps - gridsPerPage_; if (prev < 0) prev = ((total + gridsPerPage_ - 1) / gridsPerPage_ - 1) * gridsPerPage_;
+      int items = std::min(gridsPerPage_, total - prev);
+      int rows = items / gridColumns_;
+      int lc = items - rows * gridColumns_;
+      int tc = (c >= lc && lc > 0) ? lc - 1 : c;
+      selectorIndex_ = prev + (rows - 1) * gridColumns_ + tc;
+    } else { selectorIndex_ -= gridColumns_; }
     moved = true;
   }
-
-  // DOWN: go down one row; if at bottom row, go to next page's top row
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    int pageStartIdx = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-    int itemsOnPage = std::min(gridsPerPage_, total - pageStartIdx);
-    int rowsOnPage = itemsOnPage / gridColumns_;
-    int rowInPage = (selectorIndex_ - pageStartIdx) / gridColumns_;
-    int col = selectorIndex_ % gridColumns_;
-    int nextItemRow0 = pageStartIdx + (rowInPage + 1) * gridColumns_ + col;
-    if (rowInPage >= rowsOnPage - 1 || nextItemRow0 >= total) {
-      int nextStart = pageStartIdx + gridsPerPage_;
-      if (nextStart >= total) nextStart = 0;
-      int idx = nextStart + col;
-      if (idx >= total) idx = nextStart;
-      selectorIndex_ = idx;
-    } else {
-      selectorIndex_ = nextItemRow0;
-    }
+    int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+    int items = std::min(gridsPerPage_, total - ps);
+    int rows = items / gridColumns_;
+    int r = (selectorIndex_ - ps) / gridColumns_;
+    int c = selectorIndex_ % gridColumns_;
+    int nr = ps + (r + 1) * gridColumns_ + c;
+    if (r >= rows - 1 || nr >= total) {
+      int ns = ps + gridsPerPage_; if (ns >= total) ns = 0;
+      int ni = ns + c; if (ni >= total) ni = ns;
+      selectorIndex_ = ni;
+    } else { selectorIndex_ = nr; }
     moved = true;
   }
 
-  if (moved) {
-    coversComplete_ = false;
-    coverGenIndex_ = -1;
-    requestUpdate();
-  }
+  if (moved) { coversComplete_ = false; coverGenIndex_ = -1; requestUpdate(); }
 }
 
 void LibraryActivity::render(RenderLock&&) {
   renderer.clearScreen();
-
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
-
   const int total = static_cast<int>(entries_.size());
   const int totalPages = total > 0 ? (total + gridsPerPage_ - 1) / gridsPerPage_ : 0;
   const int curPage = total > 0 ? selectorIndex_ / gridsPerPage_ + 1 : 0;
@@ -524,6 +435,22 @@ void LibraryActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_MENU_LIBRARY),
                  total > 0 ? hdrBuf : nullptr);
 
+  // Draw the active filter label centered in the header
+  if (total > 0) {
+    const char* filterLabel = tr(STR_ALL_BOOKS);
+    switch (currentFilter_) {
+      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: filterLabel = tr(STR_FAVOURITES); break;
+      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: filterLabel = tr(STR_LATEST_READ); break;
+      default: break;
+    }
+    if (filterLabel && filterLabel[0]) {
+      int lblW = renderer.getTextWidth(UI_10_FONT_ID, filterLabel, EpdFontFamily::REGULAR);
+      int centerX = (pageWidth - lblW) / 2;
+      int headerY = metrics.topPadding + 8;
+      renderer.drawText(UI_10_FONT_ID, centerX, headerY, filterLabel, true, EpdFontFamily::REGULAR);
+    }
+  }
+
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
   if (total == 0) {
@@ -532,7 +459,6 @@ void LibraryActivity::render(RenderLock&&) {
     return;
   }
 
-  // Always draw the grid first
   const int pageStart = (curPage - 1) * gridsPerPage_;
   const int pageCount = std::min(gridsPerPage_, total - pageStart);
   const int gap = 16;
@@ -550,7 +476,6 @@ void LibraryActivity::render(RenderLock&&) {
     bool drawn = false;
     const auto& cp = entries_[idx].coverPath;
     if (!cp.empty()) {
-      // Check if bitmap is still valid without re-checking disk
       if (!entries_[idx].coverReady && !Storage.exists(cp.c_str())) {
         entries_[idx].coverPath.clear();
       } else {
@@ -561,7 +486,7 @@ void LibraryActivity::render(RenderLock&&) {
             renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
             renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, 0, 0);
             drawn = true;
-            entries_[idx].coverReady = true;  // mark as valid for next renders
+            entries_[idx].coverReady = true;
           }
           file.close();
         }
@@ -590,10 +515,8 @@ void LibraryActivity::render(RenderLock&&) {
     }
   }
 
-  // Page dots
   if (totalPages > 1) {
-    constexpr int DS = 8;
-    constexpr int DSp = 6;
+    constexpr int DS = 8, DSp = 6;
     int dotW = totalPages * DS + (totalPages - 1) * DSp;
     int sx = (pageWidth - dotW) / 2;
     int sy = pageHeight - metrics.buttonHintsHeight - 14 - DS;
@@ -604,56 +527,44 @@ void LibraryActivity::render(RenderLock&&) {
     }
   }
 
-  // Draw popup ON TOP at header area while covers are generating (per-page counter)
   if (!coversComplete_) {
     char pb[48];
-    int pageStartIdx = (curPage - 1) * gridsPerPage_;
-    int pageCountHere = std::min(gridsPerPage_, total - pageStartIdx);
-    int pageEndIdx = pageStartIdx + pageCountHere;
-    // Count missing on current page
-    int missingOnPage = 0;
-    for (int i = pageStartIdx; i < pageEndIdx; ++i) {
+    int psIdx = (curPage - 1) * gridsPerPage_;
+    int pc = std::min(gridsPerPage_, total - psIdx);
+    int pe = psIdx + pc;
+    int missing = 0;
+    for (int i = psIdx; i < pe; ++i) {
       if (entries_[i].coverFailed) continue;
       std::string d = libraryCoverPath(entries_[i].path);
-      if (entries_[i].coverPath.empty() || !Storage.exists(d.c_str())) missingOnPage++;
+      if (entries_[i].coverPath.empty() || !Storage.exists(d.c_str())) missing++;
     }
-    int done = pageCountHere - missingOnPage;
-    snprintf(pb, sizeof(pb), "Copertine %d/%d", done, pageCountHere);
-    Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
-    if (popupRect.width > 0 && popupRect.height > 0) {
-      GUI.fillPopupProgress(renderer, popupRect, done * 100 / std::max(1, pageCountHere));
+    snprintf(pb, sizeof(pb), "Copertine %d/%d", pc - missing, pc);
+    Rect pr = GUI.drawPopup(renderer, tr(STR_INDEXING));
+    if (pr.width > 0 && pr.height > 0) {
+      GUI.fillPopupProgress(renderer, pr, (pc - missing) * 100 / std::max(1, pc));
     }
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-
   renderer.displayBuffer();
 }
 
 void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {
   std::string path = libraryCoverPath(bookPath);
-  if (Storage.exists(path.c_str())) {
-    Storage.remove(path.c_str());
-  }
-  // Clear entry cover path so it gets regenerated
+  if (Storage.exists(path.c_str())) Storage.remove(path.c_str());
   for (auto& e : entries_) {
-    if (e.path == bookPath) {
-      e.coverPath.clear();
-      e.coverReady = false;
-      e.coverFailed = false;
-      break;
-    }
+    if (e.path == bookPath) { e.coverPath.clear(); e.coverReady = false; e.coverFailed = false; break; }
   }
 }
 
 void LibraryActivity::deletePageCovers() {
-  int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-  int pageEnd = std::min(pageStart + gridsPerPage_, static_cast<int>(entries_.size()));
-  for (int i = pageStart; i < pageEnd; ++i) {
-    std::string path = libraryCoverPath(entries_[i].path);
-    if (Storage.exists(path.c_str())) Storage.remove(path.c_str());
+  int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+  int pe = std::min(ps + gridsPerPage_, static_cast<int>(entries_.size()));
+  for (int i = ps; i < pe; ++i) {
+    std::string p = libraryCoverPath(entries_[i].path);
+    if (Storage.exists(p.c_str())) Storage.remove(p.c_str());
     entries_[i].coverPath.clear();
     entries_[i].coverReady = false;
     entries_[i].coverFailed = false;
@@ -667,19 +578,10 @@ void LibraryActivity::deleteAllLibraryCovers() {
     char nb[256];
     for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
       f.getName(nb, sizeof(nb));
-      if (!f.isDirectory()) {
-        std::string full = libraryCoverDir() + "/" + nb;
-        f.close();
-        Storage.remove(full.c_str());
-      } else {
-        f.close();
-      }
+      if (!f.isDirectory()) { std::string full = libraryCoverDir() + "/" + nb; f.close(); Storage.remove(full.c_str()); }
+      else f.close();
     }
     d.close();
   }
-  for (auto& e : entries_) {
-    e.coverPath.clear();
-    e.coverReady = false;
-    e.coverFailed = false;
-  }
+  for (auto& e : entries_) { e.coverPath.clear(); e.coverReady = false; e.coverFailed = false; }
 }

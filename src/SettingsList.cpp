@@ -147,7 +147,7 @@ const std::vector<SettingInfo>& getSettingsList() {
                           {StrId::STR_LIBRARY_4X4, StrId::STR_LIBRARY_3X3, StrId::STR_LIBRARY_2X2},
                           "libraryLayout", StrId::STR_APPS),
         SettingInfo::Enum(StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
-                          {StrId::STR_ALL_BOOKS}, "libraryFilter", StrId::STR_APPS),
+                          {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ}, "libraryFilter", StrId::STR_APPS),
 
         // --- Shortcuts (web-only launcher placement) ---
         SettingInfo::Enum(StrId::STR_BROWSE_FILES, &CrossPointSettings::browseFilesShortcut,

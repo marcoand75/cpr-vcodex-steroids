@@ -38,6 +38,9 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
     items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER});
     items.push_back({MenuAction::DELETE_PAGE_COVER_THUMBS, StrId::STR_LIBRARY_DELETE_PAGE_COVERS});
     items.push_back({MenuAction::DELETE_ALL_LIBRARY_COVERS, StrId::STR_LIBRARY_DELETE_ALL_COVERS});
+    items.push_back({MenuAction::FILTER_ALL_BOOKS, StrId::STR_ALL_BOOKS});
+    items.push_back({MenuAction::FILTER_FAVOURITES, StrId::STR_FAVOURITES});
+    items.push_back({MenuAction::FILTER_LATEST_READ, StrId::STR_LATEST_READ});
   }
   return items;
 }

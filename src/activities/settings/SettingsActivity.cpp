@@ -230,7 +230,7 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Enum(StrId::STR_LIBRARY_LAYOUT, &CrossPointSettings::libraryLayout,
                         {StrId::STR_LIBRARY_4X4, StrId::STR_LIBRARY_3X3, StrId::STR_LIBRARY_2X2}),
       SettingInfo::Enum(StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
-                        {StrId::STR_ALL_BOOKS}),
+                        {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ}),
       SettingInfo::Section(StrId::STR_FLASHCARDS),
       SettingInfo::Action(StrId::STR_FLASHCARDS, SettingAction::Flashcards),
       SettingInfo::Enum(StrId::STR_STUDY_MODE, &CrossPointSettings::flashcardStudyMode,

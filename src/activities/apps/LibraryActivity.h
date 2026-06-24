@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../Activity.h"
+#include "CrossPointSettings.h"
 #include "util/ButtonNavigator.h"
 
 struct LibraryEntry {
@@ -11,7 +12,7 @@ struct LibraryEntry {
   std::string title;
   std::string coverPath;
   bool coverFailed = false;
-  bool coverReady = false;  // true after first successful load, skips SD checks
+  bool coverReady = false;
 };
 
 class LibraryActivity final : public Activity {
@@ -25,6 +26,7 @@ class LibraryActivity final : public Activity {
   int coverHeight_ = 150;
   int gridColumns_ = 4;
   int gridsPerPage_ = 16;
+  CrossPointSettings::LIBRARY_FILTER currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
 
   void applyLayoutFromSettings();
   void scanSd();
@@ -33,6 +35,7 @@ class LibraryActivity final : public Activity {
   void deleteLibraryCovers(const std::string& bookPath);
   void deletePageCovers();
   void deleteAllLibraryCovers();
+  void rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter);
 
  public:
   explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

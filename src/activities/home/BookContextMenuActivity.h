@@ -19,7 +19,10 @@ class BookContextMenuActivity final : public Activity {
     DELETE_CACHE,
     DELETE_COVER_THUMB,
     DELETE_PAGE_COVER_THUMBS,
-    DELETE_ALL_LIBRARY_COVERS
+    DELETE_ALL_LIBRARY_COVERS,
+    FILTER_ALL_BOOKS,
+    FILTER_FAVOURITES,
+    FILTER_LATEST_READ
   };
 
   explicit BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
