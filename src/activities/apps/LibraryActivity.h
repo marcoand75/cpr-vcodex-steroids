@@ -10,6 +10,7 @@ struct LibraryEntry {
   std::string path;
   std::string title;
   std::string coverPath;
+  bool coverFailed = false;
 };
 
 class LibraryActivity final : public Activity {

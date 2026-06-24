@@ -221,11 +221,18 @@ void LibraryActivity::scanSd() {
       std::string entry = dir + nb;
       if (f.isDirectory()) { f.close(); walk(entry + '/'); }
       else if (isEbookExtension(nb)) {
+        // Skip known non-ebook text files
+        if (strcmp(nb, "if_found.txt") == 0 || strcmp(nb, "crash_report.txt") == 0) {
+          f.close();
+          continue;
+        }
         LibraryEntry e;
         e.path = entry;
         e.title = filenameWithoutExtension(entry);
         std::string cv = libraryCoverPath(entry);
         if (Storage.exists(cv.c_str())) e.coverPath = cv;
+        // If no cover exists AND a zero-size file doesn't exist, mark as needing gen
+        // (coverFailed stays false because we haven't tried yet)
         entries_.push_back(std::move(e));
       }
       f.close();
@@ -240,6 +247,7 @@ void LibraryActivity::scanSd() {
 void LibraryActivity::generateCoverForEntry(int index) {
   if (index < 0 || index >= static_cast<int>(entries_.size())) return;
   LibraryEntry& e = entries_[index];
+  if (e.coverFailed) return;  // already tried and failed — don't retry
   std::string dest = libraryCoverPath(e.path);
   // Check if existing thumb is valid (non-zero size)
   if (Storage.exists(dest.c_str())) {
@@ -255,7 +263,11 @@ void LibraryActivity::generateCoverForEntry(int index) {
     // Zero-size or unreadable — delete and regenerate
     Storage.remove(dest.c_str());
   }
-  if (generateOneCover(e.path, coverHeight_, dest)) e.coverPath = dest;
+  if (generateOneCover(e.path, coverHeight_, dest)) {
+    e.coverPath = dest;
+  } else {
+    e.coverFailed = true;
+  }
 }
 
 void LibraryActivity::onEnter() {
@@ -289,6 +301,7 @@ void LibraryActivity::loop() {
       coverGenIndex_ = pageStart;
       // Skip already-existing covers
       while (coverGenIndex_ < pageEnd) {
+        if (entries_[coverGenIndex_].coverFailed) { coverGenIndex_++; continue; }
         std::string dest = libraryCoverPath(entries_[coverGenIndex_].path);
         if (!Storage.exists(dest.c_str()) || !entries_[coverGenIndex_].coverPath.empty() == false) {
           // Need to check if truly missing
@@ -315,9 +328,10 @@ void LibraryActivity::loop() {
       coverGenIndex_++;
     }
 
-    // Check if all covers on this page are done
+    // Check if all covers on this page are done (or have failed)
     bool allDone = true;
     for (int i = pageStart; i < pageEnd; ++i) {
+      if (entries_[i].coverFailed) continue;  // failed covers count as "done"
       std::string dest = libraryCoverPath(entries_[i].path);
       if (entries_[i].coverPath.empty() || !Storage.exists(dest.c_str())) {
         allDone = false;
@@ -506,6 +520,7 @@ void LibraryActivity::render(RenderLock&&) {
     // Count missing on current page
     int missingOnPage = 0;
     for (int i = pageStartIdx; i < pageEndIdx; ++i) {
+      if (entries_[i].coverFailed) continue;
       std::string d = libraryCoverPath(entries_[i].path);
       if (entries_[i].coverPath.empty() || !Storage.exists(d.c_str())) missingOnPage++;
     }

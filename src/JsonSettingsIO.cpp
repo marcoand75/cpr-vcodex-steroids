@@ -389,6 +389,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadEnum("tiltPageTurn", s.tiltPageTurn, CrossPointSettings::TILT_PAGE_TURN_COUNT);
   loadEnum("sleepTimeout", s.sleepTimeout, CrossPointSettings::SLEEP_TIMEOUT_COUNT);
   loadToggle("showHiddenFiles", s.showHiddenFiles);
+  loadEnum("libraryLayout", s.libraryLayout, CrossPointSettings::LIBRARY_LAYOUT_COUNT);
+  loadEnum("libraryFilter", s.libraryFilter, CrossPointSettings::LIBRARY_FILTER_COUNT);
 
   loadString("opdsServerUrl", s.opdsServerUrl, sizeof(s.opdsServerUrl));
   loadString("opdsUsername", s.opdsUsername, sizeof(s.opdsUsername));
@@ -490,6 +492,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       clamp(doc["readingProfileShortcut"] | s.readingProfileShortcut, shortcutLocationCount, s.readingProfileShortcut);
   s.readingProfileShortcutOrder = clamp(doc["readingProfileShortcutOrder"] | s.readingProfileShortcutOrder,
                                         shortcutOrderCount, s.readingProfileShortcutOrder);
+  s.libraryShortcut = clamp(doc["libraryShortcut"] | s.libraryShortcut, shortcutLocationCount, s.libraryShortcut);
+  s.libraryShortcutOrder = clamp(doc["libraryShortcutOrder"] | s.libraryShortcutOrder, shortcutOrderCount, s.libraryShortcutOrder);
   s.achievementsShortcut =
       clamp(doc["achievementsShortcut"] | s.achievementsShortcut, shortcutLocationCount, s.achievementsShortcut);
   s.achievementsShortcutOrder = clamp(doc["achievementsShortcutOrder"] | s.achievementsShortcutOrder,
@@ -550,6 +554,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                           static_cast<uint8_t>(2), s.readingHeatmapShortcutVisible);
   s.readingProfileShortcutVisible = clamp(doc["readingProfileShortcutVisible"] | s.readingProfileShortcutVisible,
                                           static_cast<uint8_t>(2), s.readingProfileShortcutVisible);
+  s.libraryShortcutVisible = clamp(doc["libraryShortcutVisible"] | s.libraryShortcutVisible,
+                                   static_cast<uint8_t>(2), s.libraryShortcutVisible);
   s.achievementsShortcutVisible = clamp(doc["achievementsShortcutVisible"] | s.achievementsShortcutVisible,
                                         static_cast<uint8_t>(2), s.achievementsShortcutVisible);
   s.ifFoundShortcutVisible = clamp(doc["ifFoundShortcutVisible"] | s.ifFoundShortcutVisible, static_cast<uint8_t>(2),
@@ -742,6 +748,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 
   doc["sleepTimeout"] = s.sleepTimeout;
   doc["showHiddenFiles"] = s.showHiddenFiles;
+  doc["libraryLayout"] = s.libraryLayout;
+  doc["libraryFilter"] = s.libraryFilter;
 
   doc["displayDay"] = s.displayDay;
   doc["syncDayWifiChoice"] = s.syncDayWifiChoice;
@@ -795,6 +803,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["readingHeatmapShortcutOrder"] = s.readingHeatmapShortcutOrder;
   doc["readingProfileShortcut"] = s.readingProfileShortcut;
   doc["readingProfileShortcutOrder"] = s.readingProfileShortcutOrder;
+  doc["libraryShortcut"] = s.libraryShortcut;
+  doc["libraryShortcutOrder"] = s.libraryShortcutOrder;
   doc["achievementsShortcut"] = s.achievementsShortcut;
   doc["achievementsShortcutOrder"] = s.achievementsShortcutOrder;
   doc["ifFoundShortcut"] = s.ifFoundShortcut;
@@ -825,6 +835,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["readingStatsShortcutVisible"] = s.readingStatsShortcutVisible;
   doc["readingHeatmapShortcutVisible"] = s.readingHeatmapShortcutVisible;
   doc["readingProfileShortcutVisible"] = s.readingProfileShortcutVisible;
+  doc["libraryShortcutVisible"] = s.libraryShortcutVisible;
   doc["achievementsShortcutVisible"] = s.achievementsShortcutVisible;
   doc["ifFoundShortcutVisible"] = s.ifFoundShortcutVisible;
   doc["readMeShortcutVisible"] = s.readMeShortcutVisible;
