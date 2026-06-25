@@ -28,6 +28,82 @@
 
 namespace {
 constexpr int COVER_CORNER_RADIUS = 2;
+constexpr int RIBBON_SIZE = 36;       // triangle leg size for corner ribbons
+constexpr int RIBBON_BORDER = 2;      // white border inside the triangle
+constexpr int BOTTOM_BAND_H = 12;     // height of the "opened" indicator bar
+
+// --- Ribbon helpers ---
+
+// Draw a filled black right-triangle in the top-right corner with a white
+// border inset and a large white check-mark inside.
+void drawCompletedRibbon(GfxRenderer& r, int cx, int cy, int cw, int ch) {
+  (void)ch;
+  const int size = RIBBON_SIZE;
+  const int rx = cx + cw - size;
+  const int ry = cy;
+
+  // Black triangle
+  for (int row = 0; row < size; ++row) {
+    int left = rx + row;
+    r.drawLine(left, ry + row, rx + size - 1, ry + row, 1, true);
+  }
+
+  // White inner border
+  for (int row = RIBBON_BORDER; row < size - RIBBON_BORDER; ++row) {
+    int left = rx + row + RIBBON_BORDER;
+    int right = rx + size - 1 - RIBBON_BORDER;
+    if (left <= right) r.drawLine(left, ry + row, right, ry + row, 1, false);
+  }
+
+  // White checkmark (✓) — scaled for bigger ribbon
+  const int cmx = rx + size / 2 + 3;
+  const int cmy = ry + size / 2 - 3;
+  r.drawLine(cmx - 8, cmy,     cmx - 3, cmy + 5, 3, false);
+  r.drawLine(cmx - 3, cmy + 5, cmx + 6, cmy - 6, 3, false);
+}
+
+// Draw a filled black right-triangle in the top-left corner with a white
+// border inset and a large white heart inside.
+void drawFavoriteRibbon(GfxRenderer& r, int cx, int cy, int cw, int ch) {
+  (void)ch;
+  const int size = RIBBON_SIZE;
+  const int lx = cx;
+  const int ly = cy;
+
+  // Black triangle (top-left: diagonal from top-right to bottom-left)
+  for (int row = 0; row < size; ++row) {
+    int right = lx + size - 1 - row;
+    r.drawLine(lx, ly + row, right, ly + row, 1, true);
+  }
+
+  // White inner border
+  for (int row = RIBBON_BORDER; row < size - RIBBON_BORDER; ++row) {
+    int right = lx + size - 1 - row - RIBBON_BORDER;
+    int left = lx + RIBBON_BORDER;
+    if (left <= right) r.drawLine(left, ly + row, right, ly + row, 1, false);
+  }
+
+  // White heart — scaled for bigger ribbon (~11x10 pixel heart)
+  const int hx = lx + 7;
+  const int hy = ly + 7;
+  r.drawLine(hx + 1, hy,     hx + 8, hy,     2, false);
+  r.drawLine(hx,     hy + 2, hx + 9, hy + 2, 2, false);
+  r.drawLine(hx,     hy + 4, hx + 9, hy + 4, 2, false);
+  r.drawLine(hx + 1, hy + 6, hx + 8, hy + 6, 2, false);
+  r.drawLine(hx + 3, hy + 8, hx + 6, hy + 8, 1, false);
+  r.drawLine(hx + 4, hy + 9, hx + 5, hy + 9, 1, false);
+}
+
+// Draw a black bar at the bottom of the cover if the book has been opened.
+void drawOpenedBand(GfxRenderer& r, int cx, int cy, int cw, int ch) {
+  const int bandY = cy + ch - BOTTOM_BAND_H;
+  r.fillRect(cx, bandY, cw, BOTTOM_BAND_H, true);
+  // White "••" dots to suggest "opened" — scaled for bigger band
+  const int dotSize = 4;
+  const int dotY = bandY + (BOTTOM_BAND_H - dotSize) / 2;
+  r.fillRect(cx + cw / 2 - 8, dotY, dotSize, dotSize, false);
+  r.fillRect(cx + cw / 2 + 4, dotY, dotSize, dotSize, false);
+}
 
 std::string filenameWithoutExtension(const std::string& path) {
   std::string name = path;
@@ -507,6 +583,19 @@ void LibraryActivity::render(RenderLock&&) {
         renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), true, EpdFontFamily::BOLD);
         ty += lh;
       }
+    }
+
+    // Ribbon indicators
+    const std::string& bookPath = entries_[idx].path;
+    const auto* stats = READING_STATS.findBook(bookPath);
+    if (stats && stats->completed) {
+      drawCompletedRibbon(renderer, x, y, coverWidth_, coverHeight_);
+    }
+    if (FAVORITES.isFavorite(bookPath)) {
+      drawFavoriteRibbon(renderer, x, y, coverWidth_, coverHeight_);
+    }
+    if (stats && stats->totalReadingMs > 0) {
+      drawOpenedBand(renderer, x, y, coverWidth_, coverHeight_);
     }
 
     if (idx == selectorIndex_) {

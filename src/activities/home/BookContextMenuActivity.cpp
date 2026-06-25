@@ -20,7 +20,7 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
                                                                                        const bool isEpubFormat,
                                                                                        const bool isLibraryMode) {
   std::vector<MenuItem> items;
-  items.reserve(isLibraryMode ? 10 : 7);
+  items.reserve(isLibraryMode ? 11 : 8);
   items.push_back({MenuAction::OPEN_BOOK, StrId::STR_OPEN});
   if (!isLibraryMode) {
     items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS});
@@ -33,6 +33,9 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
       {MenuAction::MARK_READ_UNREAD, isCompleted ? StrId::STR_MARK_AS_NOT_FINISHED : StrId::STR_MARK_AS_FINISHED});
   if (isEpubFormat) {
     items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+  }
+  if (!isLibraryMode) {
+    items.push_back({MenuAction::CLEAR_THEME_CACHE, StrId::STR_CLEAR_THEME_CACHE});
   }
   if (isLibraryMode) {
     items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER});

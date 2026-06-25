@@ -1025,6 +1025,29 @@ void HomeActivity::loop() {
                   epub.clearCache();
                   break;
                 }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::CLEAR_THEME_CACHE): {
+                  // Delete all *.bin files in /.crosspoint/home-carousel-cache/
+                  invalidateResidentCarouselFrame();
+                  invalidateCarouselFrameHash();
+                  Storage.mkdir(CAROUSEL_FRAME_CACHE_DIR);
+                  auto d = Storage.open(CAROUSEL_FRAME_CACHE_DIR);
+                  if (d && d.isDirectory()) {
+                    d.rewindDirectory();
+                    char nb[96];
+                    for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+                      f.getName(nb, sizeof(nb));
+                      if (!f.isDirectory()) {
+                        std::string full = std::string(CAROUSEL_FRAME_CACHE_DIR) + "/" + nb;
+                        f.close();
+                        Storage.remove(full.c_str());
+                      } else {
+                        f.close();
+                      }
+                    }
+                    d.close();
+                  }
+                  break;
+                }
               }
               requestUpdate(true);
             });
