@@ -1,5 +1,6 @@
 #pragma once
 #include <I18n.h>
+#include <components/themes/BaseTheme.h>
 
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ class BookContextMenuActivity final : public Activity {
   struct MenuItem {
     MenuAction action;
     StrId labelId;
+    UIIcon icon;
   };
 
   static std::vector<MenuItem> buildMenuItems(bool isFavorite, bool isCompleted, bool isEpubFormat, bool isLibraryMode = false);

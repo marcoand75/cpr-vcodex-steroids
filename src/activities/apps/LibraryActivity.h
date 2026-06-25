@@ -21,6 +21,10 @@ class LibraryActivity final : public Activity {
   std::vector<LibraryEntry> entries_;
   int coverGenIndex_ = -1;
   bool coversComplete_ = false;
+  int lastPage_ = -1;  // track page changes to avoid unnecessary cover resets
+  mutable int lastRenderedPage_ = -1;  // avoid re-opening BMPs when page unchanged
+  mutable bool lastCoversComplete_ = false;
+  mutable std::vector<bool> coverDrawn_;  // per-entry flag: true if drawn this frame
 
   int coverWidth_ = 100;
   int coverHeight_ = 150;
@@ -31,6 +35,7 @@ class LibraryActivity final : public Activity {
   void applyLayoutFromSettings();
   void scanSd();
   void generateCoverForEntry(int index);
+  bool generateOneCover(const std::string& bookPath, int coverW, int coverH, const std::string& destFile);
   std::string libraryCoverPath(const std::string& bookPath) const;
   void deleteLibraryCovers(const std::string& bookPath);
   void deletePageCovers();

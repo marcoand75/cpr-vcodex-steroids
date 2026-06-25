@@ -20,6 +20,8 @@
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "components/icons/heart.h"
+#include "util/CoverRibbonBaker.h"
 #include "Txt.h"
 #include "Xtc.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
@@ -28,81 +30,56 @@
 
 namespace {
 constexpr int COVER_CORNER_RADIUS = 2;
-constexpr int RIBBON_SIZE = 36;       // triangle leg size for corner ribbons
-constexpr int RIBBON_BORDER = 2;      // white border inside the triangle
-constexpr int BOTTOM_BAND_H = 12;     // height of the "opened" indicator bar
 
-// --- Ribbon helpers ---
+// Priority-based ribbon overlay (top-right corner).
+// Only ONE ribbon shown per cover, highest priority wins.
+// Priority: 1=Read(completed), 2=Favorite, 3=Opened.
+// Draw a right-triangle at top-right corner [x, y] with given leg length.
+// Triangle fills: for dy=0..leg-1, pixels from x+dy to x+leg-1.
+static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
+  for (int dy = 0; dy < leg; ++dy)
+    r.fillRect(x + dy, y + dy, leg - dy, 1, black);
+}
 
-// Draw a filled black right-triangle in the top-right corner with a white
-// border inset and a large white check-mark inside.
-void drawCompletedRibbon(GfxRenderer& r, int cx, int cy, int cw, int ch) {
+void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
+                     bool completed, bool favorite, bool opened) {
   (void)ch;
-  const int size = RIBBON_SIZE;
-  const int rx = cx + cw - size;
+  const int leg = std::max(22, std::min(cw * 8 / 10, 84));
+  // rx,ry = top-left of the bounding box for the core triangle
+  const int rx = cx + cw - leg;
   const int ry = cy;
 
-  // Black triangle
-  for (int row = 0; row < size; ++row) {
-    int left = rx + row;
-    r.drawLine(left, ry + row, rx + size - 1, ry + row, 1, true);
+  // Triple border: white(1) → black(1) → white(1) → black fill, drawn outside-in
+  fillTopRightTri(r, rx - 3, ry - 3, leg + 6, false);  // outer white
+  fillTopRightTri(r, rx - 2, ry - 2, leg + 4, true);   // mid black
+  fillTopRightTri(r, rx - 1, ry - 1, leg + 2, false);  // inner white
+  fillTopRightTri(r, rx,     ry,     leg,     true);   // core black
+
+  // Small icon in upper-left of triangle (near the corner of the cover)
+  // Symbol centered in the upper-left portion of the triangle, sized to stay
+  // well within the visible filled area.
+  const int symSz = std::max(6, leg * 15 / 100);
+  const int symX = rx + leg * 20 / 100 - symSz / 2;
+  const int symY = ry + leg * 15 / 100 - symSz / 2;
+
+  if (completed) {
+    // ✓ Checkmark — compact
+    r.drawLine(symX,           symY + symSz / 2, symX + symSz / 3, symY + symSz,     2, false);
+    r.drawLine(symX + symSz / 3, symY + symSz,  symX + symSz,     symY,               2, false);
+  } else if (favorite) {
+    // ♥ Heart icon — scaled to fit
+    const uint8_t* icon = ::HeartIcon;
+    if (icon && symSz >= 6) r.drawIconInverted(icon, symX, symY, symSz, symSz);
+  } else if (opened) {
+    // • Small dot
+    const int dotR = std::max(1, symSz / 4);
+    const int dx = symX + symSz / 2;
+    const int dy = symY + symSz / 2;
+    for (int y2 = -dotR; y2 <= dotR; ++y2)
+      for (int x2 = -dotR; x2 <= dotR; ++x2)
+        if (x2 * x2 + y2 * y2 <= dotR * dotR + dotR)
+          r.drawLine(dx + x2, dy + y2, dx + x2, dy + y2, 1, false);
   }
-
-  // White inner border
-  for (int row = RIBBON_BORDER; row < size - RIBBON_BORDER; ++row) {
-    int left = rx + row + RIBBON_BORDER;
-    int right = rx + size - 1 - RIBBON_BORDER;
-    if (left <= right) r.drawLine(left, ry + row, right, ry + row, 1, false);
-  }
-
-  // White checkmark (✓) — scaled for bigger ribbon
-  const int cmx = rx + size / 2 + 3;
-  const int cmy = ry + size / 2 - 3;
-  r.drawLine(cmx - 8, cmy,     cmx - 3, cmy + 5, 3, false);
-  r.drawLine(cmx - 3, cmy + 5, cmx + 6, cmy - 6, 3, false);
-}
-
-// Draw a filled black right-triangle in the top-left corner with a white
-// border inset and a large white heart inside.
-void drawFavoriteRibbon(GfxRenderer& r, int cx, int cy, int cw, int ch) {
-  (void)ch;
-  const int size = RIBBON_SIZE;
-  const int lx = cx;
-  const int ly = cy;
-
-  // Black triangle (top-left: diagonal from top-right to bottom-left)
-  for (int row = 0; row < size; ++row) {
-    int right = lx + size - 1 - row;
-    r.drawLine(lx, ly + row, right, ly + row, 1, true);
-  }
-
-  // White inner border
-  for (int row = RIBBON_BORDER; row < size - RIBBON_BORDER; ++row) {
-    int right = lx + size - 1 - row - RIBBON_BORDER;
-    int left = lx + RIBBON_BORDER;
-    if (left <= right) r.drawLine(left, ly + row, right, ly + row, 1, false);
-  }
-
-  // White heart — scaled for bigger ribbon (~11x10 pixel heart)
-  const int hx = lx + 7;
-  const int hy = ly + 7;
-  r.drawLine(hx + 1, hy,     hx + 8, hy,     2, false);
-  r.drawLine(hx,     hy + 2, hx + 9, hy + 2, 2, false);
-  r.drawLine(hx,     hy + 4, hx + 9, hy + 4, 2, false);
-  r.drawLine(hx + 1, hy + 6, hx + 8, hy + 6, 2, false);
-  r.drawLine(hx + 3, hy + 8, hx + 6, hy + 8, 1, false);
-  r.drawLine(hx + 4, hy + 9, hx + 5, hy + 9, 1, false);
-}
-
-// Draw a black bar at the bottom of the cover if the book has been opened.
-void drawOpenedBand(GfxRenderer& r, int cx, int cy, int cw, int ch) {
-  const int bandY = cy + ch - BOTTOM_BAND_H;
-  r.fillRect(cx, bandY, cw, BOTTOM_BAND_H, true);
-  // White "••" dots to suggest "opened" — scaled for bigger band
-  const int dotSize = 4;
-  const int dotY = bandY + (BOTTOM_BAND_H - dotSize) / 2;
-  r.fillRect(cx + cw / 2 - 8, dotY, dotSize, dotSize, false);
-  r.fillRect(cx + cw / 2 + 4, dotY, dotSize, dotSize, false);
 }
 
 std::string filenameWithoutExtension(const std::string& path) {
@@ -156,79 +133,6 @@ std::string libraryCoverPathFor(const std::string& bookPath, int w, int h) {
   return buf;
 }
 
-bool generateOneCover(const std::string& bookPath, int coverH, const std::string& destFile) {
-  std::string fname = bookPath;
-  size_t slash = fname.find_last_of('/');
-  if (slash != std::string::npos) fname = fname.substr(slash + 1);
-
-  if (FsHelpers::hasEpubExtension(fname)) {
-    Epub epub(bookPath, "/.crosspoint");
-    if (!epub.load(true, true)) return false;
-    if (!epub.generateThumbBmp(coverH)) return false;
-    std::string src = UITheme::getCoverThumbPath(epub.getThumbBmpPath(), coverH);
-    if (src.empty() || !Storage.exists(src.c_str())) return false;
-    FsFile fin;
-    if (!Storage.openFileForRead("LIB", src, fin)) return false;
-    size_t sz = fin.size();
-    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
-    std::vector<uint8_t> buf(sz);
-    fin.read(buf.data(), sz);
-    fin.close();
-    FsFile fout;
-    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
-    size_t written = fout.write(buf.data(), sz);
-    fout.close();
-    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
-    Storage.remove(src.c_str());
-    return true;
-  }
-
-  if (FsHelpers::hasXtcExtension(fname)) {
-    Xtc xtc(bookPath, "/.crosspoint");
-    if (!xtc.load()) return false;
-    if (!xtc.generateThumbBmp(coverH)) return false;
-    std::string src = UITheme::getCoverThumbPath(xtc.getThumbBmpPath(), coverH);
-    if (src.empty() || !Storage.exists(src.c_str())) return false;
-    FsFile fin;
-    if (!Storage.openFileForRead("LIB", src, fin)) return false;
-    size_t sz = fin.size();
-    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
-    std::vector<uint8_t> buf(sz);
-    fin.read(buf.data(), sz);
-    fin.close();
-    FsFile fout;
-    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
-    size_t written = fout.write(buf.data(), sz);
-    fout.close();
-    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
-    Storage.remove(src.c_str());
-    return true;
-  }
-
-  if (FsHelpers::hasTxtExtension(fname) || FsHelpers::hasMarkdownExtension(fname)) {
-    Txt txt(bookPath, "/.crosspoint");
-    if (!txt.load()) return false;
-    if (!txt.generateCoverBmp()) return false;
-    std::string src = txt.getCoverBmpPath();
-    if (src.empty() || !Storage.exists(src.c_str())) return false;
-    FsFile fin;
-    if (!Storage.openFileForRead("LIB", src, fin)) return false;
-    size_t sz = fin.size();
-    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
-    std::vector<uint8_t> buf(sz);
-    fin.read(buf.data(), sz);
-    fin.close();
-    FsFile fout;
-    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
-    size_t written = fout.write(buf.data(), sz);
-    fout.close();
-    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
-    Storage.remove(src.c_str());
-    return true;
-  }
-
-  return false;
-}
 }  // namespace
 
 std::string LibraryActivity::libraryCoverPath(const std::string& bookPath) const {
@@ -237,10 +141,22 @@ std::string LibraryActivity::libraryCoverPath(const std::string& bookPath) const
 
 void LibraryActivity::applyLayoutFromSettings() {
   switch (SETTINGS.libraryLayout) {
-    case CrossPointSettings::LIBRARY_LAYOUT_2X2: gridColumns_ = 2; coverWidth_ = 220; coverHeight_ = 320; break;
-    case CrossPointSettings::LIBRARY_LAYOUT_3X3: gridColumns_ = 3; coverWidth_ = 130; coverHeight_ = 190; break;
+    case CrossPointSettings::LIBRARY_LAYOUT_2X2:
+      gridColumns_ = 2;
+      coverWidth_ = 202;   // proportional to 2:3 ratio at height 310
+      coverHeight_ = 310;  // -10px height (was 320)
+      break;
+    case CrossPointSettings::LIBRARY_LAYOUT_3X3:
+      gridColumns_ = 3;
+      coverWidth_ = 130;
+      coverHeight_ = 190;
+      break;
     case CrossPointSettings::LIBRARY_LAYOUT_4X4:
-    default: gridColumns_ = 4; coverWidth_ = 100; coverHeight_ = 150; break;
+    default:
+      gridColumns_ = 4;
+      coverWidth_ = 100;
+      coverHeight_ = 150;
+      break;
   }
   gridsPerPage_ = gridColumns_ * gridColumns_;
 }
@@ -308,21 +224,94 @@ void LibraryActivity::scanSd() {
   rebuildForFilter(currentFilter_);
 }
 
+bool LibraryActivity::generateOneCover(const std::string& bookPath, int coverW, int coverH, const std::string& destFile) {
+  std::string fname = bookPath;
+  size_t slash = fname.find_last_of('/');
+  if (slash != std::string::npos) fname = fname.substr(slash + 1);
+
+  bool ok = false;
+
+  if (FsHelpers::hasEpubExtension(fname)) {
+    Epub epub(bookPath, "/.crosspoint");
+    if (!epub.load(true, true)) return false;
+    if (!epub.generateThumbBmp(coverW, coverH)) return false;
+    std::string src = UITheme::getCoverThumbPath(epub.getThumbBmpPath(), coverW, coverH);
+    if (src.empty() || !Storage.exists(src.c_str())) return false;
+    FsFile fin;
+    if (!Storage.openFileForRead("LIB", src, fin)) return false;
+    size_t sz = fin.size();
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
+    std::vector<uint8_t> buf(sz);
+    fin.read(buf.data(), sz);
+    fin.close();
+    FsFile fout;
+    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
+    size_t written = fout.write(buf.data(), sz);
+    fout.close();
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
+    Storage.remove(src.c_str());
+    ok = true;
+  } else if (FsHelpers::hasXtcExtension(fname)) {
+    Xtc xtc(bookPath, "/.crosspoint");
+    if (!xtc.load()) return false;
+    if (!xtc.generateThumbBmp(coverW, coverH)) return false;
+    std::string src = UITheme::getCoverThumbPath(xtc.getThumbBmpPath(), coverW, coverH);
+    if (src.empty() || !Storage.exists(src.c_str())) return false;
+    FsFile fin;
+    if (!Storage.openFileForRead("LIB", src, fin)) return false;
+    size_t sz = fin.size();
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
+    std::vector<uint8_t> buf(sz);
+    fin.read(buf.data(), sz);
+    fin.close();
+    FsFile fout;
+    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
+    size_t written = fout.write(buf.data(), sz);
+    fout.close();
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
+    Storage.remove(src.c_str());
+    ok = true;
+  } else if (FsHelpers::hasTxtExtension(fname) || FsHelpers::hasMarkdownExtension(fname)) {
+    Txt txt(bookPath, "/.crosspoint");
+    if (!txt.load()) return false;
+    if (!txt.generateCoverBmp()) return false;
+    std::string src = txt.getCoverBmpPath();
+    if (src.empty() || !Storage.exists(src.c_str())) return false;
+    FsFile fin;
+    if (!Storage.openFileForRead("LIB", src, fin)) return false;
+    size_t sz = fin.size();
+    if (sz == 0) { fin.close(); Storage.remove(src.c_str()); return false; }
+    std::vector<uint8_t> buf(sz);
+    fin.read(buf.data(), sz);
+    fin.close();
+    FsFile fout;
+    if (!Storage.openFileForWrite("LIB", destFile, fout)) return false;
+    size_t written = fout.write(buf.data(), sz);
+    fout.close();
+    if (written != sz) { Storage.remove(destFile.c_str()); return false; }
+    Storage.remove(src.c_str());
+    ok = true;
+  }
+
+  if (ok && Storage.exists(destFile.c_str())) {
+    CoverRibbonBaker::bakeIntoFile(destFile, bookPath);
+  }
+  return ok;
+}
+
 void LibraryActivity::generateCoverForEntry(int index) {
   if (index < 0 || index >= static_cast<int>(entries_.size())) return;
   LibraryEntry& e = entries_[index];
   if (e.coverFailed) return;
+  if (!e.coverPath.empty()) return;  // already generated
   std::string dest = libraryCoverPath(e.path);
-  if (Storage.exists(dest.c_str())) {
-    FsFile check;
-    if (Storage.openFileForRead("LIB", dest, check)) {
-      if (check.size() > 0) { check.close(); e.coverPath = dest; return; }
-      check.close();
-    }
-    Storage.remove(dest.c_str());
+  if (!Storage.exists(dest.c_str())) {
+    if (generateOneCover(e.path, coverWidth_, coverHeight_, dest)) e.coverPath = dest;
+    else e.coverFailed = true;
+  } else {
+    e.coverPath = dest;
+    CoverRibbonBaker::bakeIntoFile(dest, e.path);
   }
-  if (generateOneCover(e.path, coverHeight_, dest)) e.coverPath = dest;
-  else e.coverFailed = true;
 }
 
 void LibraryActivity::onEnter() {
@@ -331,6 +320,7 @@ void LibraryActivity::onEnter() {
   selectorIndex_ = 0;
   coverGenIndex_ = -1;
   coversComplete_ = false;
+  lastPage_ = -1;
   Storage.mkdir(libraryCoverDir().c_str());
   cleanupZeroSizeThumbs();
   scanSd();
@@ -493,7 +483,15 @@ void LibraryActivity::loop() {
     moved = true;
   }
 
-  if (moved) { coversComplete_ = false; coverGenIndex_ = -1; requestUpdate(); }
+  if (moved) {
+    int curPage = selectorIndex_ / gridsPerPage_;
+    if (curPage != lastPage_) {
+      coversComplete_ = false;
+      coverGenIndex_ = -1;
+      lastPage_ = curPage;
+    }
+    requestUpdate();
+  }
 }
 
 void LibraryActivity::render(RenderLock&&) {
@@ -537,10 +535,12 @@ void LibraryActivity::render(RenderLock&&) {
 
   const int pageStart = (curPage - 1) * gridsPerPage_;
   const int pageCount = std::min(gridsPerPage_, total - pageStart);
-  const int gap = 16;
+  // Grid spacing varies by layout: 4x4 needs tighter packing
+  const int gap = (gridColumns_ >= 4) ? 8 : 16;
+  const int rowPad = (gridColumns_ >= 4) ? 8 : 14;
   const int gridW = gridColumns_ * coverWidth_ + (gridColumns_ - 1) * gap;
   const int x0 = (pageWidth - gridW) / 2;
-  const int rowH = coverHeight_ + 14;
+  const int rowH = coverHeight_ + rowPad;
 
   for (int i = 0; i < pageCount; ++i) {
     const int idx = pageStart + i;
@@ -552,19 +552,49 @@ void LibraryActivity::render(RenderLock&&) {
     bool drawn = false;
     const auto& cp = entries_[idx].coverPath;
     if (!cp.empty()) {
-      if (!entries_[idx].coverReady && !Storage.exists(cp.c_str())) {
-        entries_[idx].coverPath.clear();
-      } else {
+      // Skip existence check when coverReady is already true (hot path optimization)
+      if (entries_[idx].coverReady) {
         FsFile file;
         if (Storage.openFileForRead("LIB", cp, file)) {
           Bitmap bmp(file);
           if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+            // Fill-crop to cover dimensions (same logic as Lyra Carousel)
+            const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
+            const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
+            const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
+            const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
             renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
-            renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, 0, 0);
+            renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
             drawn = true;
-            entries_[idx].coverReady = true;
           }
           file.close();
+        }
+        if (!drawn) {
+          // File disappeared — clear the path so we can regenerate
+          entries_[idx].coverPath.clear();
+          entries_[idx].coverReady = false;
+        }
+      } else {
+        // First render: validate existence before attempting to draw
+        if (!Storage.exists(cp.c_str())) {
+          entries_[idx].coverPath.clear();
+        } else {
+          FsFile file;
+          if (Storage.openFileForRead("LIB", cp, file)) {
+            Bitmap bmp(file);
+            if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+              // Fill-crop to cover dimensions
+              const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
+              const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
+              const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
+              const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+              renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
+              renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
+              drawn = true;
+              entries_[idx].coverReady = true;
+            }
+            file.close();
+          }
         }
       }
     }
@@ -585,17 +615,15 @@ void LibraryActivity::render(RenderLock&&) {
       }
     }
 
-    // Ribbon indicators
-    const std::string& bookPath = entries_[idx].path;
-    const auto* stats = READING_STATS.findBook(bookPath);
-    if (stats && stats->completed) {
-      drawCompletedRibbon(renderer, x, y, coverWidth_, coverHeight_);
-    }
-    if (FAVORITES.isFavorite(bookPath)) {
-      drawFavoriteRibbon(renderer, x, y, coverWidth_, coverHeight_);
-    }
-    if (stats && stats->totalReadingMs > 0) {
-      drawOpenedBand(renderer, x, y, coverWidth_, coverHeight_);
+    // Render-time ribbon badge (priority: Read > Favorite > Opened)
+    if (drawn) {
+      const auto* rbStats = READING_STATS.findBook(entries_[idx].path);
+      const bool isComplete = rbStats && rbStats->completed;
+      const bool isFav = FAVORITES.isFavorite(entries_[idx].path);
+      const bool isOpened = rbStats && rbStats->totalReadingMs > 0 && !isComplete;
+      if (isComplete || isFav || isOpened) {
+        drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
+      }
     }
 
     if (idx == selectorIndex_) {

@@ -11,6 +11,7 @@
 #include "I18n.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "util/CoverRibbonBaker.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
@@ -309,7 +310,35 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     r.drawText(UI_12_FONT_ID, pctX, pctY, pctBuf, true, EpdFontFamily::BOLD);
   } else {
     r.drawText(UI_12_FONT_ID, px + pw / 2 - 35, barY + 4, "COMPLETED", true,
-               EpdFontFamily::BOLD);
+                EpdFontFamily::BOLD);
+  }
+}
+
+// Kindle-style "Read" corner ribbon (top-right). e-ink friendly: a filled black
+// corner triangle with a horizontal white "Read" label (the renderer can't slant
+// text 45 degrees), or a white check on covers too small to fit the word.
+void drawReadRibbon(GfxRenderer& renderer, int coverX, int coverY, int coverW, int coverH) {
+  (void)coverH;
+  const int leg = std::max(38, std::min(coverW * 9 / 20, 86));
+  const int rightX = coverX + coverW;
+  for (int dy = 0; dy < leg; ++dy) {
+    const int spanW = leg - dy;
+    renderer.fillRect(rightX - spanW, coverY + dy, spanW, 1, true);
+  }
+  const char* label = "Read";
+  const int tw = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
+  const int th = renderer.getLineHeight(SMALL_FONT_ID);
+  const int rowFromTop = leg / 3;
+  const int avail = leg - rowFromTop;
+  if (tw + 6 <= avail) {
+    const int tx = rightX - (avail + tw) / 2;
+    const int ty = coverY + rowFromTop - th / 2;
+    renderer.drawText(SMALL_FONT_ID, tx, ty, label, false, EpdFontFamily::BOLD);
+  } else {
+    const int cx = rightX - leg / 3;
+    const int cy = coverY + leg / 3;
+    renderer.drawLine(cx - 5, cy, cx - 1, cy + 4, 2, false);
+    renderer.drawLine(cx - 1, cy + 4, cx + 6, cy - 4, 2, false);
   }
 }
 }  // namespace
@@ -349,8 +378,9 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     if (bookIdx < 0 || bookIdx >= bookCount) return false;
     const RecentBook& book = recentBooks[bookIdx];
     bool hasCover = false;
+    std::string thumbPath;
     if (!book.coverBmpPath.empty()) {
-      std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, maxW, maxH);
+      thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, maxW, maxH);
       const std::string centerThumbPath =
           UITheme::getCoverThumbPath(book.coverBmpPath, kCenterCoverW, kCenterCoverH);
       const std::string legacyThumbPath =
@@ -370,7 +400,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
               static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
           const float tileRatio = static_cast<float>(maxW) / static_cast<float>(maxH);
           const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
-          renderer.drawBitmap(bitmap, x, y, maxW, maxH, cropX, 0.0f);
+          const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+          renderer.drawBitmap(bitmap, x, y, maxW, maxH, cropX, cropY);
           renderer.maskRoundedRectOutsideCorners(x, y, maxW, maxH, kCornerRadius, Color::White);
           hasCover = true;
         }
@@ -379,6 +410,19 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     }
     if (!hasCover) {
       drawCoverPlaceholder(renderer, x, y, maxW, maxH);
+    }
+    // Bake ribbons into the thumbnail BMP on disk (one-time, shared with library grid)
+    // so all cover views show the same indicators without render-time overhead.
+    if (hasCover && !thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
+      // Use the book path (not bookId) as the ribbon key — same as LibraryActivity
+      CoverRibbonBaker::bakeIntoFile(thumbPath, book.path);
+    }
+    // Render-time ribbon as a failsafe for old thumbnails lacking baked ribbons
+    const ReadingBookStats* readStats = nullptr;
+    if (!book.bookId.empty()) readStats = READING_STATS.findBook(book.bookId);
+    if (readStats == nullptr) readStats = READING_STATS.findBook(book.path);
+    if (readStats != nullptr && readStats->completed) {
+      drawReadRibbon(renderer, x, y, maxW, maxH);
     }
     return true;
   };
