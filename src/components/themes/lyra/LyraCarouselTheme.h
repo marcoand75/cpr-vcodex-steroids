@@ -20,10 +20,10 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .tabBarHeight = 40,
                                  .scrollBarWidth = 4,
                                  .scrollBarRightOffset = 5,
-                                  .homeTopPadding = 56,
-                                 .homeCoverHeight = 420,
-                                 .homeCoverTileHeight = 635,
-                                 .homeRecentBooksCount = 999,
+                                 .homeTopPadding = 56,
+                                 .homeCoverHeight = 600,
+                                 .homeCoverTileHeight = 660,
+                                 .homeRecentBooksCount = 3,
                                  .buttonHintsHeight = 40,
                                  .sideButtonHintsWidth = 30,
                                  .progressBarHeight = 16,
@@ -44,9 +44,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
 
 class LyraCarouselTheme : public LyraTheme {
  public:
-  static constexpr int kCenterCoverW = 230;
+  static constexpr int kCenterCoverW = 340;
   static constexpr int kCenterCoverH = LyraCarouselMetrics::values.homeCoverHeight - 60;
-  static constexpr int kSideCoverW = 110;
+  static constexpr int kSideCoverW = 200;
   static constexpr int kSideCoverH = LyraCarouselMetrics::values.homeCoverHeight - 210;
 
   static void setPreRenderIndex(int index);
