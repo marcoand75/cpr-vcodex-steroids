@@ -22,9 +22,15 @@
 #include "components/icons/heart.h"
 #include "components/icons/heart24.h"
 #include "components/icons/hotspot.h"
+#include "components/icons/image.h"
 #include "components/icons/image24.h"
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
+#include "components/icons/screensaver.h"
+#include "components/icons/heatmap.h"
+#include "components/icons/cleanmonitor.h"
+#include "components/icons/sleep.h"
+#include "components/icons/bookshelf.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
 #include "components/icons/text24.h"
@@ -75,6 +81,11 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::File:    return File24Icon;
       case UIIcon::Trophy:  return Trophy24Icon;
       case UIIcon::Heart:   return Heart24Icon;
+      case UIIcon::ScreenSaver: return ScreenSaverIcon;
+      case UIIcon::Bookshelf: return BookshelfIcon32;
+      case UIIcon::SleepMode: return SleepModeIcon32;
+      case UIIcon::CleanMonitor: return CleanMonitorIcon32;
+      case UIIcon::Heatmap: return HeatmapReadingIcon32;
       default: return nullptr;
     }
   }
@@ -90,7 +101,13 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::Trophy:    return TrophyIcon;
       case UIIcon::Wifi:      return WifiIcon;
       case UIIcon::Hotspot:   return HotspotIcon;
+      case UIIcon::Image:     return ImageIcon;
       case UIIcon::Heart:     return HeartIcon;
+      case UIIcon::ScreenSaver: return ScreenSaverIcon;
+      case UIIcon::Bookshelf: return BookshelfIcon32;
+      case UIIcon::SleepMode: return SleepModeIcon32;
+      case UIIcon::CleanMonitor: return CleanMonitorIcon32;
+      case UIIcon::Heatmap: return HeatmapReadingIcon32;
       default: return nullptr;
     }
   }
@@ -267,7 +284,7 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
 // Kindle-style "Read" corner ribbon (top-right).
 void drawReadRibbon(GfxRenderer& renderer, int coverX, int coverY, int coverW, int coverH) {
   (void)coverH;
-  const int leg = std::max(38, std::min(coverW * 9 / 20, 86));
+  const int leg = std::max(20, std::min(coverW * 2 / 5, 44));
   const int rightX = coverX + coverW;
   for (int dy = 0; dy < leg; ++dy) {
     const int spanW = leg - dy;

@@ -572,6 +572,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                           static_cast<uint8_t>(2), s.readingProfileShortcutVisible);
   s.libraryShortcutVisible = clamp(doc["libraryShortcutVisible"] | s.libraryShortcutVisible,
                                    static_cast<uint8_t>(2), s.libraryShortcutVisible);
+  s.screenSaverShortcut = clamp(doc["screenSaverShortcut"] | s.screenSaverShortcut, shortcutLocationCount, s.screenSaverShortcut);
+  s.screenSaverShortcutOrder = clamp(doc["screenSaverShortcutOrder"] | s.screenSaverShortcutOrder, shortcutOrderCount, s.screenSaverShortcutOrder);
+  s.screenSaverShortcutVisible = clamp(doc["screenSaverShortcutVisible"] | s.screenSaverShortcutVisible, static_cast<uint8_t>(2), s.screenSaverShortcutVisible);
   s.achievementsShortcutVisible = clamp(doc["achievementsShortcutVisible"] | s.achievementsShortcutVisible,
                                         static_cast<uint8_t>(2), s.achievementsShortcutVisible);
   s.ifFoundShortcutVisible = clamp(doc["ifFoundShortcutVisible"] | s.ifFoundShortcutVisible, static_cast<uint8_t>(2),
@@ -883,6 +886,9 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["readingHeatmapShortcutVisible"] = s.readingHeatmapShortcutVisible;
   doc["readingProfileShortcutVisible"] = s.readingProfileShortcutVisible;
   doc["libraryShortcutVisible"] = s.libraryShortcutVisible;
+  doc["screenSaverShortcut"] = s.screenSaverShortcut;
+  doc["screenSaverShortcutOrder"] = s.screenSaverShortcutOrder;
+  doc["screenSaverShortcutVisible"] = s.screenSaverShortcutVisible;
   doc["achievementsShortcutVisible"] = s.achievementsShortcutVisible;
   doc["ifFoundShortcutVisible"] = s.ifFoundShortcutVisible;
   doc["readMeShortcutVisible"] = s.readMeShortcutVisible;

@@ -28,6 +28,11 @@
 #include "components/icons/image24.h"
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
+#include "components/icons/screensaver.h"
+#include "components/icons/heatmap.h"
+#include "components/icons/cleanmonitor.h"
+#include "components/icons/sleep.h"
+#include "components/icons/bookshelf.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
 #include "components/icons/text.h"
@@ -165,6 +170,16 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Trophy24Icon;
       case UIIcon::Heart:
         return Heart24Icon;
+      case UIIcon::ScreenSaver:
+        return ScreenSaverIcon;
+      case UIIcon::Bookshelf:
+        return BookshelfIcon32;
+      case UIIcon::SleepMode:
+        return SleepModeIcon32;
+      case UIIcon::CleanMonitor:
+        return CleanMonitorIcon32;
+      case UIIcon::Heatmap:
+        return HeatmapReadingIcon32;
       default:
         return nullptr;
     }
@@ -196,6 +211,16 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return HotspotIcon;
       case UIIcon::Heart:
         return HeartIcon;
+      case UIIcon::ScreenSaver:
+        return ScreenSaverIcon;
+      case UIIcon::Bookshelf:
+        return BookshelfIcon32;
+      case UIIcon::SleepMode:
+        return SleepModeIcon32;
+      case UIIcon::CleanMonitor:
+        return CleanMonitorIcon32;
+      case UIIcon::Heatmap:
+        return HeatmapReadingIcon32;
       default:
         return nullptr;
     }

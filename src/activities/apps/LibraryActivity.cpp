@@ -45,7 +45,7 @@ static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
 void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
                      bool completed, bool favorite, bool opened) {
   (void)ch;
-  const int leg = std::max(22, std::min(cw * 8 / 10, 84));
+  const int leg = std::max(20, std::min(cw * 2 / 5, 44));
   const int rx = cx + cw - leg;
   const int ry = cy;
 
