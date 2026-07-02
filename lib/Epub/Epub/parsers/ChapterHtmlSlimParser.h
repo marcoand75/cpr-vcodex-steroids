@@ -69,7 +69,7 @@ class ChapterHtmlSlimParser {
   uint16_t viewportHeight;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
-  const CssParser* cssParser;
+  CssParser* cssParser;
   bool embeddedStyle;
   uint8_t imageRendering;
   std::string contentBase;
@@ -193,7 +193,7 @@ class ChapterHtmlSlimParser {
                                  const bool embeddedStyle, const std::string& contentBase,
                                  const std::string& imageBasePath, const uint8_t imageRendering = 0,
                                  std::vector<std::string> tocAnchors = {},
-                                 const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+                                 const std::function<void()>& popupFn = nullptr, CssParser* cssParser = nullptr)
 
       : epub(epub),
         filepath(filepath),

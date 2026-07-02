@@ -201,6 +201,21 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
     }
   }
 
+  if (cssParser && !cssParser->empty()) {
+    const auto beforeCssClear = heap;
+    const size_t ruleCount = cssParser->ruleCount();
+    cssParser->clear();
+    cssParser = nullptr;
+    const auto afterCssClear = MemoryBudget::snapshot();
+    LOG_DBG("EHP", "Dropped %u CSS rules during %s: free=%u->%u maxAlloc=%u->%u",
+            static_cast<unsigned>(ruleCount), stage, beforeCssClear.freeHeap, afterCssClear.freeHeap,
+            beforeCssClear.maxAllocHeap, afterCssClear.maxAllocHeap);
+    heap = afterCssClear;
+    if (MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_TEXT_LAYOUT, MIN_MAX_ALLOC_FOR_TEXT_LAYOUT)) {
+      return false;
+    }
+  }
+
   LOG_ERR("EHP", "Low heap during %s (%u free, %u max alloc); aborting section build", stage, heap.freeHeap,
           heap.maxAllocHeap);
   lowMemoryAbort = true;
