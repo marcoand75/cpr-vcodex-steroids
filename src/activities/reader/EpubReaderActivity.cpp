@@ -10,6 +10,7 @@
 #include <Logging.h>
 #include <MemoryBudget.h>
 
+#include <algorithm>
 #include <iterator>
 #include <limits>
 
@@ -25,6 +26,7 @@
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
+#include "ProgressFile.h"
 #include "QrDisplayActivity.h"
 #include "ReaderQuickSettingsActivity.h"
 #include "ReaderUtils.h"
@@ -176,12 +178,6 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
 
 bool writeReaderProgressCache(const std::string& cachePath, const int spineIndex, const int currentPage,
                               const int pageCount) {
-  FsFile f;
-  const std::string progressPath = cachePath + "/progress.bin";
-  if (!Storage.openFileForWrite("ERS", progressPath, f)) {
-    LOG_ERR("ERS", "Failed to open progress cache for sync restore: %s", progressPath.c_str());
-    return false;
-  }
   uint8_t data[6];
   data[0] = spineIndex & 0xFF;
   data[1] = (spineIndex >> 8) & 0xFF;
@@ -189,18 +185,11 @@ bool writeReaderProgressCache(const std::string& cachePath, const int spineIndex
   data[3] = (currentPage >> 8) & 0xFF;
   data[4] = pageCount & 0xFF;
   data[5] = (pageCount >> 8) & 0xFF;
-  f.write(data, 6);
-  f.close();
-  return true;
+  return ProgressFile::writeAtomic("ERS", cachePath, data, sizeof(data));
 }
 
 bool writeReaderProgressFile(const std::string& progressPath, const int spineIndex, const int currentPage,
                              const int pageCount) {
-  FsFile f;
-  if (!Storage.openFileForWrite("ERS", progressPath, f)) {
-    LOG_ERR("ERS", "Failed to open progress file: %s", progressPath.c_str());
-    return false;
-  }
   uint8_t data[6];
   data[0] = spineIndex & 0xFF;
   data[1] = (spineIndex >> 8) & 0xFF;
@@ -208,9 +197,7 @@ bool writeReaderProgressFile(const std::string& progressPath, const int spineInd
   data[3] = (currentPage >> 8) & 0xFF;
   data[4] = pageCount & 0xFF;
   data[5] = (pageCount >> 8) & 0xFF;
-  f.write(data, 6);
-  f.close();
-  return true;
+  return ProgressFile::writeAtomicPath("ERS", progressPath, data, sizeof(data));
 }
 
 }  // namespace
@@ -252,6 +239,12 @@ void EpubReaderActivity::onEnter() {
       nextPageNumber = data[2] + (data[3] << 8);
       if (nextPageNumber == UINT16_MAX) {
         LOG_DBG("ERS", "Ignoring stale last-page sentinel from progress cache");
+        nextPageNumber = 0;
+      }
+      const int spineCount = epub->getSpineItemsCount();
+      if (spineCount > 0 && currentSpineIndex >= spineCount) {
+        LOG_DBG("ERS", "Ignoring stale end-book spine index from progress cache: %d", currentSpineIndex);
+        currentSpineIndex = spineCount - 1;
         nextPageNumber = 0;
       }
       cachedSpineIndex = currentSpineIndex;
@@ -461,6 +454,7 @@ void EpubReaderActivity::loop() {
   // At end of the book, forward button goes home and back button returns to last page
   if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
     if (nextTriggered) {
+      markStatsCompletedAtEnd(*epub, currentSpineIndex);
       if (tryAutoPushOnClose()) {
         return;
       }
@@ -1142,6 +1136,12 @@ void EpubReaderActivity::markCurrentBookAsFinished() {
 }
 
 void EpubReaderActivity::pageTurn(bool isForwardTurn) {
+  if (!section) {
+    nextPageNumber = 0;
+    requestUpdate();
+    return;
+  }
+
   READING_STATS.noteActivity();
   invalidateCurrentOverlayPageCache();
   const int oldSpineIndex = currentSpineIndex;
@@ -1197,7 +1197,6 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   // Show end of book screen
   if (currentSpineIndex == epub->getSpineItemsCount()) {
-    markStatsCompletedAtEnd(*epub, currentSpineIndex);
     renderer.clearScreen();
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_END_OF_BOOK), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();
@@ -1250,6 +1249,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               popupFn)) {
         LOG_ERR("ERS", "Failed to persist page data to SD");
         section.reset();
+        renderSectionLoadFailure();
+        automaticPageTurnActive = false;
         return;
       }
       releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section cache build");
@@ -1427,7 +1428,15 @@ void EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
     progressPercent =
         clampPercent(static_cast<int>(epub->calculateProgress(spineIndex, chapterProgress) * 100.0f + 0.5f));
   }
-  READING_STATS.updateProgress(static_cast<uint8_t>(progressPercent), progressPercent >= 100,
+
+  const auto* statsBook = READING_STATS.findBook(!stableBookId.empty() ? stableBookId : epub->getPath());
+  const bool alreadyCompleted = statsBook && statsBook->completed;
+  if (!alreadyCompleted && progressPercent >= 100) {
+    LOG_DBG("ERS", "Deferring EPUB completion until end-book confirmation");
+    progressPercent = 99;
+  }
+
+  READING_STATS.updateProgress(static_cast<uint8_t>(progressPercent), alreadyCompleted && progressPercent >= 100,
                                getStatsChapterTitle(*epub, spineIndex),
                                getStatsChapterProgressPercent(currentPage, pageCount));
 
@@ -1514,6 +1523,32 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const auto tDisplay = millis();
 
   const bool needsGrayscale = enableTextAA || enableImageGrayscaleOnly;
+  ReaderUtils::TiledGrayscaleTimings tiledTimings;
+  const bool tiledGrayscale =
+      needsGrayscale && ReaderUtils::renderTiledGrayscale(
+                           renderer, "ERS",
+                           [&]() {
+                             if (enableImageGrayscaleOnly) {
+                               page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+                             } else {
+                               page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
+                                            orientedMarginTop, SETTINGS.bionicReading);
+                             }
+                             renderStatusBar();
+                           },
+                           &tiledTimings);
+
+  if (tiledGrayscale) {
+    const auto tEnd = millis();
+    fcm->logStats("gray");
+    LOG_DBG("ERS",
+            "Page render (tiled): prewarm=%lums bw_render=%lums display=%lums "
+            "gray_lsb=%lums gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
+            tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tiledTimings.grayLsb - tDisplay,
+            tiledTimings.grayMsb - tiledTimings.grayLsb, tiledTimings.grayDisplay - tiledTimings.grayMsb,
+            tiledTimings.cleanup - tiledTimings.grayDisplay, tEnd - t0);
+    return;
+  }
 
   // Save BW buffer to reset framebuffer and controller state after grayscale data sync.
   const auto bwStoreHeapBefore = MemoryBudget::snapshot();
@@ -1577,7 +1612,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
 }
 
 void EpubReaderActivity::renderStatusBar() const {
-  if (statusBarTemporarilyHidden) {
+  if (statusBarTemporarilyHidden || !section || !epub) {
     return;
   }
 
@@ -1615,6 +1650,29 @@ void EpubReaderActivity::renderStatusBar() const {
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset);
+}
+
+void EpubReaderActivity::renderSectionLoadFailure() {
+  releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section load failure");
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->clearCache();
+  }
+
+  const auto heap = MemoryBudget::snapshot();
+  LOG_DBG("ERS", "Rendering minimal page-load failure screen (free=%u maxAlloc=%u)", heap.freeHeap,
+          heap.maxAllocHeap);
+
+  renderer.clearScreen();
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  const int boxW = 96;
+  const int boxH = 96;
+  const int x = (screenW - boxW) / 2;
+  const int y = (screenH - boxH) / 2;
+  renderer.drawRect(x, y, boxW, boxH, true);
+  renderer.drawLine(x + 24, y + 24, x + boxW - 25, y + boxH - 25, 3, true);
+  renderer.drawLine(x + boxW - 25, y + 24, x + 24, y + boxH - 25, 3, true);
+  renderer.displayBuffer();
 }
 
 void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool savePosition) {

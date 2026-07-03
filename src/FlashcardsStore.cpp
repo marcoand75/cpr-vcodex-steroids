@@ -32,6 +32,22 @@ std::string trimAscii(const std::string& value) {
   return value.substr(begin, end - begin + 1);
 }
 
+void trimAsciiInPlace(std::string& value) {
+  const size_t begin = value.find_first_not_of(" \t\r\n");
+  if (begin == std::string::npos) {
+    value.clear();
+    return;
+  }
+
+  const size_t end = value.find_last_not_of(" \t\r\n");
+  if (end + 1 < value.size()) {
+    value.erase(end + 1);
+  }
+  if (begin > 0) {
+    value.erase(0, begin);
+  }
+}
+
 std::string toLowerAscii(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
@@ -47,16 +63,31 @@ std::string normalizeField(const std::string& value) {
   return trimmed;
 }
 
-std::string fnv1aHex(const std::string& value) {
-  uint32_t hash = 2166136261u;
-  for (const unsigned char ch : value) {
-    hash ^= ch;
-    hash *= 16777619u;
-  }
+uint32_t fnv1aUpdateByte(uint32_t hash, const unsigned char ch) {
+  hash ^= ch;
+  hash *= 16777619u;
+  return hash;
+}
 
+uint32_t fnv1aUpdate(uint32_t hash, const std::string& value) {
+  for (const unsigned char ch : value) {
+    hash = fnv1aUpdateByte(hash, ch);
+  }
+  return hash;
+}
+
+std::string fnv1aHex(const uint32_t hash) {
   char buffer[9];
   snprintf(buffer, sizeof(buffer), "%08x", hash);
   return buffer;
+}
+
+std::string fnv1aCardKey(const std::string& front, const std::string& back) {
+  uint32_t hash = 2166136261u;
+  hash = fnv1aUpdate(hash, front);
+  hash = fnv1aUpdateByte(hash, 0x1F);
+  hash = fnv1aUpdate(hash, back);
+  return fnv1aHex(hash);
 }
 
 bool saveJsonDocumentToFile(const char* moduleName, const char* path, const JsonDocument& doc) {
@@ -135,8 +166,8 @@ bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocu
   return true;
 }
 
-std::vector<std::vector<std::string>> parseCsvRows(HalFile& file) {
-  std::vector<std::vector<std::string>> rows;
+template <typename RowCallback>
+void parseCsvRows(HalFile& file, RowCallback&& callback) {
   std::vector<std::string> currentRow;
   std::string currentField;
   bool inQuotes = false;
@@ -160,7 +191,7 @@ std::vector<std::vector<std::string>> parseCsvRows(HalFile& file) {
       }
     }
     if (hasValue) {
-      rows.push_back(currentRow);
+      callback(currentRow);
     }
     currentRow.clear();
   };
@@ -211,8 +242,6 @@ std::vector<std::vector<std::string>> parseCsvRows(HalFile& file) {
     pushField();
     pushRow();
   }
-
-  return rows;
 }
 
 int getConfiguredSessionLimit() {
@@ -488,66 +517,84 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
     return false;
   }
 
-  auto rows = parseCsvRows(file);
-  file.close();
-  if (rows.empty()) {
-    if (error) *error = "Deck is empty";
-    return false;
-  }
-
   int idColumn = -1;
   int frontColumn = 0;
   int backColumn = 1;
-  const auto maybeHeader = rows.front();
-  bool hasNamedHeader = false;
-  for (int index = 0; index < static_cast<int>(maybeHeader.size()); ++index) {
-    const std::string field = toLowerAscii(trimAscii(maybeHeader[index]));
-    if (field == "id" || field == "card_id") {
-      idColumn = index;
-      hasNamedHeader = true;
-    } else if (field == "front" || field == "question") {
-      frontColumn = index;
-      hasNamedHeader = true;
-    } else if (field == "back" || field == "answer") {
-      backColumn = index;
-      hasNamedHeader = true;
-    }
-  }
-  if (hasNamedHeader) {
-    rows.erase(rows.begin());
-  }
-
-  if (frontColumn == backColumn) {
-    if (error) *error = "Deck needs front and back columns";
-    return false;
-  }
+  bool firstRow = true;
+  bool parsedAnyRow = false;
+  bool invalidColumns = false;
 
   deck.path = normalizedPath;
   deck.deckId = BookIdentity::resolveStableBookId(normalizedPath);
   deck.title = getTitleFromPath(normalizedPath);
-  deck.cards.reserve(rows.size());
 
-  for (const auto& row : rows) {
+  auto processDataRow = [&](std::vector<std::string>& row) {
     const int maxColumn = std::max(frontColumn, backColumn);
     if (static_cast<int>(row.size()) <= maxColumn) {
-      continue;
+      return;
     }
 
-    const std::string front = trimAscii(row[frontColumn]);
-    const std::string back = trimAscii(row[backColumn]);
-    if (front.empty() && back.empty()) {
-      continue;
+    trimAsciiInPlace(row[frontColumn]);
+    trimAsciiInPlace(row[backColumn]);
+    if (row[frontColumn].empty() && row[backColumn].empty()) {
+      return;
     }
 
     std::string key;
     if (idColumn >= 0 && idColumn < static_cast<int>(row.size())) {
-      key = trimAscii(row[idColumn]);
-    }
-    if (key.empty()) {
-      key = fnv1aHex(front + "\x1f" + back);
+      trimAsciiInPlace(row[idColumn]);
+      key = row[idColumn];
     }
 
-    deck.cards.push_back(FlashcardCard{key, front, back});
+    if (key.empty()) {
+      key = fnv1aCardKey(row[frontColumn], row[backColumn]);
+    }
+
+    std::string front = std::move(row[frontColumn]);
+    std::string back = std::move(row[backColumn]);
+    deck.cards.push_back(FlashcardCard{std::move(key), std::move(front), std::move(back)});
+  };
+
+  parseCsvRows(file, [&](std::vector<std::string>& row) {
+    parsedAnyRow = true;
+
+    if (firstRow) {
+      firstRow = false;
+      bool hasNamedHeader = false;
+      for (int index = 0; index < static_cast<int>(row.size()); ++index) {
+        const std::string field = toLowerAscii(trimAscii(row[index]));
+        if (field == "id" || field == "card_id") {
+          idColumn = index;
+          hasNamedHeader = true;
+        } else if (field == "front" || field == "question") {
+          frontColumn = index;
+          hasNamedHeader = true;
+        } else if (field == "back" || field == "answer") {
+          backColumn = index;
+          hasNamedHeader = true;
+        }
+      }
+
+      if (hasNamedHeader) {
+        invalidColumns = frontColumn == backColumn;
+        return;
+      }
+    }
+
+    if (!invalidColumns) {
+      processDataRow(row);
+    }
+  });
+  file.close();
+
+  if (!parsedAnyRow) {
+    if (error) *error = "Deck is empty";
+    return false;
+  }
+
+  if (invalidColumns) {
+    if (error) *error = "Deck needs front and back columns";
+    return false;
   }
 
   if (deck.cards.empty()) {

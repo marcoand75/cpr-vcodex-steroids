@@ -147,8 +147,9 @@ class Page {
 
   // Check if page contains any images (used to force full refresh)
   bool hasImages() const {
-    return std::any_of(elements.begin(), elements.end(),
-                       [](const std::shared_ptr<PageElement>& el) { return el->getTag() == TAG_PageImage; });
+    return std::any_of(elements.begin(), elements.end(), [](const std::shared_ptr<PageElement>& el) {
+      return el && el->getTag() == TAG_PageImage;
+    });
   }
 
   // Get bounding box of all images on the page (union of image rects)
@@ -157,6 +158,7 @@ class Page {
     bool found = false;
     int16_t minX = INT16_MAX, minY = INT16_MAX, maxX = INT16_MIN, maxY = INT16_MIN;
     for (const auto& el : elements) {
+      if (!el) continue;
       if (el->getTag() == TAG_PageImage) {
         const auto& img = static_cast<const PageImage&>(*el);
         int16_t x = img.xPos;

@@ -6,6 +6,7 @@
 #include <Serialization.h>
 
 #include <algorithm>
+#include <new>
 
 namespace {
 constexpr uint8_t BIONIC_READING_OFF = 0;
@@ -14,6 +15,7 @@ constexpr uint8_t BIONIC_READING_SUBTLE = 2;
 constexpr int DECORATION_LINE_THICKNESS = 4;
 constexpr int STRIKETHROUGH_ASCENDER_PERCENT = 66;
 constexpr int UNDERLINE_BASELINE_OFFSET_PX = 6;
+constexpr uint16_t MAX_SERIALIZED_LINE_WORDS = 512;
 
 // Bionic Reading helpers — no heap, no std::string, stack-only slicing.
 
@@ -277,8 +279,7 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   // Word count
   serialization::readPod(file, wc);
 
-  // Sanity check: prevent allocation of unreasonably large vectors (max 10000 words per block)
-  if (wc > 10000) {
+  if (wc > MAX_SERIALIZED_LINE_WORDS) {
     LOG_ERR("TXB", "Deserialization failed: word count %u exceeds maximum", wc);
     return nullptr;
   }
@@ -313,7 +314,11 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   serialization::readPod(file, blockStyle.textIndent);
   serialization::readPod(file, blockStyle.textIndentDefined);
 
-  return std::unique_ptr<TextBlock>(new TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles),
-                                                  std::move(wordFocusBoundary), std::move(wordFocusSuffixX),
-                                                  blockStyle));
+  auto* block = new (std::nothrow) TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles),
+                                             std::move(wordFocusBoundary), std::move(wordFocusSuffixX), blockStyle);
+  if (!block) {
+    LOG_ERR("TXB", "Deserialization failed: could not allocate TextBlock");
+    return nullptr;
+  }
+  return std::unique_ptr<TextBlock>(block);
 }

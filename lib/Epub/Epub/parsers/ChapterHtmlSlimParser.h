@@ -13,6 +13,7 @@
 #include "../FootnoteEntry.h"
 #include "../ParsedText.h"
 #include "../blocks/ImageBlock.h"
+#include "../converters/ImageToFramebufferDecoder.h"
 #include "../blocks/TextBlock.h"
 #include "../css/CssParser.h"
 #include "../css/CssStyle.h"
@@ -68,7 +69,7 @@ class ChapterHtmlSlimParser {
   uint16_t viewportHeight;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
-  const CssParser* cssParser;
+  CssParser* cssParser;
   bool embeddedStyle;
   uint8_t imageRendering;
   std::string contentBase;
@@ -77,6 +78,14 @@ class ChapterHtmlSlimParser {
   bool lowMemoryImageFallback = false;
   bool lowMemoryAbort = false;
   bool attemptedTextLayoutFontCacheRelease = false;
+  bool loggedSoftLowMemoryContinuation = false;
+
+  std::string lastImageDimensionsPath;
+  ImageDimensions lastImageDimensions = {0, 0};
+  bool hasLastImageDimensions = false;
+  std::string lastRenderedImagePath;
+  uint16_t lastRenderedImageCount = 0;
+  uint32_t lastLongParseServiceMs = 0;
 
   // Style tracking (replaces depth-based approach)
   struct StyleStackEntry {
@@ -154,6 +163,9 @@ class ChapterHtmlSlimParser {
   void collectReferencedAnchor(const char* href);
   bool isReferencedAnchor(const std::string& anchor) const;
   bool shouldRecordAnchor(const char* elementName, const std::string& anchor) const;
+  bool readImageDimensions(const std::string& resolvedPath, ImageDimensions& dims);
+  bool shouldSuppressRepeatedImage(const std::string& resolvedPath);
+  void serviceLongParse(const char* stage);
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
   void flushPartWordBuffer();
@@ -182,7 +194,7 @@ class ChapterHtmlSlimParser {
                                  const bool embeddedStyle, const std::string& contentBase,
                                  const std::string& imageBasePath, const uint8_t imageRendering = 0,
                                  std::vector<std::string> tocAnchors = {},
-                                 const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+                                 const std::function<void()>& popupFn = nullptr, CssParser* cssParser = nullptr)
 
       : epub(epub),
         filepath(filepath),

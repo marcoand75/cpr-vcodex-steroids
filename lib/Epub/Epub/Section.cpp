@@ -11,7 +11,7 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-constexpr uint8_t SECTION_FILE_VERSION = 30;
+constexpr uint8_t SECTION_FILE_VERSION = 33;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) +
                                  sizeof(bool) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint32_t) +
@@ -30,6 +30,10 @@ constexpr uint32_t PARAGRAPH_LUT_ENTRY_SIZE = sizeof(uint32_t) + sizeof(uint16_t
 uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
   if (!file) {
     LOG_ERR("SCT", "File not open for writing page %d", pageCount);
+    return 0;
+  }
+  if (!page) {
+    LOG_ERR("SCT", "Null page for page %d", pageCount);
     return 0;
   }
 
@@ -333,12 +337,38 @@ std::unique_ptr<Page> Section::loadPageFromSectionFile() {
     return nullptr;
   }
 
+  if (currentPage < 0 || currentPage >= pageCount) {
+    LOG_ERR("SCT", "Page load out of bounds: %d/%u", currentPage, pageCount);
+    file.close();
+    return nullptr;
+  }
+
+  const uint32_t fileSize = file.size();
   file.seek(HEADER_SIZE - sizeof(uint32_t) * 3);
   uint32_t lutOffset;
   serialization::readPod(file, lutOffset);
-  file.seek(lutOffset + sizeof(uint32_t) * currentPage);
+  if (lutOffset == 0 || lutOffset >= fileSize) {
+    LOG_ERR("SCT", "Invalid LUT offset: %u size=%u", lutOffset, fileSize);
+    file.close();
+    return nullptr;
+  }
+
+  const uint32_t lutEntryOffset = lutOffset + sizeof(uint32_t) * static_cast<uint32_t>(currentPage);
+  if (lutEntryOffset + sizeof(uint32_t) > fileSize) {
+    LOG_ERR("SCT", "Invalid LUT entry offset: %u size=%u", lutEntryOffset, fileSize);
+    file.close();
+    return nullptr;
+  }
+
+  file.seek(lutEntryOffset);
   uint32_t pagePos;
   serialization::readPod(file, pagePos);
+  if (pagePos < HEADER_SIZE || pagePos >= lutOffset || pagePos >= fileSize) {
+    LOG_ERR("SCT", "Invalid page offset: %u lut=%u size=%u", pagePos, lutOffset, fileSize);
+    file.close();
+    return nullptr;
+  }
+
   file.seek(pagePos);
 
   auto page = Page::deserialize(file);

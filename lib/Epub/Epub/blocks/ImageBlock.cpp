@@ -6,6 +6,7 @@
 #include <Serialization.h>
 #include <ZipFile.h>
 
+#include <new>
 #include <utility>
 
 #include "../converters/DirectPixelWriter.h"
@@ -187,6 +188,10 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     return;
   }
 
+  if (!renderer.glyphIntersectsStrip(x, y, x + width - 1, y + height - 1)) {
+    return;
+  }
+
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {
@@ -262,14 +267,25 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(FsFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
+  if (path.empty() || w <= 0 || h <= 0) {
+    LOG_ERR("IMG", "Deserialization failed: invalid image metadata path=%s size=%dx%d", path.c_str(), w, h);
+    return nullptr;
+  }
   bool hasLazySource = false;
   serialization::readPod(file, hasLazySource);
+  ImageBlock* block = nullptr;
   if (hasLazySource) {
     std::string sourceEpubPath;
     std::string sourceItemHref;
     serialization::readString(file, sourceEpubPath);
     serialization::readString(file, sourceItemHref);
-    return std::unique_ptr<ImageBlock>(new ImageBlock(path, w, h, std::move(sourceEpubPath), std::move(sourceItemHref)));
+    block = new (std::nothrow) ImageBlock(path, w, h, std::move(sourceEpubPath), std::move(sourceItemHref));
+  } else {
+    block = new (std::nothrow) ImageBlock(path, w, h);
   }
-  return std::unique_ptr<ImageBlock>(new ImageBlock(path, w, h));
+  if (!block) {
+    LOG_ERR("IMG", "Deserialization failed: could not allocate ImageBlock");
+    return nullptr;
+  }
+  return std::unique_ptr<ImageBlock>(block);
 }

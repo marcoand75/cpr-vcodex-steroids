@@ -63,9 +63,42 @@ bool usesCustomSleepImages() {
           !APP_STATE.lastSleepFromReader);
 }
 
+HalDisplay::RefreshMode sleepRefreshMode() {
+  return SETTINGS.cleanSleepRefresh ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH;
+}
+
 void displaySleepBuffer(const GfxRenderer& renderer) {
   renderer.clearNextRefreshOverride();
-  renderer.displayBuffer(SETTINGS.cleanSleepRefresh ? HalDisplay::FULL_REFRESH : HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(sleepRefreshMode());
+}
+
+void displaySleepGrayscaleBase(const GfxRenderer& renderer) {
+  renderer.clearNextRefreshOverride();
+  const auto mode = sleepRefreshMode();
+  if (mode == HalDisplay::FULL_REFRESH) {
+    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    renderer.preconditionGrayscale();
+    return;
+  }
+  renderer.displayGrayscaleBase(mode);
+}
+
+template <typename RenderFn>
+void renderSleepGrayscaleOverlay(GfxRenderer& renderer, RenderFn&& renderFn) {
+  displaySleepGrayscaleBase(renderer);
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  renderFn();
+  renderer.copyGrayscaleLsbBuffers();
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  renderFn();
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
 }
 
 int percentOf(const uint64_t value, const uint64_t target) {
@@ -616,27 +649,16 @@ bool renderBitmapStatsSleepScreen(GfxRenderer& renderer, const std::string& sour
   }
   drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
 
-  displaySleepBuffer(renderer);
-
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
   if (hasGreyscale) {
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    drawFullScreenCoverBitmap(renderer, bitmap);
-    drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
-    renderer.copyGrayscaleLsbBuffers();
-
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    drawFullScreenCoverBitmap(renderer, bitmap);
-    drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
-    renderer.copyGrayscaleMsbBuffers();
-
-    renderer.displayGrayBuffer();
-    renderer.setRenderMode(GfxRenderer::BW);
+    renderSleepGrayscaleOverlay(renderer, [&]() {
+      bitmap.rewindToData();
+      drawFullScreenCoverBitmap(renderer, bitmap);
+      drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
+    });
+  } else {
+    displaySleepBuffer(renderer);
   }
 
   file.close();
@@ -844,23 +866,13 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const std::str
     SleepScreenCache::save(renderer, sourcePath);
   }
 
-  displaySleepBuffer(renderer);
-
   if (hasGreyscale) {
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
-    renderer.copyGrayscaleLsbBuffers();
-
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
-    renderer.copyGrayscaleMsbBuffers();
-
-    renderer.displayGrayBuffer();
-    renderer.setRenderMode(GfxRenderer::BW);
+    renderSleepGrayscaleOverlay(renderer, [&]() {
+      bitmap.rewindToData();
+      renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+    });
+  } else {
+    displaySleepBuffer(renderer);
   }
 }
 
@@ -1045,25 +1057,14 @@ void SleepActivity::renderCoverStatsSleepScreen(bool footerOnly) const {
   }
   drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
 
-  displaySleepBuffer(renderer);
-
   if (hasGreyscale) {
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    drawFullScreenCoverBitmap(renderer, bitmap);
-    drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
-    renderer.copyGrayscaleLsbBuffers();
-
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    drawFullScreenCoverBitmap(renderer, bitmap);
-    drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
-    renderer.copyGrayscaleMsbBuffers();
-
-    renderer.displayGrayBuffer();
-    renderer.setRenderMode(GfxRenderer::BW);
+    renderSleepGrayscaleOverlay(renderer, [&]() {
+      bitmap.rewindToData();
+      drawFullScreenCoverBitmap(renderer, bitmap);
+      drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
+    });
+  } else {
+    displaySleepBuffer(renderer);
   }
 
   file.close();

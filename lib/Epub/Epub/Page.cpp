@@ -11,6 +11,7 @@ namespace {
 constexpr uint8_t MAX_TABLE_ROWS_PER_FRAGMENT = 64;
 constexpr uint8_t MAX_TABLE_CELLS_PER_ROW = 8;
 constexpr uint8_t MAX_TABLE_LINES_PER_CELL = 64;
+constexpr uint16_t MAX_PAGE_ELEMENTS_PER_PAGE = 128;
 static_assert(TableFragmentCell::MAX_SERIALIZED_LINES == MAX_TABLE_LINES_PER_CELL);
 static_assert(TableFragmentRow::MAX_SERIALIZED_CELLS == MAX_TABLE_CELLS_PER_ROW);
 static_assert(PageTableFragment::MAX_SERIALIZED_ROWS == MAX_TABLE_ROWS_PER_FRAGMENT);
@@ -18,6 +19,7 @@ static_assert(PageTableFragment::MAX_SERIALIZED_ROWS == MAX_TABLE_ROWS_PER_FRAGM
 
 void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                       const uint8_t bionicReadingMode) {
+  if (!block) return;
   block->render(renderer, fontId, xPos + xOffset, yPos + yOffset, bionicReadingMode);
 }
 
@@ -26,6 +28,7 @@ bool PageLine::serialize(FsFile& file) {
   serialization::writePod(file, yPos);
 
   // serialize TextBlock pointed to by PageLine
+  if (!block) return false;
   return block->serialize(file);
 }
 
@@ -36,12 +39,23 @@ std::unique_ptr<PageLine> PageLine::deserialize(FsFile& file) {
   serialization::readPod(file, yPos);
 
   auto tb = TextBlock::deserialize(file);
-  return std::unique_ptr<PageLine>(new PageLine(std::move(tb), xPos, yPos));
+  if (!tb) {
+    LOG_ERR("PGE", "Deserialization failed: invalid text block");
+    return nullptr;
+  }
+  std::shared_ptr<TextBlock> sharedBlock(std::move(tb));
+  auto* line = new (std::nothrow) PageLine(std::move(sharedBlock), xPos, yPos);
+  if (!line) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageLine");
+    return nullptr;
+  }
+  return std::unique_ptr<PageLine>(line);
 }
 
 void PageImage::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                        const uint8_t /*bionicReadingMode*/) {
   // Images don't use fontId or text rendering
+  if (!imageBlock) return;
   imageBlock->render(renderer, xPos + xOffset, yPos + yOffset);
 }
 
@@ -50,6 +64,7 @@ bool PageImage::serialize(FsFile& file) {
   serialization::writePod(file, yPos);
 
   // serialize ImageBlock
+  if (!imageBlock) return false;
   return imageBlock->serialize(file);
 }
 
@@ -60,7 +75,17 @@ std::unique_ptr<PageImage> PageImage::deserialize(FsFile& file) {
   serialization::readPod(file, yPos);
 
   auto ib = ImageBlock::deserialize(file);
-  return std::unique_ptr<PageImage>(new PageImage(std::move(ib), xPos, yPos));
+  if (!ib) {
+    LOG_ERR("PGE", "Deserialization failed: invalid image block");
+    return nullptr;
+  }
+  std::shared_ptr<ImageBlock> sharedBlock(std::move(ib));
+  auto* image = new (std::nothrow) PageImage(std::move(sharedBlock), xPos, yPos);
+  if (!image) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageImage");
+    return nullptr;
+  }
+  return std::unique_ptr<PageImage>(image);
 }
 
 void PageHorizontalRule::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
@@ -315,6 +340,7 @@ void PageTableFragment::recordFontUsage(FontCacheManager& fontCacheManager, cons
 void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                   const uint8_t bionicReadingMode) const {
   for (auto& element : elements) {
+    if (!element) continue;
     element->render(renderer, fontId, xOffset, yOffset, bionicReadingMode);
   }
 }
@@ -322,8 +348,10 @@ void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, co
 void Page::recordFontUsage(FontCacheManager& fontCacheManager, const int fontId,
                            const uint8_t bionicReadingMode) const {
   for (const auto& element : elements) {
+    if (!element) continue;
     if (element->getTag() == TAG_PageLine) {
       const auto& line = static_cast<const PageLine&>(*element);
+      if (!line.getBlock()) continue;
       line.getBlock()->recordFontUsage(fontCacheManager, fontId, bionicReadingMode);
     } else if (element->getTag() == TAG_PageTableFragment) {
       const auto& table = static_cast<const PageTableFragment&>(*element);
@@ -334,6 +362,7 @@ void Page::recordFontUsage(FontCacheManager& fontCacheManager, const int fontId,
 
 void Page::renderImages(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
   for (const auto& element : elements) {
+    if (!element) continue;
     if (element->getTag() == TAG_PageImage) {
       element->render(renderer, 0, xOffset, yOffset);
     }
@@ -345,6 +374,10 @@ bool Page::serialize(FsFile& file) const {
   serialization::writePod(file, count);
 
   for (const auto& el : elements) {
+    if (!el) {
+      LOG_ERR("PGE", "Serialization failed: null page element");
+      return false;
+    }
     // Use getTag() method to determine type
     serialization::writePod(file, static_cast<uint8_t>(el->getTag()));
 
@@ -369,10 +402,18 @@ bool Page::serialize(FsFile& file) const {
 }
 
 std::unique_ptr<Page> Page::deserialize(FsFile& file) {
-  auto page = std::unique_ptr<Page>(new Page());
+  auto page = std::unique_ptr<Page>(new (std::nothrow) Page());
+  if (!page) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate page");
+    return nullptr;
+  }
 
   uint16_t count;
   serialization::readPod(file, count);
+  if (count > MAX_PAGE_ELEMENTS_PER_PAGE) {
+    LOG_ERR("PGE", "Deserialization failed: element count %u exceeds maximum", count);
+    return nullptr;
+  }
 
   for (uint16_t i = 0; i < count; i++) {
     uint8_t tag;
@@ -380,9 +421,15 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
 
     if (tag == TAG_PageLine) {
       auto pl = PageLine::deserialize(file);
+      if (!pl) {
+        return nullptr;
+      }
       page->elements.push_back(std::move(pl));
     } else if (tag == TAG_PageImage) {
       auto pi = PageImage::deserialize(file);
+      if (!pi) {
+        return nullptr;
+      }
       page->elements.push_back(std::move(pi));
     } else if (tag == TAG_PageHorizontalRule) {
       auto rule = PageHorizontalRule::deserialize(file);

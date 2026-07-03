@@ -44,12 +44,27 @@ class HalDisplay {
   // Access to frame buffer
   uint8_t* getFrameBuffer() const;
 
+  // X3 grayscale preconditioning (OEM "AA-pre-BW(mid)" settle pass), windowed
+  // to the gray region in physical panel coordinates (no-arg = full frame).
+  // No-op on X4.
+  void preconditionGrayscale();
+  void preconditionGrayscale(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+
+  // Display the framebuffer as the base frame for a grayscale overlay that
+  // follows. On X3, HALF fallback first requests a resync to match
+  // displayBuffer(HALF); FAST fallback keeps the differential base waveform.
+  void displayGrayscaleBase(RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false);
+
   void copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* msbBuffer);
   void copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer);
   void copyGrayscaleMsbBuffers(const uint8_t* msbBuffer);
   void cleanupGrayscaleBuffers(const uint8_t* bwBuffer);
 
   void displayGrayBuffer(bool turnOffScreen = false);
+
+  // Tiled grayscale: stream one band of a plane straight to the controller.
+  void writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows);
+  bool supportsStripGrayscale() const;
 
   // Runtime geometry passthrough
   uint16_t getDisplayWidth() const;

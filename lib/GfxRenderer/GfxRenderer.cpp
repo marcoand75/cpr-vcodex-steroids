@@ -7,6 +7,7 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cassert>
 #include <climits>
 
 #include "FontCacheManager.h"
@@ -358,14 +359,24 @@ void GfxRenderer::drawPixelRaw(const int x, const int y, const bool state) const
     return;
   }
 
+  uint8_t* target = frameBuffer;
+  uint32_t rowY = static_cast<uint32_t>(phyY);
+  if (_stripActive) {
+    if (phyY < _stripY0 || phyY >= _stripY0 + _stripRows) {
+      return;
+    }
+    target = _stripBuf;
+    rowY = static_cast<uint32_t>(phyY - _stripY0);
+  }
+
   // Calculate byte position and bit position
-  const uint32_t byteIndex = static_cast<uint32_t>(phyY) * panelWidthBytes + (phyX / 8);
+  const uint32_t byteIndex = rowY * panelWidthBytes + (phyX / 8);
   const uint8_t bitPosition = 7 - (phyX % 8);  // MSB first
 
   if (state) {
-    frameBuffer[byteIndex] &= ~(1 << bitPosition);  // Clear bit
+    target[byteIndex] &= ~(1 << bitPosition);  // Clear bit
   } else {
-    frameBuffer[byteIndex] |= 1 << bitPosition;  // Set bit
+    target[byteIndex] |= 1 << bitPosition;  // Set bit
   }
 }
 
@@ -609,8 +620,10 @@ void GfxRenderer::drawRoundedRect(const int x, const int y, const int width, con
 }
 
 void GfxRenderer::fillRect(const int x, const int y, const int width, const int height, const bool state) const {
-  for (int fillY = y; fillY < y + height; fillY++) {
-    drawLine(x, fillY, x + width - 1, fillY, state);
+  if (state) {
+    fillRectImpl<Color::Black>(x, y, width, height);
+  } else {
+    fillRectImpl<Color::White>(x, y, width, height);
   }
 }
 
@@ -654,37 +667,190 @@ void GfxRenderer::drawPixelDither<Color::ExtraDarkGray>(const int x, const int y
 }
 
 void GfxRenderer::fillRectDither(const int x, const int y, const int width, const int height, Color color) const {
-  if (color == Color::Clear) {
-  } else if (color == Color::Black) {
-    fillRect(x, y, width, height, true);
-  } else if (color == Color::White) {
-    fillRect(x, y, width, height, false);
-  } else if (color == Color::LightGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::LightGray>(fillX, fillY);
+  switch (color) {
+    case Color::Clear:
+      break;
+    case Color::Black:
+      fillRectImpl<Color::Black>(x, y, width, height);
+      break;
+    case Color::White:
+      fillRectImpl<Color::White>(x, y, width, height);
+      break;
+    case Color::LightGray:
+      fillRectImpl<Color::LightGray>(x, y, width, height);
+      break;
+    case Color::MediumGray:
+      fillRectImpl<Color::MediumGray>(x, y, width, height);
+      break;
+    case Color::DarkGray:
+      fillRectImpl<Color::DarkGray>(x, y, width, height);
+      break;
+    case Color::ExtraDarkGray:
+      fillRectImpl<Color::ExtraDarkGray>(x, y, width, height);
+      break;
+  }
+}
+
+template <Color color>
+void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const int height) const {
+  if constexpr (color == Color::Clear) return;
+  if (width <= 0 || height <= 0) return;
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+
+  const int screenWidth = getScreenWidth();
+  const int screenHeight = getScreenHeight();
+  const int logicalX0 = std::max(0, x);
+  const int logicalY0 = std::max(0, y);
+  const int logicalX1 = std::min(screenWidth, x + width);
+  const int logicalY1 = std::min(screenHeight, y + height);
+  if (logicalX0 >= logicalX1 || logicalY0 >= logicalY1) return;
+
+  int cornerAX = 0;
+  int cornerAY = 0;
+  int cornerBX = 0;
+  int cornerBY = 0;
+  rotateCoordinates(orientation, logicalX0, logicalY0, &cornerAX, &cornerAY, panelWidth, panelHeight);
+  rotateCoordinates(orientation, logicalX1 - 1, logicalY1 - 1, &cornerBX, &cornerBY, panelWidth, panelHeight);
+
+  const int physicalX0 = std::min(cornerAX, cornerBX);
+  const int physicalX1 = std::max(cornerAX, cornerBX);
+  int physicalY0 = std::min(cornerAY, cornerBY);
+  int physicalY1 = std::max(cornerAY, cornerBY);
+  if (physicalX0 < 0 || physicalX1 >= panelWidth || physicalY0 < 0 || physicalY1 >= panelHeight) return;
+
+  uint8_t* target = getWriteTarget();
+  const int originY = getWriteOriginY();
+  const int writeRows = getWriteRows();
+  physicalY0 = std::max(physicalY0, originY);
+  physicalY1 = std::min(physicalY1, originY + writeRows - 1);
+  if (physicalY0 > physicalY1) return;
+
+  const int byteStart = physicalX0 >> 3;
+  const int byteEnd = physicalX1 >> 3;
+  const uint8_t headMask = static_cast<uint8_t>(0xFFu >> (physicalX0 & 7));
+  const uint8_t tailMask = static_cast<uint8_t>(0xFFu << (7 - (physicalX1 & 7)));
+  const uint32_t panelStride = panelWidthBytes;
+  const bool invertForDarkMode = darkMode && renderMode == BW;
+
+  if constexpr (color == Color::Black || color == Color::White) {
+    const bool fillBlack = invertForDarkMode ? color == Color::White : color == Color::Black;
+    const uint8_t fillByte = fillBlack ? 0x00u : 0xFFu;
+    for (int physicalY = physicalY0; physicalY <= physicalY1; ++physicalY) {
+      uint8_t* row = target + static_cast<uint32_t>(physicalY - originY) * panelStride;
+      if (byteStart == byteEnd) {
+        const uint8_t mask = headMask & tailMask;
+        if (fillBlack) {
+          row[byteStart] &= static_cast<uint8_t>(~mask);
+        } else {
+          row[byteStart] |= mask;
+        }
+      } else if (fillBlack) {
+        row[byteStart] &= static_cast<uint8_t>(~headMask);
+        if (byteEnd > byteStart + 1) {
+          memset(row + byteStart + 1, fillByte, byteEnd - byteStart - 1);
+        }
+        row[byteEnd] &= static_cast<uint8_t>(~tailMask);
+      } else {
+        row[byteStart] |= headMask;
+        if (byteEnd > byteStart + 1) {
+          memset(row + byteStart + 1, fillByte, byteEnd - byteStart - 1);
+        }
+        row[byteEnd] |= tailMask;
       }
     }
-  } else if (color == Color::MediumGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::MediumGray>(fillX, fillY);
-      }
+  } else {
+    static constexpr uint8_t BAYER_4X4[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+
+    int logicalDeltaXPerPhysicalX = 0;
+    int logicalDeltaYPerPhysicalX = 0;
+    switch (orientation) {
+      case Portrait:
+        logicalDeltaXPerPhysicalX = 0;
+        logicalDeltaYPerPhysicalX = 1;
+        break;
+      case PortraitInverted:
+        logicalDeltaXPerPhysicalX = 0;
+        logicalDeltaYPerPhysicalX = -1;
+        break;
+      case LandscapeClockwise:
+        logicalDeltaXPerPhysicalX = -1;
+        logicalDeltaYPerPhysicalX = 0;
+        break;
+      case LandscapeCounterClockwise:
+        logicalDeltaXPerPhysicalX = 1;
+        logicalDeltaYPerPhysicalX = 0;
+        break;
     }
-  } else if (color == Color::DarkGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::DarkGray>(fillX, fillY);
+
+    uint8_t blackMasks[4] = {};
+    for (int parityIndex = 0; parityIndex < 4; ++parityIndex) {
+      const int samplePhysicalY = physicalY0 + parityIndex;
+      int logicalXBase = 0;
+      int logicalYBase = 0;
+      switch (orientation) {
+        case Portrait:
+          logicalXBase = panelHeight - 1 - samplePhysicalY;
+          logicalYBase = byteStart * 8;
+          break;
+        case PortraitInverted:
+          logicalXBase = samplePhysicalY;
+          logicalYBase = panelWidth - 1 - byteStart * 8;
+          break;
+        case LandscapeClockwise:
+          logicalXBase = panelWidth - 1 - byteStart * 8;
+          logicalYBase = panelHeight - 1 - samplePhysicalY;
+          break;
+        case LandscapeCounterClockwise:
+          logicalXBase = byteStart * 8;
+          logicalYBase = samplePhysicalY;
+          break;
       }
+
+      uint8_t mask = 0;
+      for (int bit = 0; bit < 8; ++bit) {
+        const int logicalX = logicalXBase + bit * logicalDeltaXPerPhysicalX;
+        const int logicalY = logicalYBase + bit * logicalDeltaYPerPhysicalX;
+        bool isBlack = false;
+        if constexpr (color == Color::LightGray) {
+          isBlack = ((logicalX & 1) == 0) && ((logicalY & 1) == 0);
+        } else if constexpr (color == Color::DarkGray) {
+          isBlack = (((logicalX + logicalY) & 1) == 0);
+        } else {
+          isBlack = BAYER_4X4[logicalY & 3][logicalX & 3] < static_cast<uint8_t>(color);
+        }
+        if (invertForDarkMode) {
+          isBlack = !isBlack;
+        }
+        if (isBlack) {
+          mask |= static_cast<uint8_t>(1u << (7 - bit));
+        }
+      }
+      blackMasks[samplePhysicalY & 3] = mask;
     }
-  } else if (color == Color::ExtraDarkGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::ExtraDarkGray>(fillX, fillY);
+
+    for (int physicalY = physicalY0; physicalY <= physicalY1; ++physicalY) {
+      const uint8_t whiteMask = static_cast<uint8_t>(~blackMasks[physicalY & 3]);
+      uint8_t* row = target + static_cast<uint32_t>(physicalY - originY) * panelStride;
+      if (byteStart == byteEnd) {
+        const uint8_t rectMask = headMask & tailMask;
+        row[byteStart] = static_cast<uint8_t>((row[byteStart] & ~rectMask) | (rectMask & whiteMask));
+      } else {
+        row[byteStart] = static_cast<uint8_t>((row[byteStart] & ~headMask) | (headMask & whiteMask));
+        if (byteEnd > byteStart + 1) {
+          memset(row + byteStart + 1, whiteMask, byteEnd - byteStart - 1);
+        }
+        row[byteEnd] = static_cast<uint8_t>((row[byteEnd] & ~tailMask) | (tailMask & whiteMask));
       }
     }
   }
 }
+
+template void GfxRenderer::fillRectImpl<Color::Black>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::White>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::LightGray>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::MediumGray>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::DarkGray>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::ExtraDarkGray>(int, int, int, int) const;
 
 template <Color color>
 void GfxRenderer::fillArc(const int maxRadius, const int cx, const int cy, const int xDir, const int yDir) const {
@@ -1152,7 +1318,42 @@ static unsigned long start_ms = 0;
 void GfxRenderer::clearScreen(const uint8_t color) const {
   start_ms = millis();
   const uint8_t effectiveColor = (darkMode && renderMode == BW && color == 0xFF) ? 0x00 : color;
+  if (_stripActive) {
+    memset(_stripBuf, effectiveColor, static_cast<size_t>(panelWidthBytes) * static_cast<size_t>(_stripRows));
+    return;
+  }
   display.clearScreen(effectiveColor);
+}
+
+void GfxRenderer::beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const {
+  assert(scratch != nullptr && stripRows > 0 && stripY0 >= 0 && stripY0 <= static_cast<int>(panelHeight) - stripRows);
+  _stripBuf = scratch;
+  _stripY0 = stripY0;
+  _stripRows = stripRows;
+  _stripActive = true;
+}
+
+void GfxRenderer::endStripTarget() const {
+  _stripActive = false;
+  _stripBuf = nullptr;
+  _stripY0 = 0;
+  _stripRows = 0;
+}
+
+bool GfxRenderer::glyphIntersectsStrip(int x0, int y0, int x1, int y1) const {
+  if (!_stripActive) {
+    return true;
+  }
+
+  int ax = 0;
+  int ay = 0;
+  int bx = 0;
+  int by = 0;
+  rotateCoordinates(orientation, x0, y0, &ax, &ay, panelWidth, panelHeight);
+  rotateCoordinates(orientation, x1, y1, &bx, &by, panelWidth, panelHeight);
+  const int minY = std::min(ay, by);
+  const int maxY = std::max(ay, by);
+  return !(maxY < _stripY0 || minY >= _stripY0 + _stripRows);
 }
 
 void GfxRenderer::invertScreen() const {
@@ -1595,11 +1796,51 @@ size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 // unused
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }
 
+void GfxRenderer::displayGrayscaleBase(HalDisplay::RefreshMode fallback) const {
+  display.displayGrayscaleBase(fallback, fadingFix);
+}
+
+void GfxRenderer::preconditionGrayscale() const { display.preconditionGrayscale(); }
+
+void GfxRenderer::preconditionGrayscale(int x, int y, int w, int h) const {
+  if (w <= 0 || h <= 0) return;
+
+  int ax = 0;
+  int ay = 0;
+  int bx = 0;
+  int by = 0;
+  rotateCoordinates(orientation, x, y, &ax, &ay, panelWidth, panelHeight);
+  rotateCoordinates(orientation, x + w - 1, y + h - 1, &bx, &by, panelWidth, panelHeight);
+
+  int x0 = std::min(ax, bx);
+  int x1 = std::max(ax, bx);
+  int y0 = std::min(ay, by);
+  int y1 = std::max(ay, by);
+  x0 = std::max(x0, 0);
+  y0 = std::max(y0, 0);
+  x1 = std::min(x1, static_cast<int>(panelWidth) - 1);
+  y1 = std::min(y1, static_cast<int>(panelHeight) - 1);
+  if (x1 < x0 || y1 < y0) return;
+
+  display.preconditionGrayscale(static_cast<uint16_t>(x0), static_cast<uint16_t>(y0),
+                                static_cast<uint16_t>(x1 - x0 + 1), static_cast<uint16_t>(y1 - y0 + 1));
+}
+
 void GfxRenderer::copyGrayscaleLsbBuffers() const { display.copyGrayscaleLsbBuffers(frameBuffer); }
 
 void GfxRenderer::copyGrayscaleMsbBuffers() const { display.copyGrayscaleMsbBuffers(frameBuffer); }
 
 void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
+
+void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const {
+  if (scratch == nullptr) {
+    return;
+  }
+  assert(yStart >= 0 && numRows > 0 && yStart <= static_cast<int>(panelHeight) - numRows);
+  display.writeGrayscalePlaneStrip(lsbPlane, scratch, static_cast<uint16_t>(yStart), static_cast<uint16_t>(numRows));
+}
+
+bool GfxRenderer::supportsStripGrayscale() const { return display.supportsStripGrayscale(); }
 
 void GfxRenderer::freeBwBufferChunks() {
   for (auto& bwBufferChunk : bwBufferChunks) {

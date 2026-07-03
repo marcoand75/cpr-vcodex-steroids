@@ -4,6 +4,11 @@
 #include <GfxRenderer.h>
 #include <HalTiltSensor.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
+
+#include <algorithm>
+#include <memory>
+#include <new>
 
 #include "MappedInputManager.h"
 
@@ -12,6 +17,13 @@ namespace ReaderUtils {
 constexpr unsigned long GO_HOME_MS = 1000;
 constexpr unsigned long CONFIRM_DOUBLE_CLICK_MS = 300;
 constexpr unsigned long SKIP_HOLD_MS = 700;
+
+struct TiledGrayscaleTimings {
+  uint32_t grayLsb = 0;
+  uint32_t grayMsb = 0;
+  uint32_t grayDisplay = 0;
+  uint32_t cleanup = 0;
+};
 
 inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   switch (orientation) {
@@ -139,8 +151,71 @@ inline void requestReaderUiTransitionRefresh(GfxRenderer& renderer) {
 // and other overlays should be drawn before calling this.
 // Kept as a template to avoid std::function overhead; instantiated once per reader type.
 template <typename RenderFn>
+bool renderTiledGrayscale(GfxRenderer& renderer, const char* tag, RenderFn&& renderFn,
+                          TiledGrayscaleTimings* timings = nullptr) {
+  if (!renderer.supportsStripGrayscale()) {
+    return false;
+  }
+
+  constexpr int STRIP_ROWS = 80;
+  const int displayHeight = renderer.getDisplayHeight();
+  const int displayWidthBytes = renderer.getDisplayWidthBytes();
+  const auto heapBefore = MemoryBudget::snapshot();
+  auto scratch =
+      std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[static_cast<size_t>(displayWidthBytes) * STRIP_ROWS]);
+  const auto heapAfterAlloc = MemoryBudget::snapshot();
+  if (!scratch) {
+    LOG_ERR(tag, "OOM: grayscale strip scratch (%d bytes); falling back to BW snapshot",
+            displayWidthBytes * STRIP_ROWS);
+    return false;
+  }
+
+  auto renderPlane = [&](const GfxRenderer::RenderMode mode, const bool lsbPlane) {
+    renderer.setRenderMode(mode);
+    for (int y = 0; y < displayHeight; y += STRIP_ROWS) {
+      const int rows = std::min(STRIP_ROWS, displayHeight - y);
+      {
+        GfxStripTargetScope strip(renderer, scratch.get(), y, rows);
+        renderer.clearScreen(0x00);
+        renderFn();
+      }
+      renderer.writeGrayscalePlaneStrip(lsbPlane, scratch.get(), y, rows);
+    }
+  };
+
+  renderPlane(GfxRenderer::GRAYSCALE_LSB, true);
+  const uint32_t tGrayLsb = millis();
+
+  renderPlane(GfxRenderer::GRAYSCALE_MSB, false);
+  const uint32_t tGrayMsb = millis();
+
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.displayGrayBuffer();
+  const uint32_t tGrayDisplay = millis();
+  renderer.cleanupGrayscaleWithFrameBuffer();
+  const uint32_t tCleanup = millis();
+
+  if (timings) {
+    timings->grayLsb = tGrayLsb;
+    timings->grayMsb = tGrayMsb;
+    timings->grayDisplay = tGrayDisplay;
+    timings->cleanup = tCleanup;
+  }
+
+  const auto heapAfter = MemoryBudget::snapshot();
+  LOG_DBG(tag, "Tiled grayscale RAM: scratch=%d free=%u->%u->%u maxAlloc=%u->%u->%u",
+          displayWidthBytes * STRIP_ROWS, heapBefore.freeHeap, heapAfterAlloc.freeHeap, heapAfter.freeHeap,
+          heapBefore.maxAllocHeap, heapAfterAlloc.maxAllocHeap, heapAfter.maxAllocHeap);
+  return true;
+}
+
+template <typename RenderFn>
 void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
   if (renderer.isDarkMode()) {
+    return;
+  }
+
+  if (renderTiledGrayscale(renderer, "READER", renderFn)) {
     return;
   }
 

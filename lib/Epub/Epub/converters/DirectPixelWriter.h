@@ -4,6 +4,8 @@
 #include <HalDisplay.h>
 #include <stdint.h>
 
+#include <cassert>
+
 // Direct framebuffer writer that eliminates per-pixel overhead from the image
 // rendering hot path.  Pre-computes orientation transform as linear coefficients
 // and caches render-mode state so the inner loop is: one multiply, one add,
@@ -17,6 +19,8 @@ struct DirectPixelWriter {
   GfxRenderer::RenderMode mode;
   bool darkMode;
   uint16_t displayWidthBytes;  // Runtime framebuffer stride (X4: 100, X3: 99)
+  int originY;
+  int clipRows;
 
   // Orientation is collapsed into a linear transform:
   //   phyX = phyXBase + x * phyXStepX + y * phyXStepY
@@ -29,10 +33,12 @@ struct DirectPixelWriter {
   int rowPhyXBase, rowPhyYBase;
 
   void init(GfxRenderer& renderer) {
-    fb = renderer.getFrameBuffer();
+    fb = renderer.getWriteTarget();
     mode = renderer.getRenderMode();
     darkMode = renderer.isDarkMode();
     displayWidthBytes = renderer.getDisplayWidthBytes();
+    originY = renderer.getWriteOriginY();
+    clipRows = renderer.getWriteRows();
 
     const int phyW = renderer.getDisplayWidth();
     const int phyH = renderer.getDisplayHeight();
@@ -94,13 +100,36 @@ struct DirectPixelWriter {
   }
 
   // For the current row (set via beginRow), narrow [colStart, colEnd) to the
-  // active output band. CPR-vCodex renders grayscale against a full framebuffer,
-  // so every column remains active here. Upstream tiled renderers override this
-  // with a narrower range.
+  // columns whose physical Y falls inside the active strip band.
   inline void bandColRange(int xBase, int width, int& colStart, int& colEnd) const {
-    (void)xBase;
+    assert(phyYStepX == 0 || phyYStepX == 1 || phyYStepX == -1);
     colStart = 0;
     colEnd = width;
+    if (phyYStepX == 0) {
+      const int sy = rowPhyYBase - originY;
+      if (static_cast<unsigned>(sy) >= static_cast<unsigned>(clipRows)) colEnd = 0;
+      return;
+    }
+
+    const int loY = originY;
+    const int hiY = originY + clipRows - 1;
+    int xLo = 0;
+    int xHi = 0;
+    if (phyYStepX > 0) {
+      xLo = loY - rowPhyYBase;
+      xHi = hiY - rowPhyYBase;
+    } else {
+      xLo = rowPhyYBase - hiY;
+      xHi = rowPhyYBase - loY;
+    }
+
+    const int cs = xLo - xBase;
+    const int ce = xHi - xBase + 1;
+    if (cs > colStart) colStart = cs;
+    if (ce < colEnd) colEnd = ce;
+    if (colStart < 0) colStart = 0;
+    if (colEnd > width) colEnd = width;
+    if (colStart > colEnd) colStart = colEnd;
   }
 
   // Write a single 2-bit dithered pixel value to the framebuffer.
@@ -132,7 +161,10 @@ struct DirectPixelWriter {
     const int phyX = rowPhyXBase + logicalX * phyXStepX;
     const int phyY = rowPhyYBase + logicalX * phyYStepX;
 
-    const uint16_t byteIndex = phyY * displayWidthBytes + (phyX >> 3);
+    const int sy = phyY - originY;
+    if (static_cast<unsigned>(sy) >= static_cast<unsigned>(clipRows)) return;
+
+    const uint32_t byteIndex = static_cast<uint32_t>(sy) * displayWidthBytes + (phyX >> 3);
     const uint8_t bitMask = 1 << (7 - (phyX & 7));
 
     if (state) {

@@ -57,6 +57,14 @@ class GfxRenderer {
   mutable bool nextRefreshOverridePending = false;
   mutable HalDisplay::RefreshMode nextRefreshOverride = HalDisplay::FAST_REFRESH;
 
+  // Tiled grayscale strip target. When active, drawPixel()/clearScreen()
+  // operate on a caller-owned scratch holding physical rows
+  // [_stripY0, _stripY0 + _stripRows) instead of the shared framebuffer.
+  mutable uint8_t* _stripBuf = nullptr;
+  mutable int _stripY0 = 0;
+  mutable int _stripRows = 0;
+  mutable bool _stripActive = false;
+
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
@@ -68,6 +76,8 @@ class GfxRenderer {
   void freeBwBufferChunks();
   template <Color color>
   void drawPixelDither(int x, int y) const;
+  template <Color color>
+  void fillRectImpl(int x, int y, int width, int height) const;
   template <Color color>
   void fillArc(int maxRadius, int cx, int cy, int xDir, int yDir) const;
 
@@ -129,6 +139,13 @@ class GfxRenderer {
   void clearScreen(uint8_t color = 0xFF) const;
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
 
+  void beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const;
+  void endStripTarget() const;
+  bool glyphIntersectsStrip(int x0, int y0, int x1, int y1) const;
+  uint8_t* getWriteTarget() const { return _stripActive ? _stripBuf : frameBuffer; }
+  int getWriteOriginY() const { return _stripActive ? _stripY0 : 0; }
+  int getWriteRows() const { return _stripActive ? _stripRows : panelHeight; }
+
   // Drawing
   void drawPixel(int x, int y, bool state = true) const;
   void drawPixelDirect(int x, int y, bool state = true) const { drawPixelRaw(x, y, state); }
@@ -187,9 +204,14 @@ class GfxRenderer {
   // Grayscale functions
   void setRenderMode(const RenderMode mode) { this->renderMode = mode; }
   RenderMode getRenderMode() const { return renderMode; }
+  void preconditionGrayscale() const;
+  void preconditionGrayscale(int x, int y, int w, int h) const;
+  void displayGrayscaleBase(HalDisplay::RefreshMode fallback = HalDisplay::HALF_REFRESH) const;
   void copyGrayscaleLsbBuffers() const;
   void copyGrayscaleMsbBuffers() const;
   void displayGrayBuffer() const;
+  void writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const;
+  bool supportsStripGrayscale() const;
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
   void restoreBwBuffer();  // Restore and free the stored buffer
   void cleanupGrayscaleWithFrameBuffer() const;
@@ -207,4 +229,29 @@ class GfxRenderer {
   bool copyRegionToBuffer(int logicalX, int logicalY, int logicalW, int logicalH, uint8_t* buf, size_t bufSize) const;
   bool copyBufferToRegion(int logicalX, int logicalY, int logicalW, int logicalH, const uint8_t* buf,
                           size_t bufSize) const;
+};
+
+class GfxStripTargetScope {
+ public:
+  GfxStripTargetScope(const GfxRenderer& renderer, uint8_t* scratch, const int stripY0, const int stripRows)
+      : renderer_(renderer), active_(true) {
+    renderer_.beginStripTarget(scratch, stripY0, stripRows);
+  }
+  GfxStripTargetScope(const GfxStripTargetScope&) = delete;
+  GfxStripTargetScope& operator=(const GfxStripTargetScope&) = delete;
+  ~GfxStripTargetScope() {
+    if (active_) {
+      renderer_.endStripTarget();
+    }
+  }
+
+  void end() {
+    if (!active_) return;
+    renderer_.endStripTarget();
+    active_ = false;
+  }
+
+ private:
+  const GfxRenderer& renderer_;
+  bool active_;
 };
