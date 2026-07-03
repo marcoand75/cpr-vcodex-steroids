@@ -1,6 +1,6 @@
 param(
   [string]$Environment = "default",
-  [int]$Jobs = 1
+  [int]$Jobs = 16
 )
 
 $ErrorActionPreference = "Stop"
