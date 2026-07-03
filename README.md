@@ -165,9 +165,6 @@ All CPR-vCodex upstream features (reading stats, heatmaps, achievements, diction
 
 The firmware is built and tested on the **Xteink X4** (ESP32-C3, ~380 KB usable RAM).
 
-## Discussion & Development
-
-The development and feature discussion for CPR-vCodex Steroids takes place in the [upstream CPR-vCodex PR #118](https://github.com/franssjz/cpr-vcodex/pull/118).
 
 ---
 
