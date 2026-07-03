@@ -461,21 +461,44 @@ void LibraryActivity::loop() {
   // ---- Detect layout change while activity was in background ----
   ensureLayoutUpToDate();
 
-  // ---- Cover Generation: generate one cover per loop for the current visible page ----
+  // ---- Cover Generation: one pass through the page, retry cycle ----
   if (!coversComplete_ && total > 0) {
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
-    if (coverGenIndex_ < 0) coverGenIndex_ = 0;
-    if (coverGenIndex_ < pageCount) {
-      const int idx = pageStart + coverGenIndex_;
-      if (!isBookCoverReady(entries_[idx])) {
-        LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
-      }
-      coverGenIndex_++;
-    }
-    if (coverGenIndex_ >= pageCount) {
+    // Allow Back to cancel indexing so the user is never stuck.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       coversComplete_ = true;
       coverGenIndex_ = -1;
+      forceRender_ = true;
+      requestUpdate();
+      return;
+    }
+    // Advance cursor past entries that already have covers, then generate
+    // the first missing one. When every entry has a cover, the pass is done.
+    if (coverGenIndex_ < 0) coverGenIndex_ = 0;
+    bool generatedOne = false;
+    for (int attempt = 0; attempt < pageCount && !generatedOne; ++attempt) {
+      const int slot = (coverGenIndex_ + attempt) % pageCount;
+      const int idx = pageStart + slot;
+      if (!isBookCoverReady(entries_[idx])) {
+        LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
+        generatedOne = true;
+      }
+    }
+    coverGenIndex_++;
+    if (coverGenIndex_ >= pageCount) {
+      // Finished a full pass. If nothing is missing, mark complete;
+      // otherwise restart the pass to retry entries that failed.
+      bool stillMissing = false;
+      for (int slot = 0; slot < pageCount && !stillMissing; ++slot) {
+        if (!isBookCoverReady(entries_[pageStart + slot])) stillMissing = true;
+      }
+      if (!stillMissing) {
+        coversComplete_ = true;
+        coverGenIndex_ = -1;
+      } else {
+        coverGenIndex_ = 0;
+      }
     }
     forceRender_ = true;
     requestUpdate();
@@ -504,7 +527,8 @@ void LibraryActivity::loop() {
               switch (static_cast<BookContextMenuActivity::MenuAction>(menuResult->action)) {
                 case BookContextMenuActivity::MenuAction::OPEN_BOOK: onSelectBook(path); return;
                 case BookContextMenuActivity::MenuAction::VIEW_STATS:
-                  activityManager.replaceActivity(std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path));
+                  startActivityForResult(std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path),
+                                         [this](const ActivityResult&) { forceRender_ = true; requestUpdate(); });
                   return;
                 case BookContextMenuActivity::MenuAction::VIEW_METADATA:
                   startActivityForResult(std::make_unique<BookMetadataActivity>(renderer, mappedInput, path),
@@ -553,6 +577,8 @@ void LibraryActivity::loop() {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
     } else {
+      renderer.clearScreen();
+      renderer.displayBuffer();
       onGoHome();
     }
     return;
