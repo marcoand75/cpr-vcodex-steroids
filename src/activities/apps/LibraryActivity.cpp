@@ -131,7 +131,21 @@ void LibraryActivity::applyLayoutFromSettings() {
 
 bool LibraryActivity::isBookCoverReady(const LibraryCache::Entry& entry) const {
   const std::string tp = LibraryCache::thumbPathFor(entry.path, coverWidth_, coverHeight_);
-  return !tp.empty() && Storage.exists(tp.c_str());
+  if (!tp.empty() && Storage.exists(tp.c_str())) return true;
+  // Also accept slots we've already generated this pass — the FAT driver
+  // may not make the BMP visible immediately after write.
+  // Check `coverGeneratedMask_` for entries that were generated in this pass.
+  const auto it = std::find_if(entries_.begin(), entries_.end(),
+                               [&](const LibraryCache::Entry& e) { return e.path == entry.path; });
+  if (it != entries_.end()) {
+    const size_t entryIdx = static_cast<size_t>(it - entries_.begin());
+    const size_t pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+    if (entryIdx >= pageStart) {
+      const size_t slot = entryIdx - pageStart;
+      if (slot < 64 && (coverGeneratedMask_ & (uint64_t{1} << slot))) return true;
+    }
+  }
+  return false;
 }
 
 void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
@@ -240,12 +254,15 @@ void LibraryActivity::scanSd() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
 
-  if (LibraryCache::load(unfilteredEntries_)) {
+  // Try incremental sync first; falls back to full scan only
+  // when the cache file is missing or corrupt.
+  if (LibraryCache::sync(unfilteredEntries_)) {
     applyFilterAndSort();
-    LOG_DBG("LIB", "Loaded %d entries from library cache", static_cast<int>(entries_.size()));
+    LOG_DBG("LIB", "Synced %d entries from library cache", static_cast<int>(entries_.size()));
     return;
   }
 
+  // Cache unavailable – full scan with progress popup.
   renderer.clearScreen();
   Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
   GUI.fillPopupProgress(renderer, popupRect, 0);
@@ -465,10 +482,13 @@ void LibraryActivity::loop() {
   if (!coversComplete_ && total > 0) {
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
+    // Reset mask on first entry or page change
+    if (coverGenIndex_ < 0) coverGeneratedMask_ = 0;
     // Allow Back to cancel indexing so the user is never stuck.
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       coversComplete_ = true;
       coverGenIndex_ = -1;
+      coverGeneratedMask_ = 0;
       forceRender_ = true;
       requestUpdate();
       return;
@@ -482,6 +502,7 @@ void LibraryActivity::loop() {
       const int idx = pageStart + slot;
       if (!isBookCoverReady(entries_[idx])) {
         LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
+        if (slot < 64) coverGeneratedMask_ |= (uint64_t{1} << slot);
         generatedOne = true;
       }
     }
@@ -496,6 +517,7 @@ void LibraryActivity::loop() {
       if (!stillMissing) {
         coversComplete_ = true;
         coverGenIndex_ = -1;
+        coverGeneratedMask_ = 0;
       } else {
         coverGenIndex_ = 0;
       }

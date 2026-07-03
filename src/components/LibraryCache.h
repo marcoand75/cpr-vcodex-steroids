@@ -54,6 +54,17 @@ void invalidate();
 // Remove the entry whose `path` matches and rewrite the cache file.
 bool removeBook(const std::string& path);
 
+// Incremental sync: compare the cached library against the real SD content.
+// - Removes entries whose files no longer exist on the SD card.
+// - Parses metadata only for newly discovered books and appends them.
+// - Re-sorts and persists the cache when changes are detected.
+// Falls back to a full scan() when the cache file is missing or read fails.
+//
+// `out` receives the complete, sorted entry list after sync.
+// Progress is shown via `popupRect` only when a full scan fallback occurs;
+// incremental sync is fast and runs without a popup.
+bool sync(std::vector<Entry>& out, int maxBooks = 300);
+
 // Full SD walk: enumerate every ebook under the card, parse metadata via
 // the cheap `Epub::load(true, true)` or `Xtc::load()` / `Txt::load()` path,
 // sort, and persist to the cache file. `out` receives the sorted list.

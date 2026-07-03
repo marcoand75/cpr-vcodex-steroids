@@ -287,6 +287,181 @@ bool removeBook(const std::string& path) {
   return save(entries);
 }
 
+bool sync(std::vector<Entry>& out, int maxBooks) {
+  out.clear();
+  if (maxBooks <= 0) return true;
+
+  // Load the existing cache. If missing or corrupt, fall back to full scan
+  // but signal the caller that it must provide a popup.
+  std::vector<Entry> cached;
+  if (!load(cached)) {
+    LOG_DBG("BSC", "sync: cache not available, falling back to full scan");
+    return false;  // caller must invoke scan() with popup
+  }
+
+  // Sort cached entries by path for binary search during SD walk.
+  // The original display order (author/title) is not needed here;
+  // we re-sort at the end anyway.
+  std::sort(cached.begin(), cached.end(),
+            [](const Entry& a, const Entry& b) { return a.path < b.path; });
+
+  // Walk the SD card on-the-fly — do NOT pre-accumulate sdPaths
+  // (ESP32-C3 has ~320KB RAM; holding cached + all-sd-paths + records
+  //  causes heap exhaustion and crashes).
+  std::vector<std::string> worklist;
+  worklist.reserve(8);
+  worklist.emplace_back("/");
+
+  // Build records directly: start with kept entries, add new ones on-the-fly.
+  // Use ScanRecord (path+title+author) same as scan() for sort compatibility.
+  std::vector<ScanRecord> records;
+  records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
+
+  int removed = 0;
+  int added = 0;
+  int kept = 0;
+  int sdFileCount = 0;
+
+  // Reusable binary-search helper over cached (which is sorted by path)
+  auto cachedIndexForPath = [&cached](const std::string& path) -> int {
+    const auto it = std::lower_bound(cached.begin(), cached.end(), path,
+                                     [](const Entry& e, const std::string& p) { return e.path < p; });
+    if (it != cached.end() && it->path == path)
+      return static_cast<int>(it - cached.begin());
+    return -1;
+  };
+
+  // Track which cache entries we've already matched to avoid
+  // re-checking `Storage.exists()` for every one.
+  std::vector<bool> cachedMatched(cached.size(), false);
+
+  while (!worklist.empty() && static_cast<int>(records.size()) < maxBooks) {
+    const std::string folder = std::move(worklist.back());
+    worklist.pop_back();
+
+    HalFile root = Storage.open(folder.c_str());
+    if (!root || !root.isDirectory()) {
+      if (root) root.close();
+      continue;
+    }
+    root.rewindDirectory();
+
+    char name[500];
+    for (HalFile file = root.openNextFile(); file; file = root.openNextFile()) {
+      file.getName(name, sizeof(name));
+      const bool isDir = file.isDirectory();
+      file.close();
+
+      if (name[0] == '.') continue;
+
+      std::string lowerName = name;
+      for (auto& c : lowerName)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      if (lowerName == "system volume information") continue;
+      if (isDir && (lowerName == "crosspoint" || lowerName.compare(0, 5, "sleep") == 0 ||
+                    lowerName == "font" || lowerName == "fonts" || lowerName == "dictionaries" ||
+                    lowerName == "exports")) continue;
+
+      std::string childPath = folder;
+      if (childPath.empty() || childPath.back() != '/') childPath.push_back('/');
+      childPath.append(name);
+
+      if (isDir) {
+        worklist.push_back(std::move(childPath));
+        continue;
+      }
+
+      const std::string_view filename{name};
+      if (!FsHelpers::hasEpubExtension(filename) && !FsHelpers::hasXtcExtension(filename) &&
+          !FsHelpers::hasTxtExtension(filename) && !FsHelpers::hasMarkdownExtension(filename))
+        continue;
+      if (std::strcmp(name, "if_found.txt") == 0 || std::strcmp(name, "crash_report.txt") == 0) continue;
+
+      ++sdFileCount;
+
+      // Check if this file is already in the cache
+      const int ci = cachedIndexForPath(childPath);
+      if (ci >= 0) {
+        cachedMatched[ci] = true;
+        ScanRecord rec;
+        rec.path = childPath;  // keep the SD-walk path (no std::move from cached)
+        rec.title = cached[ci].title;
+        rec.author = cached[ci].author;
+        records.push_back(std::move(rec));
+        ++kept;
+      } else {
+        // New book: parse minimal metadata
+        ScanRecord rec;
+        rec.path = std::move(childPath);
+
+        if (FsHelpers::hasEpubExtension(rec.path)) {
+          Epub epub(rec.path, "/.crosspoint");
+          if (epub.load(true, true)) {
+            rec.title = epub.getTitle();
+            rec.author = epub.getAuthor();
+          }
+        } else if (FsHelpers::hasXtcExtension(rec.path)) {
+          Xtc xtc(rec.path, "/.crosspoint");
+          if (xtc.load()) {
+            rec.title = xtc.getTitle();
+            rec.author = xtc.getAuthor();
+          }
+        } else {
+          rec.title.clear();
+          rec.author.clear();
+        }
+
+        if (rec.title.empty()) {
+          const auto slash = rec.path.find_last_of('/');
+          const auto dot = rec.path.find_last_of('.');
+          const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
+          const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
+          rec.title = rec.path.substr(start, end - start);
+        }
+
+        records.push_back(std::move(rec));
+        ++added;
+        LOG_DBG("BSC", "sync: added new entry: %s", rec.path.c_str());
+      }
+
+      if (static_cast<int>(records.size()) >= maxBooks) break;
+    }
+    root.close();
+  }
+
+  // Detect deletions: cache entries that were NOT found on SD
+  for (size_t i = 0; i < cached.size(); ++i) {
+    if (!cachedMatched[i]) {
+      ++removed;
+      LOG_DBG("BSC", "sync: removed stale entry: %s", cached[i].path.c_str());
+    }
+  }
+
+  // If nothing changed, return cached list (already in records, no re-sort/write needed)
+  if (removed == 0 && added == 0) {
+    out.swap(cached);
+    LOG_DBG("BSC", "sync: no changes detected (%d entries, %d sd files scanned)", kept, sdFileCount);
+    return true;
+  }
+
+  // Re-sort and persist
+  std::sort(records.begin(), records.end(), compareRecords);
+
+  out.reserve(records.size());
+  for (auto& rec : records) {
+    Entry entry;
+    entry.path = std::move(rec.path);
+    entry.title = std::move(rec.title);
+    entry.author = std::move(rec.author);
+    out.push_back(std::move(entry));
+  }
+
+  const bool persisted = save(out);
+  LOG_DBG("BSC", "sync complete: %d kept, %d added, %d removed (total %d, %d sd scanned), persisted=%d", kept, added,
+          removed, static_cast<int>(out.size()), sdFileCount, persisted ? 1 : 0);
+  return persisted;
+}
+
 bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;

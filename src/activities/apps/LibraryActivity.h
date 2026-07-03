@@ -16,6 +16,7 @@ class LibraryActivity final : public Activity {
   std::vector<LibraryCache::Entry> unfilteredEntries_;
   int coverGenIndex_ = -1;
   bool coversComplete_ = false;
+  uint64_t coverGeneratedMask_ = 0;  // bitmask of slots already generated this page pass
   int lastPage_ = -1;
   mutable int lastRenderedPage_ = -1;
   mutable int lastRenderedSelectorIndex_ = -1;
