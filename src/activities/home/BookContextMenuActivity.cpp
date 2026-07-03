@@ -57,7 +57,7 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
                                                                                        const bool isEpubFormat,
                                                                                        const bool isLibraryMode) {
   std::vector<MenuItem> items;
-  items.reserve(isLibraryMode ? 14 : 8);
+  items.reserve(isLibraryMode ? 15 : 8);
   items.push_back({MenuAction::OPEN_BOOK, StrId::STR_OPEN, UIIcon::Book});
   if (!isLibraryMode) {
     items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS, UIIcon::Recent});
@@ -80,6 +80,7 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
     items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER, UIIcon::Image});
     items.push_back({MenuAction::DELETE_PAGE_COVER_THUMBS, StrId::STR_LIBRARY_DELETE_PAGE_COVERS, UIIcon::Image});
     items.push_back({MenuAction::DELETE_ALL_LIBRARY_COVERS, StrId::STR_LIBRARY_DELETE_ALL_COVERS, UIIcon::Image});
+    items.push_back({MenuAction::REINDEX_LIBRARY, StrId::STR_REINDEX_LIBRARY, UIIcon::Library});
   }
   return items;
 }

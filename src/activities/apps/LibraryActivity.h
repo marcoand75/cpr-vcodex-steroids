@@ -5,26 +5,18 @@
 
 #include "../Activity.h"
 #include "CrossPointSettings.h"
+#include "components/LibraryCache.h"
 #include "components/LibraryPopupOverlay.h"
 #include "util/ButtonNavigator.h"
-
-struct LibraryEntry {
-  std::string path;
-  std::string title;
-  std::string author;
-  std::string coverPath;
-  bool coverFailed = false;
-};
 
 class LibraryActivity final : public Activity {
  private:
   int selectorIndex_ = 0;
-  std::vector<LibraryEntry> entries_;
-  std::vector<LibraryEntry> unfilteredEntries_;
+  std::vector<LibraryCache::Entry> entries_;
+  std::vector<LibraryCache::Entry> unfilteredEntries_;
   int coverGenIndex_ = -1;
   bool coversComplete_ = false;
   int lastPage_ = -1;
-  bool inventoryLoaded_ = false;
   mutable int lastRenderedPage_ = -1;
   mutable int lastRenderedSelectorIndex_ = -1;
   mutable bool forceRender_ = true;
@@ -54,9 +46,8 @@ class LibraryActivity final : public Activity {
   void applyLayoutFromSettings();
   void scanSd();
   void applyFilterAndSort();
-  std::string generateOneCover(const std::string& bookPath, int coverW, int coverH);
+  bool isBookCoverReady(const LibraryCache::Entry& entry) const;
   void deleteLibraryCovers(const std::string& bookPath);
-  void resetPageCovers();
   void deletePageCovers();
   void deleteAllLibraryCovers();
   void rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter);

@@ -21,6 +21,7 @@ class BookContextMenuActivity final : public Activity {
     DELETE_COVER_THUMB,
     DELETE_PAGE_COVER_THUMBS,
     DELETE_ALL_LIBRARY_COVERS,
+    REINDEX_LIBRARY,
     CLEAR_THEME_CACHE
   };
 
