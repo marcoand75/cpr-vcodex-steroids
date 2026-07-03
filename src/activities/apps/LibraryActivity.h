@@ -30,6 +30,7 @@ class LibraryActivity final : public Activity {
   CrossPointSettings::LIBRARY_FILTER currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
   CrossPointSettings::LIBRARY_SORT currentSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
   std::string currentSearchText_;
+  uint8_t lastLayoutSetting_ = CrossPointSettings::LIBRARY_LAYOUT_4X4;
 
   // Popup state
   enum class PopupMode { None, Sort, Filter };
@@ -44,6 +45,7 @@ class LibraryActivity final : public Activity {
   static constexpr unsigned long kLongPressMs = 1000;
 
   void applyLayoutFromSettings();
+  void ensureLayoutUpToDate();
   void scanSd();
   void applyFilterAndSort();
   bool isBookCoverReady(const LibraryCache::Entry& entry) const;

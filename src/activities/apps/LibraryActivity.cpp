@@ -413,8 +413,20 @@ void LibraryActivity::onEnter() {
   popupMode_ = PopupMode::None;
   upHeld_ = false; upLongTriggered_ = false;
   downHeld_ = false; downLongTriggered_ = false;
+  lastLayoutSetting_ = SETTINGS.libraryLayout;
   scanSd();
   requestUpdate();
+}
+
+void LibraryActivity::ensureLayoutUpToDate() {
+  if (SETTINGS.libraryLayout != lastLayoutSetting_) {
+    applyLayoutFromSettings();
+    lastLayoutSetting_ = SETTINGS.libraryLayout;
+    coversComplete_ = false;
+    coverGenIndex_ = -1;
+    lastPage_ = -1;
+    forceRender_ = true;
+  }
 }
 
 void LibraryActivity::onExit() {
@@ -445,6 +457,9 @@ void LibraryActivity::loop() {
   }
 
   const int total = static_cast<int>(entries_.size());
+
+  // ---- Detect layout change while activity was in background ----
+  ensureLayoutUpToDate();
 
   // ---- Cover Generation: generate one cover per loop for the current visible page ----
   if (!coversComplete_ && total > 0) {
