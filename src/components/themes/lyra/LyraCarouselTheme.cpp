@@ -25,10 +25,18 @@
 #include "components/icons/recent.h"
 #include "components/icons/settings.h"
 #include "components/icons/screensaver.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/recentbooks.h"
 #include "components/icons/heatmap.h"
 #include "components/icons/cleanmonitor.h"
 #include "components/icons/sleep.h"
 #include "components/icons/bookshelf.h"
+#include "components/icons/flashcardquiz.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/lostdevice.h"
+#include "components/icons/opdsbrowser.h"
+#include "components/icons/dictionary.h"
 #include "components/icons/settings2.h"
 #include "components/icons/text24.h"
 #include "components/icons/trophy.h"
@@ -85,6 +93,22 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return CleanMonitorIcon32;
       case UIIcon::Heatmap:
         return HeatmapReadingIcon32;
+      case UIIcon::FlashcardQuiz:
+        return FlashcardQuizIcon32;
+      case UIIcon::ReadingProfile:
+        return ReadingProfileIcon32;
+      case UIIcon::LostDevice:
+        return LostDeviceIcon32;
+      case UIIcon::OpdsBrowser:
+        return OPDSBrowserIcon32;
+      case UIIcon::Dictionary:
+        return DictionaryIcon32;
+      case UIIcon::GoalsMedal:
+        return GoalsMedalIcon32;
+      case UIIcon::ReadingStatsIcon:
+        return ReadingStatsIcon32;
+      case UIIcon::RecentBooks:
+        return RecentBooksIcon32;
       default:
         return nullptr;
     }
@@ -124,6 +148,22 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return CleanMonitorIcon32;
       case UIIcon::Heatmap:
         return HeatmapReadingIcon32;
+      case UIIcon::FlashcardQuiz:
+        return FlashcardQuizIcon32;
+      case UIIcon::ReadingProfile:
+        return ReadingProfileIcon32;
+      case UIIcon::LostDevice:
+        return LostDeviceIcon32;
+      case UIIcon::OpdsBrowser:
+        return OPDSBrowserIcon32;
+      case UIIcon::Dictionary:
+        return DictionaryIcon32;
+      case UIIcon::GoalsMedal:
+        return GoalsMedalIcon32;
+      case UIIcon::ReadingStatsIcon:
+        return ReadingStatsIcon32;
+      case UIIcon::RecentBooks:
+        return RecentBooksIcon32;
       default:
         return nullptr;
     }

@@ -89,7 +89,15 @@ enum UIIcon {
   Bookshelf,
   SleepMode,
   CleanMonitor,
-  Heatmap
+  Heatmap,
+  FlashcardQuiz,
+  ReadingProfile,
+  LostDevice,
+  OpdsBrowser,
+  Dictionary,
+  GoalsMedal,
+  ReadingStatsIcon,
+  RecentBooks
 };
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
 
