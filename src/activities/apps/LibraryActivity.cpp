@@ -256,9 +256,9 @@ void LibraryActivity::scanSd() {
 
   // Try incremental sync first; falls back to full scan only
   // when the cache file is missing or corrupt.
-  if (LibraryCache::sync(unfilteredEntries_)) {
+  if (LibraryCache::sync(unfilteredEntries_, SETTINGS.libraryRootDir)) {
     applyFilterAndSort();
-    LOG_DBG("LIB", "Synced %d entries from library cache", static_cast<int>(entries_.size()));
+    LOG_DBG("LIB", "Synced %d entries from library cache (root=%s)", static_cast<int>(entries_.size()), SETTINGS.libraryRootDir);
     return;
   }
 
@@ -269,7 +269,7 @@ void LibraryActivity::scanSd() {
   renderer.displayBuffer();
 
   std::vector<LibraryCache::Entry> allEntries;
-  LibraryCache::scan(renderer, popupRect, allEntries);
+  LibraryCache::scan(renderer, popupRect, allEntries, SETTINGS.libraryRootDir);
 
   unfilteredEntries_.clear();
   for (auto& e : allEntries) {
@@ -695,10 +695,16 @@ void LibraryActivity::render(RenderLock&&) {
   const int totalPages = total > 0 ? (total + gridsPerPage_ - 1) / gridsPerPage_ : 0;
   const int curPage = total > 0 ? curPageRaw + 1 : 0;
 
-  char hdrBuf[32] = {};
-  if (total > 0) snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d", curPage, totalPages);
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_MENU_LIBRARY),
-                 total > 0 ? hdrBuf : nullptr);
+  // Draw header bar (black background + battery) without title/subtitle
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, nullptr, nullptr);
+
+  // Pagination top-left on the header bar
+  if (total > 0) {
+    char hdrBuf[32] = {};
+    snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d", curPage, totalPages);
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, metrics.topPadding + 6, hdrBuf, true,
+                      EpdFontFamily::REGULAR);
+  }
 
   if (total > 0) {
     std::string info;
@@ -735,6 +741,25 @@ void LibraryActivity::render(RenderLock&&) {
     int centerX = (pageWidth - lblW) / 2;
     int headerY = metrics.topPadding + 8;
     renderer.drawText(UI_10_FONT_ID, centerX, headerY, info.c_str(), true, EpdFontFamily::REGULAR);
+
+    // Draw selected book title below the info line, centered
+    if (selectorIndex_ < total) {
+      std::string selTitle = entries_[selectorIndex_].title;
+      if (selTitle.empty()) selTitle = filenameWithoutExtension(entries_[selectorIndex_].path);
+      // Truncate with ellipsis if needed
+      const int maxSelW = pageWidth - 20;
+      if (renderer.getTextWidth(UI_10_FONT_ID, selTitle.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+        while (selTitle.size() > 3 &&
+               renderer.getTextWidth(UI_10_FONT_ID, (selTitle + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+          selTitle.pop_back();
+        }
+        selTitle += "..";
+      }
+      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, selTitle.c_str(), EpdFontFamily::REGULAR);
+      const int selTitleX = (pageWidth - selTitleW) / 2;
+      const int selTitleY = headerY + renderer.getLineHeight(UI_10_FONT_ID) + 2;
+      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, selTitle.c_str(), true, EpdFontFamily::BOLD);
+    }
   }
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
@@ -752,7 +777,7 @@ void LibraryActivity::render(RenderLock&&) {
   const int gap = gap_;
   const int rowPad = rowPad_;
   const int gridW = gridColumns_ * coverWidth_ + (gridColumns_ - 1) * gap;
-  const int x0 = (pageWidth - gridW) / 2;
+  const int x0 = (pageWidth - gridW) / 4;
   const int rowH = coverHeight_ + rowPad;
 
   for (int i = 0; i < pageCount; ++i) {

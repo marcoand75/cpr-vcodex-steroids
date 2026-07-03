@@ -23,14 +23,14 @@ or activity lifecycle.
 5. Verify with:
 
 ```powershell
-python -X utf8 -m platformio run -e default -j 1
+python -X utf8 -m platformio run -e default -j 16
 ```
 
 Use `gh_release` as an additional build when the change is release-facing or
 could affect binary size:
 
 ```powershell
-python -X utf8 -m platformio run -e gh_release -j 1
+python -X utf8 -m platformio run -e gh_release -j 16
 ```
 
 ## Guardrails

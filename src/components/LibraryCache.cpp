@@ -1,11 +1,13 @@
 #include "LibraryCache.h"
 
 #include <Epub.h>
+#include <Epub/BookMetadataCache.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Txt.h>
 #include <Xtc.h>
+#include <esp_task_wdt.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -26,7 +28,42 @@ struct ScanRecord {
   std::string path;
   std::string title;
   std::string author;
+  std::string normTitle;   // pre-normalized for zero-alloc sort
+  std::string normAuthor;  // pre-normalized for zero-alloc sort (sort key: "zzz" when empty)
 };
+
+void finalizeRecord(ScanRecord& rec) {
+  const auto normalize = [](const std::string& s) -> std::string {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+      unsigned char c = static_cast<unsigned char>(s[i]);
+      switch (c) {
+        case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: out.push_back('a'); break;
+        case 0xC8: case 0xC9: case 0xCA: case 0xCB: out.push_back('e'); break;
+        case 0xCC: case 0xCD: case 0xCE: case 0xCF: out.push_back('i'); break;
+        case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: out.push_back('o'); break;
+        case 0xD9: case 0xDA: case 0xDB: case 0xDC: out.push_back('u'); break;
+        case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: out.push_back('a'); break;
+        case 0xE8: case 0xE9: case 0xEA: case 0xEB: out.push_back('e'); break;
+        case 0xEC: case 0xED: case 0xEE: case 0xEF: out.push_back('i'); break;
+        case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: out.push_back('o'); break;
+        case 0xF9: case 0xFA: case 0xFB: case 0xFC: out.push_back('u'); break;
+        case 0xD1: case 0xF1: out.push_back('n'); break;
+        case 0xC7: case 0xE7: out.push_back('c'); break;
+        default: out.push_back(static_cast<char>(std::tolower(c))); break;
+      }
+    }
+    return out;
+  };
+  rec.normTitle = normalize(rec.title);
+  rec.normAuthor = normalize(rec.author.empty() ? "zzz" : rec.author);
+}
+
+bool compareRecords(const ScanRecord& a, const ScanRecord& b) {
+  if (a.normAuthor != b.normAuthor) return a.normAuthor < b.normAuthor;
+  return a.normTitle < b.normTitle;
+}
 
 void emitProgress(GfxRenderer& renderer, const Rect& popupRect, int processed, int total) {
   const int denom = total > 0 ? total : 1;
@@ -72,61 +109,37 @@ bool readString(HalFile& file, std::string& out) {
   return file.read(out.data(), len) == static_cast<int>(len);
 }
 
-// Normalize a single char for sort comparison: strip accents then lowercase.
-char normalizeChar(unsigned char c) {
-  // Map common accented uppercase to base uppercase, then lowercase below.
-  switch (c) {
-    case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: return 'a';  // ÀÁÂÃÄÅ
-    case 0xC8: case 0xC9: case 0xCA: case 0xCB: return 'e';  // ÈÉÊË
-    case 0xCC: case 0xCD: case 0xCE: case 0xCF: return 'i';  // ÌÍÎÏ
-    case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: return 'o';  // ÒÓÔÕÖ
-    case 0xD9: case 0xDA: case 0xDB: case 0xDC: return 'u';  // ÙÚÛÜ
-    case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: return 'a';  // àáâãäå
-    case 0xE8: case 0xE9: case 0xEA: case 0xEB: return 'e';  // èéêë
-    case 0xEC: case 0xED: case 0xEE: case 0xEF: return 'i';  // ìíîï
-    case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: return 'o';  // òóôõö
-    case 0xF9: case 0xFA: case 0xFB: case 0xFC: return 'u';  // ùúûü
-    case 0xD1: case 0xF1: return 'n';  // Ññ
-    case 0xC7: case 0xE7: return 'c';  // Çç
-    default: break;
-  }
-  return static_cast<char>(std::tolower(c));
-}
+void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int maxBooks) {
+  // Normalise rootDir: ensure it starts with "/" and does not end with "/"
+  std::string root = rootDir ? rootDir : "";
+  if (root.empty()) root = "/";
+  if (root[0] != '/') root.insert(0, "/");
+  while (root.size() > 1 && root.back() == '/') root.pop_back();
 
-std::string normalizeForSort(const std::string& s) {
-  std::string out;
-  out.reserve(s.size());
-  for (size_t i = 0; i < s.size(); ++i) {
-    out.push_back(normalizeChar(static_cast<unsigned char>(s[i])));
-  }
-  return out;
-}
-
-bool compareRecords(const ScanRecord& a, const ScanRecord& b) {
-  const std::string aa = normalizeForSort(a.author.empty() ? "zzz" : a.author);
-  const std::string ba = normalizeForSort(b.author.empty() ? "zzz" : b.author);
-  if (aa != ba) return aa < ba;
-  return normalizeForSort(a.title) < normalizeForSort(b.title);
-}
-
-void enumerateBooks(std::vector<std::string>& outPaths, int maxBooks) {
   std::vector<std::string> worklist;
-  worklist.reserve(8);
-  worklist.emplace_back("/");
+  worklist.reserve(16);
+  worklist.emplace_back(root);
 
-  while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks * 4) {
+  int dirCount = 0;
+  while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks * 8) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
 
-    HalFile root = Storage.open(folder.c_str());
-    if (!root || !root.isDirectory()) {
-      if (root) root.close();
+    ++dirCount;
+    if ((dirCount & 0x7) == 0) {
+      yield();
+      esp_task_wdt_reset();
+    }
+
+    HalFile rootFile = Storage.open(folder.c_str());
+    if (!rootFile || !rootFile.isDirectory()) {
+      if (rootFile) rootFile.close();
       continue;
     }
-    root.rewindDirectory();
+    rootFile.rewindDirectory();
 
     char name[500];
-    for (HalFile file = root.openNextFile(); file; file = root.openNextFile()) {
+    for (HalFile file = rootFile.openNextFile(); file; file = rootFile.openNextFile()) {
       file.getName(name, sizeof(name));
       const bool isDir = file.isDirectory();
       file.close();
@@ -141,7 +154,7 @@ void enumerateBooks(std::vector<std::string>& outPaths, int maxBooks) {
                     lowerName == "exports")) continue;
 
       std::string childPath = folder;
-      if (childPath.empty() || childPath.back() != '/') childPath.push_back('/');
+      if (childPath.back() != '/') childPath.push_back('/');
       childPath.append(name);
 
       if (isDir) {
@@ -157,7 +170,49 @@ void enumerateBooks(std::vector<std::string>& outPaths, int maxBooks) {
         }
       }
     }
-    root.close();
+    rootFile.close();
+  }
+}
+
+// Helper: extract EPUB metadata, trying the persistent cache first
+// to avoid opening the ZIP when the book was previously read.
+void extractBookMetadata(ScanRecord& rec) {
+  rec.title.clear();
+  rec.author.clear();
+
+  if (FsHelpers::hasEpubExtension(rec.path)) {
+    // B-light: try reading from existing BookMetadataCache first
+    Epub epub(rec.path, "/.crosspoint");
+    const std::string& cacheDir = epub.getCachePath();
+    bool haveMeta = false;
+    if (Storage.exists(cacheDir.c_str())) {
+      BookMetadataCache metaCache(cacheDir);
+      if (metaCache.load()) {
+        rec.title = metaCache.coreMetadata.title;
+        rec.author = metaCache.coreMetadata.author;
+        haveMeta = true;
+      }
+    }
+    // Fallback: full EPUB load (this builds the cache if missing)
+    if (!haveMeta && epub.load(true, true)) {
+      rec.title = epub.getTitle();
+      rec.author = epub.getAuthor();
+    }
+  } else if (FsHelpers::hasXtcExtension(rec.path)) {
+    Xtc xtc(rec.path, "/.crosspoint");
+    if (xtc.load()) {
+      rec.title = xtc.getTitle();
+      rec.author = xtc.getAuthor();
+    }
+  }
+  // TXT/Markdown: no embedded metadata — title will be derived from filename below
+
+  if (rec.title.empty()) {
+    const auto slash = rec.path.find_last_of('/');
+    const auto dot = rec.path.find_last_of('.');
+    const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
+    const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
+    rec.title = rec.path.substr(start, end - start);
   }
 }
 
@@ -287,33 +342,28 @@ bool removeBook(const std::string& path) {
   return save(entries);
 }
 
-bool sync(std::vector<Entry>& out, int maxBooks) {
+bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;
 
-  // Load the existing cache. If missing or corrupt, fall back to full scan
-  // but signal the caller that it must provide a popup.
+  std::string root = rootDir ? rootDir : "";
+  if (root.empty()) root = "/";
+  if (root[0] != '/') root.insert(0, "/");
+  while (root.size() > 1 && root.back() == '/') root.pop_back();
+
   std::vector<Entry> cached;
   if (!load(cached)) {
     LOG_DBG("BSC", "sync: cache not available, falling back to full scan");
-    return false;  // caller must invoke scan() with popup
+    return false;
   }
 
-  // Sort cached entries by path for binary search during SD walk.
-  // The original display order (author/title) is not needed here;
-  // we re-sort at the end anyway.
   std::sort(cached.begin(), cached.end(),
             [](const Entry& a, const Entry& b) { return a.path < b.path; });
 
-  // Walk the SD card on-the-fly — do NOT pre-accumulate sdPaths
-  // (ESP32-C3 has ~320KB RAM; holding cached + all-sd-paths + records
-  //  causes heap exhaustion and crashes).
   std::vector<std::string> worklist;
-  worklist.reserve(8);
-  worklist.emplace_back("/");
+  worklist.reserve(16);
+  worklist.emplace_back(root);
 
-  // Build records directly: start with kept entries, add new ones on-the-fly.
-  // Use ScanRecord (path+title+author) same as scan() for sort compatibility.
   std::vector<ScanRecord> records;
   records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
 
@@ -321,8 +371,8 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
   int added = 0;
   int kept = 0;
   int sdFileCount = 0;
+  int dirCount = 0;
 
-  // Reusable binary-search helper over cached (which is sorted by path)
   auto cachedIndexForPath = [&cached](const std::string& path) -> int {
     const auto it = std::lower_bound(cached.begin(), cached.end(), path,
                                      [](const Entry& e, const std::string& p) { return e.path < p; });
@@ -331,23 +381,27 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
     return -1;
   };
 
-  // Track which cache entries we've already matched to avoid
-  // re-checking `Storage.exists()` for every one.
   std::vector<bool> cachedMatched(cached.size(), false);
 
   while (!worklist.empty() && static_cast<int>(records.size()) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
 
-    HalFile root = Storage.open(folder.c_str());
-    if (!root || !root.isDirectory()) {
-      if (root) root.close();
+    ++dirCount;
+    if ((dirCount & 0x7) == 0) {
+      yield();
+      esp_task_wdt_reset();
+    }
+
+    HalFile rootFile = Storage.open(folder.c_str());
+    if (!rootFile || !rootFile.isDirectory()) {
+      if (rootFile) rootFile.close();
       continue;
     }
-    root.rewindDirectory();
+    rootFile.rewindDirectory();
 
     char name[500];
-    for (HalFile file = root.openNextFile(); file; file = root.openNextFile()) {
+    for (HalFile file = rootFile.openNextFile(); file; file = rootFile.openNextFile()) {
       file.getName(name, sizeof(name));
       const bool isDir = file.isDirectory();
       file.close();
@@ -363,7 +417,7 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
                     lowerName == "exports")) continue;
 
       std::string childPath = folder;
-      if (childPath.empty() || childPath.back() != '/') childPath.push_back('/');
+      if (childPath.back() != '/') childPath.push_back('/');
       childPath.append(name);
 
       if (isDir) {
@@ -379,57 +433,30 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
 
       ++sdFileCount;
 
-      // Check if this file is already in the cache
       const int ci = cachedIndexForPath(childPath);
       if (ci >= 0) {
         cachedMatched[ci] = true;
         ScanRecord rec;
-        rec.path = childPath;  // keep the SD-walk path (no std::move from cached)
+        rec.path = childPath;
         rec.title = cached[ci].title;
         rec.author = cached[ci].author;
+        finalizeRecord(rec);
         records.push_back(std::move(rec));
         ++kept;
       } else {
-        // New book: parse minimal metadata
         ScanRecord rec;
         rec.path = std::move(childPath);
-
-        if (FsHelpers::hasEpubExtension(rec.path)) {
-          Epub epub(rec.path, "/.crosspoint");
-          if (epub.load(true, true)) {
-            rec.title = epub.getTitle();
-            rec.author = epub.getAuthor();
-          }
-        } else if (FsHelpers::hasXtcExtension(rec.path)) {
-          Xtc xtc(rec.path, "/.crosspoint");
-          if (xtc.load()) {
-            rec.title = xtc.getTitle();
-            rec.author = xtc.getAuthor();
-          }
-        } else {
-          rec.title.clear();
-          rec.author.clear();
-        }
-
-        if (rec.title.empty()) {
-          const auto slash = rec.path.find_last_of('/');
-          const auto dot = rec.path.find_last_of('.');
-          const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
-          const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
-          rec.title = rec.path.substr(start, end - start);
-        }
-
+        extractBookMetadata(rec);
+        finalizeRecord(rec);
         records.push_back(std::move(rec));
         ++added;
-        LOG_DBG("BSC", "sync: added new entry: %s", rec.path.c_str());
       }
 
       if (static_cast<int>(records.size()) >= maxBooks) break;
     }
-    root.close();
+    rootFile.close();
   }
 
-  // Detect deletions: cache entries that were NOT found on SD
   for (size_t i = 0; i < cached.size(); ++i) {
     if (!cachedMatched[i]) {
       ++removed;
@@ -437,14 +464,12 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
     }
   }
 
-  // If nothing changed, return cached list (already in records, no re-sort/write needed)
   if (removed == 0 && added == 0) {
     out.swap(cached);
     LOG_DBG("BSC", "sync: no changes detected (%d entries, %d sd files scanned)", kept, sdFileCount);
     return true;
   }
 
-  // Re-sort and persist
   std::sort(records.begin(), records.end(), compareRecords);
 
   out.reserve(records.size());
@@ -462,22 +487,25 @@ bool sync(std::vector<Entry>& out, int maxBooks) {
   return persisted;
 }
 
-bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, int maxBooks) {
+// Full scan: walk SD on-the-fly (no pre-accumulated path vector),
+// parse metadata for every book, sort with pre-normalized keys, persist.
+bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;
 
+  // Count total candidates via a lightweight pass (only string copies, no EPUB parsing)
   std::vector<std::string> paths;
-  paths.reserve(64);
-  enumerateBooks(paths, maxBooks);
-
+  paths.reserve(128);
+  enumerateBooks(paths, rootDir, maxBooks);
   const int totalCandidates = static_cast<int>(paths.size());
+
   emitProgress(renderer, popupRect, 0, totalCandidates);
 
   std::vector<ScanRecord> records;
   records.reserve(std::min<int>(totalCandidates, maxBooks));
 
   int processed = 0;
-  for (const std::string& fullPath : paths) {
+  for (auto& fullPath : paths) {
     ++processed;
     if (static_cast<int>(records.size()) >= maxBooks) {
       if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
@@ -485,42 +513,18 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
     }
 
     ScanRecord rec;
-    rec.path = fullPath;
-
-    if (FsHelpers::hasEpubExtension(fullPath)) {
-      Epub epub(fullPath, "/.crosspoint");
-      if (!epub.load(true, true)) {
-        if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
-        continue;
-      }
-      rec.title = epub.getTitle();
-      rec.author = epub.getAuthor();
-    } else if (FsHelpers::hasXtcExtension(fullPath)) {
-      Xtc xtc(fullPath, "/.crosspoint");
-      if (!xtc.load()) {
-        if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
-        continue;
-      }
-      rec.title = xtc.getTitle();
-      rec.author = xtc.getAuthor();
-    } else {
-      rec.title.clear();
-      rec.author.clear();
-    }
-
-    if (rec.title.empty()) {
-      const auto slash = fullPath.find_last_of('/');
-      const auto dot = fullPath.find_last_of('.');
-      const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
-      const size_t end = (dot == std::string::npos || dot < start) ? fullPath.size() : dot;
-      rec.title = fullPath.substr(start, end - start);
-    }
-
+    rec.path = std::move(fullPath);
+    extractBookMetadata(rec);
+    finalizeRecord(rec);
     records.push_back(std::move(rec));
 
     if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
   }
   emitProgress(renderer, popupRect, totalCandidates, totalCandidates);
+
+  // paths vector can be freed here (it was moved into rec.path)
+  paths.clear();
+  paths.shrink_to_fit();
 
   std::sort(records.begin(), records.end(), compareRecords);
 
