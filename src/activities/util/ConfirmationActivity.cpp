@@ -16,16 +16,18 @@ void ConfirmationActivity::onEnter() {
   const int maxWidth = renderer.getScreenWidth() - (margin * 2);
 
   if (!heading.empty()) {
-    safeHeading = renderer.truncatedText(fontId, heading.c_str(), maxWidth, EpdFontFamily::BOLD);
+    wrappedHeading = renderer.wrappedText(fontId, heading.c_str(), maxWidth, maxLines, EpdFontFamily::BOLD);
   }
   if (!body.empty()) {
     safeBody = renderer.truncatedText(fontId, body.c_str(), maxWidth, EpdFontFamily::REGULAR);
   }
 
-  int totalHeight = 0;
-  if (!safeHeading.empty()) totalHeight += lineHeight;
-  if (!safeBody.empty()) totalHeight += lineHeight;
-  if (!safeHeading.empty() && !safeBody.empty()) totalHeight += spacing;
+  const int headingLineCount = static_cast<int>(wrappedHeading.size());
+  int totalHeight = headingLineCount * lineHeight;
+  if (!safeBody.empty()) {
+    if (headingLineCount > 0) totalHeight += spacing;
+    totalHeight += lineHeight;
+  }
 
   startY = (renderer.getScreenHeight() - totalHeight) / 2;
 
@@ -36,11 +38,14 @@ void ConfirmationActivity::render(RenderLock&& lock) {
   renderer.clearScreen();
 
   int currentY = startY;
-  LOG_DBG("CONF", "currentY: %d", currentY);
-  // Draw Heading
-  if (!safeHeading.empty()) {
-    renderer.drawCenteredText(fontId, currentY, safeHeading.c_str(), true, EpdFontFamily::BOLD);
-    currentY += lineHeight + spacing;
+
+  // Draw Heading (word-wrapped, up to maxLines)
+  for (const auto& line : wrappedHeading) {
+    renderer.drawCenteredText(fontId, currentY, line.c_str(), true, EpdFontFamily::BOLD);
+    currentY += lineHeight;
+  }
+  if (!wrappedHeading.empty() && !safeBody.empty()) {
+    currentY += spacing;
   }
 
   // Draw Body

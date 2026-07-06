@@ -14,8 +14,9 @@ class ConfirmationActivity : public Activity {
   const int margin = 20;
   const int spacing = 30;
   const int fontId = UI_10_FONT_ID;
+  static constexpr int maxLines = 8;
 
-  std::string safeHeading;
+  std::vector<std::string> wrappedHeading;
   std::string safeBody;
   int startY = 0;
   int lineHeight = 0;

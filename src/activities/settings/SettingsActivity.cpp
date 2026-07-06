@@ -48,6 +48,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/LibraryCache.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
@@ -214,6 +215,8 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Enum(StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
                         {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ}),
       SettingInfo::String(StrId::STR_LIBRARY_ROOT_DIR, SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir)),
+      SettingInfo::Action(StrId::STR_REBUILD_LIBRARY, SettingAction::RebuildLibrary),
+      SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers),
       SettingInfo::Section(StrId::STR_SCREENSAVER),
       SettingInfo::String(StrId::STR_SCREENSAVER_DIRECTORY, SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory)),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_ORDER, &CrossPointSettings::screenSaverOrder,
@@ -794,6 +797,76 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::IfFound:
         startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::RebuildLibrary:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_REBUILD_LIBRARY_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                LibraryCache::invalidate();
+                showTransientPopup(tr(STR_REBUILD_LIBRARY_DONE), 100, 350);
+              }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::ClearCorruptCovers:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_CLEAR_CORRUPT_COVERS_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                int removedCount = 0;
+                auto root = Storage.open("/.crosspoint");
+                if (root && root.isDirectory()) {
+                  char name[128];
+                  for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+                    file.getName(name, sizeof(name));
+                    const std::string itemName(name);
+                    file.close();
+
+                    const bool isCacheDir =
+                        itemName.size() > 5 &&
+                        (itemName.compare(0, 5, "epub_") == 0 || itemName.compare(0, 4, "xtc_") == 0 ||
+                         itemName.compare(0, 4, "txt_") == 0);
+                    if (!isCacheDir) continue;
+
+                    std::string dirPath = "/.crosspoint/" + itemName;
+                    auto dir = Storage.open(dirPath.c_str());
+                    if (!dir || !dir.isDirectory()) {
+                      if (dir) dir.close();
+                      continue;
+                    }
+
+                    char fileName[128];
+                    for (auto bmpFile = dir.openNextFile(); bmpFile; bmpFile = dir.openNextFile()) {
+                      bmpFile.getName(fileName, sizeof(fileName));
+                      const std::string fname(fileName);
+                      const size_t len = fname.size();
+                      if (len >= 4 && fname.compare(len - 4, 4, ".bmp") == 0 && bmpFile.fileSize() == 0) {
+                        bmpFile.close();
+                        std::string fullBmpPath = dirPath + "/" + fname;
+                        if (Storage.remove(fullBmpPath.c_str())) {
+                          ++removedCount;
+                          LOG_DBG("CLR_CVR", "Removed corrupt cover: %s", fullBmpPath.c_str());
+                        }
+                        continue;
+                      }
+                      bmpFile.close();
+                    }
+                    dir.close();
+                  }
+                  root.close();
+                }
+
+                char msg[64];
+                if (removedCount > 0) {
+                  std::snprintf(msg, sizeof(msg), "%d %s", removedCount, tr(STR_CORRUPT_COVERS_REMOVED));
+                } else {
+                  std::snprintf(msg, sizeof(msg), "%s", tr(STR_NO_CORRUPT_COVERS));
+                }
+                showTransientPopup(msg, removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
+              }
+              requestUpdate(true);
+            });
         break;
       case SettingAction::None:
         break;
