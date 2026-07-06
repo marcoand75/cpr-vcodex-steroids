@@ -818,7 +818,7 @@ void BaseTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layou
 
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
-                              const bool fillMargin) const {
+                              const bool fillMargin, const char* timeLeftLabel) const {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -878,6 +878,26 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
                         showBatteryPercentage);
   }
 
+  // Draw Time Left label (left of title, CrossInk-style)
+  int timeLeftWidth = 0;
+  int timeLeftEndX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1;
+  if (timeLeftLabel != nullptr && timeLeftLabel[0] != '\0') {
+    timeLeftWidth = renderer.getTextWidth(SMALL_FONT_ID, timeLeftLabel);
+    // Position after battery area if battery is visible (with spacing)
+    int timeLeftX = timeLeftEndX;
+    if (SETTINGS.statusBarBattery) {
+      timeLeftX += metrics.batteryWidth + BaseTheme::batteryPercentSpacing;
+      if (showBatteryPercentage) {
+        const uint16_t percentage = powerManager.getBatteryPercentage();
+        const auto percentageText = std::to_string(percentage) + "%";
+        timeLeftX += renderer.getTextWidth(SMALL_FONT_ID, percentageText.c_str());
+      }
+      timeLeftX += 5;  // spacing between battery and time-left
+    }
+    renderer.drawText(SMALL_FONT_ID, timeLeftX, textY, timeLeftLabel);
+    timeLeftEndX = timeLeftX + timeLeftWidth;
+  }
+
   // Draw Title
   if (!title.empty()) {
     textY -= textYOffset;
@@ -886,8 +906,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     const int rendererableScreenWidth =
         renderer.getScreenWidth() - (metrics.statusBarHorizontalMargin * 2) - orientedMarginLeft - orientedMarginRight;
 
-    const int batterySize = SETTINGS.statusBarBattery ? (showBatteryPercentage ? 50 : 20) : 0;
-    const int titleMarginLeft = batterySize + 30;
+    const int leftContentWidth = timeLeftEndX - metrics.statusBarHorizontalMargin - orientedMarginLeft;
+    const int titleMarginLeft = leftContentWidth + 10;
     const int titleMarginRight = progressTextWidth + 30;
 
     // Attempt to center title on the screen, but if title is too wide then later we will center it within the

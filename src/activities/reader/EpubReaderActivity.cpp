@@ -1676,7 +1676,8 @@ void EpubReaderActivity::renderStatusBar() const {
   }
 
   // Time-left estimate based on per-book reading pace
-  std::string timeLeftStr;
+  const char* timeLeftLabel = nullptr;
+  char timeLeftBuf[32];
   if (SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE &&
       !stableBookId.empty()) {
     const auto* statsBook = READING_STATS.findBook(stableBookId);
@@ -1689,8 +1690,7 @@ void EpubReaderActivity::renderStatusBar() const {
               static_cast<int>(static_cast<float>(section->pageCount * currentSpineIndex + currentPage) * 100.0f /
                                statsBook->lastProgressPercent);
           const int pagesRead = section->pageCount * currentSpineIndex + currentPage;
-          pagesRemaining = static_cast<uint32_t>(
-              std::max(0, totalEstimatedPages - pagesRead));
+          pagesRemaining = static_cast<uint32_t>(std::max(0, totalEstimatedPages - pagesRead));
         }
       } else {
         // Chapter remaining
@@ -1700,32 +1700,23 @@ void EpubReaderActivity::renderStatusBar() const {
       if (pagesRemaining > 0) {
         const uint32_t secondsLeft = pagesRemaining * statsBook->avgSecondsPerForwardPage;
         if (secondsLeft < 60) {
-          timeLeftStr = "< 1 min";
+          snprintf(timeLeftBuf, sizeof(timeLeftBuf), "< 1 min");
         } else {
           const uint32_t minutes = secondsLeft / 60;
           const uint32_t hours = minutes / 60;
           const uint32_t remainingMinutes = minutes % 60;
-          char buf[32];
           if (hours > 0) {
-            snprintf(buf, sizeof(buf), "%uh %um", hours, remainingMinutes);
+            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%uh %um", hours, remainingMinutes);
           } else {
-            snprintf(buf, sizeof(buf), "%u min", minutes);
+            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%u min", minutes);
           }
-          timeLeftStr = buf;
         }
-        if (!timeLeftStr.empty()) {
-          timeLeftStr += " · ";
-        }
+        timeLeftLabel = timeLeftBuf;
       }
     }
   }
 
-  if (!timeLeftStr.empty() && !title.empty()) {
-    timeLeftStr += title;
-    title = std::move(timeLeftStr);
-  }
-
-  GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset);
+  GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, timeLeftLabel);
 }
 
 void EpubReaderActivity::renderSectionLoadFailure() {
