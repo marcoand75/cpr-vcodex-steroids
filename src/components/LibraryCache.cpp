@@ -176,28 +176,40 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
 
 // Helper: extract EPUB metadata, trying the persistent cache first
 // to avoid opening the ZIP when the book was previously read.
-void extractBookMetadata(ScanRecord& rec) {
+// Returns true if metadata was successfully extracted, false on OOM/failure.
+bool extractBookMetadata(ScanRecord& rec) {
   rec.title.clear();
   rec.author.clear();
 
   if (FsHelpers::hasEpubExtension(rec.path)) {
-    // B-light: try reading from existing BookMetadataCache first
-    Epub epub(rec.path, "/.crosspoint");
-    const std::string& cacheDir = epub.getCachePath();
+    // Scope-limit the Epub object so it is destroyed before we move to
+    // the next book, releasing ZIP buffer / page data immediately.
     bool haveMeta = false;
-    if (Storage.exists(cacheDir.c_str())) {
-      BookMetadataCache metaCache(cacheDir);
-      if (metaCache.load()) {
-        rec.title = metaCache.coreMetadata.title;
-        rec.author = metaCache.coreMetadata.author;
-        haveMeta = true;
+    {
+      Epub epub(rec.path, "/.crosspoint");
+      const std::string& cacheDir = epub.getCachePath();
+      if (Storage.exists(cacheDir.c_str())) {
+        BookMetadataCache metaCache(cacheDir);
+        if (metaCache.load()) {
+          rec.title = metaCache.coreMetadata.title;
+          rec.author = metaCache.coreMetadata.author;
+          haveMeta = true;
+        }
       }
-    }
-    // Fallback: full EPUB load (this builds the cache if missing)
-    if (!haveMeta && epub.load(true, true)) {
-      rec.title = epub.getTitle();
-      rec.author = epub.getAuthor();
-    }
+      // Fallback: full EPUB load (this builds the cache if missing).
+      // Skip if free heap is critically low to avoid OOM crash.
+      if (!haveMeta) {
+        if (ESP.getFreeHeap() < 45000) {
+          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 45 KB)", rec.path.c_str(), ESP.getFreeHeap());
+          return false;
+        }
+        if (epub.load(true, true)) {
+          rec.title = epub.getTitle();
+          rec.author = epub.getAuthor();
+          haveMeta = true;
+        }
+      }
+    }  // Epub destroyed here
   } else if (FsHelpers::hasXtcExtension(rec.path)) {
     Xtc xtc(rec.path, "/.crosspoint");
     if (xtc.load()) {
@@ -214,6 +226,7 @@ void extractBookMetadata(ScanRecord& rec) {
     const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
     rec.title = rec.path.substr(start, end - start);
   }
+  return true;
 }
 
 }  // namespace
@@ -511,6 +524,11 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
       if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
       continue;
     }
+
+    // Yield and reset WDT before parsing each book, since EPUB load
+    // can be both memory-heavy and slow on the ESP32-C3 (~380 KB heap).
+    yield();
+    esp_task_wdt_reset();
 
     ScanRecord rec;
     rec.path = std::move(fullPath);
