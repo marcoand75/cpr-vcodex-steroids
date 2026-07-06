@@ -437,6 +437,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
            CrossPointSettings::STATUS_BAR_PROGRESS_BAR_THICKNESS_COUNT);
   loadEnum("statusBarTitle", s.statusBarTitle, CrossPointSettings::STATUS_BAR_TITLE_COUNT);
   loadToggle("statusBarBattery", s.statusBarBattery);
+  loadEnum("statusBarTimeLeft", s.statusBarTimeLeft, CrossPointSettings::STATUS_BAR_TIME_LEFT_COUNT);
   loadEnum("xtcStatusBarMode", s.xtcStatusBarMode, CrossPointSettings::XTC_STATUS_BAR_MODE_COUNT);
 
   using S = CrossPointSettings;
@@ -841,6 +842,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["statusBarProgressBarThickness"] = s.statusBarProgressBarThickness;
   doc["statusBarTitle"] = s.statusBarTitle;
   doc["statusBarBattery"] = s.statusBarBattery;
+  doc["statusBarTimeLeft"] = s.statusBarTimeLeft;
   doc["xtcStatusBarMode"] = s.xtcStatusBarMode;
 
   // Front button remap - managed by RemapFrontButtons sub-activity, not in SettingsList.
@@ -1395,6 +1397,10 @@ bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore& store, const char
     obj["lastProgressPercent"] = book.lastProgressPercent;
     obj["chapterProgressPercent"] = book.chapterProgressPercent;
     obj["completed"] = book.completed;
+    if (book.avgSecondsPerForwardPage > 0) {
+      obj["avgSecondsPerForwardPage"] = book.avgSecondsPerForwardPage;
+      obj["paceSampleCount"] = book.paceSampleCount;
+    }
 
     JsonArray bookDays = obj["readingDays"].to<JsonArray>();
     for (const auto& day : book.readingDays) {
@@ -1493,6 +1499,8 @@ bool JsonSettingsIO::loadReadingStats(ReadingStatsStore& store, const char* json
     book.lastProgressPercent = obj["lastProgressPercent"] | static_cast<uint8_t>(0);
     book.chapterProgressPercent = obj["chapterProgressPercent"] | static_cast<uint8_t>(0);
     book.completed = obj["completed"] | false;
+    book.avgSecondsPerForwardPage = obj["avgSecondsPerForwardPage"] | static_cast<uint16_t>(0);
+    book.paceSampleCount = obj["paceSampleCount"] | static_cast<uint16_t>(0);
     if (formatVersion >= 2) {
       appendReadingDays(book.readingDays, obj["readingDays"].as<JsonArray>());
     }

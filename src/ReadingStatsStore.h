@@ -31,6 +31,10 @@ struct ReadingBookStats {
   uint8_t lastProgressPercent = 0;
   uint8_t chapterProgressPercent = 0;
   bool completed = false;
+
+  // Per-book reading pace for time-left estimates
+  uint16_t avgSecondsPerForwardPage = 0;
+  uint16_t paceSampleCount = 0;
 };
 
 struct ReadingSessionSnapshot {
@@ -179,6 +183,7 @@ class ReadingStatsStore {
   uint32_t getDisplayTimestamp(bool* usedFallback = nullptr) const;
   bool hasReadingDays() const { return !readingDays.empty(); }
 
+  void recordForwardPageRead(const std::string& bookId, uint32_t seconds);
   void reset();
   bool exportToFile(const std::string& path) const;
   bool importFromFile(const std::string& path);

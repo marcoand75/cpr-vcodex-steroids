@@ -541,8 +541,40 @@ void ReadingStatsStore::mergeBookInto(ReadingBookStats& primary, const ReadingBo
     primary.chapterProgressPercent = std::max(primary.chapterProgressPercent, duplicate.chapterProgressPercent);
   }
   primary.completed = primary.completed || duplicate.completed;
+
+  // Merge reading pace data: prefer the entry with more samples
+  if (duplicate.paceSampleCount > primary.paceSampleCount) {
+    primary.avgSecondsPerForwardPage = duplicate.avgSecondsPerForwardPage;
+    primary.paceSampleCount = duplicate.paceSampleCount;
+  }
+
   primary.readingDays.insert(primary.readingDays.end(), duplicate.readingDays.begin(), duplicate.readingDays.end());
   normalizeReadingDays(primary.readingDays);
+}
+
+void ReadingStatsStore::recordForwardPageRead(const std::string& bookId, const uint32_t seconds) {
+  if (bookId.empty() || seconds == 0) return;
+
+  const size_t index = findBookIndexByBookId(bookId);
+  if (index >= books.size()) return;
+
+  auto& book = books[index];
+  const uint16_t sample = static_cast<uint16_t>(std::min<uint32_t>(seconds, UINT16_MAX));
+
+  if (book.paceSampleCount == 0) {
+    book.avgSecondsPerForwardPage = sample;
+    book.paceSampleCount = 1;
+  } else {
+    constexpr uint16_t kMaxPaceSamples = 1000;
+    // Weighted average: new_sample = ceiling((old_avg * count + new) / (count + 1))
+    uint32_t total = static_cast<uint32_t>(book.avgSecondsPerForwardPage) * book.paceSampleCount + sample;
+    uint32_t newCount = book.paceSampleCount + 1;
+    book.avgSecondsPerForwardPage = static_cast<uint16_t>((total + newCount - 1) / newCount);
+    if (newCount <= kMaxPaceSamples) {
+      book.paceSampleCount = static_cast<uint16_t>(newCount);
+    }
+  }
+  markDirty();
 }
 
 void ReadingStatsStore::normalizeBook(ReadingBookStats& book) {

@@ -1192,7 +1192,17 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
   if (currentSpineIndex != oldSpineIndex || newPage != oldPage) {
     sessionProgressTouched = true;
   }
-  lastPageTurnTime = millis();
+  const unsigned long nowMs = millis();
+  // Track reading pace for time-left estimates on forward page turns
+  if (isForwardTurn && lastPageTurnTime > 0) {
+    const unsigned long durationMs = nowMs - lastPageTurnTime;
+    // Only count page turns within reasonable reading pace (ignore idle pauses)
+    constexpr unsigned long kPaceIdleThresholdMs = 180UL * 1000UL;
+    if (durationMs > 0 && durationMs < kPaceIdleThresholdMs) {
+      READING_STATS.recordForwardPageRead(stableBookId, static_cast<uint32_t>(durationMs / 1000UL));
+    }
+  }
+  lastPageTurnTime = nowMs;
   requestUpdate();
 }
 
@@ -1663,6 +1673,56 @@ void EpubReaderActivity::renderStatusBar() const {
 
   } else if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
     title = epub->getTitle();
+  }
+
+  // Time-left estimate based on per-book reading pace
+  std::string timeLeftStr;
+  if (SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE &&
+      !stableBookId.empty()) {
+    const auto* statsBook = READING_STATS.findBook(stableBookId);
+    if (statsBook && statsBook->avgSecondsPerForwardPage > 0 && statsBook->lastProgressPercent < 100) {
+      uint32_t pagesRemaining = 0;
+      if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK) {
+        // Estimate total book pages based on progress
+        if (statsBook->lastProgressPercent > 0) {
+          const int totalEstimatedPages =
+              static_cast<int>(static_cast<float>(section->pageCount * currentSpineIndex + currentPage) * 100.0f /
+                               statsBook->lastProgressPercent);
+          const int pagesRead = section->pageCount * currentSpineIndex + currentPage;
+          pagesRemaining = static_cast<uint32_t>(
+              std::max(0, totalEstimatedPages - pagesRead));
+        }
+      } else {
+        // Chapter remaining
+        pagesRemaining = static_cast<uint32_t>(std::max(0.0f, pageCount - currentPage));
+      }
+
+      if (pagesRemaining > 0) {
+        const uint32_t secondsLeft = pagesRemaining * statsBook->avgSecondsPerForwardPage;
+        if (secondsLeft < 60) {
+          timeLeftStr = "< 1 min";
+        } else {
+          const uint32_t minutes = secondsLeft / 60;
+          const uint32_t hours = minutes / 60;
+          const uint32_t remainingMinutes = minutes % 60;
+          char buf[32];
+          if (hours > 0) {
+            snprintf(buf, sizeof(buf), "%uh %um", hours, remainingMinutes);
+          } else {
+            snprintf(buf, sizeof(buf), "%u min", minutes);
+          }
+          timeLeftStr = buf;
+        }
+        if (!timeLeftStr.empty()) {
+          timeLeftStr += " · ";
+        }
+      }
+    }
+  }
+
+  if (!timeLeftStr.empty() && !title.empty()) {
+    timeLeftStr += title;
+    title = std::move(timeLeftStr);
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset);

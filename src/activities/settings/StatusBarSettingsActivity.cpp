@@ -11,12 +11,13 @@
 #include "fontIds.h"
 
 namespace {
-constexpr int MENU_ITEMS = 7;
+constexpr int MENU_ITEMS = 8;
 const StrId menuNames[MENU_ITEMS] = {StrId::STR_CHAPTER_PAGE_COUNT,
                                      StrId::STR_BOOK_PROGRESS_PERCENTAGE,
                                      StrId::STR_PROGRESS_BAR,
                                      StrId::STR_PROGRESS_BAR_THICKNESS,
                                      StrId::STR_TITLE,
+                                     StrId::STR_TIME_LEFT,
                                      StrId::STR_BATTERY,
                                      StrId::STR_XTC_STATUS_BAR};
 constexpr int PROGRESS_BAR_ITEMS = 3;
@@ -53,6 +54,10 @@ void StatusBarSettingsActivity::onEnter() {
 
   if (SETTINGS.statusBarTitle >= TITLE_ITEMS) {
     SETTINGS.statusBarTitle = CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE;
+  }
+
+  if (SETTINGS.statusBarTimeLeft >= CrossPointSettings::STATUS_BAR_TIME_LEFT_COUNT) {
+    SETTINGS.statusBarTimeLeft = CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE;
   }
 
   if (SETTINGS.xtcStatusBarMode >= XTC_STATUS_BAR_ITEMS) {
@@ -116,9 +121,12 @@ void StatusBarSettingsActivity::handleSelection() {
     // Chapter Title
     SETTINGS.statusBarTitle = (SETTINGS.statusBarTitle + 1) % TITLE_ITEMS;
   } else if (selectedIndex == 5) {
+    // Time Left
+    SETTINGS.statusBarTimeLeft = (SETTINGS.statusBarTimeLeft + 1) % CrossPointSettings::STATUS_BAR_TIME_LEFT_COUNT;
+  } else if (selectedIndex == 6) {
     // Show Battery
     SETTINGS.statusBarBattery = (SETTINGS.statusBarBattery + 1) % 2;
-  } else if (selectedIndex == 6) {
+  } else if (selectedIndex == 7) {
     // XTC Status Bar
     SETTINGS.xtcStatusBarMode = (SETTINGS.xtcStatusBarMode + 1) % XTC_STATUS_BAR_ITEMS;
   }
@@ -153,8 +161,11 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
         } else if (index == 4) {
           return I18N.get(titleNames[SETTINGS.statusBarTitle]);
         } else if (index == 5) {
-          return SETTINGS.statusBarBattery ? tr(STR_SHOW) : tr(STR_HIDE);
+          const StrId timeLeftNames[] = {StrId::STR_HIDE, StrId::STR_CHAPTER, StrId::STR_BOOK};
+          return I18N.get(timeLeftNames[SETTINGS.statusBarTimeLeft]);
         } else if (index == 6) {
+          return SETTINGS.statusBarBattery ? tr(STR_SHOW) : tr(STR_HIDE);
+        } else if (index == 7) {
           return I18N.get(xtcStatusBarNames[SETTINGS.xtcStatusBarMode]);
         } else {
           return tr(STR_HIDE);
