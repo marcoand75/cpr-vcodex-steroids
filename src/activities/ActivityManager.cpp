@@ -264,9 +264,10 @@ void ActivityManager::goToKOReaderSync() {
     goHome();
     return;
   }
-  replaceActivity(std::make_unique<KOReaderSyncActivity>(renderer, mappedInput, sync.epubPath, sync.spineIndex,
-                                                         sync.page, sync.totalPagesInSpine, sync.paragraphIndex,
-                                                         sync.hasParagraphIndex, sync.xhtmlSeekHint, sync.intent));
+  replaceActivity(std::make_unique<KOReaderSyncActivity>(
+      renderer, mappedInput, sync.epubPath, sync.spineIndex, sync.page, sync.totalPagesInSpine, sync.paragraphIndex,
+      sync.hasParagraphIndex, sync.xhtmlSeekHint, sync.intent, sync.hasLocalKoReaderPosition,
+      KOReaderPosition{sync.localKoReaderProgress, sync.localKoReaderPercentage}, sync.localChapterLabel));
 }
 
 void ActivityManager::goToEpubBookmark(std::string path, const int spineIndex, const uint32_t page) {

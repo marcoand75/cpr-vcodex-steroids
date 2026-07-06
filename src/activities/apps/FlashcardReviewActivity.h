@@ -11,10 +11,13 @@ class FlashcardReviewActivity final : public Activity {
   FlashcardDeck deck;
   std::vector<FlashcardCardProgress> progress;
   std::vector<int> queue;
+  FlashcardCard activeCard;
   size_t queueIndex = 0;
+  int activeCardIndex = -1;
   int initialSessionSize = 0;
   bool showBack = false;
   bool loaded = false;
+  bool activeCardLoaded = false;
   std::string errorMessage;
   GfxRenderer::Orientation originalOrientation = GfxRenderer::Orientation::Portrait;
   bool orientationApplied = false;
@@ -29,6 +32,7 @@ class FlashcardReviewActivity final : public Activity {
   void loadDeckData();
   void finishWithSummary();
   bool isCurrentCardUnseen() const;
+  bool ensureCurrentCardLoaded();
   FlashcardCardProgress& currentProgress();
   const FlashcardCard& currentCard() const;
   void goToNextCard();

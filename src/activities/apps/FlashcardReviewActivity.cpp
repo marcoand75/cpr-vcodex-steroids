@@ -19,8 +19,28 @@ struct WrappedCardBody {
   bool fits = true;
 };
 
+constexpr size_t MAX_FLASHCARD_RENDER_TEXT_BYTES = 4096;
+
 bool hasValue(const std::vector<std::string>& values, const std::string& key) {
   return std::find(values.begin(), values.end(), key) != values.end();
+}
+
+size_t utf8SafePrefixLength(const std::string& text, size_t limit) {
+  if (limit >= text.size()) {
+    return text.size();
+  }
+
+  while (limit > 0 && (static_cast<unsigned char>(text[limit]) & 0xC0U) == 0x80U) {
+    --limit;
+  }
+  return limit;
+}
+
+std::string clippedCardTextForRender(const std::string& text) {
+  const size_t limit = utf8SafePrefixLength(text, MAX_FLASHCARD_RENDER_TEXT_BYTES);
+  std::string clipped = text.substr(0, limit);
+  clipped += "...";
+  return clipped;
 }
 
 void drawReviewHeaderHints(GfxRenderer& renderer, const ThemeMetrics& metrics, const int pageWidth) {
@@ -174,11 +194,18 @@ void FlashcardReviewActivity::loadDeckData() {
     return;
   }
 
-  FLASHCARDS.loadDeckProgress(deck, progress);
+  if (!FLASHCARDS.loadDeckProgress(deck, progress, &errorMessage)) {
+    loaded = false;
+    deck.cards.clear();
+    return;
+  }
   const FlashcardDeckMetrics metrics = FLASHCARDS.buildMetrics(deck, progress);
   FLASHCARDS.registerDeckOpened(deck, metrics);
   queue = FLASHCARDS.buildSessionQueue(deck, progress);
   initialSessionSize = static_cast<int>(queue.size());
+  activeCard = {};
+  activeCardIndex = -1;
+  activeCardLoaded = false;
   loaded = true;
 }
 
@@ -192,10 +219,36 @@ bool FlashcardReviewActivity::isCurrentCardUnseen() const {
 
 FlashcardCardProgress& FlashcardReviewActivity::currentProgress() { return progress[queue[queueIndex]]; }
 
-const FlashcardCard& FlashcardReviewActivity::currentCard() const { return deck.cards[queue[queueIndex]]; }
+bool FlashcardReviewActivity::ensureCurrentCardLoaded() {
+  if (queueIndex >= queue.size()) {
+    return false;
+  }
+
+  const int cardIndex = queue[queueIndex];
+  if (activeCardLoaded && activeCardIndex == cardIndex) {
+    return true;
+  }
+
+  if (!FLASHCARDS.loadDeckCard(deck, cardIndex, activeCard, &errorMessage)) {
+    activeCard = {};
+    activeCardIndex = -1;
+    activeCardLoaded = false;
+    loaded = false;
+    return false;
+  }
+
+  activeCardIndex = cardIndex;
+  activeCardLoaded = true;
+  return true;
+}
+
+const FlashcardCard& FlashcardReviewActivity::currentCard() const { return activeCard; }
 
 void FlashcardReviewActivity::goToNextCard() {
   showBack = false;
+  activeCard = {};
+  activeCardIndex = -1;
+  activeCardLoaded = false;
   const int sessionHandled = sessionReviewed + sessionSkipped;
   if (SETTINGS.flashcardStudyMode != CrossPointSettings::FLASHCARD_STUDY_INFINITE && initialSessionSize > 0 &&
       sessionHandled >= initialSessionSize) {
@@ -381,6 +434,15 @@ void FlashcardReviewActivity::render(RenderLock&&) {
     return;
   }
 
+  if (!ensureCurrentCardLoaded()) {
+    HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FLASHCARDS), tr(STR_OPEN));
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10,
+                              errorMessage.empty() ? tr(STR_FLASHCARDS_INVALID_DECK) : errorMessage.c_str());
+    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 18, tr(STR_BACK));
+    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    return;
+  }
+
   const bool showSessionProgress = SETTINGS.flashcardStudyMode != CrossPointSettings::FLASHCARD_STUDY_INFINITE;
   const int sessionHandled = sessionReviewed + sessionSkipped;
   const int completedCards = std::clamp(sessionHandled, 0, initialSessionSize);
@@ -406,12 +468,18 @@ void FlashcardReviewActivity::render(RenderLock&&) {
   const std::string sideLabel = showBack ? tr(STR_CARD_BACK) : tr(STR_CARD_FRONT);
   renderer.drawText(SMALL_FONT_ID, cardX + 10, cardY + 10, sideLabel.c_str(), true, EpdFontFamily::BOLD);
 
-  const std::string bodyText = showBack ? currentCard().back : currentCard().front;
+  const std::string& sourceText = showBack ? currentCard().back : currentCard().front;
+  std::string clippedText;
+  const std::string* bodyText = &sourceText;
+  if (sourceText.size() > MAX_FLASHCARD_RENDER_TEXT_BYTES) {
+    clippedText = clippedCardTextForRender(sourceText);
+    bodyText = &clippedText;
+  }
   const int textWidth = cardWidth - 24;
   const int textTop = cardY + 34;
   const int textHeight = cardHeight - 50;
   const EpdFontFamily::Style bodyStyle = showBack ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
-  const auto fitted = fitCardBody(renderer, readerFontId, bodyText, textWidth, textHeight, bodyStyle);
+  const auto fitted = fitCardBody(renderer, readerFontId, *bodyText, textWidth, textHeight, bodyStyle);
   int textY = textTop + std::max(0, (textHeight - static_cast<int>(fitted.lines.size()) * fitted.lineHeight) / 2);
   for (const auto& line : fitted.lines) {
     renderer.drawText(fitted.fontId, cardX + 12, textY, line.c_str(), true, bodyStyle);

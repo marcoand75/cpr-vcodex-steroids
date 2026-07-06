@@ -138,12 +138,8 @@ MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const
   sanitized[2] = previous ? previous : "";
   sanitized[3] = next ? next : "";
 
-  const bool swapLabels =
-      SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
-                                                SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
-  const char* leftLabel = swapLabels ? sanitized[3].c_str() : sanitized[2].c_str();
-  const char* rightLabel = swapLabels ? sanitized[2].c_str() : sanitized[3].c_str();
-
+  // Generic UI navigation is not orientation-swapped; reader page turns handle
+  // their own orientation-aware mapping in ReaderUtils::detectPageTurn().
   auto labelForHardware = [&](uint8_t hw) -> const char* {
     if (hw == SETTINGS.frontButtonBack) {
       return sanitized[0].c_str();
@@ -152,10 +148,10 @@ MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const
       return sanitized[1].c_str();
     }
     if (hw == SETTINGS.frontButtonLeft) {
-      return leftLabel;
+      return sanitized[2].c_str();
     }
     if (hw == SETTINGS.frontButtonRight) {
-      return rightLabel;
+      return sanitized[3].c_str();
     }
     return "";
   };

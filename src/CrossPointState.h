@@ -36,6 +36,10 @@ struct KOReaderSyncSessionState {
   uint16_t paragraphIndex = 0;
   bool hasParagraphIndex = false;
   uint32_t xhtmlSeekHint = 0;
+  bool hasLocalKoReaderPosition = false;
+  std::string localKoReaderProgress;
+  float localKoReaderPercentage = 0.0f;
+  std::string localChapterLabel;
   KOReaderSyncIntentState intent = KOReaderSyncIntentState::COMPARE;
   KOReaderSyncOutcomeState outcome = KOReaderSyncOutcomeState::NONE;
   int resultSpineIndex = 0;

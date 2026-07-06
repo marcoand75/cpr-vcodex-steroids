@@ -38,15 +38,6 @@ bool FlashcardRecentsActivity::openSelectedDeck() {
   }
 
   const auto selectedDeck = decks[selectedIndex];
-  FlashcardDeck deck;
-  std::string error;
-  if (!FLASHCARDS.loadDeck(selectedDeck.path, deck, &error)) {
-    transientMessage = error.empty() ? tr(STR_FLASHCARDS_INVALID_DECK) : error;
-    transientUntilMs = millis() + 1500;
-    requestUpdate(true);
-    return false;
-  }
-
   startActivityForResult(std::make_unique<FlashcardReviewActivity>(renderer, mappedInput, selectedDeck.path),
                          [this](const ActivityResult& result) {
                            reloadDecks();

@@ -2,6 +2,7 @@
 #include <Epub.h>
 
 #include <memory>
+#include <string>
 
 #include "CrossPointState.h"
 #include "KOReaderSyncClient.h"
@@ -34,9 +35,12 @@
 class KOReaderSyncActivity final : public Activity {
  public:
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
-                                int currentSpineIndex, int currentPage, int totalPagesInSpine,
-                                uint16_t paragraphIndex = 0, bool hasParagraphIndex = false, uint32_t xhtmlSeekHint = 0,
-                                KOReaderSyncIntentState syncIntent = KOReaderSyncIntentState::COMPARE)
+                                 int currentSpineIndex, int currentPage, int totalPagesInSpine,
+                                 uint16_t paragraphIndex = 0, bool hasParagraphIndex = false, uint32_t xhtmlSeekHint = 0,
+                                 KOReaderSyncIntentState syncIntent = KOReaderSyncIntentState::COMPARE,
+                                 bool hasPrecomputedLocalProgress = false,
+                                 const KOReaderPosition& precomputedLocalProgress = KOReaderPosition{},
+                                 const std::string& precomputedLocalChapterLabel = std::string())
       : Activity("KOReaderSync", renderer, mappedInput),
         epubPath(epubPath),
         currentSpineIndex(currentSpineIndex),
@@ -48,7 +52,9 @@ class KOReaderSyncActivity final : public Activity {
         syncIntent(syncIntent),
         remoteProgress{},
         remotePosition{},
-        localProgress{} {}
+        hasLocalProgress(hasPrecomputedLocalProgress && !precomputedLocalProgress.xpath.empty()),
+        localProgress(hasLocalProgress ? precomputedLocalProgress : KOReaderPosition{}),
+        localChapterLabel(hasLocalProgress ? precomputedLocalChapterLabel : std::string()) {}
 
   void onEnter() override;
   void onExit() override;
@@ -91,6 +97,7 @@ class KOReaderSyncActivity final : public Activity {
   CrossPointPosition remotePosition;
 
   // Local progress as KOReader format (for display)
+  bool hasLocalProgress = false;
   KOReaderPosition localProgress;
   std::string remoteChapterLabel;
   std::string localChapterLabel;

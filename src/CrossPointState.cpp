@@ -28,6 +28,10 @@ void KOReaderSyncSessionState::clear() {
   paragraphIndex = 0;
   hasParagraphIndex = false;
   xhtmlSeekHint = 0;
+  hasLocalKoReaderPosition = false;
+  localKoReaderProgress.clear();
+  localKoReaderPercentage = 0.0f;
+  localChapterLabel.clear();
   intent = KOReaderSyncIntentState::COMPARE;
   outcome = KOReaderSyncOutcomeState::NONE;
   resultSpineIndex = 0;

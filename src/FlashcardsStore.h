@@ -106,7 +106,10 @@ class FlashcardsStore {
   bool loadFromFile();
 
   bool loadDeck(const std::string& path, FlashcardDeck& deck, std::string* error = nullptr) const;
-  bool loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress) const;
+  bool loadDeckCard(const FlashcardDeck& deck, int cardIndex, FlashcardCard& card,
+                    std::string* error = nullptr) const;
+  bool loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress,
+                        std::string* error = nullptr) const;
   bool saveDeckProgress(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress);
 
   FlashcardDeckMetrics buildMetrics(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress) const;

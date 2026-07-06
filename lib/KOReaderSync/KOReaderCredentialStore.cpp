@@ -136,13 +136,22 @@ std::string KOReaderCredentialStore::getMd5Password() const {
     return "";
   }
 
-  // Calculate MD5 hash of password using ESP32's MD5Builder
   MD5Builder md5;
   md5.begin();
-  md5.add(password.c_str());
+  md5.add(reinterpret_cast<const uint8_t*>(password.data()), password.size());
   md5.calculate();
 
-  return md5.toString().c_str();
+  uint8_t digest[16];
+  md5.getBytes(digest);
+
+  char hex[33];
+  constexpr char HEX_DIGITS[] = "0123456789abcdef";
+  for (size_t i = 0; i < sizeof(digest); ++i) {
+    hex[i * 2] = HEX_DIGITS[digest[i] >> 4];
+    hex[i * 2 + 1] = HEX_DIGITS[digest[i] & 0x0F];
+  }
+  hex[32] = '\0';
+  return std::string(hex);
 }
 
 bool KOReaderCredentialStore::hasCredentials() const { return !username.empty() && !password.empty(); }

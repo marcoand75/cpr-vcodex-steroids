@@ -16,171 +16,41 @@
   <img src="./docs/images/screenshots.png" alt="CPR-vCodex overview" width="1000" />
 </p>
 
-## What's different in CPR-vCodex Steroids
+## What's different in this fork
 
-This fork builds on top of CPR-vCodex (up to `1.3.0.30`), inheriting **all** upstream features: reading analytics suite (stats, heatmaps, day detail, reading profile, goals, streaks, achievements), Sync Day, dictionary support, flashcards, bookmarks, SD-card fonts, KOReader Sync, Bionic Reading, dark mode, and more.  
+My goal with this fork was to preserve CrossPoint experience while expanding the firmware around long-term reading engagement and personalization.
 
-On top of that, Steroids adds a substantial set of original features:
+Unlike a complete rewrite, CPR-vCodex intentionally stays close to the upstream CrossPoint project and only carries forward additions or upstream changes that are stable and safe enough for daily reading.
 
----
+Some of the main additions include:
 
-### 📚 Full E-Book Library
+- full reading analytics: reading stats, heatmaps, day detail, reading profile, session history, goals, streaks, and achievements
+- Sync Day support for reliable offline day-based statistics on hardware without a trustworthy sleep RTC
+- per-book statistics tools, including reading-time correction, start-date editing, and per-book stats reset
+- StarDict dictionary support from the SD card, with selectable monolingual and translation dictionaries, per-language folders, reader word lookup, suggestions, and lookup history
+- offline Flashcards with CSV decks, multiple study modes, recents, stats, and session summaries
+- EPUB bookmarks with explicit reader-menu actions plus a global bookmarks app
+- customizable Home and Apps shortcuts, reader quick settings, reading layouts, themes, and Lyra Carousel workflow improvements
+- enhanced sleep tools, including custom image directories, cover/custom stats screens, sleep previews, cached sleep frames, and configurable clean sleep refresh
+- downloadable and manually installable SD-card fonts, including vCodex-only families such as `ChareInk`
+- Screen Clean, SD firmware update, Auto Flash, reading stats editor, and other maintenance/workflow utilities
+- KOReader Sync, OPDS filename options, reader refresh controls, Bionic Reading, text darkness, dark mode, and other reader quality-of-life settings
+- carefully selected upstream CrossPoint improvements and fixes adapted without dropping vCodex-specific behavior
 
-A complete library browser with grid-based navigation, replaceable covers, and smart content discovery — the biggest addition to this fork.
-
-- **Configurable grid layout** — 3×3, 4×3, 6×3, or 8×3 columns, adjustable from Settings
-- **Per-page thumbnail generation** — covers are rendered at exact cell size in discrete pages, with progress bar and "Indexing…" popup
-- **Binary metadata cache** (`LibraryCache`) — fast library re-open by caching parsed metadata on SD, with per-book invalidation on cover deletion
-- **Format support** — EPUB, XTC, TXT, and Markdown files
-- **Accent-insensitive sorting** — titles sort naturally regardless of diacritics
-- **Content filters** — toggle between **All Books**, **Favourites**, and **Latest Read** with a live header indicator showing the active filter
-- **Search & incremental indexing** — text filtering across the scanned library with render deduplication
-- **Cover placeholders** — books with missing or unreadable covers show a styled placeholder instead of a blank cell
-- **Incremental startup sync** — on-the-fly SD card walk on boot detects new/removed books without a full rescan
-- **Configurable library root** — choose which SD directory to scan (default: root), with STRING-type setting support added to the on-device SettingsActivity
-- **Cover management** — delete individual cover thumbnails, all covers on the current page, or wipe the entire cover cache; covers regenerate automatically on the next page view
-
-### 📖 Book Context Menu & Metadata Viewer
-
-A rich 9–12 item contextual menu available on long-press from both the Home Lyra Carousel and the Library grid.
-
-- **Open book** — opens the selected ebook directly
-- **Reading Stats** — navigates to per-book reading statistics
-- **View Metadata** — dedicated metadata viewer showing title, author, publisher, date, identifier, subject, language, and description (parsed from EPUB OPF)
-- **Add/Remove from Favorites** — toggles favorite status
-- **Mark as finished / not finished** — toggles completion state via reading stats
-- **Delete Book Cache** (EPUB only) — clears the EPUB cache directory
-- **Delete cover thumbnail** — removes the selected book's library cover
-- **Delete page covers** — removes all covers on the current grid page
-- **Delete all library covers** — wipes the entire cover cache directory
-- **Reindex Library** — forces a full library rescan
-- **Clear theme cache** — deletes all `*.bin` files from the carousel cache directory
-- **Filter switching** — quickly change library filter (All / Favourites / Latest Read) from the menu
-
-The metadata viewer parses additional EPUB OPF fields: `dc:publisher`, `dc:description`, `dc:date`, `dc:identifier`, `dc:subject`, `dc:rights`, `dc:contributor`.
-
-### 🎨 Lyra Carousel & Theme Enhancements
-
-Substantial visual and informational improvements to the Lyra Carousel home theme and its variants.
-
-#### Cyber-style Data Panel (LyraCarouselTheme)
-- **Detailed book info panel** replacing the simple title/author text below covers
-- Layout: title + author, scanline separator, two-column data grid:
-  - **Book**: Time, Sessions, Progress, ETA
-  - **Stats**: Today, Goal, Streak, Finished
-- **Segment progress bar** at panel bottom, or **COMPLETED** label for finished books
-- Increased column gaps, panel height, and internal row spacing for balanced e-ink rendering
-- Wider progress bar segments (8px → 14px)
-- All data panel labels use i18n (`STR_HOME_PANEL_*` keys, English + Italian; other 21 languages fall back to English)
-- Configurable book count — shows ALL books on homepage
-
-#### Estimated Reading Time
-- **Remaining time estimate** appended to progress badges on all Lyra-based themes (e.g. `"35% ~2h 15m"`)
-- Uses the same reading stats logic as the analytics screen
-- Requires at least 10 minutes of reading and 5% progress before showing
-- Rounds to 5-minute increments for clean display
-- Present on: LyraCarouselTheme (center cover badge, redrawn every frame), LyraTheme, and LyraCustomTheme (beside progress bar)
-
-#### Priority Ribbon Badges on Covers
-- **Completed ribbon** — black triangle top-right with white checkmark for finished books
-- **Favorite ribbon** — black triangle top-left with white heart
-- **Opened indicator** — black bottom band with two white dots for previously opened books
-- Badges scaled (22px → 36px triangles, 8px → 12px band) for e-ink visibility
-
-#### LyraMarcoand75 Custom Theme
-- A distinct theme variant with its own cover sizing, styling, and badge placement
-- Theme-aware cover generation — each theme variant gets its own cached covers
-- **Separate carousel cache per theme** — cache directories are now theme-specific, preventing cross-theme cache corruption
-
-#### Theme Cache Management
-- Long-press context menu item to **Clear theme cache** (available in both Home and Library)
-- Deletes all `*.bin` files from `/.crosspoint/home-carousel-cache/`
-- Invalidates resident carousel frame and frame hash for immediate regeneration
-
-### 🛡️ E-Ink Screensaver
-
-A dedicated low-power screensaver app with battery-protection features.
-
-- **Automatic sleep bypass** — screensaver mode keeps the display refreshed without triggering full sleep cycles
-- **Battery-protection deep sleep** — engages after a configurable timeout to prevent battery drain
-- **Wake-on-any-button** or **single custom button** wake-up
-- **Sleep screen rotation** with a short power button press — rotates the displayed sleep image without full wake
-- Configurable from `Settings > Apps`
-- Fix: 4-gray-level BMP cycling now respects refresh settings correctly
-
-### 🎯 Custom App Icons
-
-Hand-crafted monochrome icons designed for e-ink clarity:
-- **Library** — bookshelf icon
-- **Sleep** — "Zzz" icon
-- **Screen Clean** — monitor icon
-- **Reading Heatmap** — calendar icon
-
-Homepage icon visibility fixes applied across all themes (Base, Lyra, LyraCarousel, LyraMarcoand75). Resized corner ribbons on library covers for better proportion.
-
-### ⚙️ STRING-Type Setting Support
-
-Added on-device STRING setting support to `SettingsActivity`. Previously, STRING settings were web-only; the device UI only handled TOGGLE, ENUM, VALUE, ACTION, and SECTION types.
-
-- Display current value via `getSettingValueText`
-- Edit via `KeyboardEntryActivity` on Confirm
-- Enables the "Library root directory" setting to be changed directly from the device
-
-### ⚡ Performance & Memory Optimizations
-
-Several targeted optimizations to keep the library and UI responsive on the ESP32-C3:
-- **Inventory caching** — metadata scan results are cached, avoiding repeated SD traversal
-- **System directory exclusion** — skips `.`, `crosspoint`, `sleep*`, `font*`, `dictionaries`, `exports` during scan
-- **Zero-size thumbnail cleanup** — periodic (once/day) removal of corrupted cover files
-- **Redundant `Storage.exists()` removal** — eliminated from the scan hot loop
-- **Heap exhaustion fix** — cover-generation loops now respect memory budget, preventing stuck-state hangs
-- **Corrupted favorite heart icon fix** — drawn at native 32×32 size instead of mismatch-scaled dimensions
-
----
-
-## Feature Summary Table
-
-| Feature | Category | Description |
-|---|---|---|
-| Full Library App | 📚 Library | Grid-based browser with configurable columns, per-page covers, metadata cache, search, and filters |
-| Library Cache | 📚 Library | Binary metadata cache on SD for instant re-open; automatic invalidation |
-| Favourites & Latest Read | 📚 Library | Content filters with live header indicator and context-menu switching |
-| Incremental Sync | 📚 Library | On-the-fly SD walk on startup detects new/removed books |
-| Configurable Root Dir | 📚 Library | Choose library scan directory from device Settings |
-| Book Context Menu | 📖 Navigation | 9–12 item long-press menu with stats, metadata, favorites, cache, and cover ops |
-| Metadata Viewer | 📖 Navigation | EPUB OPF metadata viewer (title, author, publisher, date, subject, language, description) |
-| Data Panel | 🎨 Theme | Cyber-style two-column book/stats panel on Lyra Carousel home |
-| Reading Time ETA | 🎨 Theme | Estimated remaining time on cover badges (e.g. "35% ~2h 15m") — all Lyra themes |
-| Priority Ribbons | 🎨 Theme | Completed ✓, Favorite ♥, and Opened indicators as triangle/band overlays |
-| LyraMarcoand75 Theme | 🎨 Theme | Custom theme variant with per-theme cover caching |
-| Theme Cache Clearing | 🎨 Theme | Context menu item to clear carousel cache; per-theme cache separation |
-| E-Ink Screensaver | 🛡️ Tools | Low-power screensaver with battery-protection deep sleep, sleep screen rotation |
-| Custom App Icons | 🎯 UI | Bookshelf, Zzz, monitor, calendar icons with theme-wide visibility fixes |
-| STRING Settings | ⚙️ System | On-device edit support for STRING-type settings |
-| Performance Optimizations | ⚡ Performance | Inventory caching, directory exclusion, heap fixes, icon sizing fix |
-| Sleep Screen Rotate | 🛡️ Tools | Rotate sleep image with short power button press (inspired by CrumBLE firmware) |
-| 4-Gray BMP Fix | 🛡️ Tools | BMP cycling in sleep respects refresh settings correctly |
-
-All CPR-vCodex upstream features (reading stats, heatmaps, achievements, dictionaries, flashcards, bookmarks, SD fonts, KOReader Sync, Bionic Reading, dark mode, sync day, etc.) are **fully included**. This fork only adds the features listed above without removing or degrading any upstream functionality.
-
-The firmware is built and tested on the **Xteink X4** (ESP32-C3, ~380 KB usable RAM).
-
-
----
+The philosophy of this fork is simple: keep the firmware fast, stable, and focused on reading, while making the device feel more rewarding and personal for people who read every day.
 
 ## At a glance
 
 | Item | Value |
 |---|---|
-| Project | `CPR-vCodex Steroids` |
+| Project | `CPR-vCodex` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex) base | [`1.3.0.30-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.30-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.3.0.30` + Steroids features |
+| Current release (CPR-vCodex) build | [`1.3.0.31-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.31-cpr-vcodex) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
-| Current release sync | Builds on selected CrossPoint Reader fixes through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and updates `open-x4-sdk` to [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3), adding the public X3 grayscale preconditioning update adapted after comparing `aalu`, `crosspoint-reader`, and `CrossInk`. Larger upstream UI/config rewrites remain intentionally deferred. |
-| Current release fixes | Reduces reader grayscale RAM spikes by streaming anti-aliased EPUB/TXT/XTC rendering in display strips and improves X3/X4 ghosting behavior with grayscale base/preconditioning paths for page turns and sleep screens. |
-| Latest release notes | - EPUB/TXT anti-aliased pages stream grayscale planes in row bands instead of snapshotting a full BW framebuffer, with heap telemetry and safe fallback.<br>- EPUB image pages and XTC 2-bit pages share the lower-RAM grayscale path; off-strip EPUB images are skipped during tiled rendering to avoid repeated decode/pixel work.<br>- Sleep covers, sleep stats overlays, and XTC grayscale turns use SDK grayscale preconditioning/base refreshes to reduce first-page and overlay ghosting. |
+| Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
+| Current release fixes | Reduces flashcard and KOReader Sync/Auth RAM pressure on X3/X4 without lowering normal study expectations, and fixes rotated front-button hint labels. |
+| Latest release notes | - Flashcard CSV deck loading now indexes card keys only and reads front/back text from the SD card on demand, so text-heavy decks avoid keeping every card body in heap at once.<br>- Oversized flashcard files, fields, and progress records now fail with clear errors instead of crashing while allocating.<br>- KOReader Sync reuses the already-computed local progress/chapter hand-off and avoids the heap-heavy MD5 `String` formatting path during authentication.<br>- Reader menu `Up`/`Down` hints now match the physical front buttons when front-button orientation is enabled in rotated layouts. |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
 | Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
 | Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
@@ -311,9 +181,9 @@ front,back
 Sample deck ready to copy to the SD card:
 - [flashcards_sample.csv](./flashcards_sample.csv)
 
-`CPR-vCodex Steroids` is a reading-focused firmware fork for the **Xteink X4**, built on top of the stable **CPR-vCodex** baseline and extended with a library manager, theme enhancements, productivity tools, and carefully selected upstream carry-forwards.
+`CPR-vCodex` is a reading-focused firmware fork for the **Xteink X4**, built on top of the stable **CrossPoint Reader** baseline and extended with analytics, reader utilities, branding cleanup, extra UI features, and carefully selected upstream carry-forwards.
 
-The official `crosspoint-reader` project is treated as the stable reference. `CPR-vCodex` only carries forward upstream work when it is useful on the X4 and safe enough to keep the reader fast and reliable.
+The official `crosspoint-reader` project is treated as the stable reference. `vcodex` only carries forward upstream work when it is useful on the X4 and safe enough to keep the reader fast and reliable.
 
 There may be some **involuntary or incidental X3 compatibility** because parts of the upstream codebase still carry X3-aware paths. `CPR-vCodex` now also includes an **experimental X3-only tilt page-turn option** for devices with the QMI8658 IMU, but it is hidden when the sensor is not detected and remains off by default. The firmware is still developed and validated on **X4**, and I do **not** currently have an **X3** device available to test or confirm that compatibility.
 
@@ -326,16 +196,6 @@ This project is **not affiliated with Xteink**.
 - manual per-book reading-time/date corrections for missed or accidental stats
 - `Achievements` built on top of the same reading data model
 - `Sync Day` for coherent day-based stats on hardware without a trustworthy sleep RTC
-- **Full e-book library** with grid browser, configurable columns, metadata cache, content filters, and cover management
-- **Book context menu & metadata viewer** with 9–12 actions on long-press, EPUB OPF metadata parsing
-- **Cyber-style data panel** on Lyra Carousel with two-column book/stats info and segment progress bar
-- **Estimated reading time** on all Lyra-themed cover badges (e.g. `"35% ~2h 15m"`)
-- **Priority ribbon badges** on covers (completed ✓, favorite ♥, opened indicator)
-- **LyraMarcoand75 custom theme** with per-theme cover caching
-- **E-ink screensaver** with battery-protection deep sleep, wake-on-any-button, and sleep screen rotation
-- **Custom app icons** (bookshelf, Zzz, monitor, calendar) with theme-wide visibility fixes
-- **STRING-type settings** now editable on-device via SettingsActivity
-- **Performance optimizations**: inventory caching, directory exclusions, heap fixes, and zero-size thumbnail cleanup
 - `Lyra Carousel` Home theme, originally created by [zgredex](https://github.com/zgredex), adapted to this fork by [erickosanchezj](https://github.com/erickosanchezj), limited to 3 books for smoother X4 navigation, with a sliding bottom shortcut row so every configured Home action remains reachable
 - experimental X3-only `Tilt Page Turn`, hidden unless the QMI8658 IMU is detected and disabled by default
 - downloadable SD-card fonts from CrossPoint plus vCodex-only families such as `ChareInk`
@@ -399,18 +259,17 @@ To return to the original CrossPoint Reader later, repeat the same process with 
 
 ## 5-minute start
 
-If you just flashed `CPR-vCodex Steroids` and want the main value quickly:
+If you just flashed `CPR-vCodex` and want the main value quickly:
 
 1. Open `Home > Sync Day`
 2. Connect to Wi-Fi and sync the date
 3. Open a book and read normally
 4. Open `Apps > Reading Stats`
-5. Open `Apps > Library` to browse your SD card books
-6. Open `Apps > Reading Heatmap`
+5. Open `Apps > Reading Heatmap`
 
-That is enough to start using the core additions: coherent day-based analytics, better stats visibility, the full library browser, and improved app-level reading tools.
+That is enough to start using the core `vcodex` additions: coherent day-based analytics, better stats visibility, and improved app-level reading tools.
 
-## What this fork adds (upstream CPR-vCodex features)
+## What this fork adds
 
 | Feature | What it adds | More info |
 |---|---|---|
@@ -716,7 +575,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.30-cpr-vcodex`
+- current release build style: `1.3.0.31-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -786,10 +645,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.30-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.31-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.30-cpr-vcodex`
+- push a stable tag named like `1.3.0.31-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not
@@ -802,7 +661,6 @@ python scripts/pre_release_check.py --tag 1.3.0.30-cpr-vcodex
 Huge credit goes to:
 
 - the **CrossPoint Reader** project for the upstream base
-- **[franssjz](https://github.com/franssjz)** for **CPR-vCodex**, the upstream fork this project builds upon
 - the Xteink X4 community around the firmware ecosystem
 - [zgredex](https://github.com/zgredex) for the original `Lyra Carousel` Home theme
 - [erickosanchezj](https://github.com/erickosanchezj) for adapting `Lyra Carousel` to CPR-vCodex
@@ -810,4 +668,4 @@ Huge credit goes to:
 
 ---
 
-CPR-vCodex Steroids is **not affiliated with Xteink or any manufacturer of the X4 hardware**.
+CPR-vCodex is **not affiliated with Xteink or any manufacturer of the X4 hardware**.

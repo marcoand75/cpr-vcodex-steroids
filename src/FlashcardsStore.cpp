@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 
 #include <algorithm>
 #include <cctype>
@@ -22,6 +23,47 @@ constexpr char FLASHCARDS_INDEX_FILE[] = "/.crosspoint/flashcards_index.json";
 constexpr uint32_t FLASHCARDS_INDEX_FORMAT_VERSION = 1;
 constexpr uint32_t FLASHCARDS_STATE_FORMAT_VERSION = 1;
 constexpr uint16_t MASTERY_INTERVAL_DAYS = 7;
+constexpr size_t MAX_FLASHCARD_DECK_FILE_BYTES = 512U * 1024U;
+constexpr size_t MAX_FLASHCARD_PROGRESS_FILE_BYTES = 128U * 1024U;
+constexpr size_t MAX_FLASHCARD_CARDS = 600;
+constexpr size_t FLASHCARD_CARD_RESERVE_STEP = 32;
+constexpr size_t MAX_FLASHCARD_COLUMNS = 16;
+constexpr size_t MAX_FLASHCARD_FIELD_BYTES = 8192;
+constexpr uint32_t FLASHCARD_LOAD_MIN_FREE = 48U * 1024U;
+constexpr uint32_t FLASHCARD_LOAD_MIN_MAX_ALLOC = 16U * 1024U;
+
+bool hasFlashcardLoadHeadroom(const char* stage) {
+  const auto heap = MemoryBudget::snapshot();
+  if (MemoryBudget::hasHeap(heap, FLASHCARD_LOAD_MIN_FREE, FLASHCARD_LOAD_MIN_MAX_ALLOC)) {
+    return true;
+  }
+
+  LOG_ERR("FCS", "Low heap while loading flashcards at %s: free=%u maxAlloc=%u need=%u/%u", stage ? stage : "",
+          heap.freeHeap, heap.maxAllocHeap, FLASHCARD_LOAD_MIN_FREE, FLASHCARD_LOAD_MIN_MAX_ALLOC);
+  return false;
+}
+
+bool hasFlashcardAllocationHeadroom(const char* stage, const size_t bytes) {
+  const auto heap = MemoryBudget::snapshot();
+  const uint32_t requested = bytes > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(bytes);
+  constexpr uint32_t ALLOCATION_OVERHEAD = 1024U;
+  if (requested > UINT32_MAX - FLASHCARD_LOAD_MIN_FREE - ALLOCATION_OVERHEAD) {
+    return false;
+  }
+  const uint32_t minFree = requested + FLASHCARD_LOAD_MIN_FREE + ALLOCATION_OVERHEAD;
+  const uint32_t minMaxAlloc = requested + ALLOCATION_OVERHEAD;
+  if (heap.freeHeap >= minFree && heap.maxAllocHeap >= minMaxAlloc) {
+    return true;
+  }
+
+  LOG_ERR("FCS", "Low heap for flashcard allocation at %s: free=%u maxAlloc=%u need=%u/%u", stage ? stage : "",
+          heap.freeHeap, heap.maxAllocHeap, minFree, minMaxAlloc);
+  return false;
+}
+
+void setDeckTooLargeError(std::string* error) {
+  if (error) *error = "Deck too large for device memory";
+}
 
 std::string trimAscii(const std::string& value) {
   const size_t begin = value.find_first_not_of(" \t\r\n");
@@ -167,13 +209,20 @@ bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocu
 }
 
 template <typename RowCallback>
-void parseCsvRows(HalFile& file, RowCallback&& callback) {
+bool parseCsvRows(HalFile& file, RowCallback&& callback, std::string* error, bool* stopRequested = nullptr) {
   std::vector<std::string> currentRow;
   std::string currentField;
   bool inQuotes = false;
   int bufferedChar = -1;
+  bool aborted = false;
+  currentRow.reserve(MAX_FLASHCARD_COLUMNS);
 
   auto pushField = [&]() {
+    if (currentRow.size() >= MAX_FLASHCARD_COLUMNS) {
+      if (error) *error = "Flashcard row has too many columns";
+      aborted = true;
+      return;
+    }
     currentRow.push_back(normalizeField(currentField));
     currentField.clear();
   };
@@ -196,7 +245,20 @@ void parseCsvRows(HalFile& file, RowCallback&& callback) {
     currentRow.clear();
   };
 
+  auto appendChar = [&](const char value) {
+    if (currentField.size() >= MAX_FLASHCARD_FIELD_BYTES) {
+      if (error) *error = "Flashcard field is too large";
+      aborted = true;
+      return;
+    }
+    currentField.push_back(value);
+  };
+
   while (bufferedChar >= 0 || file.available()) {
+    if (aborted || (stopRequested && *stopRequested)) {
+      break;
+    }
+
     const int raw = bufferedChar >= 0 ? bufferedChar : file.read();
     bufferedChar = -1;
     if (raw < 0) {
@@ -208,13 +270,13 @@ void parseCsvRows(HalFile& file, RowCallback&& callback) {
       if (ch == '"') {
         const int nextRaw = file.available() ? file.read() : -1;
         if (nextRaw == '"') {
-          currentField.push_back('"');
+          appendChar('"');
         } else {
           inQuotes = false;
           bufferedChar = nextRaw;
         }
       } else {
-        currentField.push_back(ch);
+        appendChar(ch);
       }
       continue;
     }
@@ -230,18 +292,21 @@ void parseCsvRows(HalFile& file, RowCallback&& callback) {
         break;
       case '\n':
         pushField();
-        pushRow();
+        if (!aborted) {
+          pushRow();
+        }
         break;
       default:
-        currentField.push_back(ch);
+        appendChar(ch);
         break;
     }
   }
 
-  if (!currentField.empty() || !currentRow.empty()) {
+  if (!aborted && !(stopRequested && *stopRequested) && (!currentField.empty() || !currentRow.empty())) {
     pushField();
     pushRow();
   }
+  return !aborted;
 }
 
 int getConfiguredSessionLimit() {
@@ -517,12 +582,26 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
     return false;
   }
 
+  const size_t fileSize = file.fileSize();
+  if (fileSize > MAX_FLASHCARD_DECK_FILE_BYTES) {
+    file.close();
+    setDeckTooLargeError(error);
+    return false;
+  }
+
+  if (!hasFlashcardLoadHeadroom("open")) {
+    file.close();
+    setDeckTooLargeError(error);
+    return false;
+  }
+
   int idColumn = -1;
   int frontColumn = 0;
   int backColumn = 1;
   bool firstRow = true;
   bool parsedAnyRow = false;
   bool invalidColumns = false;
+  bool deckTooLarge = false;
 
   deck.path = normalizedPath;
   deck.deckId = BookIdentity::resolveStableBookId(normalizedPath);
@@ -550,12 +629,28 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
       key = fnv1aCardKey(row[frontColumn], row[backColumn]);
     }
 
-    std::string front = std::move(row[frontColumn]);
-    std::string back = std::move(row[backColumn]);
-    deck.cards.push_back(FlashcardCard{std::move(key), std::move(front), std::move(back)});
+    if (deck.cards.size() >= MAX_FLASHCARD_CARDS || !hasFlashcardLoadHeadroom("card")) {
+      deckTooLarge = true;
+      return;
+    }
+
+    if (deck.cards.size() == deck.cards.capacity()) {
+      const size_t nextCapacity = std::min(MAX_FLASHCARD_CARDS, deck.cards.capacity() + FLASHCARD_CARD_RESERVE_STEP);
+      if (!hasFlashcardAllocationHeadroom("cards-reserve", nextCapacity * sizeof(FlashcardCard))) {
+        deckTooLarge = true;
+        return;
+      }
+      deck.cards.reserve(nextCapacity);
+    }
+
+    deck.cards.push_back(FlashcardCard{std::move(key), std::string(), std::string()});
   };
 
-  parseCsvRows(file, [&](std::vector<std::string>& row) {
+  const bool parsedOk = parseCsvRows(file, [&](std::vector<std::string>& row) {
+    if (deckTooLarge) {
+      return;
+    }
+
     parsedAnyRow = true;
 
     if (firstRow) {
@@ -584,8 +679,19 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
     if (!invalidColumns) {
       processDataRow(row);
     }
-  });
+  }, error);
   file.close();
+
+  if (!parsedOk) {
+    deck.cards.clear();
+    return false;
+  }
+
+  if (deckTooLarge) {
+    deck.cards.clear();
+    setDeckTooLargeError(error);
+    return false;
+  }
 
   if (!parsedAnyRow) {
     if (error) *error = "Deck is empty";
@@ -605,14 +711,151 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
   return true;
 }
 
-bool FlashcardsStore::loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress) const {
+bool FlashcardsStore::loadDeckCard(const FlashcardDeck& deck, const int cardIndex, FlashcardCard& card,
+                                   std::string* error) const {
+  card = {};
+  if (cardIndex < 0 || cardIndex >= static_cast<int>(deck.cards.size())) {
+    if (error) *error = "Card not found";
+    return false;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForRead("FCS", deck.path, file)) {
+    if (error) *error = "Could not open deck";
+    return false;
+  }
+
+  int idColumn = -1;
+  int frontColumn = 0;
+  int backColumn = 1;
+  bool firstRow = true;
+  bool invalidColumns = false;
+  bool found = false;
+  bool stopRequested = false;
+  int dataIndex = 0;
+
+  const bool parsedOk = parseCsvRows(file, [&](std::vector<std::string>& row) {
+    if (firstRow) {
+      firstRow = false;
+      bool hasNamedHeader = false;
+      for (int index = 0; index < static_cast<int>(row.size()); ++index) {
+        const std::string field = toLowerAscii(trimAscii(row[index]));
+        if (field == "id" || field == "card_id") {
+          idColumn = index;
+          hasNamedHeader = true;
+        } else if (field == "front" || field == "question") {
+          frontColumn = index;
+          hasNamedHeader = true;
+        } else if (field == "back" || field == "answer") {
+          backColumn = index;
+          hasNamedHeader = true;
+        }
+      }
+
+      if (hasNamedHeader) {
+        invalidColumns = frontColumn == backColumn;
+        return;
+      }
+    }
+
+    if (invalidColumns) {
+      return;
+    }
+
+    const int maxColumn = std::max(frontColumn, backColumn);
+    if (static_cast<int>(row.size()) <= maxColumn) {
+      return;
+    }
+
+    trimAsciiInPlace(row[frontColumn]);
+    trimAsciiInPlace(row[backColumn]);
+    if (row[frontColumn].empty() && row[backColumn].empty()) {
+      return;
+    }
+
+    if (dataIndex++ != cardIndex) {
+      return;
+    }
+
+    std::string key;
+    if (idColumn >= 0 && idColumn < static_cast<int>(row.size())) {
+      trimAsciiInPlace(row[idColumn]);
+      key = row[idColumn];
+    }
+    if (key.empty()) {
+      key = fnv1aCardKey(row[frontColumn], row[backColumn]);
+    }
+
+    card.key = std::move(key);
+    card.front = std::move(row[frontColumn]);
+    card.back = std::move(row[backColumn]);
+    found = true;
+    stopRequested = true;
+  }, error, &stopRequested);
+  file.close();
+
+  if (!parsedOk) {
+    card = {};
+    return false;
+  }
+  if (invalidColumns) {
+    card = {};
+    if (error) *error = "Deck needs front and back columns";
+    return false;
+  }
+  if (!found) {
+    card = {};
+    if (error) *error = "Card not found";
+    return false;
+  }
+  return true;
+}
+
+bool FlashcardsStore::loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress,
+                                       std::string* error) const {
   progress.clear();
+  if (!hasFlashcardLoadHeadroom("progress")) {
+    setDeckTooLargeError(error);
+    return false;
+  }
+  if (!hasFlashcardAllocationHeadroom("progress-reserve", deck.cards.size() * sizeof(FlashcardCardProgress))) {
+    setDeckTooLargeError(error);
+    return false;
+  }
   progress.reserve(deck.cards.size());
 
   JsonDocument doc;
   std::vector<FlashcardCardProgress> saved;
-  if (loadJsonDocumentFromFile("FCS", getStatePath(deck.deckId).c_str(), doc)) {
-    for (JsonObject obj : doc["cards"].as<JsonArray>()) {
+  const std::string statePath = getStatePath(deck.deckId);
+  bool canLoadSavedProgress = true;
+  if (Storage.exists(statePath.c_str())) {
+    HalFile stateFile;
+    if (Storage.openFileForRead("FCS", statePath, stateFile)) {
+      if (stateFile.fileSize() > MAX_FLASHCARD_PROGRESS_FILE_BYTES) {
+        canLoadSavedProgress = false;
+        LOG_ERR("FCS", "Ignoring oversized flashcard progress file: %s", statePath.c_str());
+      }
+      stateFile.close();
+    }
+  }
+
+  if (canLoadSavedProgress && loadJsonDocumentFromFile("FCS", statePath.c_str(), doc)) {
+    JsonArray cards = doc["cards"].as<JsonArray>();
+    const size_t savedReserve = std::min(static_cast<size_t>(cards.size()), deck.cards.size());
+    if (savedReserve > 0) {
+      if (!hasFlashcardAllocationHeadroom("saved-progress-reserve",
+                                          savedReserve * sizeof(FlashcardCardProgress))) {
+        setDeckTooLargeError(error);
+        return false;
+      }
+      saved.reserve(savedReserve);
+    }
+
+    for (JsonObject obj : cards) {
+      if (saved.size() >= deck.cards.size()) {
+        break;
+      }
+
       FlashcardCardProgress item;
       item.key = obj["key"] | std::string("");
       if (item.key.empty()) {
@@ -625,6 +868,12 @@ bool FlashcardsStore::loadDeckProgress(const FlashcardDeck& deck, std::vector<Fl
       item.lastReviewedDay = obj["lastReviewedDay"] | static_cast<uint32_t>(0);
       item.dueDay = obj["dueDay"] | static_cast<uint32_t>(0);
       item.intervalDays = obj["intervalDays"] | static_cast<uint16_t>(0);
+      if (!hasFlashcardLoadHeadroom("saved-progress")) {
+        progress.clear();
+        saved.clear();
+        setDeckTooLargeError(error);
+        return false;
+      }
       saved.push_back(std::move(item));
     }
   }
@@ -632,6 +881,11 @@ bool FlashcardsStore::loadDeckProgress(const FlashcardDeck& deck, std::vector<Fl
   for (const auto& card : deck.cards) {
     auto it = std::find_if(saved.begin(), saved.end(),
                            [&card](const FlashcardCardProgress& value) { return value.key == card.key; });
+    if (!hasFlashcardLoadHeadroom("progress-item")) {
+      progress.clear();
+      setDeckTooLargeError(error);
+      return false;
+    }
     if (it != saved.end()) {
       progress.push_back(*it);
     } else {

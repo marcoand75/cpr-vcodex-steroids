@@ -639,6 +639,10 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   sync["paragraphIndex"] = s.koReaderSyncSession.paragraphIndex;
   sync["hasParagraphIndex"] = s.koReaderSyncSession.hasParagraphIndex;
   sync["xhtmlSeekHint"] = s.koReaderSyncSession.xhtmlSeekHint;
+  sync["hasLocalKoReaderPosition"] = s.koReaderSyncSession.hasLocalKoReaderPosition;
+  sync["localKoReaderProgress"] = s.koReaderSyncSession.localKoReaderProgress;
+  sync["localKoReaderPercentage"] = s.koReaderSyncSession.localKoReaderPercentage;
+  sync["localChapterLabel"] = s.koReaderSyncSession.localChapterLabel;
   sync["intent"] = static_cast<uint8_t>(s.koReaderSyncSession.intent);
   sync["outcome"] = static_cast<uint8_t>(s.koReaderSyncSession.outcome);
   sync["resultSpineIndex"] = s.koReaderSyncSession.resultSpineIndex;
@@ -699,6 +703,10 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
       s.koReaderSyncSession.paragraphIndex = sync["paragraphIndex"] | static_cast<uint16_t>(0);
       s.koReaderSyncSession.hasParagraphIndex = sync["hasParagraphIndex"] | false;
       s.koReaderSyncSession.xhtmlSeekHint = sync["xhtmlSeekHint"] | static_cast<uint32_t>(0);
+      s.koReaderSyncSession.hasLocalKoReaderPosition = sync["hasLocalKoReaderPosition"] | false;
+      s.koReaderSyncSession.localKoReaderProgress = sync["localKoReaderProgress"] | std::string("");
+      s.koReaderSyncSession.localKoReaderPercentage = sync["localKoReaderPercentage"] | 0.0f;
+      s.koReaderSyncSession.localChapterLabel = sync["localChapterLabel"] | std::string("");
       s.koReaderSyncSession.intent = static_cast<KOReaderSyncIntentState>(sync["intent"] | static_cast<uint8_t>(0));
       s.koReaderSyncSession.outcome = static_cast<KOReaderSyncOutcomeState>(sync["outcome"] | static_cast<uint8_t>(0));
       s.koReaderSyncSession.resultSpineIndex = sync["resultSpineIndex"] | 0;

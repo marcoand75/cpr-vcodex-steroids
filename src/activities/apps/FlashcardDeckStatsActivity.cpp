@@ -40,7 +40,11 @@ void FlashcardDeckStatsActivity::loadDeckData() {
     loaded = false;
     return;
   }
-  FLASHCARDS.loadDeckProgress(deck, progress);
+  if (!FLASHCARDS.loadDeckProgress(deck, progress, &errorMessage)) {
+    loaded = false;
+    deck.cards.clear();
+    return;
+  }
   metrics = FLASHCARDS.buildMetrics(deck, progress);
   loaded = true;
 }

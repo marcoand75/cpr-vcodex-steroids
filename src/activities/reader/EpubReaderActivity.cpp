@@ -26,6 +26,7 @@
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
+#include "ProgressMapper.h"
 #include "ProgressFile.h"
 #include "QrDisplayActivity.h"
 #include "ReaderQuickSettingsActivity.h"
@@ -1827,8 +1828,8 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
     return;
   }
 
-  const int currentPage = section ? section->currentPage : 0;
-  const int totalPages = section ? section->pageCount : 0;
+  const int currentPage = section ? section->currentPage : nextPageNumber;
+  const int totalPages = section ? section->pageCount : cachedChapterTotalPageCount;
   KOReaderSyncIntentState syncIntent = KOReaderSyncIntentState::COMPARE;
   if (mode == SyncLaunchMode::PULL_REMOTE) {
     syncIntent = KOReaderSyncIntentState::PULL_REMOTE;
@@ -1839,6 +1840,27 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
   }
 
   auto& sync = APP_STATE.koReaderSyncSession;
+  KOReaderPosition localKoReaderPosition{};
+  std::string localChapterLabel;
+  const bool needsLocalPosition = syncIntent != KOReaderSyncIntentState::PULL_REMOTE &&
+                                  syncIntent != KOReaderSyncIntentState::AUTO_PULL;
+  if (needsLocalPosition) {
+    CrossPointPosition localPos = {currentSpineIndex, currentPage, totalPages, 0, false};
+    if (section) {
+      if (const auto pIdx = section->getParagraphIndexForPage(static_cast<uint16_t>(currentPage))) {
+        localPos.paragraphIndex = *pIdx;
+        localPos.hasParagraphIndex = true;
+        if (const auto hint = section->getXhtmlByteOffsetForPage(static_cast<uint16_t>(currentPage))) {
+          localPos.xhtmlSeekHint = *hint;
+        }
+      }
+    }
+    localKoReaderPosition = ProgressMapper::toKOReader(epub, localPos);
+    const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
+    localChapterLabel = (tocIndex >= 0) ? epub->getTocItem(tocIndex).title
+                                        : (std::string(tr(STR_SECTION_PREFIX)) + std::to_string(currentSpineIndex + 1));
+  }
+
   sync.active = true;
   sync.epubPath = epub->getPath();
   sync.spineIndex = currentSpineIndex;
@@ -1864,6 +1886,10 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
     sync.xhtmlSeekHint = 0;
   }
   sync.intent = syncIntent;
+  sync.hasLocalKoReaderPosition = needsLocalPosition && !localKoReaderPosition.xpath.empty();
+  sync.localKoReaderProgress = sync.hasLocalKoReaderPosition ? localKoReaderPosition.xpath : std::string();
+  sync.localKoReaderPercentage = sync.hasLocalKoReaderPosition ? localKoReaderPosition.percentage : 0.0f;
+  sync.localChapterLabel = sync.hasLocalKoReaderPosition ? localChapterLabel : std::string();
   sync.outcome = KOReaderSyncOutcomeState::PENDING;
   sync.resultSpineIndex = 0;
   sync.resultPage = 0;
@@ -1873,9 +1899,22 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
   sync.resultHasListItemIndex = false;
   sync.exitToHomeAfterSync = mode == SyncLaunchMode::AUTO_PUSH;
   sync.autoPullEpubPath.clear();
+  saveProgress(currentSpineIndex, currentPage, totalPages);
   APP_STATE.saveToFile();
 
   LOG_DBG("ERS", "Standalone sync handoff: spine=%d page=%d/%d", currentSpineIndex, currentPage, totalPages);
+  LOG_DBG("KOSync", "Releasing EPUB reader state before sync (heap before: %u)", static_cast<unsigned>(ESP.getFreeHeap()));
+  {
+    RenderLock lock(*this);
+    if (section) {
+      nextPageNumber = section->currentPage;
+      cachedSpineIndex = currentSpineIndex;
+      cachedChapterTotalPageCount = section->pageCount;
+    }
+    section.reset();
+    epub.reset();
+  }
+  LOG_DBG("KOSync", "EPUB reader state released before sync (heap after: %u)", static_cast<unsigned>(ESP.getFreeHeap()));
   activityManager.goToKOReaderSync();
 }
 

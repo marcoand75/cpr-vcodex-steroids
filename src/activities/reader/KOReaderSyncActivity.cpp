@@ -133,19 +133,21 @@ void KOReaderSyncActivity::performSync() {
 
   // Local mapping is only needed for compare/upload paths.
   if (syncIntent != KOReaderSyncIntentState::PULL_REMOTE && syncIntent != KOReaderSyncIntentState::AUTO_PULL) {
-    {
-      RenderLock lock(*this);
-      statusMessage = tr(STR_MAPPING_LOCAL);
-    }
-    requestUpdateAndWait();
-    if (!computeLocalProgressAndChapter()) {
+    if (!hasLocalProgress) {
       {
         RenderLock lock(*this);
-        state = SYNC_FAILED;
-        statusMessage = tr(STR_SYNC_FAILED_MSG);
+        statusMessage = tr(STR_MAPPING_LOCAL);
       }
-      requestUpdate(true);
-      return;
+      requestUpdateAndWait();
+      if (!computeLocalProgressAndChapter()) {
+        {
+          RenderLock lock(*this);
+          state = SYNC_FAILED;
+          statusMessage = tr(STR_SYNC_FAILED_MSG);
+        }
+        requestUpdate(true);
+        return;
+      }
     }
   }
 
@@ -343,7 +345,7 @@ void KOReaderSyncActivity::performUpload() {
   }
   requestUpdateAndWait();
 
-  if (localProgress.xpath.empty()) {
+  if (!hasLocalProgress || localProgress.xpath.empty()) {
     if (!computeLocalProgressAndChapter()) {
       {
         RenderLock lock(*this);
@@ -698,6 +700,7 @@ bool KOReaderSyncActivity::retryWithBinaryDocumentHash() {
 
 bool KOReaderSyncActivity::computeLocalProgressAndChapter() {
   if (!ensureEpubLoadedForMapping()) {
+    hasLocalProgress = false;
     localProgress = KOReaderPosition{};
     localChapterLabel.clear();
     return false;
@@ -711,6 +714,7 @@ bool KOReaderSyncActivity::computeLocalProgressAndChapter() {
   localChapterLabel = (localTocIndex >= 0)
                           ? epub->getTocItem(localTocIndex).title
                           : (std::string(tr(STR_SECTION_PREFIX)) + std::to_string(currentSpineIndex + 1));
+  hasLocalProgress = !localProgress.xpath.empty();
   return true;
 }
 
