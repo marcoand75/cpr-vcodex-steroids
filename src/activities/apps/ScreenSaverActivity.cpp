@@ -95,7 +95,11 @@ void ScreenSaverActivity::onEnter() {
       GUI.drawPopup(renderer, tr(STR_BATTERY_TOO_LOW));
       delay(2000);
     }
-    onGoHome();
+    if (returnToCaller_) {
+      finish();
+    } else {
+      onGoHome();
+    }
     return;
   }
 
@@ -118,6 +122,27 @@ void ScreenSaverActivity::onExit() {
   renderer.clearScreen();
   renderer.requestNextFullRefresh();
   renderer.displayBuffer();
+
+  // Drain all pending input events so the button used to exit the
+  // screensaver does not propagate to the caller (reader/home).
+  // Keep updating until the wake button is physically released;
+  // a safety counter prevents an infinite stall.
+  for (int safety = 0; safety < 200; ++safety) {
+    delay(5);
+    mappedInput.update();
+    if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Left) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Right) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Up) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Down) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Power) &&
+        !mappedInput.isPressed(MappedInputManager::Button::PageBack) &&
+        !mappedInput.isPressed(MappedInputManager::Button::PageForward)) {
+      break;
+    }
+  }
+
   Activity::onExit();
   powerManager.setPowerSaving(false);
   images_.clear();
@@ -125,12 +150,16 @@ void ScreenSaverActivity::onExit() {
 
 void ScreenSaverActivity::loop() {
   if (isWakeButtonPressed()) {
-    onGoHome();
+    if (returnToCaller_) {
+      finish();
+    } else {
+      onGoHome();
+    }
     return;
   }
   if (images_.empty()) {
     delay(500);
-    if (isWakeButtonPressed()) { onGoHome(); return; }
+    if (isWakeButtonPressed()) { if (returnToCaller_) { finish(); } else { onGoHome(); } return; }
     return;
   }
 

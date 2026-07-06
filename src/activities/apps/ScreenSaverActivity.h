@@ -13,6 +13,7 @@ class ScreenSaverActivity final : public Activity {
   unsigned long intervalMs_ = 0;
   unsigned long lastBatteryCheckMs_ = 0;
   bool firstRender_ = true;
+  bool returnToCaller_ = false;
 
   void loadImages();
   unsigned long getIntervalMs() const;
@@ -21,8 +22,8 @@ class ScreenSaverActivity final : public Activity {
   void drawTextOverlay();
 
  public:
-  explicit ScreenSaverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("ScreenSaver", renderer, mappedInput) {}
+  explicit ScreenSaverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToCaller = false)
+      : Activity("ScreenSaver", renderer, mappedInput), returnToCaller_(returnToCaller) {}
   void onEnter() override;
   void loop() override;
   void onExit() override;

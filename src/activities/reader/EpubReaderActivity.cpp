@@ -35,6 +35,7 @@
 #include "SdCardFontGlobals.h"
 #include "activities/apps/DictionaryActivity.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
+#include "activities/apps/ScreenSaverActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -1016,6 +1017,21 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         READING_STATS.noteActivity();
         launchKOReaderSync(SyncLaunchMode::COMPARE);
       }
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::SCREENSAVER: {
+      READING_STATS.noteActivity();
+      startActivityForResult(
+          std::make_unique<ScreenSaverActivity>(renderer, mappedInput, true),
+          [this](const ActivityResult&) {
+            // Discard any pending Confirm press used to exit the screensaver
+            // so it doesn't re-open the reader menu on return.
+            waitingForConfirmSecondClick = false;
+            firstConfirmClickMs = 0UL;
+            READING_STATS.resumeSession();
+            ReaderUtils::requestReaderUiTransitionRefresh(renderer);
+            requestUpdate();
+          });
       break;
     }
   }
