@@ -45,12 +45,12 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex) build | [`1.3.0.31-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.31-cpr-vcodex) |
+| Current release (CPR-vCodex) build | [`1.3.0.32-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.32-cpr-vcodex) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
-| Current release fixes | Reduces flashcard and KOReader Sync/Auth RAM pressure on X3/X4 without lowering normal study expectations, and fixes rotated front-button hint labels. |
-| Latest release notes | - Flashcard CSV deck loading now indexes card keys only and reads front/back text from the SD card on demand, so text-heavy decks avoid keeping every card body in heap at once.<br>- Oversized flashcard files, fields, and progress records now fail with clear errors instead of crashing while allocating.<br>- KOReader Sync reuses the already-computed local progress/chapter hand-off and avoids the heap-heavy MD5 `String` formatting path during authentication.<br>- Reader menu `Up`/`Down` hints now match the physical front buttons when front-button orientation is enabled in rotated layouts. |
+| Current release fixes | Improves OTA update reliability on X3/X4 when populated `/.crosspoint` data leaves too little contiguous heap for HTTPS update checks or firmware downloads. |
+| Latest release notes | - OTA update checks now run the shared network-memory trim path before contacting GitHub, clearing font/runtime caches and releasing reading-stats memory before HTTPS starts.<br>- Firmware install/download now repeats the same network-memory preparation immediately before the OTA transfer, improving headroom when large stats, flashcards, fonts, or other `.crosspoint` data were loaded earlier in the session.<br>- The fix reuses the existing low-memory TLS path already used by KOReader Sync/Auth instead of adding a separate OTA-only workaround. |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
 | Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
 | Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
@@ -575,7 +575,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.31-cpr-vcodex`
+- current release build style: `1.3.0.32-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -645,10 +645,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.31-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.32-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.31-cpr-vcodex`
+- push a stable tag named like `1.3.0.32-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not
