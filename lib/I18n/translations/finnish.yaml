@@ -3,7 +3,7 @@ _language_code: "FI"
 _order: "14"
 
 STR_CROSSPOINT: "CrossPoint"
-STR_CPR_VCODEX: "CPR-vCodex"
+STR_CPR_VCODEX: "CPR-vCodex-Steroids"
 STR_BOOTING: "KÄYNNISTYY"
 STR_SLEEPING: "LEPOTILA"
 STR_ENTERING_SLEEP: "Siirrytään lepotilaan"

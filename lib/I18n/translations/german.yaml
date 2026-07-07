@@ -3,7 +3,7 @@ _language_code: "DE"
 _order: "3"
 
 STR_CROSSPOINT: "CrossPoint"
-STR_CPR_VCODEX: "CPR-vCodex"
+STR_CPR_VCODEX: "CPR-vCodex-Steroids"
 STR_BOOTING: "STARTEN"
 STR_SLEEPING: "STANDBY"
 STR_ENTERING_SLEEP: "Standby"

@@ -3,7 +3,7 @@ _language_code: "HU"
 _order: "19"
 
 STR_CROSSPOINT: "CrossPoint"
-STR_CPR_VCODEX: "CPR-vCodex"
+STR_CPR_VCODEX: "CPR-vCodex-Steroids"
 STR_BOOTING: "INDÍTÁS"
 STR_SLEEPING: "ALVÁS"
 STR_ENTERING_SLEEP: "Alvás..."
