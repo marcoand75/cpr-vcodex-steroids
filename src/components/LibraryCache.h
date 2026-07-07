@@ -25,6 +25,8 @@ namespace LibraryCache {
 
 // Slim in-RAM record. Cover thumbnail path is computed on demand from
 // `path` via a deterministic hash -- never stored in the cache file.
+// Kept to just path/title/author to minimize per-entry RAM on the
+// constrained ESP32-C3 (large libraries hold many of these at once).
 struct Entry {
   std::string path;
   std::string title;

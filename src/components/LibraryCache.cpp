@@ -32,32 +32,36 @@ struct ScanRecord {
   std::string normAuthor;  // pre-normalized for zero-alloc sort (sort key: "zzz" when empty)
 };
 
-void finalizeRecord(ScanRecord& rec) {
-  const auto normalize = [](const std::string& s) -> std::string {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-      unsigned char c = static_cast<unsigned char>(s[i]);
-      switch (c) {
-        case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: out.push_back('a'); break;
-        case 0xC8: case 0xC9: case 0xCA: case 0xCB: out.push_back('e'); break;
-        case 0xCC: case 0xCD: case 0xCE: case 0xCF: out.push_back('i'); break;
-        case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: out.push_back('o'); break;
-        case 0xD9: case 0xDA: case 0xDB: case 0xDC: out.push_back('u'); break;
-        case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: out.push_back('a'); break;
-        case 0xE8: case 0xE9: case 0xEA: case 0xEB: out.push_back('e'); break;
-        case 0xEC: case 0xED: case 0xEE: case 0xEF: out.push_back('i'); break;
-        case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: out.push_back('o'); break;
-        case 0xF9: case 0xFA: case 0xFB: case 0xFC: out.push_back('u'); break;
-        case 0xD1: case 0xF1: out.push_back('n'); break;
-        case 0xC7: case 0xE7: out.push_back('c'); break;
-        default: out.push_back(static_cast<char>(std::tolower(c))); break;
-      }
+// Lowercase + strip common Latin accents so titles/authors sort and search
+// consistently regardless of diacritics. Shared by finalizeRecord (scan/sync)
+// and by load() so cached entries also carry normalized keys.
+std::string normalizeString(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (size_t i = 0; i < s.size(); ++i) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    switch (c) {
+      case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: out.push_back('a'); break;
+      case 0xC8: case 0xC9: case 0xCA: case 0xCB: out.push_back('e'); break;
+      case 0xCC: case 0xCD: case 0xCE: case 0xCF: out.push_back('i'); break;
+      case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: out.push_back('o'); break;
+      case 0xD9: case 0xDA: case 0xDB: case 0xDC: out.push_back('u'); break;
+      case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: out.push_back('a'); break;
+      case 0xE8: case 0xE9: case 0xEA: case 0xEB: out.push_back('e'); break;
+      case 0xEC: case 0xED: case 0xEE: case 0xEF: out.push_back('i'); break;
+      case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: out.push_back('o'); break;
+      case 0xF9: case 0xFA: case 0xFB: case 0xFC: out.push_back('u'); break;
+      case 0xD1: case 0xF1: out.push_back('n'); break;
+      case 0xC7: case 0xE7: out.push_back('c'); break;
+      default: out.push_back(static_cast<char>(std::tolower(c))); break;
     }
-    return out;
-  };
-  rec.normTitle = normalize(rec.title);
-  rec.normAuthor = normalize(rec.author.empty() ? "zzz" : rec.author);
+  }
+  return out;
+}
+
+void finalizeRecord(ScanRecord& rec) {
+  rec.normTitle = normalizeString(rec.title);
+  rec.normAuthor = normalizeString(rec.author.empty() ? "zzz" : rec.author);
 }
 
 bool compareRecords(const ScanRecord& a, const ScanRecord& b) {
@@ -121,7 +125,11 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
   worklist.emplace_back(root);
 
   int dirCount = 0;
-  while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks * 8) {
+  // Only collect up to maxBooks candidates: scan() can only index maxBooks
+  // entries anyway, and collecting thousands of extra path strings needlessly
+  // peaks RAM on the constrained ESP32-C3 (was maxBooks * 8, which OOM'd large
+  // libraries mid-scan).
+  while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
 
@@ -249,15 +257,31 @@ std::string thumbPathFor(const std::string& path, int coverW, int coverH) {
 }
 
 bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
+  // Keep the main-task watchdog fed. Callers (per-page library indexing) may
+  // invoke this from the activity loop with no other WDT reset, and an EPUB/XTC
+  // cover decode can exceed the loop WDT timeout on the ESP32-C3 (~380 KB heap).
+  yield();
+  esp_task_wdt_reset();
+
   if (FsHelpers::hasEpubExtension(path)) {
+    // Scope-limit the Epub object so ZIP/page buffers are released immediately
+    // after the thumbnail is written.
     Epub epub(path, "/.crosspoint");
     if (!epub.load(true, true)) return false;
     return epub.generateThumbBmp(coverW, coverH);
   }
   if (FsHelpers::hasXtcExtension(path)) {
     Xtc xtc(path, "/.crosspoint");
-    if (!xtc.load()) return false;
-    return xtc.generateThumbBmp(coverW, coverH);
+    if (!xtc.load()) {
+      LOG_ERR("BSC", "XTC load failed for %s", path.c_str());
+      return false;
+    }
+    const bool generated = xtc.generateThumbBmp(coverW, coverH);
+    if (!generated) {
+      LOG_ERR("BSC", "XTC thumb gen failed for %s (%dx%d) — pageCount=%lu, freeHeap=%u",
+              path.c_str(), coverW, coverH, xtc.getPageCount(), ESP.getFreeHeap());
+    }
+    return generated;
   }
   if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
     Txt txt(path, "/.crosspoint");

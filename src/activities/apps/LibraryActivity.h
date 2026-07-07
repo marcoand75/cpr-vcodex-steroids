@@ -16,11 +16,28 @@ class LibraryActivity final : public Activity {
   std::vector<LibraryCache::Entry> unfilteredEntries_;
   int coverGenIndex_ = -1;
   bool coversComplete_ = false;
+  int coverPassCount_ = 0;  // number of full indexing passes attempted on the current page
   uint64_t coverGeneratedMask_ = 0;  // bitmask of slots already generated this page pass
+  static constexpr int kMaxCoverPasses = 2;  // give up after this many passes; failed covers fall back to placeholder
   int lastPage_ = -1;
   mutable int lastRenderedPage_ = -1;
   mutable int lastRenderedSelectorIndex_ = -1;
   mutable bool forceRender_ = true;
+
+  // Render cache: header info / selected title are rebuilt only when their
+  // inputs change, keeping render allocation-free during per-page indexing.
+  std::string cachedInfo_;
+  std::string cachedSelTitle_;
+  int cachedRenderSelector_ = -1;
+  int cachedRenderPage_ = -1;
+  CrossPointSettings::LIBRARY_FILTER cachedInfoFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
+  CrossPointSettings::LIBRARY_SORT cachedInfoSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
+  std::string cachedInfoSearch_;
+  // Wrapped cover-title lines for the currently rendered page (at most
+  // gridsPerPage_ entries). Built once per page change so the render loop does
+  // not allocate during per-page cover indexing. Keyed by pageStart.
+  std::vector<std::vector<std::string>> pageTitleCache_;
+  int pageTitleCacheKey_ = -1;
 
   int coverWidth_ = 100;
   int coverHeight_ = 150;
@@ -50,6 +67,10 @@ class LibraryActivity final : public Activity {
   void scanSd();
   void applyFilterAndSort();
   bool isBookCoverReady(const LibraryCache::Entry& entry) const;
+  // Slot-aware overload: skips the linear search over `entries_` and checks the
+  // thumbnail file + the current-page generation mask directly. `slot` is the
+  // zero-based position within the current page (pageStart-relative).
+  bool isBookCoverReady(const std::string& path, size_t slot) const;
   void deleteLibraryCovers(const std::string& bookPath);
   void deletePageCovers();
   void deleteAllLibraryCovers();

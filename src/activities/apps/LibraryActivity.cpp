@@ -1,6 +1,7 @@
 #include "LibraryActivity.h"
 
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -54,7 +55,6 @@ void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
   const int symCx = cx + cw - leg / 3;
   const int symCy = cy + leg / 3;
   const int symSz = std::max(8, leg * 22 / 100);
-  (void)symSz;
 
   if (completed) {
     r.drawLine(symCx - 5, symCy,     symCx - 1, symCy + 4, 2, false);
@@ -127,24 +127,30 @@ void LibraryActivity::applyLayoutFromSettings() {
   }
   gridsPerPage_ = gridColumns_ * gridColumns_;
   rowPad_ = (gridColumns_ >= 4) ? 8 : 14;
+  pageTitleCacheKey_ = -1;  // cover width changed -> wrapping width is stale
 }
 
 bool LibraryActivity::isBookCoverReady(const LibraryCache::Entry& entry) const {
-  const std::string tp = LibraryCache::thumbPathFor(entry.path, coverWidth_, coverHeight_);
-  if (!tp.empty() && Storage.exists(tp.c_str())) return true;
-  // Also accept slots we've already generated this pass — the FAT driver
-  // may not make the BMP visible immediately after write.
-  // Check `coverGeneratedMask_` for entries that were generated in this pass.
+  // Resolve the page-relative slot for this entry (if it is on the current
+  // page) and delegate to the slot-aware overload.
+  const size_t pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
   const auto it = std::find_if(entries_.begin(), entries_.end(),
                                [&](const LibraryCache::Entry& e) { return e.path == entry.path; });
+  size_t slot = 0;
   if (it != entries_.end()) {
     const size_t entryIdx = static_cast<size_t>(it - entries_.begin());
-    const size_t pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-    if (entryIdx >= pageStart) {
-      const size_t slot = entryIdx - pageStart;
-      if (slot < 64 && (coverGeneratedMask_ & (uint64_t{1} << slot))) return true;
-    }
+    if (entryIdx >= pageStart) slot = entryIdx - pageStart;
   }
+  return isBookCoverReady(entry.path, slot);
+}
+
+bool LibraryActivity::isBookCoverReady(const std::string& path, size_t slot) const {
+  const std::string tp = LibraryCache::thumbPathFor(path, coverWidth_, coverHeight_);
+  if (!tp.empty() && Storage.exists(tp.c_str())) return true;
+  // Also accept slots we've already generated this pass — the FAT driver
+  // may not make the BMP visible immediately after write. Only valid for the
+  // current page (slot < 64). The bit is set only on a successful generation.
+  if (slot < 64 && (coverGeneratedMask_ & (uint64_t{1} << slot))) return true;
   return false;
 }
 
@@ -158,9 +164,18 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
     LibraryCache::scan(renderer, popupRect, allEntries);
   }
 
+  // Push matching entries into unfilteredEntries_.  Using the original two-
+  // container pattern (rather than compacting in place) avoids self-move
+  // issues: the system STL (libstdc++ on ESP32-C3) clears std::string on
+  // self-move-assignment, which would empty every path + title when the
+  // ALL filter is selected (every iteration of the compact loop would be
+  // allEntries[w] = move(allEntries[r]) with w == r).
   unfilteredEntries_.clear();
-  for (auto& e : allEntries) {
+  for (int r = 0; r < static_cast<int>(allEntries.size()); ++r) {
+    // Keep the WDT fed on very large libraries.
+    if ((r & 0xF) == 0) { yield(); esp_task_wdt_reset(); }
     bool include = false;
+    const LibraryCache::Entry& e = allEntries[r];
     switch (filter) {
       case CrossPointSettings::LIBRARY_FILTER_ALL: include = true; break;
       case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: include = FAVORITES.isFavorite(e.path); break;
@@ -172,7 +187,7 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
         break;
       }
     }
-    if (include) unfilteredEntries_.push_back(std::move(e));
+    if (include) unfilteredEntries_.push_back(std::move(allEntries[r]));
   }
 
   currentFilter_ = filter;
@@ -241,11 +256,17 @@ void LibraryActivity::applyFilterAndSort() {
     }
     return a.path < b.path;
   };
+  // Reset WDT before the sort — for large libraries the RECENT/PROGRESS
+  // comparator (which calls READING_STATS.findBook per comparison) can
+  // be CPU-heavy and the sort itself has no yield points.
+  yield();
+  esp_task_wdt_reset();
   std::sort(entries_.begin(), entries_.end(), compareEntries);
   selectorIndex_ = 0;
   coversComplete_ = false;
   coverGenIndex_ = -1;
   lastPage_ = -1;
+  pageTitleCacheKey_ = -1;  // entries order/contents changed
   forceRender_ = true;
 }
 
@@ -450,6 +471,8 @@ void LibraryActivity::onExit() {
   Activity::onExit();
   entries_.clear();
   unfilteredEntries_.clear();
+  pageTitleCache_.clear();
+  pageTitleCacheKey_ = -1;
 }
 
 void LibraryActivity::loop() {
@@ -482,8 +505,8 @@ void LibraryActivity::loop() {
   if (!coversComplete_ && total > 0) {
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
-    // Reset mask on first entry or page change
-    if (coverGenIndex_ < 0) coverGeneratedMask_ = 0;
+    // Reset mask + pass counter on first entry of a fresh page/pass.
+    if (coverGenIndex_ < 0) { coverGeneratedMask_ = 0; coverPassCount_ = 0; }
     // Allow Back to cancel indexing so the user is never stuck.
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       coversComplete_ = true;
@@ -500,21 +523,36 @@ void LibraryActivity::loop() {
     for (int attempt = 0; attempt < pageCount && !generatedOne; ++attempt) {
       const int slot = (coverGenIndex_ + attempt) % pageCount;
       const int idx = pageStart + slot;
-      if (!isBookCoverReady(entries_[idx])) {
-        LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
-        if (slot < 64) coverGeneratedMask_ |= (uint64_t{1} << slot);
+      if (!isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot))) {
+        // Feed the watchdog and yield before the (potentially slow) decode so a
+        // large EPUB cover cannot trip the loop-task WDT on the ESP32-C3.
+        yield();
+        esp_task_wdt_reset();
+        // Only set the per-slot mask bit when generation actually succeeded.
+        // A failed generation must NOT be reported as ready, otherwise the
+        // book would silently keep its placeholder and never get retried.
+        if (LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_) &&
+            slot < 64) {
+          coverGeneratedMask_ |= (uint64_t{1} << slot);
+        }
         generatedOne = true;
       }
     }
     coverGenIndex_++;
     if (coverGenIndex_ >= pageCount) {
-      // Finished a full pass. If nothing is missing, mark complete;
-      // otherwise restart the pass to retry entries that failed.
+      // Finished a full pass. If nothing is missing, mark complete; otherwise
+      // retry the pass. After kMaxCoverPasses attempts, give up and mark
+      // complete anyway so a permanently-failing book (e.g. corrupt EPUB)
+      // falls back to the placeholder instead of looping forever.
       bool stillMissing = false;
       for (int slot = 0; slot < pageCount && !stillMissing; ++slot) {
-        if (!isBookCoverReady(entries_[pageStart + slot])) stillMissing = true;
+        if (!isBookCoverReady(entries_[pageStart + slot].path, static_cast<size_t>(slot))) stillMissing = true;
       }
       if (!stillMissing) {
+        coversComplete_ = true;
+        coverGenIndex_ = -1;
+        coverGeneratedMask_ = 0;
+      } else if (++coverPassCount_ >= kMaxCoverPasses) {
         coversComplete_ = true;
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
@@ -527,7 +565,38 @@ void LibraryActivity::loop() {
     return;
   }
 
-  if (total <= 0) return;
+  if (total <= 0) {
+    // The list is empty (e.g., a filter produced zero matches). Only allow
+    // Back (go home) and long-press popup triggers so the user is never stuck.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      upHeld_ = false; downHeld_ = false;
+      upLongTriggered_ = false; downLongTriggered_ = false;
+      renderer.clearScreen();
+      renderer.displayBuffer();
+      onGoHome();
+    }
+    // Long-press Up/Down to open sort/filter popups (so the user can switch
+    // back to a non-empty filter).
+    if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
+      if (!upHeld_) { upHeld_ = true; upLongTriggered_ = false; }
+      if (!upLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
+        upLongTriggered_ = true; openSortPopup();
+      }
+    }
+    if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
+      if (!downHeld_) { downHeld_ = true; downLongTriggered_ = false; }
+      if (!downLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
+        downLongTriggered_ = true; openFilterPopup();
+      }
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+      upHeld_ = false; upLongTriggered_ = false;
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+      downHeld_ = false; downLongTriggered_ = false;
+    }
+    return;
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (total > 0 && selectorIndex_ < total) {
@@ -636,7 +705,10 @@ void LibraryActivity::loop() {
         selectorIndex_ -= gridColumns_;
       }
       int curPage = selectorIndex_ / gridsPerPage_;
-      if (curPage != lastPage_) { coversComplete_ = false; coverGenIndex_ = -1; lastPage_ = curPage; }
+      if (curPage != lastPage_) {
+        coversComplete_ = false; coverGenIndex_ = -1; coverPassCount_ = 0;
+        coverGeneratedMask_ = 0; lastPage_ = curPage;
+      }
       requestUpdate();
     }
     upHeld_ = false; upLongTriggered_ = false;
@@ -657,7 +729,10 @@ void LibraryActivity::loop() {
         selectorIndex_ = nr;
       }
       int curPage = selectorIndex_ / gridsPerPage_;
-      if (curPage != lastPage_) { coversComplete_ = false; coverGenIndex_ = -1; lastPage_ = curPage; }
+      if (curPage != lastPage_) {
+        coversComplete_ = false; coverGenIndex_ = -1; coverPassCount_ = 0;
+        coverGeneratedMask_ = 0; lastPage_ = curPage;
+      }
       requestUpdate();
     }
     downHeld_ = false; downLongTriggered_ = false;
@@ -672,7 +747,10 @@ void LibraryActivity::loop() {
   }
   if (moved) {
     int curPage = selectorIndex_ / gridsPerPage_;
-    if (curPage != lastPage_) { coversComplete_ = false; coverGenIndex_ = -1; lastPage_ = curPage; }
+    if (curPage != lastPage_) {
+        coversComplete_ = false; coverGenIndex_ = -1; coverPassCount_ = 0;
+        coverGeneratedMask_ = 0; lastPage_ = curPage;
+      }
     requestUpdate();
   }
 }
@@ -707,58 +785,77 @@ void LibraryActivity::render(RenderLock&&) {
   }
 
   if (total > 0) {
-    std::string info;
-    switch (currentFilter_) {
-      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: info = tr(STR_FAVOURITES); break;
-      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: info = tr(STR_LATEST_READ); break;
-      default: info = tr(STR_ALL_BOOKS); break;
-    }
-    // Always show sort label
-    const char* sortLabel = nullptr;
-    switch (currentSort_) {
-      case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
-      case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
-      case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
-      case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
-      case CrossPointSettings::LIBRARY_SORT_RECENT:     sortLabel = tr(STR_SORT_RECENT); break;
-      case CrossPointSettings::LIBRARY_SORT_PROGRESS:   sortLabel = tr(STR_SORT_PROGRESS); break;
-      default: break;
-    }
-    if (sortLabel && sortLabel[0]) { info += " / "; info += sortLabel; }
-    if (!currentSearchText_.empty()) {
-      info += " [";
-      info += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + ".." : currentSearchText_;
-      info += "]";
-    }
-    int lblW = renderer.getTextWidth(UI_10_FONT_ID, info.c_str(), EpdFontFamily::REGULAR);
-    if (lblW > pageWidth - 20) {
-      while (info.size() > 5 && renderer.getTextWidth(UI_10_FONT_ID, (info + "..").c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
-        info.pop_back();
+    // Rebuild the cached header/title strings only when their inputs change.
+    // This keeps render effectively allocation-free in the steady state and
+    // during per-page cover indexing, where render runs every frame.
+    const bool infoKeyChanged =
+        cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
+        cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
+        cachedInfoSearch_ != currentSearchText_;
+    if (infoKeyChanged) {
+      cachedInfo_.clear();
+      switch (currentFilter_) {
+        case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
+        case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
+        default: cachedInfo_ = tr(STR_ALL_BOOKS); break;
       }
-      info += "..";
+      const char* sortLabel = nullptr;
+      switch (currentSort_) {
+        case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
+        case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
+        case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
+        case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
+        case CrossPointSettings::LIBRARY_SORT_RECENT:     sortLabel = tr(STR_SORT_RECENT); break;
+        case CrossPointSettings::LIBRARY_SORT_PROGRESS:   sortLabel = tr(STR_SORT_PROGRESS); break;
+        default: break;
+      }
+      if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
+      if (!currentSearchText_.empty()) {
+        cachedInfo_ += " [";
+        cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + ".." : currentSearchText_;
+        cachedInfo_ += "]";
+      }
+
+      if (selectorIndex_ < total) {
+        cachedSelTitle_ = entries_[selectorIndex_].title;
+        if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
+        const int maxSelW = pageWidth - 20;
+        if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+          while (cachedSelTitle_.size() > 3 &&
+                 renderer.getTextWidth(UI_10_FONT_ID, (cachedSelTitle_ + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+            cachedSelTitle_.pop_back();
+          }
+          cachedSelTitle_ += "..";
+        }
+      } else {
+        cachedSelTitle_.clear();
+      }
+
+      cachedInfoFilter_ = currentFilter_;
+      cachedInfoSort_ = currentSort_;
+      cachedInfoSearch_ = currentSearchText_;
+      cachedRenderSelector_ = selectorIndex_;
+      cachedRenderPage_ = curPageRaw;
     }
-    lblW = renderer.getTextWidth(UI_10_FONT_ID, info.c_str(), EpdFontFamily::REGULAR);
+
+    int lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
+    if (lblW > pageWidth - 20) {
+      while (cachedInfo_.size() > 5 && renderer.getTextWidth(UI_10_FONT_ID, (cachedInfo_ + "..").c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
+        cachedInfo_.pop_back();
+      }
+      cachedInfo_ += "..";
+    }
+    lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
     int centerX = (pageWidth - lblW) / 2;
     int headerY = metrics.topPadding + 8;
-    renderer.drawText(UI_10_FONT_ID, centerX, headerY, info.c_str(), true, EpdFontFamily::REGULAR);
+    renderer.drawText(UI_10_FONT_ID, centerX, headerY, cachedInfo_.c_str(), true, EpdFontFamily::REGULAR);
 
     // Draw selected book title below the info line, centered
-    if (selectorIndex_ < total) {
-      std::string selTitle = entries_[selectorIndex_].title;
-      if (selTitle.empty()) selTitle = filenameWithoutExtension(entries_[selectorIndex_].path);
-      // Truncate with ellipsis if needed
-      const int maxSelW = pageWidth - 20;
-      if (renderer.getTextWidth(UI_10_FONT_ID, selTitle.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-        while (selTitle.size() > 3 &&
-               renderer.getTextWidth(UI_10_FONT_ID, (selTitle + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-          selTitle.pop_back();
-        }
-        selTitle += "..";
-      }
-      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, selTitle.c_str(), EpdFontFamily::REGULAR);
+    if (selectorIndex_ < total && !cachedSelTitle_.empty()) {
+      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
       const int selTitleX = (pageWidth - selTitleW) / 2;
       const int selTitleY = headerY + renderer.getLineHeight(UI_10_FONT_ID) + 2;
-      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, selTitle.c_str(), true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
     }
   }
 
@@ -779,6 +876,26 @@ void LibraryActivity::render(RenderLock&&) {
   const int gridW = gridColumns_ * coverWidth_ + (gridColumns_ - 1) * gap;
   const int x0 = (pageWidth - gridW) / 4;
   const int rowH = coverHeight_ + rowPad;
+
+  // Build the wrapped cover-title cache for this page once. This avoids
+  // per-frame heap allocation in the render loop during cover indexing, where
+  // render runs every frame. Rebuilt only when the page (or its contents)
+  // changes; pageTitleCacheKey_ is invalidated in applyFilterAndSort /
+  // applyLayoutFromSettings / onExit.
+  if (pageTitleCacheKey_ != pageStart) {
+    pageTitleCache_.clear();
+    pageTitleCache_.reserve(pageCount);
+    constexpr int kCoverTextPad = 4;
+    for (int i = 0; i < pageCount; ++i) {
+      const int idx = pageStart + i;
+      std::string t = entries_[idx].title;
+      if (t.empty()) t = filenameWithoutExtension(entries_[idx].path);
+      pageTitleCache_.push_back(renderer.wrappedText(SMALL_FONT_ID, t.c_str(),
+                                                     coverWidth_ - 2 * kCoverTextPad, 3, EpdFontFamily::BOLD));
+    }
+    pageTitleCacheKey_ = pageStart;
+  }
+
 
   for (int i = 0; i < pageCount; ++i) {
     const int idx = pageStart + i;
@@ -813,11 +930,8 @@ void LibraryActivity::render(RenderLock&&) {
       const int iconX = x + (coverWidth_ - iconSize) / 2;
       const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
       renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
-      std::string t = entries_[idx].title;
-      if (t.empty()) t = filenameWithoutExtension(entries_[idx].path);
-      constexpr int P = 4;
       const int textAreaH = 2 * coverHeight_ / 3 - 8;
-      auto lines = renderer.wrappedText(SMALL_FONT_ID, t.c_str(), coverWidth_ - 2 * P, 3, EpdFontFamily::BOLD);
+      const auto& lines = pageTitleCache_[i];
       int lh = renderer.getLineHeight(SMALL_FONT_ID);
       int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
       for (auto& ln : lines) {
@@ -857,7 +971,7 @@ void LibraryActivity::render(RenderLock&&) {
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
     int readyCount = 0;
     for (int i = 0; i < pageCount; ++i) {
-      if (isBookCoverReady(entries_[pageStart + i])) readyCount++;
+      if (isBookCoverReady(entries_[pageStart + i].path, static_cast<size_t>(i))) readyCount++;
     }
     Rect pr = GUI.drawPopup(renderer, tr(STR_INDEXING));
     if (pr.width > 0 && pr.height > 0) {
@@ -874,14 +988,22 @@ void LibraryActivity::render(RenderLock&&) {
 }
 
 void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {
+  // Delete only the generated thumbnail. The book must stay in the library
+  // cache; the caller resets coversComplete_ so the cover is regenerated.
+  // (Removing the cache entry here would make the book vanish from the list
+  // and force a re-parse on the next sync — inconsistent with the page/all
+  // delete variants which only remove the BMP files.)
   std::string thumbPath = LibraryCache::thumbPathFor(bookPath, coverWidth_, coverHeight_);
   if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
     Storage.remove(thumbPath.c_str());
   }
-  LibraryCache::removeBook(bookPath);
 }
 
 void LibraryActivity::deletePageCovers() {
+  // Delete only the generated thumbnails for the current page. The books must
+  // stay in the library cache (consistent with the single/all delete variants,
+  // which only remove BMP files); the caller resets coversComplete_ so the
+  // missing covers are regenerated for this page.
   int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
   int pe = std::min(ps + gridsPerPage_, static_cast<int>(entries_.size()));
   for (int i = ps; i < pe; ++i) {
@@ -889,7 +1011,6 @@ void LibraryActivity::deletePageCovers() {
     if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
       Storage.remove(thumbPath.c_str());
     }
-    LibraryCache::removeBook(entries_[i].path);
   }
 }
 
