@@ -7,12 +7,12 @@
 #include <WiFi.h>
 
 #include "MappedInputManager.h"
-#include "ReadingStatsStore.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
+#include "util/NetworkMemory.h"
 
 namespace {
 std::string formatByteSizeCompact(const size_t bytes) {
@@ -46,6 +46,8 @@ std::string buildNewVersionLine(const OtaUpdater& updater) {
 
 void OtaUpdateActivity::checkForUpdateNow() {
   LOG_DBG("OTA", "WiFi connected, checking for update");
+
+  NetworkMemory::prepareBeforeNetwork(renderer, "OTA", "pre-check");
 
   {
     RenderLock lock(*this);
@@ -100,7 +102,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 void OtaUpdateActivity::onEnter() {
   Activity::onEnter();
 
-  READING_STATS.releaseMemoryForNetwork();
+  NetworkMemory::prepareBeforeNetwork(renderer, "OTA", "enter");
 
   // Turn on WiFi immediately
   LOG_DBG("OTA", "Turning on WiFi...");
@@ -209,6 +211,7 @@ void OtaUpdateActivity::loop() {
         lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
       }
       requestUpdateAndWait();
+      NetworkMemory::prepareBeforeNetwork(renderer, "OTA", "pre-install");
       const auto res = updater.installUpdate(
           [](void* ctx) {
             // immediate=true notifies the render task directly. The default deferred path only
