@@ -1,7 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 /**
  * Submenu for KOReader Sync settings.
@@ -17,10 +17,14 @@ class KOReaderSettingsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
-  ButtonNavigator buttonNavigator;
-
   size_t selectedIndex = 0;
 
   void handleSelection();
+
+ private:
+  ListInputMapper listInputMapper;
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 };

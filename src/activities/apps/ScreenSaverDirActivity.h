@@ -4,15 +4,19 @@
 #include <vector>
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class ScreenSaverDirActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   std::vector<std::string> directories;
   int selectedIndex = 0;
 
   void loadDirectories();
   void openSelectedDirectory();
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 
  public:
   explicit ScreenSaverDirActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

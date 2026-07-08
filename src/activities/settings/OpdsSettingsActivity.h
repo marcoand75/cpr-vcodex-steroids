@@ -2,7 +2,7 @@
 
 #include "OpdsServerStore.h"
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 /**
  * Edit screen for a single OPDS server.
@@ -22,16 +22,21 @@ class OpdsSettingsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
-  ButtonNavigator buttonNavigator;
-
   size_t selectedIndex = 0;
+
+  int getMenuItemCount() const;
+  void handleSelection();
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
+
+ private:
+  ListInputMapper listInputMapper;
   int serverIndex;
   OpdsServer editServer;
   bool isNewServer = false;
   bool showSaveError = false;
 
-  int getMenuItemCount() const;
-  void handleSelection();
   bool saveServer();
 };

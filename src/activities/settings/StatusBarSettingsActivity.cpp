@@ -9,6 +9,8 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 constexpr int MENU_ITEMS = 8;
@@ -38,6 +40,26 @@ const int verticalPreviewPadding = 50;
 const int verticalPreviewTextPadding = 40;
 }  // namespace
 
+static void s_onBack(void* ctx) {
+  static_cast<StatusBarSettingsActivity*>(ctx)->finish();
+}
+
+static void s_onConfirm(void* ctx) {
+  auto* self = static_cast<StatusBarSettingsActivity*>(ctx);
+  self->handleSelection();
+  self->requestUpdate();
+}
+
+static void s_onNav(void* ctx, int delta) {
+  auto* self = static_cast<StatusBarSettingsActivity*>(ctx);
+  if (delta > 0) {
+    self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, MENU_ITEMS);
+  } else if (delta < 0) {
+    self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, MENU_ITEMS);
+  }
+  self->requestUpdate();
+}
+
 void StatusBarSettingsActivity::onEnter() {
   Activity::onEnter();
 
@@ -64,43 +86,17 @@ void StatusBarSettingsActivity::onEnter() {
     SETTINGS.xtcStatusBarMode = CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_HIDE;
   }
 
+  listInputMapper.setBackHandler(s_onBack, this, false);
+  listInputMapper.setConfirmHandler(s_onConfirm, this, false);
+  listInputMapper.setNavReleaseAndContinuous(s_onNav, s_onNav, this);
+
   requestUpdate();
 }
 
 void StatusBarSettingsActivity::onExit() { Activity::onExit(); }
 
 void StatusBarSettingsActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    requestUpdate();
-    return;
-  }
-
-  // Handle navigation
-  buttonNavigator.onNextRelease([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, MENU_ITEMS);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, MENU_ITEMS);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, MENU_ITEMS);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, MENU_ITEMS);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void StatusBarSettingsActivity::handleSelection() {
@@ -136,18 +132,14 @@ void StatusBarSettingsActivity::handleSelection() {
 void StatusBarSettingsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  auto metrics = UITheme::getInstance().getMetrics();
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto layout = ListLayout::compute(renderer, true, false, metrics.verticalSpacing);
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CUSTOMISE_STATUS_BAR));
+  ListRenderHelper::drawHeader(renderer, tr(STR_CUSTOMISE_STATUS_BAR));
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
-  GUI.drawList(
-      renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(MENU_ITEMS),
-      static_cast<int>(selectedIndex), [](int index) { return std::string(I18N.get(menuNames[index])); }, nullptr,
-      nullptr,
+  ListRenderHelper::drawList(
+      renderer, layout, static_cast<int>(MENU_ITEMS), static_cast<int>(selectedIndex),
+      [](int index) { return std::string(I18N.get(menuNames[index])); }, nullptr, nullptr,
       [this](int index) {
         // Draw status for each setting
         if (index == 0) {
@@ -174,8 +166,7 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
       true);
 
   // Draw button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   std::string title;
   if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {

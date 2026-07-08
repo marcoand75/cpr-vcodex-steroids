@@ -3,13 +3,13 @@
 #include <cstdint>
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class ScreenCleanActivity final : public Activity {
   enum class Mode : uint8_t { Quick, Deep };
   enum class Pattern : uint8_t { White, Black, LightGray, DarkGray, Checker, InverseChecker };
 
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   int selectedIndex = 0;
   bool cleaning = false;
   bool completed = false;
@@ -25,6 +25,10 @@ class ScreenCleanActivity final : public Activity {
   int stageCount() const;
   Pattern patternForStage(uint8_t index) const;
   void drawPattern(Pattern pattern) const;
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 
  public:
   explicit ScreenCleanActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

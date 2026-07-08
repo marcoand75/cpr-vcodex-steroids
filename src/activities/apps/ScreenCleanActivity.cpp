@@ -7,6 +7,9 @@
 #include <algorithm>
 
 #include "components/UITheme.h"
+#include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -21,13 +24,43 @@ const char* titleForAction(const int index) {
 const char* subtitleForAction(const int index) {
   return index == 0 ? tr(STR_SCREEN_CLEAN_QUICK_DESC) : tr(STR_SCREEN_CLEAN_DEEP_DESC);
 }
+
 }  // namespace
+
+void ScreenCleanActivity::onBack(void* ctx) {
+  auto* self = static_cast<ScreenCleanActivity*>(ctx);
+  if (self->cleaning) {
+    self->finishCleaning(false);
+  } else {
+    self->finish();
+  }
+}
+
+void ScreenCleanActivity::onConfirm(void* ctx) {
+  auto* self = static_cast<ScreenCleanActivity*>(ctx);
+  self->startCleaning(self->selectedIndex == 0 ? Mode::Quick : Mode::Deep);
+}
+
+void ScreenCleanActivity::onNav(void* ctx, int delta) {
+  auto* self = static_cast<ScreenCleanActivity*>(ctx);
+  if (delta > 0) {
+    self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, ACTION_COUNT);
+  } else if (delta < 0) {
+    self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, ACTION_COUNT);
+  }
+  self->requestUpdate();
+}
 
 void ScreenCleanActivity::onEnter() {
   Activity::onEnter();
   cleaning = false;
   completed = false;
   selectedIndex = 0;
+
+  listInputMapper.setBackHandler(onBack, this, false);
+  listInputMapper.setConfirmHandler(onConfirm, this, false);
+  listInputMapper.setNavHandlers(nullptr, onNav, nullptr, this);
+
   requestUpdate();
 }
 
@@ -140,27 +173,7 @@ void ScreenCleanActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    startCleaning(selectedIndex == 0 ? Mode::Quick : Mode::Deep);
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    completed = false;
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, ACTION_COUNT);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    completed = false;
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, ACTION_COUNT);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void ScreenCleanActivity::render(RenderLock&&) {
@@ -173,21 +186,17 @@ void ScreenCleanActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const auto layout = ListLayout::compute(renderer);
 
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_SCREEN_CLEAN));
+  ListRenderHelper::drawHeader(renderer, tr(STR_SCREEN_CLEAN), nullptr, true);
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, ACTION_COUNT, selectedIndex,
-               [](const int index) { return std::string(titleForAction(index)); },
-               [](const int index) { return std::string(subtitleForAction(index)); },
-               [](const int) { return UIIcon::Image; });
+  ListRenderHelper::drawList(
+      renderer, layout, ACTION_COUNT, selectedIndex,
+      [](const int index) { return std::string(titleForAction(index)); },
+      [](const int index) { return std::string(subtitleForAction(index)); },
+      [](const int) { return UIIcon::Image; });
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   if (completed) {
     GUI.drawPopup(renderer, tr(STR_SCREEN_CLEAN_DONE));
     return;

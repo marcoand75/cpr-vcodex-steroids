@@ -9,6 +9,8 @@
 #include "FavoritesOrderActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -40,61 +42,55 @@ void FavoritesAppActivity::openSelectedEntry() {
   }
 }
 
+void FavoritesAppActivity::onBack(void* ctx) {
+  static_cast<FavoritesAppActivity*>(ctx)->finish();
+}
+
+void FavoritesAppActivity::onConfirm(void* ctx) {
+  static_cast<FavoritesAppActivity*>(ctx)->openSelectedEntry();
+}
+
+void FavoritesAppActivity::releaseNav(void* ctx, int delta) {
+  auto* self = static_cast<FavoritesAppActivity*>(ctx);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, ACTION_COUNT);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, ACTION_COUNT);
+  self->requestUpdate();
+}
+
+void FavoritesAppActivity::continuousNav(void* ctx, int delta) {
+  auto* self = static_cast<FavoritesAppActivity*>(ctx);
+  const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  self->requestUpdate();
+}
+
 void FavoritesAppActivity::onEnter() {
   Activity::onEnter();
   refreshEntries();
+
+  listInputMapper.setBackHandler(onBack, this, true);
+  listInputMapper.setConfirmHandler(onConfirm, this, true);
+  listInputMapper.setNavReleaseAndContinuous(releaseNav, continuousNav, this);
+
   requestUpdate();
 }
 
 void FavoritesAppActivity::loop() {
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    openSelectedEntry();
-    return;
-  }
-
-  const int itemCount = ACTION_COUNT;
-  buttonNavigator.onNextRelease([this, itemCount] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this, itemCount] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, itemCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, itemCount, pageItems] {
-    selectedIndex = ButtonNavigator::nextPageIndex(selectedIndex, itemCount, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, itemCount, pageItems] {
-    selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, itemCount, pageItems);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void FavoritesAppActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int listHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const auto layout = ListLayout::compute(renderer, true, true, metrics.verticalSpacing);
   const std::string headerSubtitle = std::to_string(favoriteCount);
 
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FAVORITES), headerSubtitle.c_str());
+  ListRenderHelper::drawHeader(renderer, tr(STR_FAVORITES), headerSubtitle.c_str(), true);
 
-  GUI.drawList(
-      renderer, Rect{0, contentTop, pageWidth, listHeight}, ACTION_COUNT, selectedIndex,
+  ListRenderHelper::drawList(
+      renderer, layout, ACTION_COUNT, selectedIndex,
       [this](const int index) {
         if (index == 0) return std::string(tr(STR_BROWSE_FILES));
         if (index == 1) return std::string(tr(STR_ORDER_FAVORITES));
@@ -112,10 +108,9 @@ void FavoritesAppActivity::render(RenderLock&&) {
       });
 
   if (favoriteCount == 0) {
-    renderer.drawCenteredText(SMALL_FONT_ID, contentTop + listHeight - 14, tr(STR_NO_FAVORITES));
+    renderer.drawCenteredText(SMALL_FONT_ID, layout.contentTop + layout.contentHeight - 14, tr(STR_NO_FAVORITES));
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

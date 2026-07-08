@@ -4,7 +4,7 @@
 #include <freertos/task.h>
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 // Reader status bar configuration activity
 class StatusBarSettingsActivity final : public Activity {
@@ -17,10 +17,14 @@ class StatusBarSettingsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
-  ButtonNavigator buttonNavigator;
-
   int selectedIndex = 0;
 
   void handleSelection();
+
+ private:
+  ListInputMapper listInputMapper;
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 };

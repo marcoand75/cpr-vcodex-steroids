@@ -10,8 +10,8 @@
 
 #include <algorithm>
 
-#include "ReadingStatsStore.h"
 #include "util/BookIdentity.h"
+#include "util/BookStoreUtils.h"
 
 namespace {
 constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
@@ -19,103 +19,17 @@ constexpr char RECENT_BOOKS_FILE_BIN[] = "/.crosspoint/recent.bin";
 constexpr char RECENT_BOOKS_FILE_JSON[] = "/.crosspoint/recent.json";
 constexpr char RECENT_BOOKS_FILE_BAK[] = "/.crosspoint/recent.bin.bak";
 constexpr int MAX_RECENT_BOOKS = 10;
-
-std::string fallbackTitleFromPath(const std::string& path) {
-  std::string filename = path;
-  const size_t lastSlash = filename.find_last_of('/');
-  if (lastSlash != std::string::npos) {
-    filename = filename.substr(lastSlash + 1);
-  }
-
-  const size_t dotPos = filename.find_last_of('.');
-  if (dotPos != std::string::npos) {
-    filename = filename.substr(0, dotPos);
-  }
-  return filename;
-}
 }  // namespace
 
 RecentBooksStore RecentBooksStore::instance;
 
 int RecentBooksStore::findBookIndex(const std::string& path, const std::string& bookId) const {
-  const std::string normalizedPath = BookIdentity::normalizePath(path);
-  for (int index = 0; index < static_cast<int>(recentBooks.size()); ++index) {
-    const auto& book = recentBooks[index];
-    if (!bookId.empty() && !book.bookId.empty() && book.bookId == bookId) {
-      return index;
-    }
-    if (!normalizedPath.empty() && book.path == normalizedPath) {
-      return index;
-    }
-  }
-  return -1;
+  return BookStoreUtils::findBookIndex(recentBooks, path, bookId);
 }
 
-void RecentBooksStore::normalizeBook(RecentBook& book) {
-  book.path = BookIdentity::normalizePath(book.path);
-  if (!book.bookId.empty()) {
-    return;
-  }
+void RecentBooksStore::normalizeBook(RecentBook& book) { BookStoreUtils::normalizeBook(book); }
 
-  if (!book.path.empty() && Storage.exists(book.path.c_str())) {
-    book.bookId = BookIdentity::resolveStableBookId(book.path);
-    return;
-  }
-
-  if (const auto* statsBook = READING_STATS.findMatchingBookForPath(book.path, book.title, book.author)) {
-    book.bookId = statsBook->bookId;
-  }
-}
-
-void RecentBooksStore::normalizeBooks() {
-  for (auto& book : recentBooks) {
-    normalizeBook(book);
-  }
-
-  std::vector<RecentBook> normalized;
-  normalized.reserve(recentBooks.size());
-  for (const auto& book : recentBooks) {
-    const int existingIndex = [&normalized, &book]() {
-      for (int index = 0; index < static_cast<int>(normalized.size()); ++index) {
-        const auto& existing = normalized[index];
-        if (!book.bookId.empty() && !existing.bookId.empty() && book.bookId == existing.bookId) {
-          return index;
-        }
-        if (!book.path.empty() && existing.path == book.path) {
-          return index;
-        }
-      }
-      return -1;
-    }();
-
-    if (existingIndex < 0) {
-      normalized.push_back(book);
-      continue;
-    }
-
-    auto& existing = normalized[existingIndex];
-    if (existing.bookId.empty()) {
-      existing.bookId = book.bookId;
-    }
-    if (existing.path.empty() || (!book.path.empty() && Storage.exists(book.path.c_str()))) {
-      existing.path = book.path;
-    }
-    if (existing.title.empty() && !book.title.empty()) {
-      existing.title = book.title;
-    }
-    if (existing.author.empty() && !book.author.empty()) {
-      existing.author = book.author;
-    }
-    if (existing.coverBmpPath.empty() && !book.coverBmpPath.empty()) {
-      existing.coverBmpPath = book.coverBmpPath;
-    }
-  }
-
-  recentBooks = std::move(normalized);
-  if (recentBooks.size() > MAX_RECENT_BOOKS) {
-    recentBooks.resize(MAX_RECENT_BOOKS);
-  }
-}
+void RecentBooksStore::normalizeBooks() { BookStoreUtils::normalizeBooks(recentBooks, true, MAX_RECENT_BOOKS); }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& bookId) {
@@ -315,7 +229,7 @@ bool RecentBooksStore::loadFromBinaryFile() {
       }
 
       if (title.empty()) {
-        title = fallbackTitleFromPath(normalizedPath);
+        title = BookStoreUtils::fallbackTitleFromPath(normalizedPath);
       }
 
       recentBooks.push_back({BookIdentity::resolveStableBookId(normalizedPath), normalizedPath, title, author, ""});

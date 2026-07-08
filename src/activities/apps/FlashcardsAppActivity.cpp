@@ -9,6 +9,9 @@
 #include "FlashcardSettingsActivity.h"
 #include "FlashcardStatsActivity.h"
 #include "components/UITheme.h"
+#include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -19,13 +22,7 @@ bool hasStatsToShow(const FlashcardDeckRecord& record) {
          record.totalWrong > 0 || record.totalSkipped > 0 || record.lastReviewedAt > 0;
 }
 
-std::string getOpenSubtitle() { return tr(STR_FLASHCARDS_OPEN_DESC); }
-
-std::string getRecentsSubtitle(const int recentCount) { return std::to_string(recentCount); }
-
-std::string getStatsSubtitle(const int deckCount) { return std::to_string(deckCount); }
-
-std::string getSettingsSubtitle() {
+static std::string getSettingsSubtitle() {
   std::string studyModeLabel;
   switch (SETTINGS.flashcardStudyMode) {
     case CrossPointSettings::FLASHCARD_STUDY_DUE:
@@ -55,8 +52,9 @@ std::string getSettingsSubtitle() {
                                    ? 10
                                    : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_20
                                          ? 20
-                                         : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_30 ? 30
-                                                                                                                       : 50));
+                                         : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_30
+                                               ? 30
+                                               : 50));
 }
 }  // namespace
 
@@ -94,10 +92,38 @@ void FlashcardsAppActivity::openSelectedEntry() {
   });
 }
 
+void FlashcardsAppActivity::onBack(void* ctx) {
+  static_cast<FlashcardsAppActivity*>(ctx)->finish();
+}
+
+void FlashcardsAppActivity::onConfirm(void* ctx) {
+  static_cast<FlashcardsAppActivity*>(ctx)->openSelectedEntry();
+}
+
+void FlashcardsAppActivity::releaseNav(void* ctx, int delta) {
+  auto* self = static_cast<FlashcardsAppActivity*>(ctx);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, ACTION_COUNT);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, ACTION_COUNT);
+  self->requestUpdate();
+}
+
+void FlashcardsAppActivity::continuousNav(void* ctx, int delta) {
+  auto* self = static_cast<FlashcardsAppActivity*>(ctx);
+  const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  self->requestUpdate();
+}
+
 void FlashcardsAppActivity::onEnter() {
   Activity::onEnter();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   refreshCounts();
+
+  listInputMapper.setBackHandler(onBack, this, true);
+  listInputMapper.setConfirmHandler(onConfirm, this, true);
+  listInputMapper.setNavReleaseAndContinuous(releaseNav, continuousNav, this);
+
   requestUpdate();
 }
 
@@ -107,37 +133,7 @@ void FlashcardsAppActivity::onExit() {
 }
 
 void FlashcardsAppActivity::loop() {
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    openSelectedEntry();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, ACTION_COUNT);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, ACTION_COUNT);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, pageItems] {
-    selectedIndex = ButtonNavigator::nextPageIndex(selectedIndex, ACTION_COUNT, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, pageItems] {
-    selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, ACTION_COUNT, pageItems);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void FlashcardsAppActivity::render(RenderLock&&) {
@@ -145,53 +141,49 @@ void FlashcardsAppActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const auto layout = ListLayout::compute(renderer, true, true, metrics.verticalSpacing);
 
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FLASHCARDS),
-                                      std::to_string(deckCount).c_str());
+  ListRenderHelper::drawHeader(renderer, tr(STR_FLASHCARDS), std::to_string(deckCount).c_str(), true);
 
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, ACTION_COUNT, selectedIndex,
-               [](const int index) {
-                 switch (index) {
-                   case 0:
-                     return std::string(tr(STR_OPEN));
-                   case 1:
-                     return std::string(tr(STR_RECENTS));
-                   case 2:
-                     return std::string(tr(STR_STATISTICS));
-                   default:
-                     return std::string(tr(STR_SETTINGS_TITLE));
-                 }
-               },
-               [this](const int index) {
-                 switch (index) {
-                   case 0:
-                     return getOpenSubtitle();
-                   case 1:
-                     return getRecentsSubtitle(recentCount);
-                   case 2:
-                     return getStatsSubtitle(deckCount);
-                   default:
-                     return getSettingsSubtitle();
-                 }
-               },
-               [](const int index) {
-                 switch (index) {
-                   case 0:
-                     return UIIcon::Folder;
-                   case 1:
-                     return UIIcon::Recent;
-                   case 2:
-                     return UIIcon::Library;
-                   default:
-                     return UIIcon::Settings;
-                 }
-               });
+  ListRenderHelper::drawList(
+      renderer, layout, ACTION_COUNT, selectedIndex,
+      [](const int index) {
+        switch (index) {
+          case 0:
+            return std::string(tr(STR_OPEN));
+          case 1:
+            return std::string(tr(STR_RECENTS));
+          case 2:
+            return std::string(tr(STR_STATISTICS));
+          default:
+            return std::string(tr(STR_SETTINGS_TITLE));
+        }
+      },
+      [this](const int index) -> std::string {
+        switch (index) {
+          case 0:
+            return tr(STR_FLASHCARDS_OPEN_DESC);
+          case 1:
+            return std::to_string(recentCount);
+          case 2:
+            return std::to_string(deckCount);
+          default:
+            return getSettingsSubtitle();
+        }
+      },
+      [](const int index) {
+        switch (index) {
+          case 0:
+            return UIIcon::Folder;
+          case 1:
+            return UIIcon::Recent;
+          case 2:
+            return UIIcon::Library;
+          default:
+            return UIIcon::Settings;
+        }
+      });
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

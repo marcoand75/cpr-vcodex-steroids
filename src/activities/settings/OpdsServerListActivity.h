@@ -1,7 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 /**
  * Activity showing the list of configured OPDS servers.
@@ -19,11 +19,16 @@ class OpdsServerListActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
-  ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
   bool pickerMode = false;
 
   int getItemCount() const;
   void handleSelection();
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
+
+ private:
+  ListInputMapper listInputMapper;
 };

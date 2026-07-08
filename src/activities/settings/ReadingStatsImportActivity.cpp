@@ -10,9 +10,9 @@
 #include <utility>
 
 #include "MappedInputManager.h"
-#include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/HeaderDateUtils.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
@@ -41,6 +41,41 @@ bool isReadingStatsBackupName(const char* name) {
   return year >= 2024 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 }  // namespace
+
+static void s_onBack(void* ctx) {
+  auto* self = static_cast<ReadingStatsImportActivity*>(ctx);
+  ActivityResult result;
+  result.isCancelled = true;
+  self->setResult(std::move(result));
+  self->finish();
+}
+
+static void s_onConfirm(void* ctx) {
+  auto* self = static_cast<ReadingStatsImportActivity*>(ctx);
+  self->finishWithSelection();
+}
+
+static void s_onNavRelease(void* ctx, int delta) {
+  auto* self = static_cast<ReadingStatsImportActivity*>(ctx);
+  const int itemCount = static_cast<int>(self->importPaths.size());
+  if (delta > 0) {
+    self->selectedIndex = static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(self->selectedIndex), itemCount));
+  } else if (delta < 0) {
+    self->selectedIndex = static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(self->selectedIndex), itemCount));
+  }
+  self->requestUpdate();
+}
+
+static void s_onNavContinuous(void* ctx, int delta) {
+  auto* self = static_cast<ReadingStatsImportActivity*>(ctx);
+  const int itemCount = static_cast<int>(self->importPaths.size());
+  if (delta > 0) {
+    self->selectedIndex = static_cast<size_t>(ButtonNavigator::nextPageIndex(static_cast<int>(self->selectedIndex), itemCount, self->pageItems));
+  } else if (delta < 0) {
+    self->selectedIndex = static_cast<size_t>(ButtonNavigator::previousPageIndex(static_cast<int>(self->selectedIndex), itemCount, self->pageItems));
+  }
+  self->requestUpdate();
+}
 
 std::vector<std::string> ReadingStatsImportActivity::getImportPaths() {
   std::vector<std::string> paths;
@@ -83,6 +118,13 @@ void ReadingStatsImportActivity::onEnter() {
   Activity::onEnter();
   importPaths = getImportPaths();
   selectedIndex = 0;
+
+  pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+
+  listInputMapper.setBackHandler(s_onBack, this, false);
+  listInputMapper.setConfirmHandler(s_onConfirm, this, false);
+  listInputMapper.setNavReleaseAndContinuous(s_onNavRelease, s_onNavContinuous, this);
+
   requestUpdate();
 }
 
@@ -103,68 +145,29 @@ void ReadingStatsImportActivity::finishWithSelection() {
 }
 
 void ReadingStatsImportActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    ActivityResult result;
-    result.isCancelled = true;
-    setResult(std::move(result));
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    finishWithSelection();
-    return;
-  }
-
-  const int itemCount = static_cast<int>(importPaths.size());
-  if (itemCount <= 0) {
-    return;
-  }
-
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
-  buttonNavigator.onNextRelease([this, itemCount] {
-    selectedIndex = static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectedIndex), itemCount));
-    requestUpdate();
-  });
-  buttonNavigator.onPreviousRelease([this, itemCount] {
-    selectedIndex = static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectedIndex), itemCount));
-    requestUpdate();
-  });
-  buttonNavigator.onNextContinuous([this, itemCount, pageItems] {
-    selectedIndex =
-        static_cast<size_t>(ButtonNavigator::nextPageIndex(static_cast<int>(selectedIndex), itemCount, pageItems));
-    requestUpdate();
-  });
-  buttonNavigator.onPreviousContinuous([this, itemCount, pageItems] {
-    selectedIndex =
-        static_cast<size_t>(ButtonNavigator::previousPageIndex(static_cast<int>(selectedIndex), itemCount, pageItems));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void ReadingStatsImportActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
+  const auto layout = ListLayout::compute(renderer);
+  const bool isEmpty = importPaths.empty();
 
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_IMPORT_READING_STATS), READING_STATS_EXPORT_DIR);
+  ListRenderHelper::drawHeader(renderer, tr(STR_IMPORT_READING_STATS), READING_STATS_EXPORT_DIR, true);
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
-  if (importPaths.empty()) {
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_READING_STATS_EXPORT));
+  if (isEmpty) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, layout.contentTop + 20, tr(STR_NO_READING_STATS_EXPORT));
   } else {
-    GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(importPaths.size()),
-        static_cast<int>(selectedIndex), [this](int index) { return getDisplayName(index); }, nullptr,
-        [](int) { return UIIcon::File; });
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(importPaths.size()), static_cast<int>(selectedIndex),
+                               [this](int index) { return getDisplayName(index); }, nullptr,
+                               [](int) { return UIIcon::File; });
   }
 
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), importPaths.empty() ? "" : tr(STR_SELECT),
-                            importPaths.empty() ? "" : tr(STR_DIR_UP), importPaths.empty() ? "" : tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const char* btn2 = isEmpty ? "" : tr(STR_SELECT);
+  const char* btn3 = isEmpty ? "" : tr(STR_DIR_UP);
+  const char* btn4 = isEmpty ? "" : tr(STR_DIR_DOWN);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), btn2, btn3, btn4);
   renderer.displayBuffer();
 }

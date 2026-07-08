@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class FontSelectionActivity final : public Activity {
  public:
@@ -18,8 +18,12 @@ class FontSelectionActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
   void handleSelection();
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNavRelease(void* ctx, int delta);
+  static void onNavContinuous(void* ctx, int delta);
 
   struct FontEntry {
     std::string name;
@@ -27,8 +31,11 @@ class FontSelectionActivity final : public Activity {
     uint8_t settingIndex;  // index used by valueSetter
   };
 
-  const SdCardFontRegistry* registry_;
-  ButtonNavigator buttonNavigator_;
   std::vector<FontEntry> fonts_;
   int selectedIndex_ = 0;
+  int pageItems_ = 0;
+
+ private:
+  const SdCardFontRegistry* registry_;
+  ListInputMapper listInputMapper;
 };

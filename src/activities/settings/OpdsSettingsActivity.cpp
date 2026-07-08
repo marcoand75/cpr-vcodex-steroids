@@ -11,12 +11,34 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 // Editable fields: Name, URL, Username, Password.
 // Existing servers also show a Delete option (BASE_ITEMS + 1).
 constexpr int BASE_ITEMS = 4;
 }  // namespace
+
+static void s_onBack(void* ctx) {
+  static_cast<OpdsSettingsActivity*>(ctx)->finish();
+}
+
+static void s_onConfirm(void* ctx) {
+  auto* self = static_cast<OpdsSettingsActivity*>(ctx);
+  self->handleSelection();
+}
+
+static void s_onNav(void* ctx, int delta) {
+  auto* self = static_cast<OpdsSettingsActivity*>(ctx);
+  const int menuItems = self->getMenuItemCount();
+  if (delta > 0) {
+    self->selectedIndex = (self->selectedIndex + 1) % menuItems;
+  } else if (delta < 0) {
+    self->selectedIndex = (self->selectedIndex + menuItems - 1) % menuItems;
+  }
+  self->requestUpdate();
+}
 
 int OpdsSettingsActivity::getMenuItemCount() const {
   return isNewServer ? BASE_ITEMS : BASE_ITEMS + 1;  // +1 for Delete
@@ -42,32 +64,17 @@ void OpdsSettingsActivity::onEnter() {
     }
   }
 
+  listInputMapper.setBackHandler(s_onBack, this, false);
+  listInputMapper.setConfirmHandler(s_onConfirm, this, false);
+  listInputMapper.setNavPressAndContinuous(s_onNav, s_onNav, this);
+
   requestUpdate();
 }
 
 void OpdsSettingsActivity::onExit() { Activity::onExit(); }
 
 void OpdsSettingsActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    return;
-  }
-
-  const int menuItems = getMenuItemCount();
-  buttonNavigator.onNext([this, menuItems] {
-    selectedIndex = (selectedIndex + 1) % menuItems;
-    requestUpdate();
-  });
-
-  buttonNavigator.onPrevious([this, menuItems] {
-    selectedIndex = (selectedIndex + menuItems - 1) % menuItems;
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 bool OpdsSettingsActivity::saveServer() {
@@ -172,24 +179,17 @@ void OpdsSettingsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
-  // Reuse STR_OPDS_BROWSER as the "edit existing server" title.
-  // New server creation uses STR_ADD_SERVER.
-  const char* header = isNewServer ? tr(STR_ADD_SERVER) : tr(STR_OPDS_BROWSER);
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, header);
-  GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
-                    tr(STR_CALIBRE_URL_HINT));
-
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + metrics.tabBarHeight;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
+  const auto layout = ListLayout::compute(renderer, true, true, metrics.verticalSpacing);
   const int menuItems = getMenuItemCount();
+
+  const char* header = isNewServer ? tr(STR_ADD_SERVER) : tr(STR_OPDS_BROWSER);
+  ListRenderHelper::drawHeader(renderer, header, tr(STR_CALIBRE_URL_HINT), true);
 
   const StrId fieldNames[] = {StrId::STR_SERVER_NAME, StrId::STR_OPDS_SERVER_URL, StrId::STR_USERNAME,
                               StrId::STR_PASSWORD};
 
-  GUI.drawList(
-      renderer, Rect{0, contentTop, pageWidth, contentHeight}, menuItems, static_cast<int>(selectedIndex),
+  ListRenderHelper::drawList(
+      renderer, layout, menuItems, static_cast<int>(selectedIndex),
       [this, &fieldNames](int index) {
         if (index < BASE_ITEMS) {
           return std::string(I18N.get(fieldNames[index]));
@@ -211,8 +211,7 @@ void OpdsSettingsActivity::render(RenderLock&&) {
       },
       true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   if (showSaveError) {
     GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));

@@ -7,6 +7,39 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
+
+static void s_onBack(void* ctx) {
+  static_cast<FontSelectionActivity*>(ctx)->finish();
+}
+
+static void s_onConfirm(void* ctx) {
+  auto* self = static_cast<FontSelectionActivity*>(ctx);
+  self->handleSelection();
+}
+
+static void s_onNavRelease(void* ctx, int delta) {
+  auto* self = static_cast<FontSelectionActivity*>(ctx);
+  const int itemCount = static_cast<int>(self->fonts_.size());
+  if (delta > 0) {
+    self->selectedIndex_ = ButtonNavigator::nextIndex(self->selectedIndex_, itemCount);
+  } else if (delta < 0) {
+    self->selectedIndex_ = ButtonNavigator::previousIndex(self->selectedIndex_, itemCount);
+  }
+  self->requestUpdate();
+}
+
+static void s_onNavContinuous(void* ctx, int delta) {
+  auto* self = static_cast<FontSelectionActivity*>(ctx);
+  const int itemCount = static_cast<int>(self->fonts_.size());
+  if (delta > 0) {
+    self->selectedIndex_ = ButtonNavigator::nextPageIndex(self->selectedIndex_, itemCount, self->pageItems_);
+  } else if (delta < 0) {
+    self->selectedIndex_ = ButtonNavigator::previousPageIndex(self->selectedIndex_, itemCount, self->pageItems_);
+  }
+  self->requestUpdate();
+}
 
 FontSelectionActivity::FontSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                              const SdCardFontRegistry* registry)
@@ -15,7 +48,6 @@ FontSelectionActivity::FontSelectionActivity(GfxRenderer& renderer, MappedInputM
 void FontSelectionActivity::onEnter() {
   Activity::onEnter();
 
-  // Build combined font list: built-in + SD card fonts
   fonts_.clear();
   fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
 
@@ -30,7 +62,6 @@ void FontSelectionActivity::onEnter() {
     }
   }
 
-  // Find current selection
   selectedIndex_ = 0;
   if (SETTINGS.sdFontFamilyName[0] != '\0' && registry_) {
     const auto& families = registry_->getFamilies();
@@ -44,44 +75,19 @@ void FontSelectionActivity::onEnter() {
     selectedIndex_ = SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
   }
 
+  pageItems_ = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+
+  listInputMapper.setBackHandler(s_onBack, this, false);
+  listInputMapper.setConfirmHandler(s_onConfirm, this, false);
+  listInputMapper.setNavReleaseAndContinuous(s_onNavRelease, s_onNavContinuous, this);
+
   requestUpdate();
 }
 
 void FontSelectionActivity::onExit() { Activity::onExit(); }
 
 void FontSelectionActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    return;
-  }
-
-  const int listSize = static_cast<int>(fonts_.size());
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
-
-  buttonNavigator_.onNextRelease([this, listSize] {
-    selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
-    requestUpdate();
-  });
-
-  buttonNavigator_.onPreviousRelease([this, listSize] {
-    selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, listSize);
-    requestUpdate();
-  });
-
-  buttonNavigator_.onNextContinuous([this, listSize, pageItems] {
-    selectedIndex_ = ButtonNavigator::nextPageIndex(selectedIndex_, listSize, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator_.onPreviousContinuous([this, listSize, pageItems] {
-    selectedIndex_ = ButtonNavigator::previousPageIndex(selectedIndex_, listSize, pageItems);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void FontSelectionActivity::handleSelection() {
@@ -103,16 +109,10 @@ void FontSelectionActivity::handleSelection() {
 void FontSelectionActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
-  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto layout = ListLayout::compute(renderer);
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_FAMILY));
+  ListRenderHelper::drawHeader(renderer, tr(STR_FONT_FAMILY));
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
-
-  // Determine which font index is currently active (to mark as "Selected")
   int currentFontIndex = 0;
   if (SETTINGS.sdFontFamilyName[0] != '\0' && registry_) {
     const auto& families = registry_->getFamilies();
@@ -126,14 +126,13 @@ void FontSelectionActivity::render(RenderLock&&) {
     currentFontIndex = SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
   }
 
-  GUI.drawList(
-      renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(fonts_.size()), selectedIndex_,
-      [this](int index) { return fonts_[index].name; }, nullptr, nullptr,
-      [this, currentFontIndex](int index) -> std::string { return index == currentFontIndex ? tr(STR_SELECTED) : ""; },
-      true);
+  ListRenderHelper::drawList(renderer, layout, static_cast<int>(fonts_.size()), selectedIndex_,
+                             [this](int index) { return fonts_[index].name; }, nullptr, nullptr,
+                             [this, currentFontIndex](int index) -> std::string {
+                               return index == currentFontIndex ? tr(STR_SELECTED) : std::string();
+                             },
+                             true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

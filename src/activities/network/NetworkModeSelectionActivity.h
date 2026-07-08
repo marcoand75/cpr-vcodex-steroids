@@ -1,9 +1,7 @@
 #pragma once
 
-#include <functional>
-
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 enum class NetworkMode { JOIN_NETWORK, CONNECT_CALIBRE, CREATE_HOTSPOT };
 
@@ -17,10 +15,6 @@ enum class NetworkMode { JOIN_NETWORK, CONNECT_CALIBRE, CREATE_HOTSPOT };
  * The onCancel callback is called if the user presses back.
  */
 class NetworkModeSelectionActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
-
-  int selectedIndex = 0;
-
  public:
   explicit NetworkModeSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("NetworkModeSelection", renderer, mappedInput) {}
@@ -31,4 +25,14 @@ class NetworkModeSelectionActivity final : public Activity {
 
   void onModeSelected(NetworkMode mode);
   void onCancel();
+
+  int selectedIndex = 0;
+
+ private:
+  ListInputMapper listInputMapper;
+
+ private:
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 };

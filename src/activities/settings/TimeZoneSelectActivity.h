@@ -2,6 +2,7 @@
 
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class TimeZoneSelectActivity final : public Activity {
  public:
@@ -13,6 +14,10 @@ class TimeZoneSelectActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
+  ListInputMapper listInputMapper;
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 };

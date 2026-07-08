@@ -9,6 +9,8 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 std::string getEntryTitle(const ShortcutOrderEntry& entry) {
@@ -16,9 +18,49 @@ std::string getEntryTitle(const ShortcutOrderEntry& entry) {
 }
 }  // namespace
 
+static void s_onBack(void* ctx) {
+  auto* self = static_cast<ShortcutOrderActivity*>(ctx);
+  if (self->moveMode) {
+    self->moveMode = false;
+    self->requestUpdate();
+  } else {
+    self->finish();
+  }
+}
+
+static void s_onConfirm(void* ctx) {
+  auto* self = static_cast<ShortcutOrderActivity*>(ctx);
+  if (!self->entries.empty()) {
+    self->moveMode = !self->moveMode;
+    self->requestUpdate();
+  }
+}
+
+static void s_onNav(void* ctx, int delta) {
+  auto* self = static_cast<ShortcutOrderActivity*>(ctx);
+  if (self->entries.empty()) {
+    return;
+  }
+  if (self->moveMode) {
+    self->moveSelectedEntry(delta);
+    return;
+  }
+  if (delta > 0) {
+    self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+  } else if (delta < 0) {
+    self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+  }
+  self->requestUpdate();
+}
+
 void ShortcutOrderActivity::onEnter() {
   Activity::onEnter();
   reloadEntries();
+
+  listInputMapper.setBackHandler(s_onBack, this, false);
+  listInputMapper.setConfirmHandler(s_onConfirm, this, false);
+  listInputMapper.setNavHandlers(nullptr, s_onNav, nullptr, this);
+
   requestUpdate();
 }
 
@@ -52,71 +94,24 @@ const char* ShortcutOrderActivity::getTitle() const {
 }
 
 void ShortcutOrderActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    if (moveMode) {
-      moveMode = false;
-      requestUpdate();
-    } else {
-      finish();
-    }
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    if (!entries.empty()) {
-      moveMode = !moveMode;
-      requestUpdate();
-    }
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    if (moveMode) {
-      moveSelectedEntry(1);
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    if (moveMode) {
-      moveSelectedEntry(-1);
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void ShortcutOrderActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
+  const auto layout = ListLayout::compute(renderer);
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, getTitle());
-
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  ListRenderHelper::drawHeader(renderer, getTitle());
 
   if (entries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_ENTRIES));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, tr(STR_NO_ENTRIES));
   } else {
-    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(entries.size()), selectedIndex,
-                 [this](const int index) { return getEntryTitle(entries[index]); });
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(entries.size()), selectedIndex,
+                               [this](const int index) { return getEntryTitle(entries[index]); });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), moveMode ? tr(STR_DONE) : tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), moveMode ? tr(STR_DONE) : tr(STR_SELECT),
+                              tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

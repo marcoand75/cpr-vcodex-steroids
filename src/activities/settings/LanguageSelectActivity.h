@@ -3,11 +3,9 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
-#include <functional>
-
 #include "../Activity.h"
 #include "components/UITheme.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class MappedInputManager;
 
@@ -24,11 +22,16 @@ class LanguageSelectActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
 
- private:
   void handleSelection();
-
-  void onBack() { finish(); }
-  ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
+  int pageItems = 0;
   constexpr static uint8_t totalItems = getLanguageCount();
+
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNavRelease(void* ctx, int delta);
+  static void onNavContinuous(void* ctx, int delta);
+
+ private:
+  ListInputMapper listInputMapper;
 };

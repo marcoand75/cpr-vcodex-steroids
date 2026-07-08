@@ -6,99 +6,23 @@
 
 #include <algorithm>
 
-#include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "util/BookIdentity.h"
+#include "util/BookStoreUtils.h"
 
 namespace {
 constexpr char FAVORITES_FILE_JSON[] = "/.crosspoint/favorites.json";
-
-std::string getFallbackTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
-}
 }  // namespace
 
 FavoritesStore FavoritesStore::instance;
 
 int FavoritesStore::findBookIndex(const std::string& path, const std::string& bookId) const {
-  const std::string normalizedPath = BookIdentity::normalizePath(path);
-  for (int index = 0; index < static_cast<int>(favoriteBooks.size()); ++index) {
-    const auto& book = favoriteBooks[index];
-    if (!bookId.empty() && !book.bookId.empty() && book.bookId == bookId) {
-      return index;
-    }
-    if (!normalizedPath.empty() && book.path == normalizedPath) {
-      return index;
-    }
-  }
-  return -1;
+  return BookStoreUtils::findBookIndex(favoriteBooks, path, bookId);
 }
 
-void FavoritesStore::normalizeBook(FavoriteBook& book) {
-  book.path = BookIdentity::normalizePath(book.path);
-  if (!book.bookId.empty()) {
-    return;
-  }
+void FavoritesStore::normalizeBook(FavoriteBook& book) { BookStoreUtils::normalizeBook(book); }
 
-  if (!book.path.empty() && Storage.exists(book.path.c_str())) {
-    book.bookId = BookIdentity::resolveStableBookId(book.path);
-    return;
-  }
-
-  if (const auto* statsBook = READING_STATS.findMatchingBookForPath(book.path, book.title, book.author)) {
-    book.bookId = statsBook->bookId;
-  }
-}
-
-void FavoritesStore::normalizeBooks() {
-  for (auto& book : favoriteBooks) {
-    normalizeBook(book);
-  }
-
-  std::vector<FavoriteBook> normalized;
-  normalized.reserve(favoriteBooks.size());
-  for (const auto& book : favoriteBooks) {
-    const int existingIndex = [&normalized, &book]() {
-      for (int index = 0; index < static_cast<int>(normalized.size()); ++index) {
-        const auto& existing = normalized[index];
-        if (!book.bookId.empty() && !existing.bookId.empty() && book.bookId == existing.bookId) {
-          return index;
-        }
-        if (!book.path.empty() && existing.path == book.path) {
-          return index;
-        }
-      }
-      return -1;
-    }();
-
-    if (existingIndex < 0) {
-      normalized.push_back(book);
-      continue;
-    }
-
-    auto& existing = normalized[existingIndex];
-    if (existing.bookId.empty()) {
-      existing.bookId = book.bookId;
-    }
-    if (existing.path.empty() || (!book.path.empty() && Storage.exists(book.path.c_str()))) {
-      existing.path = book.path;
-    }
-    if (existing.title.empty() && !book.title.empty()) {
-      existing.title = book.title;
-    }
-    if (existing.author.empty() && !book.author.empty()) {
-      existing.author = book.author;
-    }
-    if (existing.coverBmpPath.empty() && !book.coverBmpPath.empty()) {
-      existing.coverBmpPath = book.coverBmpPath;
-    }
-  }
-
-  favoriteBooks = std::move(normalized);
-}
+void FavoritesStore::normalizeBooks() { BookStoreUtils::normalizeBooks(favoriteBooks); }
 
 bool FavoritesStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                              const std::string& coverBmpPath, const std::string& bookId) {
@@ -241,7 +165,7 @@ FavoriteBook FavoritesStore::getDataFromBook(std::string path) const {
   FavoriteBook favoriteBook{recentBook.bookId, recentBook.path, recentBook.title, recentBook.author,
                             recentBook.coverBmpPath};
   if (favoriteBook.title.empty()) {
-    favoriteBook.title = getFallbackTitleFromPath(favoriteBook.path);
+    favoriteBook.title = BookStoreUtils::fallbackTitleFromPath(favoriteBook.path);
   }
   return favoriteBook;
 }

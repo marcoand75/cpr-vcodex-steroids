@@ -118,9 +118,9 @@ void ScreenSaverActivity::onEnter() {
 }
 
 void ScreenSaverActivity::onExit() {
-  // Clear screen before going home - use FULL_REFRESH to avoid ghosting
+  // Clear screen before going home - use HALF_REFRESH (partial is enough for eink)
   renderer.clearScreen();
-  renderer.requestNextFullRefresh();
+  renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   renderer.displayBuffer();
 
   // Drain all pending input events so the button used to exit the
@@ -214,7 +214,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     return;
   }
 
@@ -223,14 +223,14 @@ void ScreenSaverActivity::render(RenderLock&&) {
     if (PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight)) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
-      renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       return;
     }
     // Fall through to black screen on PNG failure
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     return;
   }
 
@@ -239,7 +239,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     return;
   }
 
@@ -249,7 +249,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     return;
   }
 
@@ -282,7 +282,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   drawTextOverlay();
 
   renderer.clearNextRefreshOverride();
-  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 
   if (hasGreyscale) {
     // LSB pass
