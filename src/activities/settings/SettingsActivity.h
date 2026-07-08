@@ -45,6 +45,7 @@ enum class SettingAction {
   Flashcards,
   ScreenClean,
   SleepApp,
+  ScreenSaverDir,
   IfFound,
   DownloadFonts,
   RebuildLibrary,

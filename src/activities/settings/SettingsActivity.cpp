@@ -43,6 +43,7 @@
 #include "activities/apps/ReadingProfileActivity.h"
 #include "activities/apps/ReadingStatsActivity.h"
 #include "activities/apps/ScreenCleanActivity.h"
+#include "activities/apps/ScreenSaverDirActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -218,9 +219,7 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Action(StrId::STR_REBUILD_LIBRARY, SettingAction::RebuildLibrary),
       SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers),
       SettingInfo::Section(StrId::STR_SCREENSAVER),
-      SettingInfo::String(StrId::STR_SCREENSAVER_DIRECTORY, SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory)),
-      SettingInfo::Enum(StrId::STR_SCREENSAVER_ORDER, &CrossPointSettings::screenSaverOrder,
-                        {StrId::STR_SHUFFLE, StrId::STR_SEQUENTIAL}),
+      SettingInfo::Action(StrId::STR_SCREENSAVER_DIRECTORY, SettingAction::ScreenSaverDir),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_INTERVAL, &CrossPointSettings::screenSaverInterval,
                         {StrId::STR_SCREENSAVER_INTERVAL_1M, StrId::STR_SCREENSAVER_INTERVAL_5M,
                          StrId::STR_SCREENSAVER_INTERVAL_15M, StrId::STR_SCREENSAVER_INTERVAL_30M,
@@ -406,6 +405,15 @@ std::string getSettingValueText(const SettingInfo& setting) {
       case SettingAction::SleepApp: {
         const auto* definition = findShortcutDefinition(ShortcutId::Sleep);
         return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::ScreenSaverDir: {
+        const std::string orderLabel = SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SHUFFLE
+                                           ? tr(STR_SHUFFLE)
+                                           : tr(STR_SEQUENTIAL);
+        if (SETTINGS.screenSaverDirectory[0] == '\0') {
+          return orderLabel;
+        }
+        return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverDirectory) + " - " + orderLabel;
       }
       case SettingAction::ShortcutLocation:
         return getShortcutLocationSettingValueText();
@@ -794,6 +802,9 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::SleepApp:
         startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ScreenSaverDir:
+        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::IfFound:
         startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);
