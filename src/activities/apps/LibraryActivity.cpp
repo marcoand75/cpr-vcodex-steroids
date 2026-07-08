@@ -25,8 +25,18 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "components/LibraryCache.h"
+#include "components/icons/bookshelf.h"
 #include "components/icons/cover.h"
+#include "components/icons/file24.h"
 #include "components/icons/heart.h"
+#include "components/icons/heart24.h"
+#include "components/icons/library.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/recent.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/settings2.h"
+#include "components/icons/text24.h"
+#include "components/icons/transfer.h"
 #include "components/LibraryPopupOverlay.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
@@ -320,18 +330,23 @@ void LibraryActivity::openSortPopup() {
   popupOverlay_.items.clear();
   popupOverlay_.selectedIndex = 0;
   popupOverlay_.startIndex = 0;
+  upHeld_ = downHeld_ = false;
+  upLongTriggered_ = downLongTriggered_ = false;
 
-  struct { StrId id; CrossPointSettings::LIBRARY_SORT sort; } sorts[] = {
-    {StrId::STR_SORT_TITLE_ASC, CrossPointSettings::LIBRARY_SORT_TITLE_ASC},
-    {StrId::STR_SORT_TITLE_DESC, CrossPointSettings::LIBRARY_SORT_TITLE_DESC},
-    {StrId::STR_SORT_AUTHOR_ASC, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
-    {StrId::STR_SORT_AUTHOR_DESC, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
-    {StrId::STR_SORT_RECENT, CrossPointSettings::LIBRARY_SORT_RECENT},
-    {StrId::STR_SORT_PROGRESS, CrossPointSettings::LIBRARY_SORT_PROGRESS},
+  struct { StrId id; const uint8_t* icon; int iconW; int iconH; CrossPointSettings::LIBRARY_SORT sort; } sorts[] = {
+    {StrId::STR_SORT_TITLE_ASC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_TITLE_ASC},
+    {StrId::STR_SORT_TITLE_DESC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_TITLE_DESC},
+    {StrId::STR_SORT_AUTHOR_ASC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
+    {StrId::STR_SORT_AUTHOR_DESC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
+    {StrId::STR_SORT_RECENT, RecentBooksIcon32, 32, 32, CrossPointSettings::LIBRARY_SORT_RECENT},
+    {StrId::STR_SORT_PROGRESS, ReadingStatsIcon32, 32, 32, CrossPointSettings::LIBRARY_SORT_PROGRESS},
   };
   for (int i = 0; i < 6; ++i) {
     PopupItem item;
     item.label = I18N.get(sorts[i].id);
+    item.icon = sorts[i].icon;
+    item.iconW = sorts[i].iconW;
+    item.iconH = sorts[i].iconH;
     item.selected = (currentSort_ == sorts[i].sort);
     popupOverlay_.items.push_back(item);
     if (item.selected) {
@@ -348,24 +363,31 @@ void LibraryActivity::openFilterPopup() {
   popupOverlay_.items.clear();
   popupOverlay_.selectedIndex = 0;
   popupOverlay_.startIndex = 0;
+  upHeld_ = downHeld_ = false;
+  upLongTriggered_ = downLongTriggered_ = false;
 
   PopupItem allItem; allItem.label = I18N.get(StrId::STR_ALL_BOOKS);
+  allItem.icon = BookshelfIcon32; allItem.iconW = 32; allItem.iconH = 32;
   allItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_ALL);
   popupOverlay_.items.push_back(allItem);
 
   PopupItem favItem; favItem.label = I18N.get(StrId::STR_FAVOURITES);
+  favItem.icon = Heart24Icon; favItem.iconW = 24; favItem.iconH = 24;
   favItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_FAVOURITES);
   popupOverlay_.items.push_back(favItem);
 
   PopupItem recentItem; recentItem.label = I18N.get(StrId::STR_LATEST_READ);
+  recentItem.icon = RecentBooksIcon32; recentItem.iconW = 32; recentItem.iconH = 32;
   recentItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_LATEST_READ);
   popupOverlay_.items.push_back(recentItem);
 
   PopupItem searchItem; searchItem.label = I18N.get(StrId::STR_SEARCH_LIBRARY);
+  searchItem.icon = Text24Icon; searchItem.iconW = 24; searchItem.iconH = 24;
   searchItem.selected = false;
   popupOverlay_.items.push_back(searchItem);
 
   PopupItem clearItem; clearItem.label = I18N.get(StrId::STR_SEARCH_CLEAR);
+  clearItem.icon = TransferIcon; clearItem.iconW = 32; clearItem.iconH = 32;
   clearItem.selected = false;
   popupOverlay_.items.push_back(clearItem);
 
@@ -374,6 +396,11 @@ void LibraryActivity::openFilterPopup() {
 
 void LibraryActivity::closePopup() {
   popupMode_ = PopupMode::None;
+  popupSpawnButton_ = -1;
+  // Force a redraw: closing the popup changes only popupMode_, so without
+  // this the render guard would early-return and leave the popup overlay on
+  // screen until the next key press.
+  forceRender_ = true;
   requestUpdate();
 }
 
@@ -451,6 +478,7 @@ void LibraryActivity::onEnter() {
   popupMode_ = PopupMode::None;
   upHeld_ = false; upLongTriggered_ = false;
   downHeld_ = false; downLongTriggered_ = false;
+  popupSpawnButton_ = -1;
   lastLayoutSetting_ = SETTINGS.libraryLayout;
   scanSd();
   requestUpdate();
@@ -477,6 +505,14 @@ void LibraryActivity::onExit() {
 
 void LibraryActivity::loop() {
   if (popupMode_ != PopupMode::None) {
+    // Consume the button release that opened this popup so it does not also
+    // move the selection (long-press Up/Down opens the popup, then lifting the
+    // finger would otherwise shift the cursor by one).
+    if (popupSpawnButton_ >= 0 &&
+        mappedInput.wasReleased(static_cast<MappedInputManager::Button>(popupSpawnButton_))) {
+      popupSpawnButton_ = -1;
+      return;
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) { closePopup(); return; }
     int itemCount = static_cast<int>(popupOverlay_.items.size());
     int& sel = popupOverlay_.selectedIndex;
@@ -502,6 +538,8 @@ void LibraryActivity::loop() {
   ensureLayoutUpToDate();
 
   // ---- Cover Generation: one pass through the page, retry cycle ----
+  // One cover per frame: the ESP32-C3 has very limited RAM/CPU, so generating
+  // a single cover per loop keeps the device responsive and avoids spikes.
   if (!coversComplete_ && total > 0) {
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
@@ -572,6 +610,7 @@ void LibraryActivity::loop() {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
       renderer.clearScreen();
+      renderer.requestNextFullRefresh();
       renderer.displayBuffer();
       onGoHome();
     }
@@ -580,13 +619,19 @@ void LibraryActivity::loop() {
     if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
       if (!upHeld_) { upHeld_ = true; upLongTriggered_ = false; }
       if (!upLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        upLongTriggered_ = true; openSortPopup();
+        upLongTriggered_ = true;
+        popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Up);
+        openSortPopup();
+        return;
       }
     }
     if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
       if (!downHeld_) { downHeld_ = true; downLongTriggered_ = false; }
       if (!downLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        downLongTriggered_ = true; openFilterPopup();
+        downLongTriggered_ = true;
+        popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Down);
+        openFilterPopup();
+        return;
       }
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
@@ -669,6 +714,7 @@ void LibraryActivity::loop() {
       upLongTriggered_ = false; downLongTriggered_ = false;
     } else {
       renderer.clearScreen();
+      renderer.requestNextFullRefresh();
       renderer.displayBuffer();
       onGoHome();
     }
@@ -678,17 +724,19 @@ void LibraryActivity::loop() {
   if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
     if (!upHeld_) { upHeld_ = true; upLongTriggered_ = false; }
     if (!upLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-      upLongTriggered_ = true;
-      openSortPopup();
-      return;
+        upLongTriggered_ = true;
+        popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Up);
+        openSortPopup();
+        return;
     }
   }
   if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
     if (!downHeld_) { downHeld_ = true; downLongTriggered_ = false; }
     if (!downLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-      downLongTriggered_ = true;
-      openFilterPopup();
-      return;
+        downLongTriggered_ = true;
+        popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Down);
+        openFilterPopup();
+        return;
     }
   }
 
@@ -979,9 +1027,18 @@ void LibraryActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
+  if (popupMode_ != PopupMode::None) {
+    // While a popup is open the Up/Down side buttons scroll the list and the
+    // front Back/Confirm buttons close/choose — same vocabulary as the
+    // homepage carousel book popup.
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  } else {
+    const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
+  }
 
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
   renderer.displayBuffer();

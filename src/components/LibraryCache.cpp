@@ -207,8 +207,8 @@ bool extractBookMetadata(ScanRecord& rec) {
       // Fallback: full EPUB load (this builds the cache if missing).
       // Skip if free heap is critically low to avoid OOM crash.
       if (!haveMeta) {
-        if (ESP.getFreeHeap() < 45000) {
-          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 45 KB)", rec.path.c_str(), ESP.getFreeHeap());
+        if (ESP.getFreeHeap() < 95000) {
+          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 95 KB)", rec.path.c_str(), ESP.getFreeHeap());
           return false;
         }
         if (epub.load(true, true)) {
@@ -271,6 +271,15 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
     return epub.generateThumbBmp(coverW, coverH);
   }
   if (FsHelpers::hasXtcExtension(path)) {
+    // XTC thumbnail generation loads a full uncompressed page into RAM.
+    // The worst-case buffer is ~96 KB (XTCH 2-bit, 480×800).  Guard against
+    // OOM: if available heap is critically low the malloc inside generateThumbBmp
+    // would fail anyway, but an early exit keeps the error path clean and avoids
+    // leaving a partial BMP on the SD card.
+    if (ESP.getFreeHeap() < 95000) {
+      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 95 KB)", path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
     Xtc xtc(path, "/.crosspoint");
     if (!xtc.load()) {
       LOG_ERR("BSC", "XTC load failed for %s", path.c_str());

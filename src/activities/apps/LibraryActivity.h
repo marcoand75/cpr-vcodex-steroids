@@ -60,7 +60,10 @@ class LibraryActivity final : public Activity {
   bool upLongTriggered_ = false;
   bool downHeld_ = false;
   bool downLongTriggered_ = false;
-  static constexpr unsigned long kLongPressMs = 1000;
+  // Button whose long-press spawned the active popup (ordinal, or -1 when
+  // none); its release is consumed so it does not also move the popup selection.
+  int popupSpawnButton_ = -1;
+  static constexpr unsigned long kLongPressMs = 800;
 
   void applyLayoutFromSettings();
   void ensureLayoutUpToDate();

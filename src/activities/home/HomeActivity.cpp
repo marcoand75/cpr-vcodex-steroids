@@ -15,8 +15,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "CrossPointSettings.h"
@@ -635,6 +637,16 @@ void HomeActivity::onEnter() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   reloadHomeBooks(metrics.homeRecentBooksCount);
 
+  // Drop any stale carousel frame cache (e.g. frames rendered with old reading
+  // statistics) and force a fresh render — important after returning from a
+  // finished read so the carousel shows updated progress/last-read at once.
+  if (isLyraCarouselTheme()) {
+    invalidateResidentCarouselFrame();
+    invalidateCarouselFrameHash();
+    carouselFramesReady = false;
+    pruneCarouselFrameCache();
+  }
+
   requestUpdate();
 }
 
@@ -853,6 +865,50 @@ void HomeActivity::preRenderCarouselFrames() {
     renderCarouselFrame(centerIdx);
   }
   carouselFramesReady = true;
+}
+
+void HomeActivity::pruneCarouselFrameCache() {
+  if (!isLyraCarouselTheme() || recentBooks.empty()) {
+    return;
+  }
+
+  const char* cacheDir = getCarouselFrameCacheDir();
+  Storage.mkdir(cacheDir);
+
+  // Collect the set of frame hashes that are still valid for the current book
+  // set. The frame hash already folds in progress/last-read stats, so a frame
+  // cached with stale statistics produces a different hash and is dropped here
+  // — this both bounds cache growth and guarantees a fresh frame after reading.
+  std::set<uint32_t> validHashes;
+  for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+    validHashes.insert(getCachedCarouselFrameHash(i));
+  }
+  invalidateCarouselFrameHash();
+
+  auto d = Storage.open(cacheDir);
+  if (!d || !d.isDirectory()) {
+    return;
+  }
+  d.rewindDirectory();
+  char nb[96];
+  for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+    if (f.isDirectory()) {
+      f.close();
+      continue;
+    }
+    f.getName(nb, sizeof(nb));
+    f.close();
+    const std::string name = nb;
+    if (name.size() < 9 || name.compare(name.size() - 4, 4, ".bin") != 0) {
+      continue;
+    }
+    const uint32_t h = static_cast<uint32_t>(std::strtoul(name.substr(0, 8).c_str(), nullptr, 16));
+    if (validHashes.find(h) == validHashes.end()) {
+      const std::string full = std::string(cacheDir) + "/" + name;
+      Storage.remove(full.c_str());
+    }
+  }
+  d.close();
 }
 
 void HomeActivity::loop() {

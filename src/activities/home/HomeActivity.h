@@ -59,6 +59,7 @@ class HomeActivity final : public Activity {
   void requestFreshHomeRender(bool immediate = false);
   uint32_t getCachedCarouselFrameHash(int bookIndex);
   void scheduleCarouselCoverLoadIfNeeded();
+  void pruneCarouselFrameCache();  // remove cached frames no longer matching the current book set
   void loadRecentBooks(int maxBooks);
   void reloadHomeBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
