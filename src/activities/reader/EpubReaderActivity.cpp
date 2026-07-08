@@ -1679,37 +1679,63 @@ void EpubReaderActivity::renderStatusBar() const {
   // Time-left estimate based on per-book reading pace
   const char* timeLeftLabel = nullptr;
   char timeLeftBuf[32];
-  if (SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE &&
-      !stableBookId.empty()) {
-    const auto* statsBook = READING_STATS.findBook(stableBookId);
-    if (statsBook && statsBook->avgSecondsPerForwardPage > 0 && statsBook->lastProgressPercent < 100) {
-      uint32_t pagesRemaining = 0;
-      if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK) {
-        // Estimate total book pages based on progress
-        if (statsBook->lastProgressPercent > 0) {
-          const int totalEstimatedPages =
-              static_cast<int>(static_cast<float>(section->pageCount * currentSpineIndex + currentPage) * 100.0f /
-                               statsBook->lastProgressPercent);
-          const int pagesRead = section->pageCount * currentSpineIndex + currentPage;
-          pagesRemaining = static_cast<uint32_t>(std::max(0, totalEstimatedPages - pagesRead));
+  if (SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE) {
+    const auto* statsBook = READING_STATS.findBook(!stableBookId.empty() ? stableBookId : epub->getPath());
+    if (!statsBook && !stableBookId.empty()) {
+      statsBook = READING_STATS.findMatchingBookForPath(epub->getPath());
+    }
+    if (statsBook && statsBook->lastProgressPercent > 0 && statsBook->lastProgressPercent < 100) {
+      uint64_t remainingMs = 0;
+
+      // Primary method: page-turn pace (avgSecondsPerForwardPage)
+      if (statsBook->avgSecondsPerForwardPage > 0) {
+        uint32_t pagesRemaining = 0;
+        if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK) {
+          // Estimate total book pages based on progress
+          if (statsBook->lastProgressPercent > 0) {
+            const int totalEstimatedPages =
+                static_cast<int>(static_cast<float>(section->pageCount * currentSpineIndex + currentPage) * 100.0f /
+                                 statsBook->lastProgressPercent);
+            const int pagesRead = section->pageCount * currentSpineIndex + currentPage;
+            pagesRemaining = static_cast<uint32_t>(std::max(0, totalEstimatedPages - pagesRead));
+          }
+        } else {
+          // Chapter remaining
+          pagesRemaining = static_cast<uint32_t>(std::max(0.0f, pageCount - currentPage));
         }
-      } else {
-        // Chapter remaining
-        pagesRemaining = static_cast<uint32_t>(std::max(0.0f, pageCount - currentPage));
+
+        if (pagesRemaining > 0) {
+          remainingMs = static_cast<uint64_t>(pagesRemaining) * statsBook->avgSecondsPerForwardPage * 1000ULL;
+        }
       }
 
-      if (pagesRemaining > 0) {
-        const uint32_t secondsLeft = pagesRemaining * statsBook->avgSecondsPerForwardPage;
-        if (secondsLeft < 60) {
+      // Failover: time-vs-progress linear extrapolation, book mode only
+      if (remainingMs == 0 &&
+          SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK &&
+          statsBook->totalReadingMs >= 10ULL * 60ULL * 1000ULL) {
+        const uint64_t estimatedTotalMs =
+            (statsBook->totalReadingMs * 100ULL + statsBook->lastProgressPercent - 1) /
+            statsBook->lastProgressPercent;
+        if (estimatedTotalMs > statsBook->totalReadingMs) {
+          uint64_t bookRemainingMs = estimatedTotalMs - statsBook->totalReadingMs;
+          // Round up to nearest 5 minutes (same as stats detail screen)
+          constexpr uint64_t kEstimateRoundingMs = 5ULL * 60ULL * 1000ULL;
+          bookRemainingMs = ((bookRemainingMs + kEstimateRoundingMs - 1) / kEstimateRoundingMs) * kEstimateRoundingMs;
+          remainingMs = bookRemainingMs;
+        }
+      }
+
+      if (remainingMs > 0) {
+        const uint64_t remainingMinutes = remainingMs / 60000ULL;
+        if (remainingMinutes < 1) {
           snprintf(timeLeftBuf, sizeof(timeLeftBuf), "< 1 min");
         } else {
-          const uint32_t minutes = secondsLeft / 60;
-          const uint32_t hours = minutes / 60;
-          const uint32_t remainingMinutes = minutes % 60;
+          const uint64_t hours = remainingMinutes / 60;
+          const uint64_t minutes = remainingMinutes % 60;
           if (hours > 0) {
-            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%uh %um", hours, remainingMinutes);
+            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%lluh %llum", hours, minutes);
           } else {
-            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%u min", minutes);
+            snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%llu min", minutes);
           }
         }
         timeLeftLabel = timeLeftBuf;
