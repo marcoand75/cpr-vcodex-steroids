@@ -5,6 +5,7 @@
 
 #include "fontIds.h"
 #include "images/Logo.h"
+#include "version.h"
 
 namespace {
 constexpr int BOOT_LOGO_WIDTH = 174;

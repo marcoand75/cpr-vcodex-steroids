@@ -7,6 +7,7 @@ lib/I18n/I18nKeys.h
 lib/I18n/I18nStrings.h
 lib/I18n/I18nStrings.cpp
 *.generated.h
+src/version.generated.inc
 .vs
 build
 **/__pycache__/

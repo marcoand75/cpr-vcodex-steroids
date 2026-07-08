@@ -12,6 +12,7 @@
 #include "esp_wifi.h"
 #include "FirmwareFlasher.h"
 #include "HttpDownloader.h"
+#include "version.h"
 
 namespace {
 constexpr char firmwareManifestUrl[] = "https://franssjz.github.io/cpr-vcodex/firmware/manifest.json";

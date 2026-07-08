@@ -28,8 +28,12 @@ python -X utf8 -m platformio run -e default -j 1
 ## Versioning
 
 - Base version lives in `platformio.ini` under `[crosspoint]`.
-- `scripts/git_branch.py` injects `CROSSPOINT_VERSION`,
-  `VCODEX_RELEASE_SEQ`, and build kind defines.
+- `scripts/git_branch.py` writes version metadata to
+  `artifacts/build-version.json` and C++ symbols to
+  `src/version.generated.inc`.
+- Runtime code should include `src/version.h` and read `CROSSPOINT_VERSION`
+  from there. Avoid adding the version back to global `CPPDEFINES`; doing so
+  makes every dev build look dirty to PlatformIO.
 - Development builds include a `.devN-<sha>` suffix.
 - Release builds are tag-driven when `VCODEX_RELEASE_TAG` or `GITHUB_REF_NAME`
   matches `<base>.<release>-cpr-vcodex`.

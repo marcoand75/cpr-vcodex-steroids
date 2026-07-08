@@ -22,6 +22,7 @@
 #include "RecentBooksStore.h"
 #include "SdCardFontGlobals.h"
 #include "WebDAVHandler.h"
+#include "version.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"

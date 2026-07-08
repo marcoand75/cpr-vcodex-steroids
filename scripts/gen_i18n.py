@@ -35,6 +35,15 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+try:
+    _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _SCRIPTS_DIR = os.path.join(os.getcwd(), "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from write_if_changed import write_if_changed
+
 
 # ---------------------------------------------------------------------------
 # YAML file reading (simple key: "value" format, no PyYAML dependency)
@@ -805,10 +814,8 @@ def _append_string_entry(lines: List[str], text: str, comment: str = "") -> None
 
 
 def _write_file(path: str, lines: List[str], verbose: bool = False) -> None:
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines))
-        f.write("\n")
-    if verbose:
+    content = "\n".join(lines) + "\n"
+    if write_if_changed(path, content) and verbose:
         print(f"Generated: {path}")
 
 
