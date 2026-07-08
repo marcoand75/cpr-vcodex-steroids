@@ -610,7 +610,7 @@ void LibraryActivity::loop() {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
       renderer.clearScreen();
-      renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+      renderer.requestNextFullRefresh();
       renderer.displayBuffer();
       onGoHome();
     }
@@ -714,7 +714,7 @@ void LibraryActivity::loop() {
       upLongTriggered_ = false; downLongTriggered_ = false;
     } else {
       renderer.clearScreen();
-      renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+      renderer.requestNextFullRefresh();
       renderer.displayBuffer();
       onGoHome();
     }
