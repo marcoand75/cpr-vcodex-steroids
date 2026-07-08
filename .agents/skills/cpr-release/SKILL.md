@@ -25,7 +25,7 @@ before release work.
 3. Build release firmware with:
 
 ```powershell
-python -X utf8 -m platformio run -e gh_release -j 1
+python -X utf8 -m platformio run -e gh_release -j 16
 ```
 
 4. Run the release checker with the intended tag:

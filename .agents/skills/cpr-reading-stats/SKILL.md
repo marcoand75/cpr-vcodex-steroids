@@ -31,7 +31,7 @@ read `agent-docs/firmware-constraints.md`.
 Build firmware after device-side changes:
 
 ```powershell
-python -X utf8 -m platformio run -e default -j 1
+python -X utf8 -m platformio run -e default -j 16
 ```
 
 For stats migrations or import/export changes, inspect sample exported JSON/CSV

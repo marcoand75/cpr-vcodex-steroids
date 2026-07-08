@@ -40,8 +40,8 @@ skill from `.agents/skills/`; for deeper project details, read the linked
 ## Quick Commands
 
 ```powershell
-python -X utf8 -m platformio run -e default -j 1
-python -X utf8 -m platformio run -e gh_release -j 1
+python -X utf8 -m platformio run -e default -j 16
+python -X utf8 -m platformio run -e gh_release -j 16
 python -X utf8 scripts/pre_release_check.py --tag <tag>
 python -X utf8 scripts/sync_autoflash_firmware.py --repo franssjz/cpr-vcodex
 ```

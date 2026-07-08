@@ -25,7 +25,7 @@ work.
 5. Build with `default` after code syncs:
 
 ```powershell
-python -X utf8 -m platformio run -e default -j 1
+python -X utf8 -m platformio run -e default -j 16
 ```
 
 Use `gh_release` if the synced change affects release artifacts, binary size, or

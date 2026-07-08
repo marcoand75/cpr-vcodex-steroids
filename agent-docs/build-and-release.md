@@ -19,10 +19,11 @@ pio run -t clean
 pio check
 ```
 
-On constrained machines, use `-j 1` for lower memory pressure:
+On constrained machines, lower the job count (e.g. `-j 4`) for reduced
+memory pressure:
 
 ```bash
-python -X utf8 -m platformio run -e default -j 1
+python -X utf8 -m platformio run -e default -j 16
 ```
 
 ## Versioning
