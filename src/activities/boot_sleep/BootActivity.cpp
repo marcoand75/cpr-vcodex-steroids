@@ -7,8 +7,8 @@
 #include "images/Logo.h"
 
 namespace {
-constexpr int BOOT_LOGO_WIDTH = 175;
-constexpr int BOOT_LOGO_HEIGHT = 48;
+constexpr int BOOT_LOGO_WIDTH = 350;
+constexpr int BOOT_LOGO_HEIGHT = 96;
 constexpr int LOGO_TEXT_GAP = 10;
 constexpr int SUBTITLE_GAP = 25;
 }
