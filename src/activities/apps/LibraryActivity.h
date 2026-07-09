@@ -18,10 +18,13 @@ class LibraryActivity final : public Activity {
   bool coversComplete_ = false;
   int coverPassCount_ = 0;  // number of full indexing passes attempted on the current page
   uint64_t coverGeneratedMask_ = 0;  // bitmask of slots already generated this page pass
+  int coverGenRenderBatch_ = 0;      // count of covers generated since last render
+  static constexpr int kCoverRenderBatchEvery = 1;  // render every N covers (1 = per-cover, 2 = every other, etc.)
   static constexpr int kMaxCoverPasses = 2;  // give up after this many passes; failed covers fall back to placeholder
   int lastPage_ = -1;
   mutable int lastRenderedPage_ = -1;
   mutable int lastRenderedSelectorIndex_ = -1;
+  mutable bool lastRenderedCoversComplete_ = false;  // avoids redundant redraws during indexing
   mutable bool forceRender_ = true;
 
   // Render cache: header info / selected title are rebuilt only when their

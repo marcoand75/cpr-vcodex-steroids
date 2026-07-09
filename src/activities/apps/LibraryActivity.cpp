@@ -275,7 +275,7 @@ void LibraryActivity::applyFilterAndSort() {
   selectorIndex_ = 0;
   coversComplete_ = false;
   coverGenIndex_ = -1;
-  lastPage_ = -1;
+  lastPage_ = 0;  // selectorIndex_ was just reset to 0, which is on page 0
   pageTitleCacheKey_ = -1;  // entries order/contents changed
   forceRender_ = true;
 }
@@ -473,7 +473,8 @@ void LibraryActivity::beginTextSearch() {
 void LibraryActivity::onEnter() {
   Activity::onEnter();
   applyLayoutFromSettings();
-  selectorIndex_ = 0; coverGenIndex_ = -1; coversComplete_ = false; lastPage_ = -1;
+  selectorIndex_ = 0; coverGenIndex_ = -1; coversComplete_ = false;
+  lastPage_ = 0;  // start on page 0 so intra-page Left/Right don't falsely trigger page change
   lastRenderedPage_ = -1; forceRender_ = true;
   popupMode_ = PopupMode::None;
   upHeld_ = false; upLongTriggered_ = false;
@@ -490,7 +491,7 @@ void LibraryActivity::ensureLayoutUpToDate() {
     lastLayoutSetting_ = SETTINGS.libraryLayout;
     coversComplete_ = false;
     coverGenIndex_ = -1;
-    lastPage_ = -1;
+    lastPage_ = selectorIndex_ / gridsPerPage_;
     forceRender_ = true;
   }
 }
@@ -534,73 +535,70 @@ void LibraryActivity::loop() {
 
   const int total = static_cast<int>(entries_.size());
 
-  // ---- Detect layout change while activity was in background ----
   ensureLayoutUpToDate();
 
-  // ---- Cover Generation: one pass through the page, retry cycle ----
-  // One cover per frame: the ESP32-C3 has very limited RAM/CPU, so generating
-  // a single cover per loop keeps the device responsive and avoids spikes.
+  // ---- Cover generation: one thumb per frame, block input ----
   if (!coversComplete_ && total > 0) {
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
-    // Reset mask + pass counter on first entry of a fresh page/pass.
-    if (coverGenIndex_ < 0) { coverGeneratedMask_ = 0; coverPassCount_ = 0; }
-    // Allow Back to cancel indexing so the user is never stuck.
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      coversComplete_ = true;
-      coverGenIndex_ = -1;
+
+    if (coverGenIndex_ < 0) {
       coverGeneratedMask_ = 0;
+      coverPassCount_ = 0;
+      coverGenRenderBatch_ = 0;
+      // First frame of this pass: redraw the full grid so placeholders + any
+      // existing covers from previous sessions are visible immediately.
       forceRender_ = true;
       requestUpdate();
-      return;
+      coverGenIndex_ = 0;
+      return;  // render this frame, generate next frame
     }
-    // Advance cursor past entries that already have covers, then generate
-    // the first missing one. When every entry has a cover, the pass is done.
     if (coverGenIndex_ < 0) coverGenIndex_ = 0;
+
+    // Generate the next missing thumb.
     bool generatedOne = false;
     for (int attempt = 0; attempt < pageCount && !generatedOne; ++attempt) {
       const int slot = (coverGenIndex_ + attempt) % pageCount;
       const int idx = pageStart + slot;
       if (!isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot))) {
-        // Feed the watchdog and yield before the (potentially slow) decode so a
-        // large EPUB cover cannot trip the loop-task WDT on the ESP32-C3.
         yield();
         esp_task_wdt_reset();
-        // Only set the per-slot mask bit when generation actually succeeded.
-        // A failed generation must NOT be reported as ready, otherwise the
-        // book would silently keep its placeholder and never get retried.
         if (LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_) &&
             slot < 64) {
           coverGeneratedMask_ |= (uint64_t{1} << slot);
         }
         generatedOne = true;
+        forceRender_ = true;
+        coverGenRenderBatch_++;
+        if (coverGenRenderBatch_ >= kCoverRenderBatchEvery) {
+          coverGenRenderBatch_ = 0;
+          requestUpdate();
+        }
+        return;  // one cover per frame, block input
       }
     }
+
     coverGenIndex_++;
     if (coverGenIndex_ >= pageCount) {
-      // Finished a full pass. If nothing is missing, mark complete; otherwise
-      // retry the pass. After kMaxCoverPasses attempts, give up and mark
-      // complete anyway so a permanently-failing book (e.g. corrupt EPUB)
-      // falls back to the placeholder instead of looping forever.
+      // Full pass done.  If nothing is still missing, or we've exceeded the
+      // retry budget, mark the page complete and allow navigation.
       bool stillMissing = false;
       for (int slot = 0; slot < pageCount && !stillMissing; ++slot) {
         if (!isBookCoverReady(entries_[pageStart + slot].path, static_cast<size_t>(slot))) stillMissing = true;
       }
-      if (!stillMissing) {
+      if (!stillMissing || ++coverPassCount_ >= kMaxCoverPasses) {
         coversComplete_ = true;
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
-      } else if (++coverPassCount_ >= kMaxCoverPasses) {
-        coversComplete_ = true;
-        coverGenIndex_ = -1;
-        coverGeneratedMask_ = 0;
-      } else {
-        coverGenIndex_ = 0;
+        coverGenRenderBatch_ = 0;
+        forceRender_ = true;
+        requestUpdate();
+        return;
       }
+      coverGenIndex_ = 0;
     }
-    forceRender_ = true;
-    requestUpdate();
-    return;
+
+    return;  // block input while indexing
   }
 
   if (total <= 0) {
@@ -806,13 +804,18 @@ void LibraryActivity::loop() {
 void LibraryActivity::render(RenderLock&&) {
   const int total = static_cast<int>(entries_.size());
   const int curPageRaw = total > 0 ? selectorIndex_ / gridsPerPage_ : 0;
-  if (!forceRender_ && popupMode_ == PopupMode::None && coversComplete_ &&
-      curPageRaw == lastRenderedPage_ && selectorIndex_ == lastRenderedSelectorIndex_) {
+  // Guard: skip full redraw when nothing changed.  During cover indexing
+  // forceRender_ is only set when a thumb was generated or the initial popup
+  // needs to appear, so we don't redraw the entire screen every idle frame.
+  if (!forceRender_ && popupMode_ == PopupMode::None &&
+      curPageRaw == lastRenderedPage_ && selectorIndex_ == lastRenderedSelectorIndex_ &&
+      coversComplete_ == lastRenderedCoversComplete_) {
     return;
   }
   forceRender_ = false;
   lastRenderedPage_ = curPageRaw;
   lastRenderedSelectorIndex_ = selectorIndex_;
+  lastRenderedCoversComplete_ = coversComplete_;
 
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
@@ -827,7 +830,18 @@ void LibraryActivity::render(RenderLock&&) {
   // Pagination top-left on the header bar
   if (total > 0) {
     char hdrBuf[32] = {};
-    snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d", curPage, totalPages);
+    if (!coversComplete_) {
+      // Show "N/M" cover generation progress instead of page number.
+      const int pgStartI = (curPage - 1) * gridsPerPage_;
+      const int pgCountI = std::min(gridsPerPage_, total - pgStartI);
+      int missing = 0;
+      for (int i = 0; i < pgCountI; ++i) {
+        if (!isBookCoverReady(entries_[pgStartI + i].path, static_cast<size_t>(i))) missing++;
+      }
+      snprintf(hdrBuf, sizeof(hdrBuf), "covers %d/%d", pgCountI - missing, pgCountI);
+    } else {
+      snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d", curPage, totalPages);
+    }
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, metrics.topPadding + 6, hdrBuf, true,
                       EpdFontFamily::REGULAR);
   }
@@ -1010,20 +1024,6 @@ void LibraryActivity::render(RenderLock&&) {
       int dx = sx + p * (DS + DSp);
       if (p == curPage - 1) renderer.fillRect(dx, sy, DS, DS, true);
       else renderer.drawRect(dx, sy, DS, DS, true);
-    }
-  }
-
-  // Show cover generation progress when covers are not yet complete for the current page.
-  if (!coversComplete_ && total > 0) {
-    const int pageStart = (curPage - 1) * gridsPerPage_;
-    const int pageCount = std::min(gridsPerPage_, total - pageStart);
-    int readyCount = 0;
-    for (int i = 0; i < pageCount; ++i) {
-      if (isBookCoverReady(entries_[pageStart + i].path, static_cast<size_t>(i))) readyCount++;
-    }
-    Rect pr = GUI.drawPopup(renderer, tr(STR_INDEXING));
-    if (pr.width > 0 && pr.height > 0) {
-      GUI.fillPopupProgress(renderer, pr, readyCount * 100 / std::max(1, pageCount));
     }
   }
 
