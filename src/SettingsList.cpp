@@ -46,9 +46,15 @@ const std::vector<SettingInfo>& getSettingsList() {
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
         // --- Reader ---
+#ifdef OMIT_LEXEND
+        SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
+                          {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS}, "fontFamily",
+                          StrId::STR_CAT_READER),
+#else
         SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
                           {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS, StrId::STR_LEXEND}, "fontFamily",
                           StrId::STR_CAT_READER),
+#endif
         SettingInfo::Enum(
             StrId::STR_FONT_SIZE, &CrossPointSettings::fontSize,
             {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE}, "fontSize",

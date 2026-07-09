@@ -95,8 +95,13 @@ const std::vector<SettingInfo>& getDeviceDisplaySettings() {
 
 const std::vector<SettingInfo>& getDeviceReaderSettings() {
   static const std::vector<SettingInfo> settings = {
+#ifdef OMIT_LEXEND
+      SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
+                        {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS}),
+#else
       SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
                         {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS, StrId::STR_LEXEND}),
+#endif
       SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts),
       SettingInfo::Enum(
           StrId::STR_FONT_SIZE, &CrossPointSettings::fontSize,

@@ -53,7 +53,9 @@ void FontSelectionActivity::onEnter() {
 
   fonts_.push_back({I18N.get(StrId::STR_BOOKERLY), true, CrossPointSettings::BOOKERLY});
   fonts_.push_back({I18N.get(StrId::STR_NOTO_SANS), true, CrossPointSettings::NOTOSANS});
+#ifndef OMIT_LEXEND
   fonts_.push_back({I18N.get(StrId::STR_LEXEND), true, CrossPointSettings::LEXEND});
+#endif
 
   if (registry_) {
     const auto& families = registry_->getFamilies();

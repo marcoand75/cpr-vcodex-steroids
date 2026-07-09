@@ -27,7 +27,11 @@ std::string fontFamilyText() {
   if (SETTINGS.sdFontFamilyName[0] != '\0') {
     return SETTINGS.sdFontFamilyName;
   }
+#ifdef OMIT_LEXEND
+  static const std::vector<StrId> builtInLabels = {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS};
+#else
   static const std::vector<StrId> builtInLabels = {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS, StrId::STR_LEXEND};
+#endif
   return enumValueText(SETTINGS.fontFamily, builtInLabels);
 }
 

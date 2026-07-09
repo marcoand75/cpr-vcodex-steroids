@@ -78,8 +78,9 @@ EpdFont bookerly18BoldFont(&bookerly_18_bold);
 EpdFont bookerly18ItalicFont(&bookerly_18_italic);
 EpdFont bookerly18BoldItalicFont(&bookerly_18_bolditalic);
 EpdFontFamily bookerly18FontFamily(&bookerly18RegularFont, &bookerly18BoldFont, &bookerly18ItalicFont,
-                                   &bookerly18BoldItalicFont);
+                                    &bookerly18BoldItalicFont);
 
+#ifndef OMIT_LEXEND
 // Lexend is bundled with regular and bold only. Italic falls back to regular,
 // and bold italic falls back to bold to keep the family complete for EPUB styling.
 EpdFont lexend10RegularFont(&lexend_10_regular);
@@ -97,6 +98,7 @@ EpdFontFamily lexend16FontFamily(&lexend16RegularFont, &lexend16BoldFont, &lexen
 EpdFont lexend18RegularFont(&lexend_18_regular);
 EpdFont lexend18BoldFont(&lexend_18_bold);
 EpdFontFamily lexend18FontFamily(&lexend18RegularFont, &lexend18BoldFont, &lexend18RegularFont, &lexend18BoldFont);
+#endif
 
 EpdFont notosans10RegularFont(&notosans_10_regular);
 EpdFont notosans10BoldFont(&notosans_10_bold);
@@ -433,11 +435,13 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(BOOKERLY_16_FONT_ID, bookerly16FontFamily);
   renderer.insertFont(BOOKERLY_18_FONT_ID, bookerly18FontFamily);
 
+#ifndef OMIT_LEXEND
   renderer.insertFont(LEXEND_10_FONT_ID, lexend10FontFamily);
   renderer.insertFont(LEXEND_12_FONT_ID, lexend12FontFamily);
   renderer.insertFont(LEXEND_14_FONT_ID, lexend14FontFamily);
   renderer.insertFont(LEXEND_16_FONT_ID, lexend16FontFamily);
   renderer.insertFont(LEXEND_18_FONT_ID, lexend18FontFamily);
+#endif
 
   renderer.insertFont(NOTOSANS_10_FONT_ID, notosans10FontFamily);
   renderer.insertFont(NOTOSANS_12_FONT_ID, notosans12FontFamily);

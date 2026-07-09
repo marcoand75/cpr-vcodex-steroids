@@ -285,6 +285,7 @@ float CrossPointSettings::getReaderLineCompression() const {
         case WIDE:
           return 1.0f;
       }
+#ifndef OMIT_LEXEND
     case LEXEND:
       switch (lineSpacing) {
         case TIGHT:
@@ -295,6 +296,7 @@ float CrossPointSettings::getReaderLineCompression() const {
         case WIDE:
           return 1.0f;
       }
+#endif
   }
 }
 
@@ -436,6 +438,7 @@ int CrossPointSettings::getReaderFontId() const {
         case EXTRA_LARGE:
           return NOTOSANS_18_FONT_ID;
       }
+#ifndef OMIT_LEXEND
     case LEXEND:
       switch (fontSize) {
         case X_SMALL:
@@ -450,5 +453,6 @@ int CrossPointSettings::getReaderFontId() const {
         case EXTRA_LARGE:
           return LEXEND_18_FONT_ID;
       }
+#endif
   }
 }

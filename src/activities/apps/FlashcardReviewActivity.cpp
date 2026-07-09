@@ -113,6 +113,7 @@ int builtInReaderFontId(uint8_t family, uint8_t size) {
         default:
           return NOTOSANS_14_FONT_ID;
       }
+#ifndef OMIT_LEXEND
     case CrossPointSettings::LEXEND:
       switch (size) {
         case CrossPointSettings::X_SMALL:
@@ -127,6 +128,7 @@ int builtInReaderFontId(uint8_t family, uint8_t size) {
         default:
           return LEXEND_14_FONT_ID;
       }
+#endif
     case CrossPointSettings::BOOKERLY:
     default:
       switch (size) {
