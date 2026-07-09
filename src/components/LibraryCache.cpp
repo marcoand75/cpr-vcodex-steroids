@@ -271,13 +271,11 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
     return epub.generateThumbBmp(coverW, coverH);
   }
   if (FsHelpers::hasXtcExtension(path)) {
-    // XTC thumbnail generation loads a full uncompressed page into RAM.
-    // The worst-case buffer is ~96 KB (XTCH 2-bit, 480×800).  Guard against
-    // OOM: if available heap is critically low the malloc inside generateThumbBmp
-    // would fail anyway, but an early exit keeps the error path clean and avoids
-    // leaving a partial BMP on the SD card.
-    if (ESP.getFreeHeap() < 95000) {
-      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 95 KB)", path.c_str(), ESP.getFreeHeap());
+    // XTC thumbnail generation now streams from the cover BMP (row by row)
+    // and requires very little contiguous heap (~300 bytes). Keep a small
+    // safety margin so we don't attempt generation when the heap is truly exhausted.
+    if (ESP.getFreeHeap() < 8192) {
+      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 8 KB)", path.c_str(), ESP.getFreeHeap());
       return false;
     }
     Xtc xtc(path, "/.crosspoint");

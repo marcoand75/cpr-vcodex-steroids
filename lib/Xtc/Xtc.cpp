@@ -401,14 +401,15 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
     return false;
   }
 
-  // Read the cover BMP line by line to keep heap low.
   // After Bitmap::parseHeaders(), the file pointer is at the start of pixel data.
   const size_t bmpDataOffset = coverFile.position();
 
-  // We need source rows within [cropY .. cropY+visibleHeight).
-  // Read one source row at a time into a tight buffer (srcRowBytes max 60 bytes).
-  uint8_t* srcLine = static_cast<uint8_t*>(malloc(srcRowBytes));
-  if (!srcLine) {
+  // Buffer to hold all source rows needed for one destination row.
+  // Worst case: scale factor 0.45 means ~2.2 src rows per dst row. Allocate for 4 rows.
+  const size_t maxSrcRowsPerDstRow = 4;
+  const size_t srcLinesBufSize = maxSrcRowsPerDstRow * srcRowBytes;
+  uint8_t* srcLinesBuf = static_cast<uint8_t*>(malloc(srcLinesBufSize));
+  if (!srcLinesBuf) {
     free(rowBuffer);
     thumbBmp.close();
     Storage.remove(thumbPath.c_str());
@@ -426,6 +427,25 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
     if (srcYEnd   <= srcYStart)                   srcYEnd   = srcYStart + 1;
     if (srcYEnd   >  static_cast<uint32_t>(srcH)) srcYEnd   = srcH;
 
+    const uint32_t numSrcRows = srcYEnd - srcYStart;
+    if (numSrcRows > maxSrcRowsPerDstRow) {
+      // Should not happen for 230x360 thumb from 480x800 source, but be safe.
+      free(srcLinesBuf);
+      free(rowBuffer);
+      thumbBmp.close();
+      Storage.remove(thumbPath.c_str());
+      coverFile.close();
+      return false;
+    }
+
+    // Pre-load all source rows for this destination row with one seek+read each.
+    for (uint32_t r = 0; r < numSrcRows; r++) {
+      const uint32_t srcY = srcYStart + r;
+      const size_t rowFileOffset = bmpDataOffset + static_cast<size_t>(srcY) * srcBmpRowSize;
+      coverFile.seek(rowFileOffset);
+      coverFile.read(srcLinesBuf + r * srcRowBytes, srcRowBytes);
+    }
+
     for (uint16_t dstX = 0; dstX < thumbWidth; dstX++) {
       uint32_t srcXStart = (cropX_fp + static_cast<uint32_t>(dstX)     * scaleInv_fp) >> 16;
       uint32_t srcXEnd   = (cropX_fp + static_cast<uint32_t>(dstX + 1) * scaleInv_fp) >> 16;
@@ -435,15 +455,9 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
       if (srcXEnd   >  static_cast<uint32_t>(srcW)) srcXEnd   = srcW;
 
       uint32_t graySum = 0, totalCount = 0;
-      for (uint32_t srcY = srcYStart; srcY < srcYEnd && srcY < static_cast<uint32_t>(srcH); srcY++) {
-        // Seek and read the source row from cover BMP
-        // BMP rows: top-down (TopDown order), row 0 = first in file
-        const size_t rowFileOffset = bmpDataOffset + static_cast<size_t>(srcY) * srcBmpRowSize;
-        coverFile.seek(rowFileOffset);
-        coverFile.read(srcLine, srcRowBytes);
-
+      for (uint32_t r = 0; r < numSrcRows; r++) {
+        const uint8_t* srcLine = srcLinesBuf + r * srcRowBytes;
         for (uint32_t srcX = srcXStart; srcX < srcXEnd && srcX < static_cast<uint32_t>(srcW); srcX++) {
-          // BMP 1-bit: 0=black(palette[0]), 1=white(palette[1])
           const size_t byteIdx = srcX / 8;
           const size_t bitIdx = 7 - (srcX % 8);
           const uint8_t grayValue = ((srcLine[byteIdx] >> bitIdx) & 1) ? 255 : 0;
@@ -466,7 +480,7 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
     thumbBmp.write(rowBuffer, rowSize);
   }
 
-  free(srcLine);
+  free(srcLinesBuf);
   free(rowBuffer);
   thumbBmp.close();
   coverFile.close();
