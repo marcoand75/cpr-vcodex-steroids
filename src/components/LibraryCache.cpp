@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <CoverDebugLog.h>
+
 #include "components/UITheme.h"
 
 namespace LibraryCache {
@@ -264,29 +266,56 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   esp_task_wdt_reset();
 
   if (FsHelpers::hasEpubExtension(path)) {
+    // EPUB cover extraction needs the ZIP inflate window (~32 KB) plus the
+    // image decoder (JPEG ~17 KB, PNG ~42 KB).  Ensure enough contiguous heap
+    // is available before opening the EPUB, so we don't OOM mid-extraction.
+    const uint32_t freeH = ESP.getFreeHeap();
+    const uint32_t maxA  = ESP.getMaxAllocHeap();
+    COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
+    if (maxA < 32 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 32768", maxA);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 48 KB)",
+              path.c_str(), maxA);
+      return false;
+    }
     // Scope-limit the Epub object so ZIP/page buffers are released immediately
     // after the thumbnail is written.
     Epub epub(path, "/.crosspoint");
-    if (!epub.load(true, true)) return false;
-    return epub.generateThumbBmp(coverW, coverH);
+    const bool loaded = epub.load(true, true);
+    COVER_LOG("BSC", "EPUB load(%s): result=%d free=%u maxA=%u",
+              path.c_str(), loaded ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    if (!loaded) return false;
+    const bool thumbOk = epub.generateThumbBmp(coverW, coverH);
+    COVER_LOG("BSC", "EPUB thumb(%s): result=%d free=%u maxA=%u",
+              path.c_str(), thumbOk ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return thumbOk;
   }
   if (FsHelpers::hasXtcExtension(path)) {
     // XTC thumbnail generation now streams from the cover BMP (row by row)
     // and requires very little contiguous heap (~300 bytes). Keep a small
     // safety margin so we don't attempt generation when the heap is truly exhausted.
-    if (ESP.getFreeHeap() < 8192) {
-      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 8 KB)", path.c_str(), ESP.getFreeHeap());
+    const uint32_t xtcFree = ESP.getFreeHeap();
+    const uint32_t xtcMaxA = ESP.getMaxAllocHeap();
+    COVER_LOG("BSC", "XTC start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, xtcFree, xtcMaxA);
+    if (xtcFree < 8192) {
+      COVER_LOG("BSC", "XTC SKIP (low heap): free=%u", xtcFree);
+      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 8 KB)", path.c_str(), xtcFree);
       return false;
     }
     Xtc xtc(path, "/.crosspoint");
     if (!xtc.load()) {
+      COVER_LOG("BSC", "XTC load FAIL: path=%s", path.c_str());
       LOG_ERR("BSC", "XTC load failed for %s", path.c_str());
       return false;
     }
     const bool generated = xtc.generateThumbBmp(coverW, coverH);
     if (!generated) {
+      COVER_LOG("BSC", "XTC thumb FAIL: path=%s W=%d H=%d free=%u maxA=%u",
+                path.c_str(), coverW, coverH, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       LOG_ERR("BSC", "XTC thumb gen failed for %s (%dx%d) — pageCount=%lu, freeHeap=%u",
               path.c_str(), coverW, coverH, xtc.getPageCount(), ESP.getFreeHeap());
+    } else {
+      COVER_LOG("BSC", "XTC thumb OK: path=%s", path.c_str());
     }
     return generated;
   }

@@ -13,6 +13,8 @@
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
 
+#include <CoverDebugLog.h>
+
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   const auto containerPath = "META-INF/container.xml";
   size_t containerSize;
@@ -728,14 +730,20 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
   }
 
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    COVER_LOG("EBP-TH", "FAIL: cache not loaded path=%s", thumbPath.c_str());
     LOG_ERR("EBP", "Cannot generate thumb BMP, cache not loaded");
     return false;
   }
 
   const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
+  COVER_LOG("EBP-TH", "thumb W=%d H=%d coverHref=%s free=%u maxA=%u",
+            width, height, coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   if (coverImageHref.empty()) {
+    COVER_LOG("EBP-TH", "FAIL: no cover image");
     LOG_DBG("EBP", "No known cover image for thumbnail");
   } else if (FsHelpers::hasJpgExtension(coverImageHref)) {
+    COVER_LOG("EBP-TH", "JPEG thumb gen start: free=%u maxA=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
 
@@ -745,7 +753,20 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     }
     readItemContentsToStream(coverImageHref, coverJpg, 1024);
     // Explicitly close() file before reopening for reading
+    const size_t jpgSize = coverJpg.position();
     coverJpg.close();
+
+    if (jpgSize == 0) {
+      // ZIP extraction failed — the cover href may point to a non-existent
+      // entry in the archive (path mismatch between OPF metadata and actual
+      // ZIP structure). Clear the temp file and abort; there is nothing to
+      // decode.  Do NOT write a sentinel — the href might be resolvable
+      // after a library reindex that rebuilds the metadata cache.
+      COVER_LOG("EBP-TH", "JPEG cover not found in ZIP: href=%s free=%u maxA=%u",
+                coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(coverJpgTempPath.c_str());
+      return false;
+    }
 
     if (!Storage.openFileForRead("EBP", coverJpgTempPath, coverJpg)) {
       return false;
@@ -770,50 +791,60 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
       LOG_ERR("EBP", "Failed to generate thumb BMP from JPG cover image");
       Storage.remove(thumbPath.c_str());
 
-      if (!permanentJpegFailure) {
-        // Transient failure (OOM) — keep temp JPEG so a retry can attempt it later.
-        Storage.remove(coverJpgTempPath.c_str());
-        return false;
-      }
-
-      // Permanent failure (e.g. progressive JPEG) — try the Exif embedded thumbnail.
-      // The temp cover JPEG is still on disk; reopen it for Exif scanning.
-      LOG_DBG("EBP", "Permanent JPEG failure, trying Exif thumbnail fallback");
-      bool exifDecoded = false;
-      if (Storage.openFileForRead("EBP", coverJpgTempPath, coverJpg)) {
-        if (Storage.openFileForWrite("EBP", thumbPath, thumbBmp)) {
-          bool exifPermanent = false;
-          exifDecoded = JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(
-              coverJpg, getCachePath() + "/.thumb.jpg", thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT,
-              &exifPermanent);
-          coverJpg.close();
-          thumbBmp.close();
-          if (!exifDecoded) {
-            Storage.remove(thumbPath.c_str());
+      // Try Exif embedded thumbnail — this is small (typically ≤ 160x120)
+      // and likely to decode even when the full JPEG exhausted the MCU buffer.
+      // Only skip the fallback if the full decode reported a permanent codec
+      // error that would also affect the Exif segment (e.g. truncated stream).
+      const bool tryExif = permanentJpegFailure || true;  // always try
+      if (tryExif) {
+        COVER_LOG("EBP-TH", "JPEG failed (perm=%d), trying Exif: free=%u maxA=%u",
+                  permanentJpegFailure ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        LOG_DBG("EBP", "JPEG decode failed, trying Exif thumbnail fallback");
+        bool exifDecoded = false;
+        if (Storage.openFileForRead("EBP", coverJpgTempPath, coverJpg)) {
+          if (Storage.openFileForWrite("EBP", thumbPath, thumbBmp)) {
+            bool exifPermanent = false;
+            exifDecoded = JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(
+                coverJpg, getCachePath() + "/.thumb.jpg", thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT,
+                &exifPermanent);
+            coverJpg.close();
+            thumbBmp.close();
+            if (!exifDecoded) {
+              Storage.remove(thumbPath.c_str());
+            }
+          } else {
+            coverJpg.close();
           }
-        } else {
-          coverJpg.close();
         }
+        if (exifDecoded) {
+          COVER_LOG("EBP-TH", "Exif thumbnail OK: free=%u maxA=%u",
+                    ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+          LOG_DBG("EBP", "Cover extracted via Exif thumbnail");
+          Storage.remove(coverJpgTempPath.c_str());
+          return true;
+        }
+        COVER_LOG("EBP-TH", "Exif fallback also failed: free=%u maxA=%u",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       }
-      Storage.remove(coverJpgTempPath.c_str());
 
-      if (exifDecoded) {
-        LOG_DBG("EBP", "Cover extracted via Exif thumbnail");
-        return true;
-      }
-
-      // All attempts failed — write sentinel to prevent endless retries.
+      // All code paths failed — write sentinel to prevent endless retries.
+      COVER_LOG("EBP-TH", "JPEG all attempts FAILED: path=%s free=%u maxA=%u",
+                thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       LOG_DBG("EBP", "All JPEG decode attempts failed, writing sentinel");
+      Storage.remove(coverJpgTempPath.c_str());
       FsFile sentinel;
       Storage.openFileForWrite("EBP", thumbPath, sentinel);
       return false;
     }
 
     Storage.remove(coverJpgTempPath.c_str());
+    COVER_LOG("EBP-TH", "JPEG thumb OK: path=%s free=%u maxA=%u",
+              thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     LOG_DBG("EBP", "Generated thumb BMP from JPG cover image");
     return true;
   } else if (FsHelpers::hasPngExtension(coverImageHref)) {
-    LOG_DBG("EBP", "Generating thumb BMP from PNG cover image");
+    COVER_LOG("EBP-TH", "PNG thumb gen start: free=%u maxA=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     const auto coverPngTempPath = getCachePath() + "/.cover.png";
 
     FsFile coverPng;
@@ -842,6 +873,8 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     Storage.remove(coverPngTempPath.c_str());
 
     if (!success) {
+      COVER_LOG("EBP-TH", "PNG thumb FAILED: path=%s free=%u maxA=%u",
+                thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       LOG_ERR("EBP", "Failed to generate thumb BMP from PNG cover image");
       Storage.remove(thumbPath.c_str());
       // PNG decode failures are always permanent (corrupt data or unsupported format) —
@@ -851,9 +884,12 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
       Storage.openFileForWrite("EBP", thumbPath, sentinel);
       return false;
     }
+    COVER_LOG("EBP-TH", "PNG thumb OK: path=%s free=%u maxA=%u",
+              thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     LOG_DBG("EBP", "Generated thumb BMP from PNG cover image");
     return true;
   } else {
+    COVER_LOG("EBP-TH", "FAIL: unsupported format coverHref=%s", coverImageHref.c_str());
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
   }
 

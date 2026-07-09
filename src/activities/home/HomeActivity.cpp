@@ -49,6 +49,7 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraMarcoand75Theme.h"
 #include "fontIds.h"
+#include <CoverDebugLog.h>
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -523,8 +524,20 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
 
       if (FsHelpers::hasEpubExtension(book.path)) {
+        // EPUB extraction needs the inflate window (~32 KB) + JPEG/PNG decoder.
+        // Require a minimum contiguous block; skip this pass if not met (retry on next render).
+        COVER_LOG("HOME", "EPUB try: path=%s H=%d lyra=%d free=%u maxA=%u",
+                  book.path.c_str(), coverHeight, isLyraCarouselTheme() ? 1 : 0,
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        if (ESP.getMaxAllocHeap() < 32 * 1024) {
+          COVER_LOG("HOME", "EPUB SKIP (low heap): maxA=%u", ESP.getMaxAllocHeap());
+          progress++;
+          continue;
+        }
         Epub epub(book.path, "/.crosspoint");
         if (epub.load(isLyraCarouselTheme(), true)) {
+          COVER_LOG("HOME", "EPUB load ok: path=%s free=%u maxA=%u",
+                    book.path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
           if (!epub.getTitle().empty()) {
             book.title = epub.getTitle();
           }
@@ -537,6 +550,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                   ? epub.generateThumbBmp(getCarouselCenterCoverW(), getCarouselCenterCoverH()) &&
                         isValidBmpFile(getCarouselCenterThumbPath(book))
                   : epub.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+          COVER_LOG("HOME", "EPUB thumb result=%d: path=%s free=%u maxA=%u",
+                    success ? 1 : 0, book.path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
           if (!success && !isLyraCarouselTheme()) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";
@@ -544,8 +559,15 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           updateHomeBookMetadata(book);
           coverRendered = false;
           needsRefresh = true;
+        } else {
+          COVER_LOG("HOME", "EPUB load FAIL: path=%s free=%u maxA=%u",
+                    book.path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         }
       } else if (FsHelpers::hasXtcExtension(book.path)) {
+        if (ESP.getMaxAllocHeap() < 8192) {
+          progress++;
+          continue;
+        }
         Xtc xtc(book.path, "/.crosspoint");
         if (xtc.load()) {
           const std::string title = xtc.getTitle();

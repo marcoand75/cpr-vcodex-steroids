@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "BitmapHelpers.h"
+#include <CoverDebugLog.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exif thumbnail helpers
@@ -309,6 +310,7 @@ struct BmpConvertCtx {
   Print* bmpOut;
   int srcWidth;
   int srcHeight;
+  int srcStride;        // >1 when horizontal subsampling is active (MCU OOM fallback)
   int outWidth;
   int outHeight;
   bool oneBit;
@@ -317,7 +319,7 @@ struct BmpConvertCtx {
   uint32_t scaleX_fp;  // source pixels per output pixel, 16.16 fixed-point
   uint32_t scaleY_fp;
 
-  // Accumulates one MCU row (up to MAX_MCU_HEIGHT source rows × srcWidth pixels)
+  // Accumulates one MCU row (up to MAX_MCU_HEIGHT source rows × srcWidth/srcStride columns)
   // Filled column-by-column as JPEGDEC callbacks arrive for the same MCU row
   std::unique_ptr<uint8_t[]> mcuBuf;
 
@@ -503,10 +505,16 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   LOG_DBG("JPG", "Converting JPEG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   const auto heap = MemoryBudget::snapshot();
-  if (!MemoryBudget::hasHeap(heap, MIN_FREE_HEAP, JPEG_DECODER_SIZE)) {
-    LOG_ERR("JPG", "Not enough heap for JPEG decoder (%u free, %u max alloc, need %u/%u)", heap.freeHeap,
-            heap.maxAllocHeap, MIN_FREE_HEAP, JPEG_DECODER_SIZE);
-    setPermanent(false);  // transient: might succeed once memory is freed
+  COVER_LOG("JPG", "decode start: free=%u maxA=%u target=%dx%d",
+            heap.freeHeap, heap.maxAllocHeap, targetWidth, targetHeight);
+  // Thumbnail targets are tiny (e.g., 130x190) — accept a lower free-heap
+  // floor than the default (which targets full-screen 480x800 decodes).
+  // The MCU buffer for a thumbnail is the bottleneck, not free heap.
+  if (heap.maxAllocHeap < JPEG_DECODER_SIZE + 8192) {
+    COVER_LOG("JPG", "SKIP: low maxAlloc (%u < %u)", heap.maxAllocHeap, JPEG_DECODER_SIZE + 8192);
+    LOG_ERR("JPG", "Not enough heap for JPEG decoder (free=%u maxAlloc=%u, need maxAlloc>=%u)",
+            heap.freeHeap, heap.maxAllocHeap, JPEG_DECODER_SIZE + 8192);
+    setPermanent(false);
     return false;
   }
 
@@ -514,6 +522,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
 
   auto jpeg = makeUniqueNoThrow<JPEGDEC>();
   if (!jpeg) {
+    COVER_LOG("JPG", "SKIP: JPEGDEC alloc fail");
     LOG_ERR("JPG", "OOM: JPEG decoder");
     setPermanent(false);  // transient: OOM
     return false;
@@ -521,6 +530,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
 
   int rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, bmpDrawCallback);
   if (rc != 1) {
+    COVER_LOG("JPG", "SKIP: JPEGDEC open fail rc=%d err=%d", rc, jpeg->getLastError());
     LOG_ERR("JPG", "JPEG open failed (err=%d)", jpeg->getLastError());
     setPermanent(true);  // permanent: this JPEG data failed to parse/open
     return false;
@@ -539,6 +549,31 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   LOG_DBG("JPG", "JPEG dimensions: %dx%d", srcWidth, srcHeight);
   if (progressiveDecode) {
     LOG_DBG("JPG", "Progressive JPEG decode uses 1/8 source: %dx%d", decodedSrcWidth, decodedSrcHeight);
+  }
+
+  // On RAM-constrained devices the MCU row buffer (MAX_MCU_HEIGHT × gridWidth)
+  // can easily exceed the largest contiguous free block for high-res baseline
+  // JPEGs.  Halve the decode grid horizontally until the buffer fits within
+  // the available max-alloc heap (minus 8 KB for BMP row + scaling + JPEGDEC).
+  int gridWidth = decodedSrcWidth;
+  {
+    const size_t mcuBufBytes = static_cast<size_t>(MAX_MCU_HEIGHT) * gridWidth;
+    // Use live maxAllocHeap, not the snapshot — JPEGDEC open() consumed some heap.
+    const uint32_t maxA = ESP.getMaxAllocHeap();
+    COVER_LOG("JPG", "MCU check: gridW=%d buf=%u maxA=%u decodedW=%d",
+              gridWidth, (unsigned)mcuBufBytes, maxA, decodedSrcWidth);
+    if (mcuBufBytes + 8192 > maxA) {
+      LOG_DBG("JPG", "MCU buffer (%u bytes) too large for maxAlloc %u, subsampling",
+              (unsigned)mcuBufBytes, maxA);
+      while (gridWidth > 1) {
+        gridWidth = (gridWidth + 1) / 2;
+        const size_t newMcu = static_cast<size_t>(MAX_MCU_HEIGHT) * gridWidth;
+        if (newMcu + 8192 <= maxA) break;
+      }
+      LOG_DBG("JPG", "Subsampled grid width: %d (from %d)", gridWidth, decodedSrcWidth);
+      COVER_LOG("JPG", "MCU subsample: gridWidth=%d srcW=%d maxA=%u",
+                gridWidth, decodedSrcWidth, maxA);
+    }
   }
 
   constexpr int MAX_IMAGE_WIDTH = 2048;
@@ -560,7 +595,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
     outHeight = decodedSrcHeight;
   }
 
-  const int scaleSrcWidth = decodedSrcWidth;
+  const int scaleSrcWidth = gridWidth;
   const int scaleSrcHeight = decodedSrcHeight;
 
   uint32_t scaleX_fp = 65536;  // 1.0 in 16.16 fixed point
@@ -621,6 +656,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
   ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
   if (!ctx.mcuBuf) {
+    COVER_LOG("JPG", "SKIP: MCU alloc fail (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
     LOG_ERR("JPG", "OOM: MCU buffer (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
     setPermanent(false);  // transient: OOM
     return false;
@@ -711,6 +747,7 @@ bool JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(FsFile& jpegFi
                                                                   int targetMaxHeight, bool* permanentFailure) {
   const ExifThumbInfo thumb = findExifThumbnail(jpegFile);
   if (!thumb.found) {
+    COVER_LOG("JPG-EXIF", "No Exif thumbnail found");
     LOG_DBG("JPG", "No Exif JPEG thumbnail found in JPEG");
     if (permanentFailure) *permanentFailure = true;  // not going to change next time
     return false;
@@ -742,6 +779,7 @@ bool JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(FsFile& jpegFi
   tmp.close();
 
   if (rem > 0) {
+    COVER_LOG("JPG-EXIF", "Exif copy truncated (%lu bytes short)", static_cast<unsigned long>(rem));
     LOG_ERR("JPG", "Exif thumbnail copy truncated (%lu bytes short)", static_cast<unsigned long>(rem));
     Storage.remove(tempThumbPath.c_str());
     if (permanentFailure) *permanentFailure = true;
@@ -751,6 +789,7 @@ bool JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(FsFile& jpegFi
   // Decode the extracted thumbnail
   FsFile thumbFile;
   if (!Storage.openFileForRead("JPG", tempThumbPath, thumbFile)) {
+    COVER_LOG("JPG-EXIF", "Cannot reopen Exif thumb temp file");
     Storage.remove(tempThumbPath.c_str());
     if (permanentFailure) *permanentFailure = false;
     return false;
@@ -758,6 +797,10 @@ bool JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(FsFile& jpegFi
 
   const bool ok =
       jpegFileToBmpStreamInternal(thumbFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, permanentFailure);
+  if (!ok) {
+    COVER_LOG("JPG-EXIF", "Exif thumb decode failed: free=%u maxA=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  }
   thumbFile.close();
   Storage.remove(tempThumbPath.c_str());
   return ok;
