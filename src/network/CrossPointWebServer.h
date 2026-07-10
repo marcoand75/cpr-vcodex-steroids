@@ -5,9 +5,9 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 
+#include <array>
 #include <memory>
 #include <string>
-#include <vector>
 
 // Structure to hold file information
 struct FileInfo {
@@ -43,10 +43,8 @@ class CrossPointWebServer {
     // 4KB is a good balance: large enough to reduce syscall overhead, small enough
     // to keep individual write times short and avoid watchdog issues
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;  // 4KB buffer
-    std::vector<uint8_t> buffer;
+    std::array<uint8_t, UPLOAD_BUFFER_SIZE> buffer{};
     size_t bufferPos = 0;
-
-    UploadState() { buffer.resize(UPLOAD_BUFFER_SIZE); }
   } upload;
 
   CrossPointWebServer();
@@ -130,10 +128,8 @@ class CrossPointWebServer {
     bool magicChecked = false;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
-    std::vector<uint8_t> buffer;
+    std::array<uint8_t, BUFFER_SIZE> buffer{};
     size_t bufferPos = 0;
-
-    FontUploadState() { buffer.resize(BUFFER_SIZE); }
   } fontUpload;
 
   // OPDS server handlers

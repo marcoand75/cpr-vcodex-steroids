@@ -4,6 +4,7 @@
 #include <ESPmDNS.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -16,6 +17,7 @@
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/NetworkMemory.h"
 #include "util/QrUtils.h"
 
 namespace {
@@ -243,10 +245,14 @@ void CrossPointWebServerActivity::startAccessPoint() {
   // Start DNS server for captive portal behavior
   // This redirects all DNS queries to our IP, making any domain typed resolve to us
   stopDnsServer();
-  dnsServer = new DNSServer();
-  dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
-  dnsServer->start(DNS_PORT, "*", apIP);
-  LOG_DBG("WEBACT", "DNS server started for captive portal");
+  dnsServer = new (std::nothrow) DNSServer();
+  if (dnsServer) {
+    dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
+    dnsServer->start(DNS_PORT, "*", apIP);
+    LOG_DBG("WEBACT", "DNS server started for captive portal");
+  } else {
+    LOG_ERR("WEBACT", "Insufficient heap for captive-portal DNS; direct IP access remains available");
+  }
 
   LOG_DBG("WEBACT", "Free heap after AP start: %d bytes", ESP.getFreeHeap());
 
@@ -257,8 +263,18 @@ void CrossPointWebServerActivity::startAccessPoint() {
 void CrossPointWebServerActivity::startWebServer() {
   LOG_DBG("WEBACT", "Starting web server...");
 
+  // SD-font and reading-stat caches are not needed while File Transfer is
+  // active. Releasing them before the server starts leaves contiguous heap for
+  // WiFi/WebSocket frame buffers, especially on devices with many SD fonts.
+  NetworkMemory::prepareBeforeNetwork(renderer, "WEBACT", "pre-server");
+
   // Create the web server instance
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("WEBACT", "ERROR: Insufficient heap for File Transfer server");
+    onGoHome();
+    return;
+  }
   webServer->begin();
 
   if (webServer->isRunning()) {

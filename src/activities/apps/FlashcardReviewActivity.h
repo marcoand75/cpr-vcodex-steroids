@@ -18,6 +18,13 @@ class FlashcardReviewActivity final : public Activity {
   bool showBack = false;
   bool loaded = false;
   bool activeCardLoaded = false;
+  bool cardLayoutValid = false;
+  std::vector<std::string> wrappedLines;
+  int wrappedFontId = 0;
+  int wrappedLineHeight = 0;
+  int visibleLineCount = 1;
+  int scrollLineOffset = 0;
+  int maxScrollLineOffset = 0;
   std::string errorMessage;
   GfxRenderer::Orientation originalOrientation = GfxRenderer::Orientation::Portrait;
   bool orientationApplied = false;
@@ -35,10 +42,11 @@ class FlashcardReviewActivity final : public Activity {
   bool ensureCurrentCardLoaded();
   FlashcardCardProgress& currentProgress();
   const FlashcardCard& currentCard() const;
+  void invalidateCardLayout();
+  void scrollCard(int direction);
   void goToNextCard();
   void markCurrentSuccess();
   void markCurrentFailure();
-  void skipCurrentCard();
 
  public:
   FlashcardReviewActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string deckPath)

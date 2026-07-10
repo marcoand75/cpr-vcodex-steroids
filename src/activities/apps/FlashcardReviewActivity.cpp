@@ -15,11 +15,13 @@ namespace {
 struct WrappedCardBody {
   int fontId = UI_10_FONT_ID;
   int lineHeight = 0;
+  int visibleLineCount = 1;
   std::vector<std::string> lines;
   bool fits = true;
 };
 
 constexpr size_t MAX_FLASHCARD_RENDER_TEXT_BYTES = 4096;
+constexpr int MAX_FLASHCARD_WRAPPED_LINES = 256;
 
 bool hasValue(const std::vector<std::string>& values, const std::string& key) {
   return std::find(values.begin(), values.end(), key) != values.end();
@@ -43,24 +45,33 @@ std::string clippedCardTextForRender(const std::string& text) {
   return clipped;
 }
 
-void drawReviewHeaderHints(GfxRenderer& renderer, const ThemeMetrics& metrics, const int pageWidth) {
+void drawReviewScrollHints(GfxRenderer& renderer, const ThemeMetrics& metrics, const int pageWidth,
+                           const bool canScrollUp, const bool canScrollDown) {
   const int headerY = metrics.topPadding + 5;
-  const char* exitLabel = tr(STR_EXIT);
-  const int exitWidth = renderer.getTextWidth(SMALL_FONT_ID, exitLabel);
+  const char* upLabel = tr(STR_DIR_UP);
+  const char* downLabel = tr(STR_DIR_DOWN);
+  const int labelWidth =
+      std::max(renderer.getTextWidth(SMALL_FONT_ID, upLabel), renderer.getTextWidth(SMALL_FONT_ID, downLabel));
   const int boxHeight = renderer.getLineHeight(SMALL_FONT_ID) + 6;
   const int boxPaddingX = 6;
-  const int boxWidth = exitWidth + boxPaddingX * 2;
-  const int exitGap = 22;
-  const int exit2X = pageWidth - 210 - boxWidth;
-  const int exit1X = exit2X - exitGap - exitWidth;
+  const int boxWidth = labelWidth + boxPaddingX * 2;
+  const int hintGap = 22;
+  const int downBoxX = pageWidth - 210 - boxWidth;
+  const int upBoxX = downBoxX - hintGap - boxWidth;
   const int boxY = headerY - 2;
-  const int exit1BoxX = exit2X - exitGap - boxWidth;
 
-  renderer.drawRect(exit1BoxX, boxY, boxWidth, boxHeight);
-  renderer.drawText(SMALL_FONT_ID, exit1BoxX + boxPaddingX, headerY, exitLabel);
+  const auto drawHint = [&](const int boxX, const char* label) {
+    renderer.drawRect(boxX, boxY, boxWidth, boxHeight);
+    const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label);
+    renderer.drawText(SMALL_FONT_ID, boxX + (boxWidth - textWidth) / 2, headerY, label);
+  };
 
-  renderer.drawRect(exit2X, boxY, boxWidth, boxHeight);
-  renderer.drawText(SMALL_FONT_ID, exit2X + boxPaddingX, headerY, exitLabel);
+  if (canScrollUp) {
+    drawHint(upBoxX, upLabel);
+  }
+  if (canScrollDown) {
+    drawHint(downBoxX, downLabel);
+  }
 }
 
 std::vector<std::string> wrapCardBody(GfxRenderer& renderer, const int fontId, const std::string& text, const int width,
@@ -69,6 +80,7 @@ std::vector<std::string> wrapCardBody(GfxRenderer& renderer, const int fontId, c
   if (text.empty() || maxLines <= 0) {
     return result;
   }
+  result.reserve(static_cast<size_t>(maxLines));
 
   size_t start = 0;
   while (start <= text.size() && static_cast<int>(result.size()) < maxLines) {
@@ -154,7 +166,8 @@ std::vector<int> flashcardFontCandidates(int preferredFontId) {
   };
 
   addUnique(preferredFontId);
-  const int startSize = std::clamp<int>(SETTINGS.fontSize, CrossPointSettings::X_SMALL, CrossPointSettings::EXTRA_LARGE);
+  const int startSize =
+      std::clamp<int>(SETTINGS.fontSize, CrossPointSettings::X_SMALL, CrossPointSettings::EXTRA_LARGE);
   for (int size = startSize; size >= CrossPointSettings::X_SMALL; --size) {
     addUnique(builtInReaderFontId(SETTINGS.fontFamily, static_cast<uint8_t>(size)));
   }
@@ -173,21 +186,29 @@ WrappedCardBody fitCardBody(GfxRenderer& renderer, const int preferredFontId, co
     const int maxLines = std::max(1, height / lineHeight);
     auto lines = wrapCardBody(renderer, fontId, text, width, maxLines + 1, style);
     const bool fits = static_cast<int>(lines.size()) <= maxLines;
-    if (!fits && static_cast<int>(lines.size()) > maxLines) {
-      lines.resize(maxLines);
+    if (fits) {
+      return WrappedCardBody{fontId, lineHeight, maxLines, std::move(lines), true};
     }
 
-    fallback = WrappedCardBody{fontId, lineHeight, std::move(lines), fits};
-    if (fits) {
-      return fallback;
+    fallback = WrappedCardBody{fontId, lineHeight, maxLines, {}, false};
+  }
+
+  auto lines = wrapCardBody(renderer, fallback.fontId, text, width, MAX_FLASHCARD_WRAPPED_LINES + 1, style);
+  if (static_cast<int>(lines.size()) > MAX_FLASHCARD_WRAPPED_LINES) {
+    lines.resize(MAX_FLASHCARD_WRAPPED_LINES);
+    if (!lines.empty()) {
+      const std::string truncatedLine = lines.back() + " ...";
+      lines.back() = renderer.truncatedText(fallback.fontId, truncatedLine.c_str(), width, style);
     }
   }
+  fallback.lines = std::move(lines);
 
   return fallback;
 }
 }  // namespace
 
 void FlashcardReviewActivity::loadDeckData() {
+  invalidateCardLayout();
   errorMessage.clear();
   if (!FLASHCARDS.loadDeck(deckPath, deck, &errorMessage)) {
     loaded = false;
@@ -239,16 +260,37 @@ bool FlashcardReviewActivity::ensureCurrentCardLoaded() {
 
   activeCardIndex = cardIndex;
   activeCardLoaded = true;
+  invalidateCardLayout();
   return true;
 }
 
 const FlashcardCard& FlashcardReviewActivity::currentCard() const { return activeCard; }
+
+void FlashcardReviewActivity::invalidateCardLayout() {
+  cardLayoutValid = false;
+  wrappedLines.clear();
+  wrappedFontId = 0;
+  wrappedLineHeight = 0;
+  visibleLineCount = 1;
+  scrollLineOffset = 0;
+  maxScrollLineOffset = 0;
+}
+
+void FlashcardReviewActivity::scrollCard(const int direction) {
+  const int pageStep = std::max(1, visibleLineCount - 1);
+  const int nextOffset = std::clamp(scrollLineOffset + direction * pageStep, 0, maxScrollLineOffset);
+  if (nextOffset != scrollLineOffset) {
+    scrollLineOffset = nextOffset;
+    requestUpdate();
+  }
+}
 
 void FlashcardReviewActivity::goToNextCard() {
   showBack = false;
   activeCard = {};
   activeCardIndex = -1;
   activeCardLoaded = false;
+  invalidateCardLayout();
   const int sessionHandled = sessionReviewed + sessionSkipped;
   if (SETTINGS.flashcardStudyMode != CrossPointSettings::FLASHCARD_STUDY_INFINITE && initialSessionSize > 0 &&
       sessionHandled >= initialSessionSize) {
@@ -296,19 +338,6 @@ void FlashcardReviewActivity::markCurrentFailure() {
   queue.push_back(cardIndex);
   sessionReviewed++;
   sessionFailed++;
-  goToNextCard();
-}
-
-void FlashcardReviewActivity::skipCurrentCard() {
-  const int cardIndex = queue[queueIndex];
-  auto& item = currentProgress();
-  if (isCurrentCardUnseen() && !hasValue(newlySeenKeys, item.key)) {
-    newlySeenKeys.push_back(item.key);
-    sessionNewSeen++;
-  }
-  FLASHCARDS.markCardSkipped(item);
-  queue.push_back(cardIndex);
-  sessionSkipped++;
   goToNextCard();
 }
 
@@ -380,22 +409,25 @@ void FlashcardReviewActivity::loop() {
   }
 
   const bool backReleased = mappedInput.wasReleased(MappedInputManager::Button::Back);
-  const bool pageBackReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack);
-  const bool pageForwardReleased = mappedInput.wasReleased(MappedInputManager::Button::PageForward);
-
   if (backReleased) {
-    showBack = !showBack;
-    requestUpdate();
-    return;
-  }
-
-  if (pageBackReleased || pageForwardReleased) {
     finishWithSummary();
     return;
   }
 
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    scrollCard(-1);
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    scrollCard(1);
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    skipCurrentCard();
+    showBack = !showBack;
+    invalidateCardLayout();
+    requestUpdate();
     return;
   }
 
@@ -446,10 +478,9 @@ void FlashcardReviewActivity::render(RenderLock&&) {
   const bool showSessionProgress = SETTINGS.flashcardStudyMode != CrossPointSettings::FLASHCARD_STUDY_INFINITE;
   const int sessionHandled = sessionReviewed + sessionSkipped;
   const int completedCards = std::clamp(sessionHandled, 0, initialSessionSize);
-  const std::string headerSubtitle =
-      showSessionProgress && initialSessionSize > 0
-          ? std::to_string(completedCards) + "/" + std::to_string(initialSessionSize)
-          : std::string();
+  const std::string headerSubtitle = showSessionProgress && initialSessionSize > 0
+                                         ? std::to_string(completedCards) + "/" + std::to_string(initialSessionSize)
+                                         : std::string();
   const std::string headerTitle =
       showSessionProgress && !headerSubtitle.empty() ? deck.title + " / " + headerSubtitle : deck.title;
   HeaderDateUtils::drawHeaderWithDate(renderer, headerTitle.c_str(), nullptr);
@@ -468,27 +499,43 @@ void FlashcardReviewActivity::render(RenderLock&&) {
   const std::string sideLabel = showBack ? tr(STR_CARD_BACK) : tr(STR_CARD_FRONT);
   renderer.drawText(SMALL_FONT_ID, cardX + 10, cardY + 10, sideLabel.c_str(), true, EpdFontFamily::BOLD);
 
-  const std::string& sourceText = showBack ? currentCard().back : currentCard().front;
-  std::string clippedText;
-  const std::string* bodyText = &sourceText;
-  if (sourceText.size() > MAX_FLASHCARD_RENDER_TEXT_BYTES) {
-    clippedText = clippedCardTextForRender(sourceText);
-    bodyText = &clippedText;
-  }
   const int textWidth = cardWidth - 24;
   const int textTop = cardY + 34;
   const int textHeight = cardHeight - 50;
   const EpdFontFamily::Style bodyStyle = showBack ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
-  const auto fitted = fitCardBody(renderer, readerFontId, *bodyText, textWidth, textHeight, bodyStyle);
-  int textY = textTop + std::max(0, (textHeight - static_cast<int>(fitted.lines.size()) * fitted.lineHeight) / 2);
-  for (const auto& line : fitted.lines) {
-    renderer.drawText(fitted.fontId, cardX + 12, textY, line.c_str(), true, bodyStyle);
-    textY += fitted.lineHeight;
+  if (!cardLayoutValid) {
+    const std::string& sourceText = showBack ? currentCard().back : currentCard().front;
+    std::string clippedText;
+    const std::string* bodyText = &sourceText;
+    if (sourceText.size() > MAX_FLASHCARD_RENDER_TEXT_BYTES) {
+      clippedText = clippedCardTextForRender(sourceText);
+      bodyText = &clippedText;
+    }
+
+    auto fitted = fitCardBody(renderer, readerFontId, *bodyText, textWidth, textHeight, bodyStyle);
+    wrappedFontId = fitted.fontId;
+    wrappedLineHeight = fitted.lineHeight;
+    visibleLineCount = fitted.visibleLineCount;
+    wrappedLines = std::move(fitted.lines);
+    maxScrollLineOffset = std::max(0, static_cast<int>(wrappedLines.size()) - std::max(1, visibleLineCount));
+    scrollLineOffset = std::clamp(scrollLineOffset, 0, maxScrollLineOffset);
+    cardLayoutValid = true;
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_FLIP), tr(STR_NEXT), tr(STR_SUCCESS), tr(STR_FAIL));
+  const int firstLine = std::clamp(scrollLineOffset, 0, maxScrollLineOffset);
+  const int endLine = std::min(static_cast<int>(wrappedLines.size()), firstLine + std::max(1, visibleLineCount));
+  int textY = textTop;
+  if (maxScrollLineOffset == 0) {
+    textY += std::max(0, (textHeight - static_cast<int>(wrappedLines.size()) * wrappedLineHeight) / 2);
+  }
+  for (int lineIndex = firstLine; lineIndex < endLine; ++lineIndex) {
+    renderer.drawText(wrappedFontId, cardX + 12, textY, wrappedLines[lineIndex].c_str(), true, bodyStyle);
+    textY += wrappedLineHeight;
+  }
+
+  const auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_FLIP), tr(STR_SUCCESS), tr(STR_FAIL));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  drawReviewHeaderHints(renderer, metrics, pageWidth);
+  drawReviewScrollHints(renderer, metrics, pageWidth, scrollLineOffset > 0, scrollLineOffset < maxScrollLineOffset);
 
   renderer.displayBuffer();
 }
