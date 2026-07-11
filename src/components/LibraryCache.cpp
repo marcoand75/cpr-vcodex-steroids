@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <Txt.h>
 #include <Xtc.h>
 #include <esp_task_wdt.h>
@@ -124,6 +125,14 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
   worklist.reserve(16);
   worklist.emplace_back(root);
 
+  // Cap recursion depth.  A malformed card with circular symlinks or deeply
+  // nested directories could otherwise push thousands of paths and peak
+  // hundreds of KB of RAM.  8 levels is plenty for any realistic library
+  // layout (genre/author/series/title).
+  constexpr int kMaxDepth = 8;
+  std::vector<uint8_t> depth;
+  depth.push_back(0);
+
   int dirCount = 0;
   // Only collect up to maxBooks candidates: scan() can only index maxBooks
   // entries anyway, and collecting thousands of extra path strings needlessly
@@ -132,6 +141,8 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
   while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
+    const uint8_t folderDepth = depth.back();
+    depth.pop_back();
 
     ++dirCount;
     if ((dirCount & 0x7) == 0) {
@@ -166,7 +177,11 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
       childPath.append(name);
 
       if (isDir) {
+        // Refuse to descend past kMaxDepth. The path may still be opened by
+        // the user later, but we keep the indexing walk bounded.
+        if (folderDepth + 1 >= kMaxDepth) continue;
         worklist.push_back(std::move(childPath));
+        depth.push_back(static_cast<uint8_t>(folderDepth + 1));
         continue;
       }
 
@@ -185,15 +200,46 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
 // Helper: extract EPUB metadata, trying the persistent cache first
 // to avoid opening the ZIP when the book was previously read.
 // Returns true if metadata was successfully extracted, false on OOM/failure.
+// On any failure the record is left with empty title/author and the caller
+// falls back to the filename-derived title.
 bool extractBookMetadata(ScanRecord& rec) {
   rec.title.clear();
   rec.author.clear();
+
+  // Defensive sanity check: the path must point to an existing non-empty
+  // regular file.  A corrupt FAT entry or stale path can otherwise crash
+  // the underlying open() call inside the parser.
+  if (rec.path.empty() || rec.path[0] != '/') {
+    LOG_ERR("BSC", "Refusing to parse invalid path: %s", rec.path.c_str());
+    return false;
+  }
+  HalFile stat = Storage.open(rec.path.c_str());
+  if (!stat || stat.isDirectory() || stat.size() == 0) {
+    if (stat) stat.close();
+    LOG_DBG("BSC", "Skipping missing/empty file: %s", rec.path.c_str());
+    return false;
+  }
+  stat.close();
 
   if (FsHelpers::hasEpubExtension(rec.path)) {
     // Scope-limit the Epub object so it is destroyed before we move to
     // the next book, releasing ZIP buffer / page data immediately.
     bool haveMeta = false;
     {
+      // Re-check max-alloc heap right before opening the ZIP: a single
+      // EPUB open can request a 100+ KB block; on a fragmented heap after
+      // several previous books the call can OOM. Skipping here is much
+      // cheaper than recovering from a failed allocation deep inside the
+      // parser.
+      const auto heap = MemoryBudget::snapshot();
+      constexpr uint32_t kEpubMinFree = 40000;   // ~40 KB
+      constexpr uint32_t kEpubMinMaxAlloc = 30000;
+      if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
+        LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap,
+                heap.maxAllocHeap);
+        return false;
+      }
+
       Epub epub(rec.path, "/.crosspoint");
       const std::string& cacheDir = epub.getCachePath();
       if (Storage.exists(cacheDir.c_str())) {
@@ -218,15 +264,34 @@ bool extractBookMetadata(ScanRecord& rec) {
           haveMeta = true;
         }
       }
-    }  // Epub destroyed here
+    }  // Epub destroyed here — release ZIP buffer / page data immediately
   } else if (FsHelpers::hasXtcExtension(rec.path)) {
+    // XTC load is cheaper than EPUB but still allocates a per-page table.
+    // Guard against fragmentation on the constrained ESP32-C3.
+    if (ESP.getFreeHeap() < 20000) {
+      LOG_DBG("BSC", "Skipping XTC parse for %s (free heap %u < 20 KB)", rec.path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
     Xtc xtc(rec.path, "/.crosspoint");
     if (xtc.load()) {
       rec.title = xtc.getTitle();
       rec.author = xtc.getAuthor();
     }
+  } else if (FsHelpers::hasTxtExtension(rec.path) || FsHelpers::hasMarkdownExtension(rec.path)) {
+    // TXT/Markdown: Txt::load is cheap (it only counts lines), but
+    // still skip on very low heap to leave room for the next book.
+    if (ESP.getFreeHeap() < 16000) {
+      LOG_DBG("BSC", "Skipping TXT parse for %s (free heap %u < 16 KB)", rec.path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
+    Txt txt(rec.path, "/.crosspoint");
+    if (txt.load()) {
+      rec.title = txt.getTitle();
+      // Txt has no getAuthor() — leave author empty; UI falls back to filename.
+    }
   }
-  // TXT/Markdown: no embedded metadata — title will be derived from filename below
+  // TXT/Markdown have no embedded metadata by default; title will be
+  // derived from the filename below when empty.
 
   if (rec.title.empty()) {
     const auto slash = rec.path.find_last_of('/');
@@ -377,6 +442,14 @@ void invalidate() {
 }
 
 bool removeBook(const std::string& path) {
+  // Refuse to operate when heap is critically low: the load/save round-trip
+  // doubles the cache's resident size, which OOMs on the ESP32-C3 with a
+  // large library.
+  if (ESP.getFreeHeap() < 30000) {
+    LOG_ERR("BSC", "removeBook skipped: free heap %u < 30 KB", ESP.getFreeHeap());
+    return false;
+  }
+
   std::vector<Entry> entries;
   if (!load(entries)) return false;
 
@@ -409,6 +482,12 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   worklist.reserve(16);
   worklist.emplace_back(root);
 
+  // Mirror enumerateBooks() depth cap so an attacker-supplied / pathological
+  // card layout cannot blow the heap during incremental sync either.
+  constexpr int kMaxDepth = 8;
+  std::vector<uint8_t> depth;
+  depth.push_back(0);
+
   std::vector<ScanRecord> records;
   records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
 
@@ -431,6 +510,8 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   while (!worklist.empty() && static_cast<int>(records.size()) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
+    const uint8_t folderDepth = depth.back();
+    depth.pop_back();
 
     ++dirCount;
     if ((dirCount & 0x7) == 0) {
@@ -466,7 +547,9 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
       childPath.append(name);
 
       if (isDir) {
+        if (folderDepth + 1 >= kMaxDepth) continue;
         worklist.push_back(std::move(childPath));
+        depth.push_back(static_cast<uint8_t>(folderDepth + 1));
         continue;
       }
 
@@ -489,12 +572,17 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
         records.push_back(std::move(rec));
         ++kept;
       } else {
+        // Newly discovered file: parse metadata, but never let a single
+        // bad book take down the whole sync. extractBookMetadata already
+        // logs the reason and returns false on failure; on false we
+        // silently skip the book (its path won't enter records).
         ScanRecord rec;
         rec.path = std::move(childPath);
-        extractBookMetadata(rec);
-        finalizeRecord(rec);
-        records.push_back(std::move(rec));
-        ++added;
+        if (extractBookMetadata(rec)) {
+          finalizeRecord(rec);
+          records.push_back(std::move(rec));
+          ++added;
+        }
       }
 
       if (static_cast<int>(records.size()) >= maxBooks) break;
@@ -550,6 +638,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
   records.reserve(std::min<int>(totalCandidates, maxBooks));
 
   int processed = 0;
+  int skipped = 0;
   for (auto& fullPath : paths) {
     ++processed;
     if (static_cast<int>(records.size()) >= maxBooks) {
@@ -562,9 +651,26 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
     yield();
     esp_task_wdt_reset();
 
+    // Pre-flight heap check: if we're below the safety threshold, stop
+    // indexing rather than risk OOM inside the parser.
+    const auto heap = MemoryBudget::snapshot();
+    constexpr uint32_t kScanMinFree = 50000;   // ~50 KB
+    constexpr uint32_t kScanMinMaxAlloc = 32000;
+    if (heap.freeHeap < kScanMinFree || heap.maxAllocHeap < kScanMinMaxAlloc) {
+      LOG_ERR("BSC", "Stopping scan: heap too low (free=%u maxAlloc=%u) after %d books",
+              heap.freeHeap, heap.maxAllocHeap, processed - 1);
+      skipped += (totalCandidates - processed + 1);
+      break;
+    }
+
     ScanRecord rec;
     rec.path = std::move(fullPath);
-    extractBookMetadata(rec);
+    if (!extractBookMetadata(rec)) {
+      // extractBookMetadata logs the reason; continue to next book.
+      ++skipped;
+      if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
+      continue;
+    }
     finalizeRecord(rec);
     records.push_back(std::move(rec));
 
@@ -588,8 +694,8 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
   }
 
   const bool persisted = save(out);
-  LOG_DBG("BSC", "Scan complete: %d books (of %d candidates), persisted=%d", static_cast<int>(out.size()),
-          totalCandidates, persisted ? 1 : 0);
+  LOG_DBG("BSC", "Scan complete: %d books (of %d candidates, %d skipped), persisted=%d",
+          static_cast<int>(out.size()), totalCandidates, skipped, persisted ? 1 : 0);
   return persisted;
 }
 

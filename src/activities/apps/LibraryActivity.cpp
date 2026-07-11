@@ -171,7 +171,7 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
     Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
     GUI.fillPopupProgress(renderer, popupRect, 0);
     renderer.displayBuffer();
-    LibraryCache::scan(renderer, popupRect, allEntries);
+    LibraryCache::scan(renderer, popupRect, allEntries, SETTINGS.libraryRootDir);
   }
 
   // Push matching entries into unfilteredEntries_.  Using the original two-
