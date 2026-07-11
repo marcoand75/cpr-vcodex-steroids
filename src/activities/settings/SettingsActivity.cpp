@@ -57,6 +57,7 @@
 #include "util/ShortcutUiMetadata.h"
 #include "util/SleepImageUtils.h"
 #include "util/TimeUtils.h"
+#include "version.h"
 
 const StrId SettingsActivity::categoryNames[categoryCount] = {
     StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER, StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM, StrId::STR_APPS};

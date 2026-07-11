@@ -9,18 +9,26 @@ from pathlib import Path
 Import("env")
 
 README_PATH = "README.md"
+BUILD_VERSION_JSON_PATH = "artifacts/build-version.json"
 RELEASE_COUNTER_FILE_TEMPLATE = ".release-counter-{base}.txt"
 RELEASE_DRY_RUN_ENV = "VCODEX_RELEASE_DRY_RUN"
 
 
-def extract_define(name: str) -> str:
-    for define in env.get("CPPDEFINES", []):
-        if isinstance(define, tuple) and len(define) >= 2 and define[0] == name:
-            value = define[1]
-            if isinstance(value, str):
-                return value.replace('\\"', '"').strip('"')
-            return str(value)
-    return "unknown"
+def load_build_metadata(project_dir: Path) -> tuple[str, str, int | None]:
+    path = project_dir / BUILD_VERSION_JSON_PATH
+    if not path.exists():
+        return "unknown", "unknown", None
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "unknown", "unknown", None
+
+    version = str(data.get("version", "unknown"))
+    base_version = str(data.get("baseVersion", infer_base_version(version)))
+    build_seq_value = data.get("buildSeq")
+    build_seq = int(build_seq_value) if isinstance(build_seq_value, int) else None
+    return version, base_version, build_seq
 
 
 def sanitize_filename(value: str) -> str:
@@ -28,24 +36,15 @@ def sanitize_filename(value: str) -> str:
     return sanitized or "unknown"
 
 
-def extract_define_int(name: str) -> int | None:
-    value = extract_define(name)
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
 def counter_token(base_version: str) -> str:
     return re.sub(r"[^0-9A-Za-z]+", "-", base_version).strip("-") or "unknown"
 
 
-def extract_base_version(version: str) -> str:
-    explicit_base = extract_define("VCODEX_BASE_VERSION")
-    if explicit_base != "unknown":
-        return explicit_base
-
+def infer_base_version(version: str) -> str:
     match = re.fullmatch(r"(\d+\.\d+\.\d+)\.\d+(?:\..*)?", version)
+    if match:
+        return match.group(1)
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:-.*)?", version)
     if match:
         return match.group(1)
     return "unknown"
@@ -82,7 +81,7 @@ def update_readme_release_version(project_dir: Path, artifact_name: str) -> None
 
 def persist_release_counter(project_dir: Path, base_version: str, build_seq: int | None) -> None:
     if build_seq is None:
-        print("Release counter update skipped: missing VCODEX_BUILD_SEQ")
+        print("Release counter update skipped: missing buildSeq in build-version.json")
         return
 
     counter_path = release_counter_path(project_dir, base_version)
@@ -103,9 +102,7 @@ def package_vcodex_bin(source, target, env):
         print(f"vcodex packaging skipped: missing {firmware_path}")
         return
 
-    version = extract_define("CROSSPOINT_VERSION")
-    base_version = extract_base_version(version)
-    build_seq = extract_define_int("VCODEX_BUILD_SEQ")
+    version, base_version, build_seq = load_build_metadata(project_dir)
     safe_version = sanitize_filename(version)
 
     output_dir = project_dir / "artifacts"

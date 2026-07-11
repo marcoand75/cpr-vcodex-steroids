@@ -271,6 +271,24 @@ bool asciiEqualsIgnoreCase(const std::string& value, const char* expected) {
   return true;
 }
 
+bool looksLikeLocalFilePath(const std::string& value) {
+  size_t pos = 0;
+  while (pos < value.size() && isAsciiSpace(value[pos])) {
+    pos++;
+  }
+
+  const bool drivePath = pos + 2 < value.size() &&
+                         ((value[pos] >= 'a' && value[pos] <= 'z') ||
+                          (value[pos] >= 'A' && value[pos] <= 'Z')) &&
+                         value[pos + 1] == ':' && (value[pos + 2] == '\\' || value[pos + 2] == '/');
+  const bool uncPath = pos + 1 < value.size() && value[pos] == '\\' && value[pos + 1] == '\\';
+  const bool fileUri = pos + 7 <= value.size() && asciiLower(value[pos]) == 'f' &&
+                       asciiLower(value[pos + 1]) == 'i' && asciiLower(value[pos + 2]) == 'l' &&
+                       asciiLower(value[pos + 3]) == 'e' && value[pos + 4] == ':' && value[pos + 5] == '/' &&
+                       value[pos + 6] == '/';
+  return drivePath || uncPath || fileUri;
+}
+
 bool startsHrefAttribute(const std::string& text, const size_t pos) {
   if (pos + 4 > text.size()) return false;
   if (pos > 0 && isAsciiNameChar(text[pos - 1])) return false;
@@ -368,7 +386,8 @@ bool ChapterHtmlSlimParser::shouldRecordAnchor(const char* elementName, const st
   return anchorData.size() < MAX_ANCHORS_PER_CHAPTER;
 }
 
-bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath, ImageDimensions& dims) {
+bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath,
+                                                const std::string& cachedImagePath, ImageDimensions& dims) {
   if (hasLastImageDimensions && lastImageDimensionsPath == resolvedPath) {
     dims = lastImageDimensions;
     return true;
@@ -376,11 +395,32 @@ bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath,
 
   auto* imagePrefix = static_cast<uint8_t*>(malloc(IMAGE_DIMENSION_PREFIX_BYTES));
   size_t imagePrefixSize = 0;
-  const bool dimensionsRead =
+  bool dimensionsRead =
       imagePrefix && epub->readItemPrefixToBuffer(resolvedPath, imagePrefix, IMAGE_DIMENSION_PREFIX_BYTES,
                                                   &imagePrefixSize, IMAGE_DIMENSION_PREFIX_CHUNK) &&
       parseImageDimensionsFromPrefix(imagePrefix, imagePrefixSize, dims);
   free(imagePrefix);
+
+  // Some otherwise-decodable EPUB images have metadata/layout that the small
+  // prefix probe cannot recognize. Fall back to the older streaming extraction
+  // path only for those images; the extracted file also becomes the lazy cache.
+  if (!dimensionsRead) {
+    FsFile cachedImageFile;
+    bool extracted = false;
+    if (Storage.openFileForWrite("EHP", cachedImagePath, cachedImageFile)) {
+      extracted = epub->readItemContentsToStream(resolvedPath, cachedImageFile, IMAGE_DIMENSION_PREFIX_CHUNK);
+      cachedImageFile.flush();
+      cachedImageFile.close();
+    }
+
+    ImageToFramebufferDecoder* decoder = extracted ? ImageDecoderFactory::getDecoder(cachedImagePath) : nullptr;
+    dimensionsRead = decoder && decoder->getDimensions(cachedImagePath, dims);
+    if (!dimensionsRead) {
+      Storage.remove(cachedImagePath.c_str());
+    } else {
+      LOG_DBG("EHP", "Read image dimensions after streaming fallback: %s", resolvedPath.c_str());
+    }
+  }
 
   if (dimensionsRead) {
     lastImageDimensionsPath = resolvedPath;
@@ -1255,8 +1295,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 ext = resolvedPath.substr(extPos);
               }
 
+              const std::string cachedImagePath = self->imageBasePath + std::to_string(self->imageCounter++) + ext;
               ImageDimensions dims = {0, 0};
-              const bool dimensionsRead = self->readImageDimensions(resolvedPath, dims);
+              const bool dimensionsRead = self->readImageDimensions(resolvedPath, cachedImagePath, dims);
 
               if (dimensionsRead) {
                 LOG_DBG("EHP", "Image dimensions: %dx%d", dims.width, dims.height);
@@ -1402,8 +1443,6 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 // Apply top margin from container block
                 self->currentPageNextY += imageMarginTop;
 
-                const std::string cachedImagePath = self->imageBasePath + std::to_string(self->imageCounter++) + ext;
-
                 // Create ImageBlock and add to page
                 auto imageBlock = std::shared_ptr<ImageBlock>(new (std::nothrow) ImageBlock(
                     cachedImagePath, displayWidth, displayHeight, self->epub->getPath(), resolvedPath));
@@ -1450,7 +1489,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       }
 
       // Fallback to alt text if image processing fails
-      if (!alt.empty()) {
+      if (!alt.empty() && !looksLikeLocalFilePath(alt)) {
         alt = "[Image: " + alt + "]";
         self->startNewTextBlock(self->blockStyleStack.back()
                                     .getCombinedBlockStyle(centeredBlockStyle, BlockStyle::CombineAxis::Horizontal)

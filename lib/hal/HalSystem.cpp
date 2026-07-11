@@ -12,6 +12,8 @@
 
 #define MAX_PANIC_STACK_DEPTH 32
 
+extern const char CPR_CROSSPOINT_VERSION[];
+
 RTC_NOINIT_ATTR char panicMessage[256];
 RTC_NOINIT_ATTR HalSystem::StackFrame panicStack[MAX_PANIC_STACK_DEPTH];
 
@@ -115,7 +117,7 @@ std::string getPanicInfo(bool full) {
   } else {
     std::string info;
 
-    info += "CrossPoint version: " CROSSPOINT_VERSION;
+    info += std::string("CrossPoint version: ") + CPR_CROSSPOINT_VERSION;
     info += "\n\nPanic reason: " + std::string(panicMessage);
     info += "\n\nLast logs:\n" + getLastLogs();
     info += "\n\nStack memory:\n";

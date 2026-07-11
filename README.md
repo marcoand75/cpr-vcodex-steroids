@@ -219,6 +219,23 @@ Some of the main additions include:
 
 The philosophy of this fork is simple: keep the firmware fast, stable, and focused on reading, while making the device feel more rewarding and personal for people who read every day.
 
+## At a glance
+
+| Item | Value |
+|---|---|
+| Project | `CPR-vCodex` |
+| Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
+| Current release (CPR-vCodex) build | [`1.3.0.34-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.34-cpr-vcodex) |
+| Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
+| Changelog | [CHANGELOG.md](./CHANGELOG.md) |
+| Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
+| Current release fixes | Improves EPUB jump/image stability, hardens File Transfer under font-heavy low-memory conditions, and adds scrolling controls for long flashcards. |
+| Latest release notes | - EPUB `Go to %` now serializes metadata access with rendering, valid images get a streaming dimension fallback, and broken-image labels no longer expose local PC paths.<br>- File Transfer releases SD-font/reading-stat caches before server startup, uses fixed upload buffers, and keeps HTTP available when optional WebSocket/WebDAV allocations cannot be made.<br>- Long flashcards now scroll page by page with the side rocker; front controls are `Exit / Flip / Success / Fail`, scroll hints appear only when needed, and wrapped lines are cached between e-ink refreshes. |
+| Base firmware line | `CrossPoint Reader 1.3.0` |
+| Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
+| Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
+| Intentional upstream exclusions | Unsupported upstream theme variants such as `RoundedRaff` remain out of the supported vCodex theme list; other upstream UI/config changes are adapted selectively to preserve the existing X4 workflow. |
+
 ## Web tools
 
 - [Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html) installs the latest CPR-vCodex firmware from Chrome or Edge using Web Serial.
@@ -738,7 +755,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.32-cpr-vcodex`
+- current release build style: `1.3.0.34-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -808,10 +825,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.32-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.34-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.32-cpr-vcodex`
+- push a stable tag named like `1.3.0.34-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not

@@ -396,12 +396,18 @@ void EpubReaderActivity::loop() {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
     READING_STATS.noteActivity();
-    const int currentPage = section ? section->currentPage + 1 : 0;
-    const int totalPages = section ? section->pageCount : 0;
+    int currentPage = 0;
+    int totalPages = 0;
     float bookProgress = 0.0f;
-    if (epub->getBookSize() > 0 && section && section->pageCount > 0) {
-      const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
-      bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+    {
+      RenderLock lock(*this);
+      currentPage = section ? section->currentPage + 1 : 0;
+      totalPages = section ? section->pageCount : 0;
+      if (epub->getBookSize() > 0 && section && section->pageCount > 0) {
+        const float chapterProgress =
+            static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
+        bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+      }
     }
     const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
     ReaderUtils::requestReaderUiTransitionRefresh(renderer);
@@ -644,6 +650,10 @@ void EpubReaderActivity::jumpToPercent(int percent) {
     return;
   }
 
+  // BookMetadataCache uses one seek-based file handle for spine lookups. Keep
+  // the complete calculation serialized with render/status-bar metadata reads.
+  RenderLock lock(*this);
+
   const size_t bookSize = epub->getBookSize();
   if (bookSize == 0) {
     return;
@@ -691,14 +701,11 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   }
 
   // Reset state so render() reloads and repositions on the target spine.
-  {
-    RenderLock lock(*this);
-    currentSpineIndex = targetSpineIndex;
-    nextPageNumber = 0;
-    pendingPercentJump = true;
-    sessionProgressTouched = true;
-    section.reset();
-  }
+  currentSpineIndex = targetSpineIndex;
+  nextPageNumber = 0;
+  pendingPercentJump = true;
+  sessionProgressTouched = true;
+  section.reset();
 }
 
 EpubReaderActivity::ReaderSettingsSnapshot EpubReaderActivity::captureReaderSettingsSnapshot() const {
@@ -918,9 +925,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT: {
       float bookProgress = 0.0f;
-      if (epub && epub->getBookSize() > 0 && section && section->pageCount > 0) {
-        const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
-        bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+      {
+        RenderLock lock(*this);
+        if (epub && epub->getBookSize() > 0 && section && section->pageCount > 0) {
+          const float chapterProgress =
+              static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
+          bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+        }
       }
       const int initialPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
       READING_STATS.noteActivity();

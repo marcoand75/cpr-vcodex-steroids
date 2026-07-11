@@ -3,6 +3,7 @@
 #include <ESPmDNS.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -11,6 +12,7 @@
 #include "WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/NetworkMemory.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -75,13 +77,21 @@ void CalibreConnectActivity::startWebServer() {
   state = CalibreConnectState::SERVER_STARTING;
   requestUpdate();
 
+  NetworkMemory::prepareBeforeNetwork(renderer, "CAL", "pre-server");
+
   MDNS.end();
   if (MDNS.begin(HOSTNAME)) {
     // mDNS is optional for the Calibre plugin but still helpful for users.
     LOG_DBG("CAL", "mDNS started: http://%s.local/", HOSTNAME);
   }
 
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("CAL", "Insufficient heap for Calibre server");
+    state = CalibreConnectState::ERROR;
+    requestUpdate();
+    return;
+  }
   webServer->begin();
 
   if (webServer->isRunning()) {

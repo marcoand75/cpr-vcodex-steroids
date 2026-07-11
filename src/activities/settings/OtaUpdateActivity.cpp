@@ -13,6 +13,7 @@
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
 #include "util/NetworkMemory.h"
+#include "version.h"
 
 namespace {
 std::string formatByteSizeCompact(const size_t bytes) {

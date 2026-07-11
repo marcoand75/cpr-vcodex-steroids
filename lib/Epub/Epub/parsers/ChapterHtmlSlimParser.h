@@ -163,7 +163,8 @@ class ChapterHtmlSlimParser {
   void collectReferencedAnchor(const char* href);
   bool isReferencedAnchor(const std::string& anchor) const;
   bool shouldRecordAnchor(const char* elementName, const std::string& anchor) const;
-  bool readImageDimensions(const std::string& resolvedPath, ImageDimensions& dims);
+  bool readImageDimensions(const std::string& resolvedPath, const std::string& cachedImagePath,
+                           ImageDimensions& dims);
   bool shouldSuppressRepeatedImage(const std::string& resolvedPath);
   void serviceLongParse(const char* stage);
   void startNewTextBlock(const BlockStyle& blockStyle);

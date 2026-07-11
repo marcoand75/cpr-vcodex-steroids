@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "util/UrlUtils.h"
+#include "version.h"
 
 namespace {
 class FileWriteStream final : public Stream {
@@ -72,7 +73,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
 
   http.begin(*client, url.c_str());
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  const std::string userAgent = std::string("CrossPoint-ESP32-") + CROSSPOINT_VERSION;
+  http.addHeader("User-Agent", userAgent.c_str());
 
   if (!username.empty() && !password.empty()) {
     std::string credentials = username + ":" + password;
@@ -128,7 +130,8 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
 
   http.begin(*client, url.c_str());
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  const std::string userAgent = std::string("CrossPoint-ESP32-") + CROSSPOINT_VERSION;
+  http.addHeader("User-Agent", userAgent.c_str());
 
   if (!username.empty() && !password.empty()) {
     std::string credentials = username + ":" + password;

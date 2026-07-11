@@ -27,6 +27,7 @@
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "version.h"
 #include "SdCardFontGlobals.h"
 #include "SilentRestart.h"
 #include "UiFontSelection.h"
@@ -573,7 +574,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
+  LOG_DBG("MAIN", "Starting CrossPoint version %s", CROSSPOINT_VERSION);
 
   gpio.update();
   const bool manualSafeBoot = gpio.isPressed(HalGPIO::BTN_BACK);
