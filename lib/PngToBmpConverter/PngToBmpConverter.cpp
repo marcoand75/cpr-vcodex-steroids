@@ -399,6 +399,15 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
                                                    bool oneBit, bool crop) {
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
+  // PNG decoding needs a 32 KB inflate window plus scanline and output buffers.
+  // Bail out early if the heap cannot satisfy the largest allocation, so the
+  // caller can retry later instead of writing a permanent sentinel.
+  if (ESP.getMaxAllocHeap() < 42 * 1024) {
+    LOG_DBG("PNG", "Insufficient contiguous heap for PNG decode (maxAlloc=%u < 42KB), skipping",
+            ESP.getMaxAllocHeap());
+    return false;
+  }
+
   // Verify PNG signature
   uint8_t sig[8];
   if (pngFile.read(sig, 8) != 8 || memcmp(sig, PNG_SIGNATURE, 8) != 0) {

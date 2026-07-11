@@ -6,6 +6,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
+#include <CoverDebugLog.h>
 #include <Txt.h>
 #include <Xtc.h>
 #include <esp_task_wdt.h>
@@ -330,11 +331,44 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   esp_task_wdt_reset();
 
   if (FsHelpers::hasEpubExtension(path)) {
+    // EPUB cover extraction needs the ZIP inflate window (~32 KB) plus the
+    // image decoder (JPEG ~17 KB, PNG ~42 KB).  Ensure enough contiguous heap
+    // is available before opening the EPUB, so we don't OOM mid-extraction.
+    uint32_t freeH = ESP.getFreeHeap();
+    uint32_t maxA  = ESP.getMaxAllocHeap();
+    COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
+    if (maxA < 32 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 32768", maxA);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 32 KB)",
+              path.c_str(), maxA);
+      return false;
+    }
     // Scope-limit the Epub object so ZIP/page buffers are released immediately
     // after the thumbnail is written.
     Epub epub(path, "/.crosspoint");
-    if (!epub.load(true, true)) return false;
-    return epub.generateThumbBmp(coverW, coverH);
+    const bool loaded = epub.load(true, true);
+    COVER_LOG("BSC", "EPUB load(%s): result=%d free=%u maxA=%u",
+              path.c_str(), loaded ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    if (!loaded) return false;
+
+    // Re-check heap after opening the EPUB: metadata cache + ZIP inflate can
+    // consume a significant chunk.  Don't attempt decode if we no longer have
+    // enough contiguous memory; the caller will retry on the next pass.
+    maxA = ESP.getMaxAllocHeap();
+    if (maxA < 28 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 28KB", maxA);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen after load for %s (maxAlloc=%u < 28 KB)",
+              path.c_str(), maxA);
+      return false;
+    }
+
+    yield();
+    esp_task_wdt_reset();
+
+    const bool thumbOk = epub.generateThumbBmp(coverW, coverH);
+    COVER_LOG("BSC", "EPUB thumb(%s): result=%d free=%u maxA=%u",
+              path.c_str(), thumbOk ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return thumbOk;
   }
   if (FsHelpers::hasXtcExtension(path)) {
     // XTC thumbnail generation now streams from the cover BMP (row by row)

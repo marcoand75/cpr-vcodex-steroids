@@ -14,6 +14,7 @@
 #include "Epub/parsers/TocNcxParser.h"
 
 #include <CoverDebugLog.h>
+#include <esp_task_wdt.h>
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   const auto containerPath = "META-INF/container.xml";
@@ -745,13 +746,24 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     COVER_LOG("EBP-TH", "JPEG thumb gen start: free=%u maxA=%u",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
+
+    // Pre-flight heap guard: JPEG decoding needs a contiguous block for the
+    // decoder (~20 KB) plus the MCU row buffer.  If memory is too fragmented,
+    // return transient failure so the caller retries later instead of writing a
+    // permanent sentinel.
+    if (ESP.getMaxAllocHeap() < 28 * 1024) {
+      COVER_LOG("EBP-TH", "SKIP: low maxAlloc (%u < 28KB) href=%s", ESP.getMaxAllocHeap(), coverImageHref.c_str());
+      LOG_DBG("EBP", "Insufficient contiguous heap for JPEG thumb, retry later");
+      return false;
+    }
+
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
 
     FsFile coverJpg;
     if (!Storage.openFileForWrite("EBP", coverJpgTempPath, coverJpg)) {
       return false;
     }
-    readItemContentsToStream(coverImageHref, coverJpg, 1024);
+    readItemContentsToStream(coverImageHref, coverJpg, 4096);
     // Explicitly close() file before reopening for reading
     const size_t jpgSize = coverJpg.position();
     coverJpg.close();
@@ -781,6 +793,10 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     int THUMB_TARGET_WIDTH = width;
     int THUMB_TARGET_HEIGHT = height;
     bool permanentJpegFailure = false;
+
+    yield();
+    esp_task_wdt_reset();
+
     const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(
         coverJpg, thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT, &permanentJpegFailure);
     // Explicitly close() files before calling Storage.remove()
@@ -845,15 +861,36 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
   } else if (FsHelpers::hasPngExtension(coverImageHref)) {
     COVER_LOG("EBP-TH", "PNG thumb gen start: free=%u maxA=%u",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    LOG_DBG("EBP", "Generating thumb BMP from PNG cover image");
+
+    // PNG decoding uses a 32 KB inflate window plus scanline buffers.  Skip
+    // transiently if the contiguous heap cannot accommodate it.
+    if (ESP.getMaxAllocHeap() < 40 * 1024) {
+      COVER_LOG("EBP-TH", "SKIP: low maxAlloc for PNG (%u < 40KB) href=%s", ESP.getMaxAllocHeap(),
+                coverImageHref.c_str());
+      LOG_DBG("EBP", "Insufficient contiguous heap for PNG thumb, retry later");
+      return false;
+    }
+
     const auto coverPngTempPath = getCachePath() + "/.cover.png";
 
     FsFile coverPng;
     if (!Storage.openFileForWrite("EBP", coverPngTempPath, coverPng)) {
       return false;
     }
-    readItemContentsToStream(coverImageHref, coverPng, 1024);
+    readItemContentsToStream(coverImageHref, coverPng, 4096);
     // Explicitly close() file before reopening for reading
+    const size_t pngSize = coverPng.position();
     coverPng.close();
+
+    if (pngSize == 0) {
+      // Same path mismatch protection as for JPEGs: the PNG cover href may not
+      // exist in the ZIP.  Don't write a sentinel; a reindex could fix it.
+      COVER_LOG("EBP-TH", "PNG cover not found in ZIP: href=%s free=%u maxA=%u",
+                coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(coverPngTempPath.c_str());
+      return false;
+    }
 
     if (!Storage.openFileForRead("EBP", coverPngTempPath, coverPng)) {
       return false;
@@ -865,6 +902,10 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     }
     int THUMB_TARGET_WIDTH = width;
     int THUMB_TARGET_HEIGHT = height;
+
+    yield();
+    esp_task_wdt_reset();
+
     const bool success =
         PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(coverPng, thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT);
     // Explicitly close() files before calling Storage.remove()
