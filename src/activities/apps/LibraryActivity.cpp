@@ -546,6 +546,23 @@ void LibraryActivity::loop() {
       coverGeneratedMask_ = 0;
       coverPassCount_ = 0;
       coverGenRenderBatch_ = 0;
+      // P2: if every slot already has its thumb on disk, the page is ready
+      // immediately — skip the one-slot-per-frame pass that would otherwise
+      // freeze navigation for gridsPerPage_ frames on re-visits to an already
+      // indexed page.
+      bool allReady = true;
+      for (int s = 0; s < pageCount && allReady; ++s) {
+        if (!isBookCoverReady(entries_[pageStart + s].path, static_cast<size_t>(s))) allReady = false;
+      }
+      if (allReady) {
+        coversComplete_ = true;
+        coverGenIndex_ = -1;
+        coverGeneratedMask_ = 0;
+        coverGenRenderBatch_ = 0;
+        forceRender_ = true;
+        requestUpdate();
+        return;
+      }
       // First frame of this pass: redraw the full grid so placeholders + any
       // existing covers from previous sessions are visible immediately.
       forceRender_ = true;
@@ -553,7 +570,6 @@ void LibraryActivity::loop() {
       coverGenIndex_ = 0;
       return;  // render this frame, generate next frame
     }
-    if (coverGenIndex_ < 0) coverGenIndex_ = 0;
 
     // Generate the next missing thumb.
     bool generatedOne = false;
@@ -812,6 +828,11 @@ void LibraryActivity::render(RenderLock&&) {
       coversComplete_ == lastRenderedCoversComplete_) {
     return;
   }
+  // Capture whether this is a forced redraw (cover completion, menu actions
+  // that change ribbons, etc.) before clearing the flag. The incremental
+  // selector path (P3) must NOT run on a forced redraw, because a forced
+  // redraw can change tile content beyond just the selection highlight.
+  const bool forcedRender = forceRender_;
   forceRender_ = false;
   lastRenderedPage_ = curPageRaw;
   lastRenderedSelectorIndex_ = selectorIndex_;
@@ -958,57 +979,79 @@ void LibraryActivity::render(RenderLock&&) {
     pageTitleCacheKey_ = pageStart;
   }
 
+  // P3: incremental selector update. When only the selection moved within the
+  // already-rendered page (same page, same cover state, no forced redraw), we
+  // avoid clearScreen() + full grid redraw. We repaint just the previously
+  // selected tile (removing its border), draw the new selection border, and
+  // refresh the selected-title line — a fraction of the full-screen work.
+  // The framebuffer already holds this page's full render, so the e-ink diff
+  // is tiny (same FAST_REFRESH as a full update). Falls through to the full
+  // redraw for any other change.
+  const bool selectionOnlyMove =
+      !forcedRender && popupMode_ == PopupMode::None &&
+      curPageRaw == lastRenderedPage_ && coversComplete_ == lastRenderedCoversComplete_ &&
+      pageTitleCacheKey_ == pageStart &&
+      lastRenderedSelectorIndex_ >= 0 && lastRenderedSelectorIndex_ < total &&
+      selectorIndex_ != lastRenderedSelectorIndex_ && selectorIndex_ < total;
+
+  if (selectionOnlyMove) {
+    const int prevSel = lastRenderedSelectorIndex_;
+    const int prevI = prevSel - pageStart;
+    const int prevCol = prevI % gridColumns_;
+    const int prevRow = prevI / gridColumns_;
+    const int prevX = x0 + prevCol * (coverWidth_ + gap);
+    const int prevY = contentTop + prevRow * rowH;
+    // The selection border is two concentric rounded rects (offsets 4 and 6px);
+    // clear the full 6px bounding box so both are removed. With gap >= 7 the
+    // 6px clear still never reaches a neighbour tile (1px spare on each side).
+    renderer.fillRect(prevX - 6, prevY - 6, coverWidth_ + 12, coverHeight_ + 12, false);
+    drawTileContent(prevI, pageStart, prevX, prevY);
+
+    const int newI = selectorIndex_ - pageStart;
+    const int newCol = newI % gridColumns_;
+    const int newRow = newI / gridColumns_;
+    const int newX = x0 + newCol * (coverWidth_ + gap);
+    const int newY = contentTop + newRow * rowH;
+    renderer.drawRoundedRect(newX - 4, newY - 4, coverWidth_ + 8, coverHeight_ + 8, 3, COVER_CORNER_RADIUS + 4, true);
+    renderer.drawRoundedRect(newX - 6, newY - 6, coverWidth_ + 12, coverHeight_ + 12, 1, COVER_CORNER_RADIUS + 6, true);
+
+    // Refresh the selected-title line under the header (white band + redraw).
+    // The info line and pagination are unchanged on a pure selector move.
+    const int headerY = metrics.topPadding + 8;
+    const int lh = renderer.getLineHeight(UI_10_FONT_ID);
+    const int selTitleY = headerY + lh + 2;
+    cachedSelTitle_ = entries_[selectorIndex_].title;
+    if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
+    const int maxSelW = pageWidth - 20;
+    if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+      while (cachedSelTitle_.size() > 3 &&
+             renderer.getTextWidth(UI_10_FONT_ID, (cachedSelTitle_ + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+        cachedSelTitle_.pop_back();
+      }
+      cachedSelTitle_ += "..";
+    }
+    renderer.fillRect(0, selTitleY, pageWidth, lh, false);
+    if (!cachedSelTitle_.empty()) {
+      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
+      const int selTitleX = (pageWidth - selTitleW) / 2;
+      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
+    }
+    cachedRenderSelector_ = selectorIndex_;
+
+    lastRenderedSelectorIndex_ = selectorIndex_;
+    lastRenderedPage_ = curPageRaw;
+    lastRenderedCoversComplete_ = coversComplete_;
+    renderer.displayBuffer();
+    return;
+  }
 
   for (int i = 0; i < pageCount; ++i) {
     const int idx = pageStart + i;
-    const std::string& thumbPath = LibraryCache::thumbPathFor(entries_[idx].path, coverWidth_, coverHeight_);
-    const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
     const int col = i % gridColumns_;
     const int row = i / gridColumns_;
     const int x = x0 + col * (coverWidth_ + gap);
     const int y = contentTop + row * rowH;
-    bool drawn = false;
-    if (hasThumb) {
-      FsFile file;
-      if (Storage.openFileForRead("LIB", thumbPath, file)) {
-        Bitmap bmp(file);
-        if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-          const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
-          const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
-          const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
-          const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
-          renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
-          renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
-          drawn = true;
-        }
-        file.close();
-      }
-    }
-    if (!drawn) {
-      renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
-      renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1,
-                               COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
-      const int iconSize = std::min(32, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
-      const int iconX = x + (coverWidth_ - iconSize) / 2;
-      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
-      renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
-      const int textAreaH = 2 * coverHeight_ / 3 - 8;
-      const auto& lines = pageTitleCache_[i];
-      int lh = renderer.getLineHeight(SMALL_FONT_ID);
-      int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
-      for (auto& ln : lines) {
-        int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
-        renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-        ty += lh;
-      }
-    }
-    if (drawn) {
-      const auto* rbStats = READING_STATS.findBook(entries_[idx].path);
-      const bool isComplete = rbStats && rbStats->completed;
-      const bool isFav = FAVORITES.isFavorite(entries_[idx].path);
-      const bool isOpened = rbStats && rbStats->totalReadingMs > 0 && !isComplete;
-      if (isComplete || isFav || isOpened) drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
-    }
+    drawTileContent(i, pageStart, x, y);
     if (idx == selectorIndex_) {
       renderer.drawRoundedRect(x - 4, y - 4, coverWidth_ + 8, coverHeight_ + 8, 3, COVER_CORNER_RADIUS + 4, true);
       renderer.drawRoundedRect(x - 6, y - 6, coverWidth_ + 12, coverHeight_ + 12, 1, COVER_CORNER_RADIUS + 6, true);
@@ -1042,6 +1085,55 @@ void LibraryActivity::render(RenderLock&&) {
 
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
   renderer.displayBuffer();
+}
+
+void LibraryActivity::drawTileContent(int i, int pageStart, int x, int y) const {
+  const int idx = pageStart + i;
+  bool drawn = false;
+  const std::string& thumbPath = LibraryCache::thumbPathFor(entries_[idx].path, coverWidth_, coverHeight_);
+  const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
+  if (hasThumb) {
+    FsFile file;
+    if (Storage.openFileForRead("LIB", thumbPath, file)) {
+      Bitmap bmp(file);
+      if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+        const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
+        const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
+        const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
+        const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+        renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
+        renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
+        drawn = true;
+      }
+      file.close();
+    }
+  }
+  if (!drawn) {
+    renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
+    renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1,
+                             COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
+    const int iconSize = std::min(32, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
+    const int iconX = x + (coverWidth_ - iconSize) / 2;
+    const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
+    renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
+    const int textAreaH = 2 * coverHeight_ / 3 - 8;
+    const auto& lines = pageTitleCache_[i];
+    int lh = renderer.getLineHeight(SMALL_FONT_ID);
+    int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+    for (auto& ln : lines) {
+      int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+      renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+      ty += lh;
+    }
+  }
+  if (drawn) {
+    const auto* rbStats = READING_STATS.findBook(entries_[idx].path);
+    const bool isComplete = rbStats && rbStats->completed;
+    const bool isFav = FAVORITES.isFavorite(entries_[idx].path);
+    const bool isOpened = rbStats && rbStats->totalReadingMs > 0 && !isComplete;
+    if (isComplete || isFav || isOpened)
+      drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
+  }
 }
 
 void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {

@@ -77,6 +77,11 @@ class LibraryActivity final : public Activity {
   // thumbnail file + the current-page generation mask directly. `slot` is the
   // zero-based position within the current page (pageStart-relative).
   bool isBookCoverReady(const std::string& path, size_t slot) const;
+  // Draw the content of grid cell `i` (cover thumbnail, or placeholder with
+  // wrapped title + ribbon badge) at pixel (x, y). Does NOT draw the selection
+  // border — callers add that afterwards. Shared by the full grid redraw and
+  // the incremental selector-move path (P3) so both produce identical tiles.
+  void drawTileContent(int i, int pageStart, int x, int y) const;
   void deleteLibraryCovers(const std::string& bookPath);
   void deletePageCovers();
   void deleteAllLibraryCovers();
