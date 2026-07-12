@@ -180,8 +180,8 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 |---|---|
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current upstream base | [`1.3.0.32-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.32-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.3.0.32` + Steroids features |
+| Current upstream base | [`1.3.0.35-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.35-cpr-vcodex) |
+| Current Steroids build | Synced with upstream `1.3.0.35` + Steroids features |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
