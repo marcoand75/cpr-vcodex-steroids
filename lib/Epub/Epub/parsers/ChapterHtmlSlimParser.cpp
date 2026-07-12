@@ -210,9 +210,9 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
     cssParser->clear();
     cssParser = nullptr;
     const auto afterCssClear = MemoryBudget::snapshot();
-    LOG_DBG("EHP", "Dropped %u CSS rules during %s: free=%u->%u maxAlloc=%u->%u",
-            static_cast<unsigned>(ruleCount), stage, beforeCssClear.freeHeap, afterCssClear.freeHeap,
-            beforeCssClear.maxAllocHeap, afterCssClear.maxAllocHeap);
+    LOG_DBG("EHP", "Dropped %u CSS rules during %s: free=%u->%u maxAlloc=%u->%u", static_cast<unsigned>(ruleCount),
+            stage, beforeCssClear.freeHeap, afterCssClear.freeHeap, beforeCssClear.maxAllocHeap,
+            afterCssClear.maxAllocHeap);
     heap = afterCssClear;
     if (MemoryBudget::hasHeap(heap, SOFT_MIN_FREE_HEAP_FOR_TEXT_LAYOUT, SOFT_MIN_MAX_ALLOC_FOR_TEXT_LAYOUT)) {
       return false;
@@ -238,8 +238,7 @@ bool ChapterHtmlSlimParser::startNewPage(const char* reason) {
   currentPage.reset(new (std::nothrow) Page());
   if (!currentPage) {
     const auto heap = MemoryBudget::snapshot();
-    LOG_ERR("EHP", "Failed to create page during %s (%u free, %u max alloc)", reason, heap.freeHeap,
-            heap.maxAllocHeap);
+    LOG_ERR("EHP", "Failed to create page during %s (%u free, %u max alloc)", reason, heap.freeHeap, heap.maxAllocHeap);
     lowMemoryAbort = true;
     return false;
   }
@@ -253,23 +252,12 @@ bool ChapterHtmlSlimParser::startNewPage(const char* reason) {
 }
 
 bool isAsciiNameChar(const char c) {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ||
-         c == ':';
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == ':';
 }
 
 bool isAsciiSpace(const char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\f'; }
 
 char asciiLower(const char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
-
-bool asciiEqualsIgnoreCase(const std::string& value, const char* expected) {
-  if (!expected) return value.empty();
-  const size_t expectedLen = strlen(expected);
-  if (value.size() != expectedLen) return false;
-  for (size_t i = 0; i < expectedLen; i++) {
-    if (asciiLower(value[i]) != asciiLower(expected[i])) return false;
-  }
-  return true;
-}
 
 bool looksLikeLocalFilePath(const std::string& value) {
   size_t pos = 0;
@@ -278,14 +266,12 @@ bool looksLikeLocalFilePath(const std::string& value) {
   }
 
   const bool drivePath = pos + 2 < value.size() &&
-                         ((value[pos] >= 'a' && value[pos] <= 'z') ||
-                          (value[pos] >= 'A' && value[pos] <= 'Z')) &&
+                         ((value[pos] >= 'a' && value[pos] <= 'z') || (value[pos] >= 'A' && value[pos] <= 'Z')) &&
                          value[pos + 1] == ':' && (value[pos + 2] == '\\' || value[pos + 2] == '/');
   const bool uncPath = pos + 1 < value.size() && value[pos] == '\\' && value[pos + 1] == '\\';
-  const bool fileUri = pos + 7 <= value.size() && asciiLower(value[pos]) == 'f' &&
-                       asciiLower(value[pos + 1]) == 'i' && asciiLower(value[pos + 2]) == 'l' &&
-                       asciiLower(value[pos + 3]) == 'e' && value[pos + 4] == ':' && value[pos + 5] == '/' &&
-                       value[pos + 6] == '/';
+  const bool fileUri = pos + 7 <= value.size() && asciiLower(value[pos]) == 'f' && asciiLower(value[pos + 1]) == 'i' &&
+                       asciiLower(value[pos + 2]) == 'l' && asciiLower(value[pos + 3]) == 'e' &&
+                       value[pos + 4] == ':' && value[pos + 5] == '/' && value[pos + 6] == '/';
   return drivePath || uncPath || fileUri;
 }
 
@@ -386,8 +372,8 @@ bool ChapterHtmlSlimParser::shouldRecordAnchor(const char* elementName, const st
   return anchorData.size() < MAX_ANCHORS_PER_CHAPTER;
 }
 
-bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath,
-                                                const std::string& cachedImagePath, ImageDimensions& dims) {
+bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath, const std::string& cachedImagePath,
+                                                ImageDimensions& dims) {
   if (hasLastImageDimensions && lastImageDimensionsPath == resolvedPath) {
     dims = lastImageDimensions;
     return true;
@@ -395,10 +381,10 @@ bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath,
 
   auto* imagePrefix = static_cast<uint8_t*>(malloc(IMAGE_DIMENSION_PREFIX_BYTES));
   size_t imagePrefixSize = 0;
-  bool dimensionsRead =
-      imagePrefix && epub->readItemPrefixToBuffer(resolvedPath, imagePrefix, IMAGE_DIMENSION_PREFIX_BYTES,
-                                                  &imagePrefixSize, IMAGE_DIMENSION_PREFIX_CHUNK) &&
-      parseImageDimensionsFromPrefix(imagePrefix, imagePrefixSize, dims);
+  bool dimensionsRead = imagePrefix &&
+                        epub->readItemPrefixToBuffer(resolvedPath, imagePrefix, IMAGE_DIMENSION_PREFIX_BYTES,
+                                                     &imagePrefixSize, IMAGE_DIMENSION_PREFIX_CHUNK) &&
+                        parseImageDimensionsFromPrefix(imagePrefix, imagePrefixSize, dims);
   free(imagePrefix);
 
   // Some otherwise-decodable EPUB images have metadata/layout that the small
@@ -442,8 +428,8 @@ bool ChapterHtmlSlimParser::shouldSuppressRepeatedImage(const std::string& resol
   }
 
   if (lastRenderedImageCount == MAX_REPEATED_IMAGE_RENDERS_PER_CHAPTER + 1) {
-    LOG_DBG("EHP", "Suppressing repeated chapter image after %u uses: %s",
-            MAX_REPEATED_IMAGE_RENDERS_PER_CHAPTER, resolvedPath.c_str());
+    LOG_DBG("EHP", "Suppressing repeated chapter image after %u uses: %s", MAX_REPEATED_IMAGE_RENDERS_PER_CHAPTER,
+            resolvedPath.c_str());
   }
 
   return lastRenderedImageCount > MAX_REPEATED_IMAGE_RENDERS_PER_CHAPTER;
@@ -813,8 +799,8 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
   };
 
   for (const auto& row : table.rows) {
-    const bool rowHasMergedCells =
-        std::any_of(row.cells.begin(), row.cells.end(), [](const BufferedTableCell& cell) { return cell.colSpan != 1; });
+    const bool rowHasMergedCells = std::any_of(row.cells.begin(), row.cells.end(),
+                                               [](const BufferedTableCell& cell) { return cell.colSpan != 1; });
     const bool isFullWidthSingleCellRow =
         row.cells.size() == 1 && table.maxCols > 0 && row.cells[0].colSpan == table.maxCols;
 
@@ -889,13 +875,12 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
         nextRowIndex++;
       }
 
-      auto tableFragment = std::shared_ptr<PageTableFragment>(
-          new (std::nothrow) PageTableFragment(tableWidth, segment.columnCount, TABLE_CELL_PADDING, lineHeight,
-                                               std::move(fragmentRows), table.blockStyle.leftInset(), currentPageNextY));
+      auto tableFragment = std::shared_ptr<PageTableFragment>(new (std::nothrow) PageTableFragment(
+          tableWidth, segment.columnCount, TABLE_CELL_PADDING, lineHeight, std::move(fragmentRows),
+          table.blockStyle.leftInset(), currentPageNextY));
       if (!tableFragment) {
         const auto heap = MemoryBudget::snapshot();
-        LOG_ERR("EHP", "Failed to create PageTableFragment (%u free, %u max alloc)", heap.freeHeap,
-                heap.maxAllocHeap);
+        LOG_ERR("EHP", "Failed to create PageTableFragment (%u free, %u max alloc)", heap.freeHeap, heap.maxAllocHeap);
         lowMemoryAbort = true;
         return;
       }
@@ -1215,28 +1200,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS))) {
     std::string src;
     std::string alt;
-    std::string role;
-    std::string ariaHidden;
     if (atts != nullptr) {
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "src") == 0) {
           src = atts[i + 1];
         } else if (strcmp(atts[i], "alt") == 0) {
           alt = atts[i + 1];
-        } else if (strcmp(atts[i], "role") == 0) {
-          role = atts[i + 1];
-        } else if (strcmp(atts[i], "aria-hidden") == 0) {
-          ariaHidden = atts[i + 1];
         }
       }
 
-      if (asciiEqualsIgnoreCase(role, "presentation") || asciiEqualsIgnoreCase(role, "none") ||
-          asciiEqualsIgnoreCase(ariaHidden, "true")) {
-        self->skipUntilDepth = self->depth;
-        self->depth += 1;
-        return;
-      }
-
+      // Accessibility-only role/aria-hidden attributes do not hide visual content.
+      // CSS display:none and the reader's image setting remain the visual controls.
       // imageRendering: 0=display, 1=placeholder (alt text only), 2=suppress entirely
       if (self->imageRendering == 2) {
         self->skipUntilDepth = self->depth;
@@ -1927,7 +1901,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     // We must avoid splitting multi-byte UTF-8 sequences across word boundaries,
     // otherwise the trailing bytes become orphaned continuation bytes that the
     // decoder can't interpret.
-  if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
+    if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
       int safeLen = utf8SafeTruncateBuffer(self->partWordBuffer, self->partWordBufferIndex);
 
       if (safeLen < self->partWordBufferIndex && safeLen > 0) {

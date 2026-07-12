@@ -225,12 +225,12 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex) build | [`1.3.0.34-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.34-cpr-vcodex) |
+| Current release (CPR-vCodex) build | [`1.3.0.35-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.35-cpr-vcodex) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
-| Current release fixes | Improves EPUB jump/image stability, hardens File Transfer under font-heavy low-memory conditions, and adds scrolling controls for long flashcards. |
-| Latest release notes | - EPUB `Go to %` now serializes metadata access with rendering, valid images get a streaming dimension fallback, and broken-image labels no longer expose local PC paths.<br>- File Transfer releases SD-font/reading-stat caches before server startup, uses fixed upload buffers, and keeps HTTP available when optional WebSocket/WebDAV allocations cannot be made.<br>- Long flashcards now scroll page by page with the side rocker; front controls are `Exit / Flip / Success / Fail`, scroll hints appear only when needed, and wrapped lines are cached between e-ink refreshes. |
+| Current release fixes | Restores decorative EPUB chapter images that were incorrectly suppressed by accessibility-only markup. |
+| Latest release notes | - EPUB images marked with `role="presentation"`, `role="none"`, or `aria-hidden="true"` remain visually rendered; those attributes affect accessibility semantics rather than visual display.<br>- CSS `display:none` and the reader image setting remain the visual controls.<br>- The existing repeated-image limit remains active to protect EPUB indexing memory, and the section-cache version was bumped so affected books rebuild automatically. |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
 | Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
 | Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
@@ -755,7 +755,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.34-cpr-vcodex`
+- current release build style: `1.3.0.35-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -825,10 +825,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.34-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.35-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.34-cpr-vcodex`
+- push a stable tag named like `1.3.0.35-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not
