@@ -14,6 +14,7 @@ class ScreenSaverActivity final : public Activity {
   unsigned long lastBatteryCheckMs_ = 0;
   bool firstRender_ = true;
   bool returnToCaller_ = false;
+  std::vector<uint8_t> callerFrameBuffer_;  // saved before first render for transparent PNG background
 
   void loadImages();
   unsigned long getIntervalMs() const;
@@ -30,4 +31,5 @@ class ScreenSaverActivity final : public Activity {
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
   bool preventAutoSleep() override { return true; }
+  bool isScreenSaverActivity() const override { return true; }
 };

@@ -48,7 +48,9 @@ void drawPreviewBitmap(GfxRenderer& renderer, const Rect& contentRect, Bitmap& b
 
 bool drawPreviewPng(GfxRenderer& renderer, const Rect& contentRect, const std::string& imagePath) {
   return PngSleepRenderer::drawTransparentPng(imagePath, renderer, contentRect.x, contentRect.y, contentRect.width,
-                                              contentRect.height);
+                                              contentRect.height, "SS") ||
+         PngSleepRenderer::drawTransparentPng(imagePath, renderer, contentRect.x, contentRect.y, contentRect.width,
+                                              contentRect.height, "SLP");
 }
 
 void drawPreviewFrame(GfxRenderer& renderer, const std::string& directoryLabel, const std::string& subtitle,
@@ -108,8 +110,9 @@ void ScreenSaverPreviewActivity::loop() {
 }
 
 void ScreenSaverPreviewActivity::selectDirectory() {
-  strncpy(SETTINGS.screenSaverDirectory, directoryPath.c_str(), sizeof(SETTINGS.screenSaverDirectory) - 1);
-  SETTINGS.screenSaverDirectory[sizeof(SETTINGS.screenSaverDirectory) - 1] = '\0';
+  char* target = forReader ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
+  strncpy(target, directoryPath.c_str(), 127);
+  target[127] = '\0';
   SETTINGS.saveToFile();
   GUI.drawPopup(renderer, tr(STR_SELECTED));
   delay(700);

@@ -497,6 +497,10 @@ class CrossPointSettings {
   uint8_t screenSaverPanelColor = 0;   // 0=black, 1=white
   uint8_t screenSaverPanelOpacity = 3; // 0=none, 1=25%, 2=50%, 3=75%
   uint8_t screenSaverMinBattery = 0;   // 0=10%, 1=20%, 2=30%, ..., 8=90%
+  uint8_t screenSaverReplaceSleep = 0; // 0=off, 1=use screensaver instead of sleep when battery is above minimum
+  // Separate settings for screensaver from reading activity
+  char screenSaverReaderDir[128] = "";
+  uint8_t screenSaverReaderOrder = SCREENSAVER_SHUFFLE;  // 0=shuffle, 1=sequential
 
   ~CrossPointSettings() = default;
 

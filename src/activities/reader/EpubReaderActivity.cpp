@@ -1031,21 +1031,6 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       }
       break;
     }
-    case EpubReaderMenuActivity::MenuAction::SCREENSAVER: {
-      READING_STATS.noteActivity();
-      startActivityForResult(
-          std::make_unique<ScreenSaverActivity>(renderer, mappedInput, true),
-          [this](const ActivityResult&) {
-            // Discard any pending Confirm press used to exit the screensaver
-            // so it doesn't re-open the reader menu on return.
-            waitingForConfirmSecondClick = false;
-            firstConfirmClickMs = 0UL;
-            READING_STATS.resumeSession();
-            ReaderUtils::requestReaderUiTransitionRefresh(renderer);
-            requestUpdate();
-          });
-      break;
-    }
   }
 }
 

@@ -404,6 +404,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadEnum("screenSaverOrder", s.screenSaverOrder, CrossPointSettings::SCREENSAVER_ORDER_COUNT);
   loadEnum("screenSaverInterval", s.screenSaverInterval, CrossPointSettings::SCREENSAVER_INTERVAL_COUNT);
   loadEnum("screenSaverWakeButton", s.screenSaverWakeButton, CrossPointSettings::SCREENSAVER_WAKE_BUTTON_COUNT);
+  loadString("screenSaverReaderDir", s.screenSaverReaderDir, sizeof(s.screenSaverReaderDir));
+  loadEnum("screenSaverReaderOrder", s.screenSaverReaderOrder, CrossPointSettings::SCREENSAVER_ORDER_COUNT);
 
   loadString("screenSaverText", s.screenSaverText, sizeof(s.screenSaverText));
   loadEnum("screenSaverFontSize", s.screenSaverFontSize, CrossPointSettings::SCREENSAVER_FONT_SIZE_COUNT);
@@ -413,6 +415,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadEnum("screenSaverPanelColor", s.screenSaverPanelColor, static_cast<uint8_t>(2));
   loadEnum("screenSaverPanelOpacity", s.screenSaverPanelOpacity, static_cast<uint8_t>(4));
   loadEnum("screenSaverMinBattery", s.screenSaverMinBattery, static_cast<uint8_t>(9));
+  loadToggle("screenSaverReplaceSleep", s.screenSaverReplaceSleep);
 
   loadString("opdsServerUrl", s.opdsServerUrl, sizeof(s.opdsServerUrl));
   loadString("opdsUsername", s.opdsUsername, sizeof(s.opdsUsername));
@@ -822,6 +825,14 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["screenSaverPanelColor"] = s.screenSaverPanelColor;
   doc["screenSaverPanelOpacity"] = s.screenSaverPanelOpacity;
   doc["screenSaverMinBattery"] = s.screenSaverMinBattery;
+  doc["screenSaverReplaceSleep"] = s.screenSaverReplaceSleep;
+  {
+    const std::string ssReaderDir(s.screenSaverReaderDir);
+    if (!ssReaderDir.empty()) {
+      doc["screenSaverReaderDir"] = ssReaderDir;
+    }
+  }
+  doc["screenSaverReaderOrder"] = s.screenSaverReaderOrder;
 
   doc["displayDay"] = s.displayDay;
   doc["syncDayWifiChoice"] = s.syncDayWifiChoice;

@@ -11,6 +11,7 @@ class ScreenSaverPreviewActivity final : public Activity {
   std::string directoryPath;
   std::vector<std::string> imagePaths;
   int selectedIndex = 0;
+  bool forReader = false;
 
   void loadImages();
   void renderPreview(bool showLoadingPopup);
@@ -18,8 +19,10 @@ class ScreenSaverPreviewActivity final : public Activity {
   void showLoadError(const char* message);
 
  public:
-  ScreenSaverPreviewActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string directoryPath)
-      : Activity("ScreenSaverPreview", renderer, mappedInput), directoryPath(std::move(directoryPath)) {}
+  ScreenSaverPreviewActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string directoryPath,
+                             bool forReader = false)
+      : Activity("ScreenSaverPreview", renderer, mappedInput), directoryPath(std::move(directoryPath)),
+        forReader(forReader) {}
 
   void onEnter() override;
   void loop() override;

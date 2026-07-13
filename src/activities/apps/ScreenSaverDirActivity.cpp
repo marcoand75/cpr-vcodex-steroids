@@ -26,8 +26,13 @@ void ScreenSaverDirActivity::onBack(void* ctx) {
 void ScreenSaverDirActivity::onConfirm(void* ctx) {
   auto* self = static_cast<ScreenSaverDirActivity*>(ctx);
   if (self->selectedIndex == 0) {
-    SETTINGS.screenSaverOrder =
-        (SETTINGS.screenSaverOrder + 1) % CrossPointSettings::SCREENSAVER_ORDER_COUNT;
+    if (self->forReader) {
+      SETTINGS.screenSaverReaderOrder =
+          (SETTINGS.screenSaverReaderOrder + 1) % CrossPointSettings::SCREENSAVER_ORDER_COUNT;
+    } else {
+      SETTINGS.screenSaverOrder =
+          (SETTINGS.screenSaverOrder + 1) % CrossPointSettings::SCREENSAVER_ORDER_COUNT;
+    }
     SETTINGS.saveToFile();
     self->requestUpdate();
   } else {
@@ -66,11 +71,12 @@ void ScreenSaverDirActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto layout = ListLayout::compute(renderer);
-  const std::string selectedDirectory = SETTINGS.screenSaverDirectory;
+  const std::string selectedDirectory = forReader ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
+  const uint8_t order = forReader ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
   const char* screenSaverOrderLabel =
-      SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SHUFFLE ? tr(STR_SHUFFLE) : tr(STR_SEQUENTIAL);
+      order == CrossPointSettings::SCREENSAVER_SHUFFLE ? tr(STR_SHUFFLE) : tr(STR_SEQUENTIAL);
 
-  ListRenderHelper::drawHeader(renderer, tr(STR_SCREENSAVER), nullptr, true);
+  ListRenderHelper::drawHeader(renderer, forReader ? tr(STR_SCREENSAVER_READER_SECTION) : tr(STR_SCREENSAVER), nullptr, true);
 
   if (directories.empty()) {
     ListRenderHelper::drawList(
@@ -109,7 +115,8 @@ void ScreenSaverDirActivity::openSelectedDirectory() {
     return;
   }
 
-  startActivityForResult(std::make_unique<ScreenSaverPreviewActivity>(renderer, mappedInput, directories[selectedIndex - 1]),
+  startActivityForResult(
+      std::make_unique<ScreenSaverPreviewActivity>(renderer, mappedInput, directories[selectedIndex - 1], forReader),
                          [this](const ActivityResult&) {
                            loadDirectories();
                            requestUpdate();

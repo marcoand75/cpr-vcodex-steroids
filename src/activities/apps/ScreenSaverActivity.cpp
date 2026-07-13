@@ -1,7 +1,11 @@
 #include "ScreenSaverActivity.h"
 
+#include "CrossPointState.h"
+
+#include <cstring>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
@@ -17,12 +21,19 @@
 
 void ScreenSaverActivity::loadImages() {
   images_.clear();
-  const char* dir = SETTINGS.screenSaverDirectory;
+  const char* dir = returnToCaller_ ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
   std::string dirPath;
   if (dir[0] != '\0') {
     dirPath = dir;
-  } else {
+  } else if (!returnToCaller_) {
     dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
+  } else {
+    // For reading activity fallback to general screensaver directory
+    if (SETTINGS.screenSaverDirectory[0] != '\0') {
+      dirPath = SETTINGS.screenSaverDirectory;
+    } else {
+      dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
+    }
   }
   if (dirPath.empty()) return;
   images_ = SleepImageUtils::listImageFiles(dirPath);
@@ -109,7 +120,8 @@ void ScreenSaverActivity::onEnter() {
   firstRender_ = true;
 
   // Randomize first image in shuffle mode
-  if (!images_.empty() && SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SHUFFLE) {
+  const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
+  if (!images_.empty() && order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
     currentIndex_ = random(static_cast<int>(images_.size()));
   }
 
@@ -118,11 +130,6 @@ void ScreenSaverActivity::onEnter() {
 }
 
 void ScreenSaverActivity::onExit() {
-  // Clear screen before going home - use HALF_REFRESH (partial is enough for eink)
-  renderer.clearScreen();
-  renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
-  renderer.displayBuffer();
-
   // Drain all pending input events so the button used to exit the
   // screensaver does not propagate to the caller (reader/home).
   // Keep updating until the wake button is physically released;
@@ -141,6 +148,13 @@ void ScreenSaverActivity::onExit() {
         !mappedInput.isPressed(MappedInputManager::Button::PageForward)) {
       break;
     }
+  }
+  callerFrameBuffer_.clear();
+  // When launched from the screensaver app (returnToCaller_=false) the
+  // underlying home page needs a full refresh to clear ghosting.  When
+  // launched from reader the normal refresh is sufficient.
+  if (!returnToCaller_) {
+    renderer.requestNextRefresh(HalDisplay::FULL_REFRESH);
   }
 
   Activity::onExit();
@@ -172,6 +186,8 @@ void ScreenSaverActivity::loop() {
     if (minPct > 0 && batPct < minPct) {
       // Battery dropped below threshold -> go to deep sleep
       powerManager.setPowerSaving(false);
+      APP_STATE.lastSleepFromReader = false;
+      APP_STATE.saveToFile();
       powerManager.startDeepSleep(gpio);
       return;
     }
@@ -179,7 +195,8 @@ void ScreenSaverActivity::loop() {
 
   if (now - lastChangeMs_ >= intervalMs_) {
     lastChangeMs_ = now;
-    if (SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SEQUENTIAL) {
+    const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
+    if (order == CrossPointSettings::SCREENSAVER_SEQUENTIAL) {
       currentIndex_ = (currentIndex_ + 1) % static_cast<int>(images_.size());
     } else {
       int next = random(static_cast<int>(images_.size()));
@@ -219,14 +236,43 @@ void ScreenSaverActivity::render(RenderLock&&) {
   }
 
   if (isPng) {
-    // PNG rendering (transparent)
-    if (PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight)) {
+    // Lazily save caller framebuffer once (on first render) for later restoration
+    // on each image change, so transparent areas show the original caller screen
+    // instead of accumulated previous images.
+    if (callerFrameBuffer_.empty()) {
+      const uint32_t bufSize = display.getBufferSize();
+      const uint8_t* buf = display.getFrameBuffer();
+      if (buf && bufSize > 0) {
+        callerFrameBuffer_.assign(buf, buf + bufSize);
+      }
+    }
+
+    // Free the PNG decoder heap by clearing the snapshot BEFORE decoding.
+    // The snapshot is restored right before drawing.
+    std::vector<uint8_t> restoreBuf = std::move(callerFrameBuffer_);
+    callerFrameBuffer_.clear();
+
+    // Retain the caller content so the first render has a background to start from.
+    // For subsequent renders this is necessary because the screen still has the
+    // previous image.  We restore from the snapshot saved above.
+    if (!restoreBuf.empty()) {
+      memcpy(const_cast<uint8_t*>(display.getFrameBuffer()), restoreBuf.data(), restoreBuf.size());
+    }
+
+    // Try "SS" prefix first (screensaver directory), then "SLP" (sleep directory).
+    bool pngOk = PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight, "SS");
+    if (!pngOk) {
+      pngOk = PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight, "SLP");
+    }
+    if (pngOk) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      // Keep the snapshot for subsequent renders
+      callerFrameBuffer_ = std::move(restoreBuf);
       return;
     }
-    // Fall through to black screen on PNG failure
+    // Fall through to white screen on PNG failure
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();

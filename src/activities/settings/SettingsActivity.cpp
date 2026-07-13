@@ -237,6 +237,9 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
                          StrId::STR_SCREENSAVER_WAKE_RIGHT, StrId::STR_SCREENSAVER_WAKE_UP,
                          StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER,
                          StrId::STR_SCREENSAVER_WAKE_PAGE_BACK, StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD}),
+      SettingInfo::Section(StrId::STR_SCREENSAVER_READER_SECTION),
+      SettingInfo::Action(StrId::STR_SCREENSAVER_READER_DIR, SettingAction::ScreenSaverReaderDir),
+      SettingInfo::Toggle(StrId::STR_SCREENSAVER_REPLACE_SLEEP, &CrossPointSettings::screenSaverReplaceSleep),
       SettingInfo::Section(StrId::STR_SCREENSAVER_TEXT_SECTION),
       SettingInfo::String(StrId::STR_SCREENSAVER_TEXT, SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText)),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_FONT_SIZE_OPT, &CrossPointSettings::screenSaverFontSize,
@@ -255,11 +258,11 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
                         {StrId::STR_SCREENSAVER_OPACITY_25, StrId::STR_SCREENSAVER_OPACITY_50,
                          StrId::STR_SCREENSAVER_OPACITY_75, StrId::STR_SCREENSAVER_OPACITY_100}),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_MIN_BATTERY, &CrossPointSettings::screenSaverMinBattery,
-                        {StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20,
-                         StrId::STR_SCREENSAVER_BAT_30, StrId::STR_SCREENSAVER_BAT_40,
-                         StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
-                         StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80,
-                         StrId::STR_SCREENSAVER_BAT_90}),
+                         {StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20,
+                          StrId::STR_SCREENSAVER_BAT_30, StrId::STR_SCREENSAVER_BAT_40,
+                          StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
+                           StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80,
+                           StrId::STR_SCREENSAVER_BAT_90}),
       SettingInfo::Section(StrId::STR_FLASHCARDS),
       SettingInfo::Action(StrId::STR_FLASHCARDS, SettingAction::Flashcards),
       SettingInfo::Enum(StrId::STR_STUDY_MODE, &CrossPointSettings::flashcardStudyMode,
@@ -420,6 +423,15 @@ std::string getSettingValueText(const SettingInfo& setting) {
           return orderLabel;
         }
         return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverDirectory) + " - " + orderLabel;
+      }
+      case SettingAction::ScreenSaverReaderDir: {
+        const std::string orderLabel = SETTINGS.screenSaverReaderOrder == CrossPointSettings::SCREENSAVER_SHUFFLE
+                                           ? tr(STR_SHUFFLE)
+                                           : tr(STR_SEQUENTIAL);
+        if (SETTINGS.screenSaverReaderDir[0] == '\0') {
+          return orderLabel;
+        }
+        return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverReaderDir) + " - " + orderLabel;
       }
       case SettingAction::ShortcutLocation:
         return getShortcutLocationSettingValueText();
@@ -810,7 +822,10 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::ScreenSaverDir:
-        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, false), resultHandler);
+        break;
+      case SettingAction::ScreenSaverReaderDir:
+        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, true), resultHandler);
         break;
       case SettingAction::IfFound:
         startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);

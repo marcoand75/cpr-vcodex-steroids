@@ -14,6 +14,8 @@ namespace {
 
 constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
 
+const char* g_pngStoragePrefix = "SLP";
+
 struct PngOverlayCtx {
   const GfxRenderer* renderer;
   int screenW;
@@ -30,7 +32,7 @@ struct PngOverlayCtx {
 
 void* pngSleepOpen(const char* filename, int32_t* size) {
   FsFile* f = new FsFile();
-  if (!Storage.openFileForRead("SLP", std::string(filename), *f)) {
+  if (!Storage.openFileForRead(g_pngStoragePrefix, std::string(filename), *f)) {
     delete f;
     return nullptr;
   }
@@ -144,7 +146,8 @@ int pngOverlayDraw(PNGDRAW* pDraw) {
 }  // namespace
 
 bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRenderer& renderer, const int targetX,
-                                          const int targetY, const int targetWidth, const int targetHeight) {
+                                          const int targetY, const int targetWidth, const int targetHeight,
+                                          const char* storagePrefix) {
   if (targetWidth <= 0 || targetHeight <= 0) {
     return false;
   }
@@ -158,7 +161,10 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
     return false;
   }
 
+  const char* previousPrefix = g_pngStoragePrefix;
+  g_pngStoragePrefix = storagePrefix ? storagePrefix : "SLP";
   int rc = png->open(path.c_str(), pngSleepOpen, pngSleepClose, pngSleepRead, pngSleepSeek, pngOverlayDraw);
+  g_pngStoragePrefix = previousPrefix;
   if (rc != PNG_SUCCESS) {
     LOG_ERR("SLP", "PNG open failed: %s (%d)", path.c_str(), rc);
     delete png;

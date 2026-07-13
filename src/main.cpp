@@ -33,6 +33,7 @@
 #include "UiFontSelection.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/apps/ScreenSaverActivity.h"
 #include "activities/boot_sleep/SleepActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -365,6 +366,25 @@ static bool consumeCompletedSleepEntryTap() {
 
   // startDeepSleep() does not return on hardware; spin so [[noreturn]] is satisfied.
   while (true) { delay(1000); }
+}
+
+// Returns true when the replacement-screensaver is enabled, battery is
+// sufficient, and the user is inside a reader activity. Only active
+// during reading so the rest of the system keeps normal sleep.
+static bool canStartReplacementScreenSaver() {
+  if (!SETTINGS.screenSaverReplaceSleep) return false;
+  if (!activityManager.isReaderActivity()) return false;
+  const int minPct = (static_cast<int>(SETTINGS.screenSaverMinBattery) + 1) * 10;
+  return static_cast<int>(powerManager.getBatteryPercentage()) >= minPct;
+}
+
+// Launches the screensaver on top of the reader, preserving the reader on
+// the activity stack so it's restored when the user wakes the device.
+static bool startReplacementScreenSaver() {
+  if (activityManager.isScreenSaverActive()) return false;
+  if (!activityManager.isReaderActivity()) return false;
+  activityManager.pushActivity(std::make_unique<ScreenSaverActivity>(renderer, mappedInputManager, true));
+  return true;
 }
 
 // Enter deep sleep mode
@@ -764,6 +784,14 @@ void loop() {
   if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
+      return;
+    }
+    if (activityManager.isScreenSaverActive()) {
+      // Let the screensaver handle the wake button in its own loop()
+      return;
+    }
+    if (canStartReplacementScreenSaver()) {
+      startReplacementScreenSaver();
       return;
     }
     enterDeepSleep();
