@@ -90,16 +90,16 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::Trophy:  return Trophy24Icon;
       case UIIcon::Heart:   return Heart24Icon;
       case UIIcon::ScreenSaver: return ScreenSaverIcon;
-      case UIIcon::Bookshelf: return BookshelfIcon32;
+      case UIIcon::Bookshelf: return BookshelfIcon;
       case UIIcon::SleepMode: return SleepModeIcon32;
       case UIIcon::CleanMonitor: return CleanMonitorIcon32;
       case UIIcon::Heatmap: return HeatmapReadingIcon32;
       case UIIcon::FlashcardQuiz: return FlashcardQuizIcon32;
       case UIIcon::ReadingProfile: return ReadingProfileIcon32;
       case UIIcon::LostDevice: return LostDeviceIcon32;
-      case UIIcon::OpdsBrowser: return OPDSBrowserIcon32;
-      case UIIcon::Dictionary: return DictionaryIcon32;
-      case UIIcon::GoalsMedal: return GoalsMedalIcon32;
+      case UIIcon::OpdsBrowser: return OPDSBrowserIcon;
+      case UIIcon::Dictionary: return DictionaryIcon;
+      case UIIcon::GoalsMedal: return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
       case UIIcon::RecentBooks: return RecentBooksIcon32;
       default: return nullptr;
@@ -120,16 +120,16 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::Image:     return ImageIcon;
       case UIIcon::Heart:     return HeartIcon;
       case UIIcon::ScreenSaver: return ScreenSaverIcon;
-      case UIIcon::Bookshelf: return BookshelfIcon32;
+      case UIIcon::Bookshelf: return BookshelfIcon;
       case UIIcon::SleepMode: return SleepModeIcon32;
       case UIIcon::CleanMonitor: return CleanMonitorIcon32;
       case UIIcon::Heatmap: return HeatmapReadingIcon32;
       case UIIcon::FlashcardQuiz: return FlashcardQuizIcon32;
       case UIIcon::ReadingProfile: return ReadingProfileIcon32;
       case UIIcon::LostDevice: return LostDeviceIcon32;
-      case UIIcon::OpdsBrowser: return OPDSBrowserIcon32;
-      case UIIcon::Dictionary: return DictionaryIcon32;
-      case UIIcon::GoalsMedal: return GoalsMedalIcon32;
+      case UIIcon::OpdsBrowser: return OPDSBrowserIcon;
+      case UIIcon::Dictionary: return DictionaryIcon;
+      case UIIcon::GoalsMedal: return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
       case UIIcon::RecentBooks: return RecentBooksIcon32;
       default: return nullptr;
@@ -171,6 +171,17 @@ void drawCyberPanel(const GfxRenderer& r, int x, int y, int w, int h, bool sel) 
   r.drawLine(x + cg, y + h - cg - cl, x + cg, y + h - cg, 1, true);
   r.drawLine(x + w - cg - cl, y + h - cg, x + w - cg, y + h - cg, 1, true);
   r.drawLine(x + w - cg, y + h - cg - cl, x + w - cg, y + h - cg, 1, true);
+
+  // Inner corner brackets for HUD/cyberpunk feel
+  int bi = 10, bl = 6;
+  r.drawLine(x + bi, y + bi, x + bi + bl, y + bi, 1, true);
+  r.drawLine(x + bi, y + bi, x + bi, y + bi + bl, 1, true);
+  r.drawLine(x + w - bi - bl, y + bi, x + w - bi, y + bi, 1, true);
+  r.drawLine(x + w - bi, y + bi, x + w - bi, y + bi + bl, 1, true);
+  r.drawLine(x + bi, y + h - bi, x + bi + bl, y + h - bi, 1, true);
+  r.drawLine(x + bi, y + h - bi - bl, x + bi, y + h - bi, 1, true);
+  r.drawLine(x + w - bi - bl, y + h - bi, x + w - bi, y + h - bi, 1, true);
+  r.drawLine(x + w - bi, y + h - bi - bl, x + w - bi, y + h - bi, 1, true);
 }
 
 void drawScanlineSep(const GfxRenderer& r, int x, int y, int w) {
@@ -178,15 +189,29 @@ void drawScanlineSep(const GfxRenderer& r, int x, int y, int w) {
     r.drawLine(cx, y, cx + kDashLen, y, 1, true);
     r.drawLine(cx + 1, y + 2, cx + kDashLen - 1, y + 2, 1, true);
   }
+  // End caps
+  r.drawLine(x, y + 1, x, y + 2, 1, true);
+  r.drawLine(x + w - 1, y + 1, x + w - 1, y + 2, 1, true);
 }
 
 void drawSegmentProgressBar(const GfxRenderer& r, int x, int y, int filled, int total) {
   int sx = x;
   for (int i = 0; i < total; ++i) {
-    if (i < filled) r.fillRect(sx, y, kProgSegW, kProgSegH, true);
-    else r.drawRect(sx, y, kProgSegW, kProgSegH, true);
+    if (i < filled) {
+      r.fillRect(sx, y, kProgSegW, kProgSegH, true);
+      // Inner highlight for filled segments
+      if (kProgSegW > 4 && kProgSegH > 4) {
+        r.drawLine(sx + 2, y + 2, sx + kProgSegW - 3, y + 2, 1, false);
+      }
+    } else {
+      r.drawRect(sx, y, kProgSegW, kProgSegH, true);
+    }
     sx += kProgSegW + kProgSegGap;
   }
+  // End brackets
+  r.drawLine(x - 2, y - 2, x - 2, y + kProgSegH + 2, 1, true);
+  r.drawLine(x + total * (kProgSegW + kProgSegGap) - kProgSegGap + 1, y - 2,
+             x + total * (kProgSegW + kProgSegGap) - kProgSegGap + 1, y + kProgSegH + 2, 1, true);
 }
 
 uint8_t getBookProgress(const RecentBook& b) {
@@ -244,44 +269,61 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
   int rx = px + kPanelInnerPad;
   int rw = pw - 2 * kPanelInnerPad;
 
-  const auto tTrunc = r.truncatedText(UI_12_FONT_ID, book.title.c_str(), rw, EpdFontFamily::BOLD);
-  r.drawText(UI_12_FONT_ID, rx, ry, tTrunc.c_str(), true, EpdFontFamily::BOLD);
+  // Title with corner bracket accents
+  const auto tTrunc = r.truncatedText(UI_12_FONT_ID, book.title.c_str(), rw - 12, EpdFontFamily::BOLD);
+  r.drawText(UI_12_FONT_ID, rx + 6, ry, tTrunc.c_str(), true, EpdFontFamily::BOLD);
   ry += r.getLineHeight(UI_12_FONT_ID) + 4;
 
   if (!book.author.empty()) {
-    const auto aTrunc = r.truncatedText(SMALL_FONT_ID, book.author.c_str(), rw);
-    r.drawText(SMALL_FONT_ID, rx, ry, aTrunc.c_str(), true);
+    const auto aTrunc = r.truncatedText(SMALL_FONT_ID, book.author.c_str(), rw - 12);
+    r.drawText(SMALL_FONT_ID, rx + 6, ry, aTrunc.c_str(), true);
     ry += r.getLineHeight(SMALL_FONT_ID) + 4;
   }
   drawScanlineSep(r, rx, ry, rw);
-  ry += 12;
+  ry += 10;
 
   const int colW = (rw - kColGap) / 2;
   const int colLeft = rx, colRight = rx + colW + kColGap;
   const int dataFont = UI_10_FONT_ID;
 
-  r.drawText(dataFont, colLeft, ry, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
-  r.drawText(dataFont, colRight, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
-  ry += r.getLineHeight(dataFont) + 4;
+  // Section headers with brackets
+  r.drawText(dataFont, colLeft, ry, "[", true);
+  r.drawText(dataFont, colLeft + 8, ry, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
+  r.drawText(dataFont, colLeft + 8 + r.getTextWidth(dataFont, tr(STR_HOME_PANEL_BOOK)) + 2, ry, "]", true);
 
-  struct Row { const char* label; const std::string& value; };
+  r.drawText(dataFont, colRight, ry, "[", true);
+  r.drawText(dataFont, colRight + 8, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
+  r.drawText(dataFont, colRight + 8 + r.getTextWidth(dataFont, tr(STR_HOME_PANEL_STATS)) + 2, ry, "]", true);
+  ry += r.getLineHeight(dataFont) + 6;
+
+  // Data rows with value highlighting
+  struct Row { const char* label; const std::string& value; bool highlight; };
   const Row leftCol[] = {
-    {tr(STR_HOME_PANEL_TIME), timeVal},
-    {tr(STR_HOME_PANEL_SESSIONS), sessVal},
-    {tr(STR_HOME_PANEL_PROGRESS), std::string(pbuf)},
-    {tr(STR_HOME_PANEL_ETA), etaVal}};
+    {tr(STR_HOME_PANEL_TIME), timeVal, false},
+    {tr(STR_HOME_PANEL_SESSIONS), sessVal, false},
+    {tr(STR_HOME_PANEL_PROGRESS), std::string(pbuf), true},
+    {tr(STR_HOME_PANEL_ETA), etaVal, false}};
   const Row rightCol[] = {
-    {tr(STR_HOME_PANEL_TODAY), dayVal},
-    {tr(STR_HOME_PANEL_GOAL), goalVal},
-    {tr(STR_HOME_PANEL_STREAK), streakVal},
-    {tr(STR_HOME_PANEL_FINISHED), booksFinished}};
+    {tr(STR_HOME_PANEL_TODAY), dayVal, false},
+    {tr(STR_HOME_PANEL_GOAL), goalVal, false},
+    {tr(STR_HOME_PANEL_STREAK), streakVal, false},
+    {tr(STR_HOME_PANEL_FINISHED), booksFinished, false}};
 
   int ly = ry, rry = ry;
   for (int i = 0; i < 4; ++i) {
     char buf[64]; snprintf(buf, sizeof(buf), "%s:", leftCol[i].label);
     int labelW = r.getTextWidth(dataFont, buf);
     r.drawText(dataFont, colLeft, ly, buf, true);
-    r.drawText(dataFont, colLeft + labelW + 3, ly, leftCol[i].value.c_str(), true, EpdFontFamily::BOLD);
+    if (leftCol[i].highlight) {
+      const int vx = colLeft + labelW + 4;
+      const int vy = ly - 1;
+      const int vw = r.getTextWidth(dataFont, leftCol[i].value.c_str()) + 4;
+      const int vh = r.getLineHeight(dataFont) + 2;
+      r.fillRect(vx, vy, vw, vh, true);
+      r.drawText(dataFont, vx + 2, ly, leftCol[i].value.c_str(), false, EpdFontFamily::BOLD);
+    } else {
+      r.drawText(dataFont, colLeft + labelW + 3, ly, leftCol[i].value.c_str(), true, EpdFontFamily::BOLD);
+    }
     ly += kRowH;
   }
   for (int i = 0; i < 4; ++i) {
@@ -292,7 +334,7 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     rry += kRowH;
   }
 
-  const int barY = (ly > rry ? ly : rry) + 10;
+  const int barY = (ly > rry ? ly : rry) + 8;
   if (!done) {
     const int segs = (pct * kProgSegCount + 50) / 100;
     const int barTotalW = kProgSegCount * (kProgSegW + kProgSegGap) - kProgSegGap;

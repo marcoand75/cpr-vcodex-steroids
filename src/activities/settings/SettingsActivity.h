@@ -7,6 +7,7 @@
 
 #include "CrossPointSettings.h"
 #include "activities/Activity.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
 struct Rect;
@@ -59,6 +60,7 @@ struct SettingInfo {
   uint8_t CrossPointSettings::* valuePtr = nullptr;
   std::vector<StrId> enumValues;
   SettingAction action = SettingAction::None;
+  UIIcon iconId = Folder;
 
   struct ValueRange {
     uint8_t min;
@@ -81,24 +83,30 @@ struct SettingInfo {
   std::function<std::string()> stringGetter;
   std::function<void(const std::string&)> stringSetter;
 
+  SettingInfo& withIcon(UIIcon icon) {
+    iconId = icon;
+    return *this;
+  }
+
   SettingInfo& withObfuscated() {
     obfuscated = true;
     return *this;
   }
 
   static SettingInfo Toggle(StrId nameId, uint8_t CrossPointSettings::* ptr, const char* key = nullptr,
-                            StrId category = StrId::STR_NONE_OPT) {
+                            StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::TOGGLE;
     s.valuePtr = ptr;
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 
   static SettingInfo Enum(StrId nameId, uint8_t CrossPointSettings::* ptr, std::vector<StrId> values,
-                          const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
+                          const char* key = nullptr, StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::ENUM;
@@ -106,14 +114,16 @@ struct SettingInfo {
     s.enumValues = std::move(values);
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 
-  static SettingInfo Action(StrId nameId, SettingAction action) {
+  static SettingInfo Action(StrId nameId, SettingAction action, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::ACTION;
     s.action = action;
+    s.iconId = icon;
     return s;
   }
 
@@ -125,7 +135,7 @@ struct SettingInfo {
   }
 
   static SettingInfo Value(StrId nameId, uint8_t CrossPointSettings::* ptr, const ValueRange valueRange,
-                           const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
+                           const char* key = nullptr, StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::VALUE;
@@ -133,11 +143,12 @@ struct SettingInfo {
     s.valueRange = valueRange;
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 
   static SettingInfo String(StrId nameId, char* ptr, size_t maxLen, const char* key = nullptr,
-                            StrId category = StrId::STR_NONE_OPT) {
+                            StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::STRING;
@@ -145,12 +156,13 @@ struct SettingInfo {
     s.stringMaxLen = maxLen;
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 
   static SettingInfo DynamicEnum(StrId nameId, std::vector<StrId> values, std::function<uint8_t()> getter,
                                  std::function<void(uint8_t)> setter, const char* key = nullptr,
-                                 StrId category = StrId::STR_NONE_OPT) {
+                                 StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::ENUM;
@@ -159,12 +171,13 @@ struct SettingInfo {
     s.valueSetter = std::move(setter);
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 
   static SettingInfo DynamicString(StrId nameId, std::function<std::string()> getter,
                                    std::function<void(const std::string&)> setter, const char* key = nullptr,
-                                   StrId category = StrId::STR_NONE_OPT) {
+                                   StrId category = StrId::STR_NONE_OPT, UIIcon icon = Folder) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::STRING;
@@ -172,6 +185,7 @@ struct SettingInfo {
     s.stringSetter = std::move(setter);
     s.key = key;
     s.category = category;
+    s.iconId = icon;
     return s;
   }
 };

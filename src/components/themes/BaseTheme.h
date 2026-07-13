@@ -97,7 +97,8 @@ enum UIIcon {
   Dictionary,
   GoalsMedal,
   ReadingStatsIcon,
-  RecentBooks
+  RecentBooks,
+  Bookmark
 };
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
 

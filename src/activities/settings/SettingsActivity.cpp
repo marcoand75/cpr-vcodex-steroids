@@ -51,6 +51,53 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/LibraryCache.h"
 #include "components/UITheme.h"
+#include "components/icons/PowerOnIcon.h"
+#include "components/icons/PowerOffIcon.h"
+#include "components/icons/settings.h"
+#include "components/icons/settings24.h"
+#include "components/icons/settings2.h"
+#include "components/icons/settings224.h"
+#include "components/icons/wifi.h"
+#include "components/icons/wifi24.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/bookshelf24.h"
+#include "components/icons/trophy.h"
+#include "components/icons/trophy24.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/heatmap.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/goalsmedal24.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/bookmark24.h"
+#include "components/icons/screensaver.h"
+#include "components/icons/cleanmonitor.h"
+#include "components/icons/sleep.h"
+#include "components/icons/lostdevice.h"
+#include "components/icons/transfer.h"
+#include "components/icons/transfer24.h"
+#include "components/icons/folder.h"
+#include "components/icons/folder24.h"
+#include "components/icons/book.h"
+#include "components/icons/book24.h"
+#include "components/icons/text.h"
+#include "components/icons/text24.h"
+#include "components/icons/image.h"
+#include "components/icons/image24.h"
+#include "components/icons/file.h"
+#include "components/icons/file24.h"
+#include "components/icons/recent.h"
+#include "components/icons/recent24.h"
+#include "components/icons/heart.h"
+#include "components/icons/heart24.h"
+#include "components/icons/hotspot.h"
+#include "components/icons/opdsbrowser.h"
+#include "components/icons/opdsbrowser24.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/dictionary24.h"
+#include "components/icons/flashcardquiz.h"
+#include "components/icons/library.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
@@ -64,6 +111,55 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {
 
 namespace {
 constexpr size_t SETTINGS_TAB_MAX_CHARS = 10;
+constexpr int kSettingIconSize = 24;
+constexpr int kToggleWidth = 32;
+
+void drawToggleIndicator(const GfxRenderer& r, int x, int y, bool on) {
+  const int w = 28, h = 16, r_corner = 4;
+  if (on) {
+    r.fillRoundedRect(x, y, w, h, r_corner, Color::Black);
+    r.fillRect(x + w - 10, y + 5, 6, 6, false);
+  } else {
+    r.drawRoundedRect(x, y, w, h, 1, r_corner, true);
+    r.fillRect(x + 4, y + 5, 6, 6, true);
+  }
+}
+
+const uint8_t* iconForSetting(UIIcon iconId, int& outW, int& outH) {
+  outW = 0; outH = 0;
+  switch (iconId) {
+    case Folder: outW = 24; outH = 24; return FolderIcon;
+    case Text: outW = 24; outH = 24; return TextIcon;
+    case Image: outW = 24; outH = 24; return ImageIcon;
+    case Book: outW = 24; outH = 24; return BookIcon;
+    case File: outW = 24; outH = 24; return FileIcon;
+    case Recent: outW = 24; outH = 24; return RecentIcon;
+    case Settings: outW = 24; outH = 24; return SettingsIcon;
+    case Apps: outW = 24; outH = 24; return SettingsIcon;
+    case Transfer: outW = 24; outH = 24; return TransferIcon;
+    case Library: outW = 24; outH = 24; return LibraryIcon;
+    case Trophy: outW = 24; outH = 24; return TrophyIcon;
+    case Wifi: outW = 24; outH = 24; return WifiIcon;
+    case Hotspot: outW = 24; outH = 24; return HotspotIcon;
+    case Heart: outW = 24; outH = 24; return HeartIcon;
+    case ScreenSaver: outW = 24; outH = 24; return ScreenSaverIcon;
+    case Bookshelf: outW = 24; outH = 24; return BookshelfIcon;
+    case SleepMode: outW = 24; outH = 24; return SleepModeIcon32;
+    case CleanMonitor: outW = 24; outH = 24; return CleanMonitorIcon32;
+    case Heatmap: outW = 24; outH = 24; return HeatmapReadingIcon32;
+    case FlashcardQuiz: outW = 24; outH = 24; return FlashcardQuizIcon32;
+    case ReadingProfile: outW = 24; outH = 24; return ReadingProfileIcon32;
+    case LostDevice: outW = 24; outH = 24; return LostDeviceIcon32;
+    case OpdsBrowser: outW = 24; outH = 24; return OPDSBrowserIcon;
+    case Dictionary: outW = 24; outH = 24; return DictionaryIcon;
+    case GoalsMedal: outW = 24; outH = 24; return GoalsMedalIcon;
+    case ReadingStatsIcon: outW = 24; outH = 24; return ReadingStatsIcon32;
+    case RecentBooks: outW = 24; outH = 24; return RecentBooksIcon32;
+    case Bookmark: outW = 24; outH = 24; return BookmarkIcon;
+    default: break;
+  }
+  return nullptr;
+}
 
 const std::vector<SettingInfo>& getDeviceDisplaySettings() {
   static const std::vector<SettingInfo> settings = {
@@ -150,7 +246,7 @@ const std::vector<SettingInfo>& getDeviceControlsSettings() {
     };
     if (halTiltSensor.isAvailable()) {
       result.push_back(SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
-                                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}));
+                                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}).withIcon(UIIcon::Transfer));
     }
     return result;
   }();
@@ -950,6 +1046,8 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
   const int rowX = rect.x + sidePadding;
   const int rowWidth = rect.width - sidePadding * 2 - scrollBarWidth - scrollBarGap;
   const int viewportHeight = rect.height;
+  constexpr int kIconAreaWidth = 36;
+  constexpr int kToggleWidth = 32;
 
   auto getItemHeight = [rowHeight, sectionHeight](const SettingInfo* setting) {
     return setting->type == SettingType::SECTION ? sectionHeight : rowHeight;
@@ -990,8 +1088,10 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
     if (renderedHeight + itemHeight > viewportHeight) { break; }
 
     if (setting->type == SettingType::SECTION) {
-      renderer.drawText(UI_10_FONT_ID, rowX, currentY + 4, getSettingNameText(*setting), true, EpdFontFamily::BOLD);
-      renderer.drawLine(rowX, currentY + itemHeight - 5, rowX + rowWidth, currentY + itemHeight - 5, true);
+      renderer.drawText(UI_10_FONT_ID, rowX + kIconAreaWidth, currentY + 4, getSettingNameText(*setting), true,
+                        EpdFontFamily::BOLD);
+      renderer.drawLine(rowX + kIconAreaWidth, currentY + itemHeight - 5, rowX + rowWidth, currentY + itemHeight - 5,
+                        true);
       currentY += itemHeight;
       renderedHeight += itemHeight;
       continue;
@@ -1012,10 +1112,26 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
     const std::string sideNote = showExportFileName
                                      ? getReadingStatsExportFileName()
                                      : (showImportFileName ? getLatestReadingStatsImportFileName() : std::string());
+
+    const int iconDrawX = rowX + 6;
+    const int iconDrawY = currentY + (itemHeight - kSettingIconSize) / 2 - 2;
+    int iconW = 0, iconH = 0;
+    const uint8_t* iconPixels = iconForSetting(setting->iconId, iconW, iconH);
+    if (iconPixels != nullptr && iconW > 0 && iconH > 0) {
+      const int scale = kSettingIconSize / iconW;
+      if (scale > 1) {
+        renderer.drawScaledIcon(iconPixels, iconDrawX, iconDrawY, iconW, iconH, kSettingIconSize, kSettingIconSize);
+      } else {
+        renderer.drawIcon(iconPixels, iconDrawX, iconDrawY, iconW, iconH);
+      }
+    }
+
+    const int textX = rowX + kIconAreaWidth;
     const int valueWidth =
         valueText.empty() ? 0 : renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str(), EpdFontFamily::REGULAR);
-    const int leftPadding = 12;
-    const int rightPadding = 12;
+    const int leftPadding = 6;
+    const int rightPadding = kToggleWidth + 10;
+
     if (showExportFileName || showImportFileName) {
       const int sideNoteMaxWidth = rowRect.width / 2 - leftPadding - rightPadding;
       const std::string truncatedSideNote =
@@ -1029,23 +1145,29 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
       const int labelWidth = rowRect.width - leftPadding - rightPadding - (sideNoteWidth > 0 ? sideNoteWidth + 12 : 0);
       const std::string titleText =
           renderer.truncatedText(UI_10_FONT_ID, getSettingNameText(*setting), labelWidth, EpdFontFamily::REGULAR);
-      renderer.drawText(UI_10_FONT_ID, rowRect.x + leftPadding, rowRect.y + 9, titleText.c_str(), true,
-                        EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, textX, rowRect.y + 9, titleText.c_str(), true, EpdFontFamily::REGULAR);
       if (!truncatedSideNote.empty()) {
-        renderer.drawText(SMALL_FONT_ID, rowRect.x + rowRect.width - rightPadding - sideNoteWidth, rowRect.y + 11,
-                          truncatedSideNote.c_str(), true, EpdFontFamily::REGULAR);
+        renderer.drawText(SMALL_FONT_ID, textX + rowRect.width - leftPadding - rightPadding - sideNoteWidth,
+                          rowRect.y + 11, truncatedSideNote.c_str(), true, EpdFontFamily::REGULAR);
       }
     } else {
       const int labelWidth = rowRect.width - leftPadding - rightPadding - (valueWidth > 0 ? valueWidth + 12 : 0);
       const std::string titleText =
           renderer.truncatedText(UI_10_FONT_ID, getSettingNameText(*setting), labelWidth, EpdFontFamily::REGULAR);
-      renderer.drawText(UI_10_FONT_ID, rowRect.x + leftPadding, rowRect.y + 9, titleText.c_str(), true,
-                        EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, textX, rowRect.y + 9, titleText.c_str(), true, EpdFontFamily::REGULAR);
       if (!valueText.empty()) {
-        renderer.drawText(UI_10_FONT_ID, rowRect.x + rowRect.width - rightPadding - valueWidth, rowRect.y + 9,
+        renderer.drawText(UI_10_FONT_ID, textX + rowRect.width - leftPadding - rightPadding - valueWidth, rowRect.y + 9,
                           valueText.c_str(), true, EpdFontFamily::REGULAR);
       }
     }
+
+    if (setting->type == SettingType::TOGGLE && setting->valuePtr != nullptr) {
+      const bool on = SETTINGS.*(setting->valuePtr);
+      const int toggleX = rowX + rowWidth - kToggleWidth - 4;
+      const int toggleY = rowRect.y + (rowRect.height - 16) / 2;
+      drawToggleIndicator(renderer, toggleX, toggleY, on);
+    }
+
     currentY += itemHeight;
     renderedHeight += itemHeight;
   }
@@ -1169,7 +1291,9 @@ void SettingsActivity::render(RenderLock&&) {
   } else {
     GUI.drawList(
         renderer, listRect, settingsCount, selectedSettingIndex - 1,
-        [&settings](int index) { return std::string(getSettingNameText(*settings[index])); }, nullptr, nullptr,
+        [&settings](int index) { return std::string(getSettingNameText(*settings[index])); },
+        nullptr,
+        [&settings](int index) { return settings[index]->iconId; },
         [&settings](int i) { return getSettingValueText(*settings[i]); }, true);
   }
 

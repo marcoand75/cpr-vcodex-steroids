@@ -1,9 +1,10 @@
 import os
 import io
 import sys
+import argparse
 
 threshold = 128
-USAGE = 'Usage: python scripts/convert_icon.py input.png|input.svg output_name width height'
+USAGE = 'Usage: python scripts/convert_icon.py input.png|input.svg output_name width height [--name ArrayName]'
 
 def svg_to_png_bytes(svg_path, width, height):
     import cairosvg
@@ -24,10 +25,11 @@ def load_image(path, width, height):
         img = Image.open(path)
         img = img.convert('RGBA')
         img = img.resize((width, height), Image.LANCZOS)
-        # Flatten alpha: paste on white background
-        background = Image.new('RGBA', img.size, (255, 255, 255, 255))
-        background.paste(img, mask=img.split()[3])
-        img = background
+    # Flatten alpha: paste on white background so anti-aliased edges become
+    # gray instead of black-on-transparent (which thresholds to all-black).
+    background = Image.new('RGBA', img.size, (255, 255, 255, 255))
+    background.paste(img, mask=img.split()[3])
+    img = background
     # Rotate 90 degrees counterclockwise
     img = img.rotate(90, expand=True)
     return img
@@ -61,26 +63,28 @@ def image_to_c_array(img, array_name):
     return c
 
 def main():
-    if any(arg in ('-h', '--help') for arg in sys.argv[1:]):
-        print(USAGE)
-        sys.exit(0)
-    if len(sys.argv) != 5:
-        print(USAGE)
-        sys.exit(1)
-    input_path, output_name, width, height = sys.argv[1:5]
-    array_name = output_name.capitalize() + 'Icon'
-    width, height = int(width), int(height)
-    img = load_image(input_path, width, height)
+    parser = argparse.ArgumentParser(description="Convert an image to a 1-bit C array header")
+    parser.add_argument("input", help="Source image (.png or .svg)")
+    parser.add_argument("output_name", help="Output header name (without .h)")
+    parser.add_argument("width", type=int, help="Width in pixels")
+    parser.add_argument("height", type=int, help="Height in pixels")
+    parser.add_argument("--name", default=None, help="C array name (default: OutputName + 'Icon')")
+    parser.add_argument("--threshold", type=int, default=128, help="Grayscale threshold (default 128)")
+    args = parser.parse_args()
+
+    array_name = args.name if args.name else args.output_name.capitalize() + 'Icon'
+    img = load_image(args.input, args.width, args.height)
     c_array = image_to_c_array(img, array_name)
 
     # Always save to src/components/icons/[output_name].h relative to project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(project_root, 'src', 'components', 'icons')
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f'{output_name}.h')
+    output_path = os.path.join(output_dir, f'{args.output_name}.h')
     with open(output_path, 'w') as f:
         f.write(c_array)
     print(f'Wrote {output_path}')
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

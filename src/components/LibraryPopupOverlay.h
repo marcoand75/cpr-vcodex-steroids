@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 
+#include "PanelDrawHelper.h"
 #include "../fontIds.h"
 
 #include <functional>
@@ -44,99 +45,50 @@ class LibraryPopupOverlay {
   int selectedIndex = 0;
   int startIndex = 0;  // scroll offset
 
-  static constexpr int kRowH = 44;
-  static constexpr int kTitleH = 22;
-  static constexpr int kPadX = 16;
-  static constexpr int kPadY = 12;
-  static constexpr int kIconPad = 10;
-  static constexpr int kCornerRadius = 12;
-  static constexpr int kPanelWPercent = 80;  // matches homepage carousel popup
-  static constexpr int kMaxVisibleRows = 8;
-
   int maxPanelH() const {
     int itemCount = static_cast<int>(items.size());
-    int visible = std::min(itemCount, kMaxVisibleRows);
-    return kPadY + kTitleH + 4 + kPadY + visible * kRowH + kPadY;
+    int visible = std::min(itemCount, PanelDrawHelper::kMaxVisibleRows);
+    return PanelDrawHelper::kPadY + PanelDrawHelper::kTitleH + 4 + PanelDrawHelper::kPadY + visible * PanelDrawHelper::kRowH + PanelDrawHelper::kPadY;
   }
 
   void render(GfxRenderer& renderer, int pageWidth, int pageHeight) const {
     int itemCount = static_cast<int>(items.size());
-    int visibleRows = std::min(itemCount, kMaxVisibleRows);
+    int visibleRows = std::min(itemCount, PanelDrawHelper::kMaxVisibleRows);
 
-    int panelW = pageWidth * kPanelWPercent / 100;
-    int contentH = kPadY + kTitleH + 4 + kPadY + visibleRows * kRowH + kPadY;
-    int maxH = pageHeight * kPanelWPercent / 100;
-    int panelH = std::min(contentH, maxH);
-    int panelX = (pageWidth - panelW) / 2;
-    int panelY = (pageHeight - panelH) / 2;
+    auto layout = PanelDrawHelper::calculatePanel(pageWidth, pageHeight, visibleRows);
 
     // NOTE: intentionally NO full-screen dim here. The popup is drawn on top of
     // the already-rendered library, so the books remain visible behind the
     // panel (a proper overlay, not a white screen).
 
-    // Panel background (white fill + black border) — same look as the
-    // homepage carousel book popup.
-    renderer.fillRoundedRect(panelX, panelY, panelW, panelH, kCornerRadius, Color::White);
-    renderer.drawRoundedRect(panelX, panelY, panelW, panelH, 2, kCornerRadius, true);
+    PanelDrawHelper::drawBackground(renderer, layout);
+    PanelDrawHelper::drawTitle(renderer, layout, title.c_str());
+    PanelDrawHelper::drawSeparator(renderer, layout);
 
-    // Title (bold), top-left.
-    int titleX = panelX + kPadX;
-    int titleY = panelY + kPadY;
-    renderer.drawText(UI_10_FONT_ID, titleX, titleY, title.c_str(), true, EpdFontFamily::BOLD);
-
-    // Separator line under the title.
-    int sepY = titleY + kTitleH + 4;
-    renderer.drawLine(panelX + kPadX, sepY, panelX + panelW - kPadX, sepY, 1, true);
-
-    // Items.
-    int listY = sepY + kPadY;
     int endIdx = std::min(startIndex + visibleRows, itemCount);
     for (int i = startIndex; i < endIdx; ++i) {
-      int rowY = listY + (i - startIndex) * kRowH;
-      bool sel = (i == selectedIndex);
-
-      // Highlight (filled black) for the focused row.
-      if (sel) {
-        renderer.fillRect(panelX + kPadX, rowY, panelW - 2 * kPadX, kRowH, true);
-      }
-
-      int textX = panelX + kPadX + kIconPad;
-      // Optional row icon — drawn at its NATIVE bitmap size so 32px icons are
-      // not corrupted by being blitted into a 24px box.
-      if (items[i].icon && items[i].iconW > 0 && items[i].iconH > 0) {
-        const int iw = items[i].iconW;
-        const int ih = items[i].iconH;
-        int iconX = panelX + kPadX + kIconPad;
-        int iconY = rowY + (kRowH - ih) / 2;
-        if (sel) {
-          renderer.drawIconInverted(items[i].icon, iconX, iconY, iw, ih);
-        } else {
-          renderer.drawIcon(items[i].icon, iconX, iconY, iw, ih);
-        }
-        textX = iconX + iw + kIconPad;
-      }
+      int rowIndex = i - startIndex;
+      PanelDrawHelper::drawRowHighlight(renderer, layout, rowIndex, i == selectedIndex);
+      PanelDrawHelper::drawRowIcon(renderer, layout, rowIndex, items[i].icon, items[i].iconW, items[i].iconH,
+                                   i == selectedIndex);
 
       std::string rowLabel = items[i].label;
       if (items[i].selected) {
         rowLabel = "* " + rowLabel;  // active filter/sort marker
       }
 
+      int textX = PanelDrawHelper::getRowTextX(layout);
+      if (items[i].icon && items[i].iconW > 0 && items[i].iconH > 0) {
+        textX += items[i].iconW + PanelDrawHelper::kIconPad;
+      }
+
       int lh = renderer.getLineHeight(UI_10_FONT_ID);
-      int textY = rowY + (kRowH - lh) / 2;
-      renderer.drawText(UI_10_FONT_ID, textX, textY, rowLabel.c_str(), sel ? false : true,
-                        sel ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+      int rowY = PanelDrawHelper::getSeparatorY(layout) + PanelDrawHelper::kPadY + rowIndex * PanelDrawHelper::kRowH;
+      int textY = rowY + (PanelDrawHelper::kRowH - lh) / 2;
+      renderer.drawText(UI_10_FONT_ID, textX, textY, rowLabel.c_str(), i == selectedIndex ? false : true,
+                        i == selectedIndex ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     }
 
-    // Scroll indicators.
-    if (startIndex > 0) {
-      int arrowY = panelY + kTitleH + kPadY + 2;
-      renderer.drawLine(panelX + panelW / 2 - 6, arrowY + 6, panelX + panelW / 2, arrowY, 2, true);
-      renderer.drawLine(panelX + panelW / 2, arrowY, panelX + panelW / 2 + 6, arrowY + 6, 2, true);
-    }
-    if (endIdx < itemCount) {
-      int arrowY = panelY + panelH - kPadY - 8;
-      renderer.drawLine(panelX + panelW / 2 - 6, arrowY, panelX + panelW / 2, arrowY + 6, 2, true);
-      renderer.drawLine(panelX + panelW / 2, arrowY + 6, panelX + panelW / 2 + 6, arrowY, 2, true);
-    }
+    PanelDrawHelper::drawScrollArrows(renderer, layout, startIndex > 0, endIdx < itemCount);
   }
 };

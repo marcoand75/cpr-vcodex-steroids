@@ -7,6 +7,35 @@
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "components/icons/book.h"
+#include "components/icons/book24.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/bookmark24.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/dictionary24.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/goalsmedal24.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/bookshelf24.h"
+#include "components/icons/recent.h"
+#include "components/icons/recent24.h"
+#include "components/icons/settings2.h"
+#include "components/icons/settings224.h"
+#include "components/icons/transfer.h"
+#include "components/icons/transfer24.h"
+#include "components/icons/trophy.h"
+#include "components/icons/trophy24.h"
+#include "components/icons/wifi.h"
+#include "components/icons/wifi24.h"
+#include "components/icons/search.h"
+#include "components/icons/search24.h"
+#include "components/icons/rotation.h"
+#include "components/icons/rotation24.h"
+#include "components/icons/pageview.h"
+#include "components/icons/pageview24.h"
+#include "components/icons/CameraIcon.h"
+#include "components/icons/QrCodeIcon.h"
+#include "components/icons/ProgressIcon.h"
 #include "fontIds.h"
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -24,25 +53,25 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes) {
   std::vector<MenuItem> items;
   items.reserve(17);
-  items.push_back({MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS});
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  items.push_back({MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS, Settings2Icon, 24, 24});
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER, BookIcon, 24, 24});
   if (hasFootnotes) {
-    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
+    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES, BookmarkIcon, 24, 24});
   }
-  items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD});
-  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY});
-  items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS});
-  items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
-  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
-  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
-  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED});
-  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
-  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+  items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, SearchIcon, 24, 24});
+  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, RecentIcon, 24, 24});
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, DictionaryIcon, 24, 24});
+  items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, BookmarkIcon, 24, 24});
+  items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, BookmarkIcon, 24, 24});
+  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, RotationIcon, 24, 24});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, PageviewIcon, 24, 24});
+  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT, ProgressIcon, 24, 24});
+  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON, CameraIcon, 24, 24});
+  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR, QrCodeIcon, 24, 24});
+  items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, TrophyIcon, 24, 24});
+  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, BookshelfIcon, 24, 24});
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, WifiIcon, 24, 24});
+  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, TransferIcon, 24, 24});
   return items;
 }
 
@@ -151,16 +180,28 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
       renderer.fillRect(contentX, displayY, contentWidth - 1, lineHeight, true);
     }
 
-    renderer.drawText(UI_10_FONT_ID, contentX + 20, displayY, I18N.get(menuItems[itemIndex].labelId), !isSelected);
+    const auto& item = menuItems[itemIndex];
+    const int iconX = contentX + 4;
+    const int iconY = displayY + (lineHeight - item.iconH) / 2;
+    if (item.iconPixels != nullptr) {
+      if (isSelected) {
+        renderer.drawIconInverted(item.iconPixels, iconX, iconY, item.iconW, item.iconH);
+      } else {
+        renderer.drawIcon(item.iconPixels, iconX, iconY, item.iconW, item.iconH);
+      }
+    }
 
-    if (menuItems[itemIndex].action == MenuAction::ROTATE_SCREEN) {
+    const int textX = iconX + item.iconW + 6;
+    renderer.drawText(UI_10_FONT_ID, textX, displayY, I18N.get(item.labelId), !isSelected);
+
+    if (item.action == MenuAction::ROTATE_SCREEN) {
       // Render current orientation value on the right edge of the content area.
       const char* value = I18N.get(orientationLabels[pendingOrientation]);
       const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
       renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY, value, !isSelected);
     }
 
-    if (menuItems[itemIndex].action == MenuAction::AUTO_PAGE_TURN) {
+    if (item.action == MenuAction::AUTO_PAGE_TURN) {
       // Render current page turn value on the right edge of the content area.
       const auto value = pageTurnLabels[selectedPageTurnOption];
       const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);

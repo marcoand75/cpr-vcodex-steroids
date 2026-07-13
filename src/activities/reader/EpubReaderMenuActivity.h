@@ -45,6 +45,9 @@ class EpubReaderMenuActivity final : public Activity {
   struct MenuItem {
     MenuAction action;
     StrId labelId;
+    const uint8_t* iconPixels;
+    int iconW;
+    int iconH;
   };
 
   static std::vector<MenuItem> buildMenuItems(bool hasFootnotes);

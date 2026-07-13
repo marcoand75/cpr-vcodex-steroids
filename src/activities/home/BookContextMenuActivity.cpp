@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include "MappedInputManager.h"
+#include "components/PanelDrawHelper.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "components/icons/heart.h"
@@ -15,21 +16,6 @@
 #include "components/icons/transfer.h"
 #include "components/icons/image.h"
 #include "fontIds.h"
-
-namespace {
-// Visual constants mirror LibraryPopupOverlay so the two popups share the
-// same look: a white rounded panel with an inline bold title, separator line,
-// inverted highlight on the focused row, native-size row icons, and scroll
-// indicators.
-constexpr int kCornerRadius = 12;
-constexpr int kRowH = 44;
-constexpr int kPadX = 16;
-constexpr int kPadY = 12;
-constexpr int kIconPad = 10;
-constexpr int kTitleH = 22;
-constexpr int kPanelWPercent = 80;
-constexpr int kMaxVisibleRows = 8;
-}  // namespace
 
 BookContextMenuActivity::BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                  const std::string& bookTitle, const bool isFavorite,
@@ -109,88 +95,43 @@ void BookContextMenuActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  // White background — same clean look as the original BookContextMenu.
-
   const int itemCount = static_cast<int>(menuItems.size());
-  const int visibleRows = std::min(itemCount, kMaxVisibleRows);
+  const int visibleRows = std::min(itemCount, PanelDrawHelper::kMaxVisibleRows);
 
-  // Panel — same sizing as LibraryPopupOverlay: 80 % wide, dynamic height
-  // capped at 80 % of the screen.
-  const int panelW = pageWidth * kPanelWPercent / 100;
-  const int contentH = kPadY + kTitleH + 4 + kPadY + visibleRows * kRowH + kPadY;
-  const int maxH = pageHeight * kPanelWPercent / 100;
-  const int panelH = std::min(contentH, maxH);
-  const int panelX = (pageWidth - panelW) / 2;
-  const int panelY = (pageHeight - panelH) / 2;
+  auto layout = PanelDrawHelper::calculatePanel(pageWidth, pageHeight, visibleRows);
 
-  // Rounded white panel with black border.
-  renderer.fillRoundedRect(panelX, panelY, panelW, panelH, kCornerRadius, Color::White);
-  renderer.drawRoundedRect(panelX, panelY, panelW, panelH, 2, kCornerRadius, true);
+  PanelDrawHelper::drawBackground(renderer, layout);
+  PanelDrawHelper::drawTitle(renderer, layout, bookTitle.c_str());
+  PanelDrawHelper::drawSeparator(renderer, layout);
 
-  // Inline title (bold) — same style as LibraryPopupOverlay.
-  const int titleX = panelX + kPadX;
-  const int titleY = panelY + kPadY;
-  renderer.drawText(UI_10_FONT_ID, titleX, titleY, bookTitle.c_str(), true, EpdFontFamily::BOLD);
-
-  // Separator line under the title.
-  const int sepY = titleY + kTitleH + 4;
-  renderer.drawLine(panelX + kPadX, sepY, panelX + panelW - kPadX, sepY, 1, true);
-
-  // Scroll range.
   int startIdx = 0;
   if (selectedIndex >= visibleRows) {
     startIdx = selectedIndex - visibleRows / 2;
     if (startIdx + visibleRows > itemCount) startIdx = itemCount - visibleRows;
     if (startIdx < 0) startIdx = 0;
   }
-
-  const int listY = sepY + kPadY;
   const int endIdx = std::min(startIdx + visibleRows, itemCount);
+
   for (int i = startIdx; i < endIdx; ++i) {
-    const int rowY = listY + (i - startIdx) * kRowH;
-    const bool sel = (i == selectedIndex);
+    const int rowIndex = i - startIdx;
+    PanelDrawHelper::drawRowHighlight(renderer, layout, rowIndex, i == selectedIndex);
+    PanelDrawHelper::drawRowIcon(renderer, layout, rowIndex, menuItems[i].iconPixels, menuItems[i].iconW,
+                                 menuItems[i].iconH, i == selectedIndex);
 
-    // Inverted highlight for the focused row.
-    if (sel) {
-      renderer.fillRect(panelX + kPadX, rowY, panelW - 2 * kPadX, kRowH, true);
-    }
-
-    // Icon at its native size, vertically centered in the row.
-    const int iw = menuItems[i].iconW;
-    const int ih = menuItems[i].iconH;
-    int textX = panelX + kPadX + kIconPad;
-    if (menuItems[i].iconPixels && iw > 0 && ih > 0) {
-      const int iconX = panelX + kPadX + kIconPad;
-      const int iconY = rowY + (kRowH - ih) / 2;
-      if (sel) {
-        renderer.drawIconInverted(menuItems[i].iconPixels, iconX, iconY, iw, ih);
-      } else {
-        renderer.drawIcon(menuItems[i].iconPixels, iconX, iconY, iw, ih);
-      }
-      textX = iconX + iw + kIconPad;
-    }
-
-    // Row label.
     const char* label = I18N.get(menuItems[i].labelId);
-    const int lh = renderer.getLineHeight(UI_10_FONT_ID);
-    const int textY = rowY + (kRowH - lh) / 2;
-    renderer.drawText(UI_10_FONT_ID, textX, textY, label, sel ? false : true,
-                      sel ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    int textX = PanelDrawHelper::getRowTextX(layout);
+    if (menuItems[i].iconPixels && menuItems[i].iconW > 0 && menuItems[i].iconH > 0) {
+      textX += menuItems[i].iconW + PanelDrawHelper::kIconPad;
+    }
+    int lh = renderer.getLineHeight(UI_10_FONT_ID);
+    int rowY = PanelDrawHelper::getSeparatorY(layout) + PanelDrawHelper::kPadY + rowIndex * PanelDrawHelper::kRowH;
+    int textY = rowY + (PanelDrawHelper::kRowH - lh) / 2;
+    renderer.drawText(UI_10_FONT_ID, textX, textY, label, i == selectedIndex ? false : true,
+                      i == selectedIndex ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
   }
 
-  // Scroll indicators (triangles) — same as LibraryPopupOverlay.
-  if (startIdx > 0) {
-    const int arrowY = panelY + kTitleH + kPadY + 2;
-    renderer.drawLine(panelX + panelW / 2 - 6, arrowY + 6, panelX + panelW / 2, arrowY, 2, true);
-    renderer.drawLine(panelX + panelW / 2, arrowY, panelX + panelW / 2 + 6, arrowY + 6, 2, true);
-  }
-  if (endIdx < itemCount) {
-    const int arrowY = panelY + panelH - kPadY - 8;
-    renderer.drawLine(panelX + panelW / 2 - 6, arrowY, panelX + panelW / 2, arrowY + 6, 2, true);
-    renderer.drawLine(panelX + panelW / 2, arrowY + 6, panelX + panelW / 2 + 6, arrowY, 2, true);
-  }
+  PanelDrawHelper::drawScrollArrows(renderer, layout, startIdx > 0, endIdx < itemCount);
 
-  // Button hints at the bottom.
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

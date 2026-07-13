@@ -1071,6 +1071,73 @@ void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const in
   }
 }
 
+void GfxRenderer::drawScaledIcon(const uint8_t bitmap[], int x, int y, int srcW, int srcH, int dstW, int dstH) const {
+  if (srcW == dstW && srcH == dstH) {
+    drawIcon(bitmap, x, y, dstW, dstH);
+    return;
+  }
+
+  // Nearest-neighbor downscale/upscale into a stack buffer.
+  const int maxDim = 32;
+  if (dstW > maxDim || dstH > maxDim) return;
+
+  const int srcStride = (srcW + 7) / 8;
+  const int dstStride = (dstW + 7) / 8;
+  uint8_t scaled[dstStride * maxDim] = {0};
+
+  for (int dy = 0; dy < dstH; ++dy) {
+    const int sy = dy * srcH / dstH;
+    const uint8_t* srcRow = &bitmap[sy * srcStride];
+    uint8_t* dstRow = &scaled[dy * dstStride];
+    for (int dx = 0; dx < dstW; ++dx) {
+      const int sx = dx * srcW / dstW;
+      const int srcByte = sx / 8;
+      const int srcBit = 7 - (sx % 8);
+      const bool bit = (srcRow[srcByte] >> srcBit) & 1;
+      if (bit) {
+        const int dstByte = dx / 8;
+        const int dstBit = 7 - (dx % 8);
+        dstRow[dstByte] |= (1 << dstBit);
+      }
+    }
+  }
+
+  drawIcon(scaled, x, y, dstW, dstH);
+}
+
+void GfxRenderer::drawScaledIconInverted(const uint8_t bitmap[], int x, int y, int srcW, int srcH, int dstW, int dstH) const {
+  if (srcW == dstW && srcH == dstH) {
+    drawIconInverted(bitmap, x, y, dstW, dstH);
+    return;
+  }
+
+  const int maxDim = 32;
+  if (dstW > maxDim || dstH > maxDim) return;
+
+  const int srcStride = (srcW + 7) / 8;
+  const int dstStride = (dstW + 7) / 8;
+  uint8_t scaled[dstStride * maxDim] = {0};
+
+  for (int dy = 0; dy < dstH; ++dy) {
+    const int sy = dy * srcH / dstH;
+    const uint8_t* srcRow = &bitmap[sy * srcStride];
+    uint8_t* dstRow = &scaled[dy * dstStride];
+    for (int dx = 0; dx < dstW; ++dx) {
+      const int sx = dx * srcW / dstW;
+      const int srcByte = sx / 8;
+      const int srcBit = 7 - (sx % 8);
+      const bool bit = (srcRow[srcByte] >> srcBit) & 1;
+      if (bit) {
+        const int dstByte = dx / 8;
+        const int dstBit = 7 - (dx % 8);
+        dstRow[dstByte] |= (1 << dstBit);
+      }
+    }
+  }
+
+  drawIconInverted(scaled, x, y, dstW, dstH);
+}
+
 void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
                              const float cropX, const float cropY) const {
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;

@@ -86,7 +86,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
       case UIIcon::Bookshelf:
-        return BookshelfIcon32;
+        return BookshelfIcon;
       case UIIcon::SleepMode:
         return SleepModeIcon32;
       case UIIcon::CleanMonitor:
@@ -100,11 +100,11 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::LostDevice:
         return LostDeviceIcon32;
       case UIIcon::OpdsBrowser:
-        return OPDSBrowserIcon32;
+        return OPDSBrowserIcon;
       case UIIcon::Dictionary:
-        return DictionaryIcon32;
+        return DictionaryIcon;
       case UIIcon::GoalsMedal:
-        return GoalsMedalIcon32;
+        return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon:
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
@@ -141,7 +141,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
       case UIIcon::Bookshelf:
-        return BookshelfIcon32;
+        return BookshelfIcon;
       case UIIcon::SleepMode:
         return SleepModeIcon32;
       case UIIcon::CleanMonitor:
@@ -155,11 +155,11 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::LostDevice:
         return LostDeviceIcon32;
       case UIIcon::OpdsBrowser:
-        return OPDSBrowserIcon32;
+        return OPDSBrowserIcon;
       case UIIcon::Dictionary:
-        return DictionaryIcon32;
+        return DictionaryIcon;
       case UIIcon::GoalsMedal:
-        return GoalsMedalIcon32;
+        return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon:
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:

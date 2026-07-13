@@ -181,7 +181,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
       case UIIcon::Bookshelf:
-        return BookshelfIcon32;
+        return BookshelfIcon;
       case UIIcon::SleepMode:
         return SleepModeIcon32;
       case UIIcon::CleanMonitor:
@@ -195,11 +195,11 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::LostDevice:
         return LostDeviceIcon32;
       case UIIcon::OpdsBrowser:
-        return OPDSBrowserIcon32;
+        return OPDSBrowserIcon;
       case UIIcon::Dictionary:
-        return DictionaryIcon32;
+        return DictionaryIcon;
       case UIIcon::GoalsMedal:
-        return GoalsMedalIcon32;
+        return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon:
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
@@ -238,7 +238,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
       case UIIcon::Bookshelf:
-        return BookshelfIcon32;
+        return BookshelfIcon;
       case UIIcon::SleepMode:
         return SleepModeIcon32;
       case UIIcon::CleanMonitor:
@@ -252,11 +252,11 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::LostDevice:
         return LostDeviceIcon32;
       case UIIcon::OpdsBrowser:
-        return OPDSBrowserIcon32;
+        return OPDSBrowserIcon;
       case UIIcon::Dictionary:
-        return DictionaryIcon32;
+        return DictionaryIcon;
       case UIIcon::GoalsMedal:
-        return GoalsMedalIcon32;
+        return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon:
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
@@ -274,12 +274,17 @@ bool drawUiIcon(const GfxRenderer& renderer, const UIIcon icon, const int x, con
     return true;
   }
 
-  if (size > 24) {
-    if (const uint8_t* fallbackBitmap = iconForName(icon, 24); fallbackBitmap != nullptr) {
-      const int inset = (size - 24) / 2;
-      renderer.drawIcon(fallbackBitmap, x + inset, y + inset, 24, 24);
-      return true;
-    }
+  // Scale from the nearest native size (32 or 24) so icons without an exact
+  // size match still render instead of being silently dropped or cropped.
+  const uint8_t* nativeBitmap = iconForName(icon, 32);
+  int nativeSize = 32;
+  if (nativeBitmap == nullptr) {
+    nativeBitmap = iconForName(icon, 24);
+    nativeSize = 24;
+  }
+  if (nativeBitmap != nullptr && nativeSize != size) {
+    renderer.drawScaledIcon(nativeBitmap, x, y, nativeSize, nativeSize, size, size);
+    return true;
   }
 
   return false;

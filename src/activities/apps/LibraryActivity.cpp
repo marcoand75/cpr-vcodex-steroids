@@ -351,7 +351,7 @@ void LibraryActivity::openSortPopup() {
     popupOverlay_.items.push_back(item);
     if (item.selected) {
       popupOverlay_.selectedIndex = i;
-      popupOverlay_.startIndex = std::max(0, i - LibraryPopupOverlay::kMaxVisibleRows / 2);
+      popupOverlay_.startIndex = std::max(0, i - PanelDrawHelper::kMaxVisibleRows / 2);
     }
   }
   requestUpdate();
@@ -367,7 +367,7 @@ void LibraryActivity::openFilterPopup() {
   upLongTriggered_ = downLongTriggered_ = false;
 
   PopupItem allItem; allItem.label = I18N.get(StrId::STR_ALL_BOOKS);
-  allItem.icon = BookshelfIcon32; allItem.iconW = 32; allItem.iconH = 32;
+  allItem.icon = BookshelfIcon; allItem.iconW = 32; allItem.iconH = 32;
   allItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_ALL);
   popupOverlay_.items.push_back(allItem);
 
@@ -518,7 +518,7 @@ void LibraryActivity::loop() {
     int itemCount = static_cast<int>(popupOverlay_.items.size());
     int& sel = popupOverlay_.selectedIndex;
     int& start = popupOverlay_.startIndex;
-    int visible = std::min(itemCount, LibraryPopupOverlay::kMaxVisibleRows);
+    int visible = std::min(itemCount, PanelDrawHelper::kMaxVisibleRows);
     if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
       if (sel > 0) { sel--; if (sel < start) start = sel; }
       else { sel = itemCount - 1; start = std::max(0, itemCount - visible); }
