@@ -171,12 +171,6 @@ void ScreenSaverActivity::onExit() {
   if (Storage.exists(callerFrameBufferPath_.c_str())) {
     Storage.remove(callerFrameBufferPath_.c_str());
   }
-  // When launched from the screensaver app (returnToCaller_=false) the
-  // underlying home page needs a full refresh to clear ghosting.  When
-  // launched from reader the normal refresh is sufficient.
-  if (!returnToCaller_) {
-    renderer.requestNextRefresh(HalDisplay::FULL_REFRESH);
-  }
 
   Activity::onExit();
   powerManager.setPowerSaving(false);

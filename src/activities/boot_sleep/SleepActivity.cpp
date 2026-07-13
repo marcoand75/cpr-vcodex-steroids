@@ -18,6 +18,7 @@
 #include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "FontCacheManager.h"
 #include "ReadingStatsStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
@@ -668,6 +669,13 @@ bool renderBitmapStatsSleepScreen(GfxRenderer& renderer, const std::string& sour
 
 void SleepActivity::onEnter() {
   Activity::onEnter();
+
+  // Release all font caches to maximise contiguous free space for the
+  // PNG decoder that will be used in renderCustomSleepScreen / cycle.
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->clearCache();
+  }
+
   renderer.clearNextRefreshOverride();
   const bool restoreDarkMode = renderer.isDarkMode();
   if (restoreDarkMode) {
@@ -752,6 +760,10 @@ void SleepActivity::renderCustomSleepScreen() const {
       if (renderPngSleepScreen(selected.path)) {
         return;
       }
+      // PNG decode failed — the framebuffer still holds the saved snapshot,
+      // just display it as-is instead of falling through to the default logo.
+      displaySleepBuffer(renderer);
+      return;
     } else {
       GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
       FsFile file;
@@ -890,6 +902,16 @@ bool SleepActivity::renderPngSleepScreen(const std::string& sourcePath) const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
+  // Release font caches to maximise contiguous free space for the ~44 KB
+  // PNG decoder.  Without this the allocation can fail from Library where
+  // the heap is more fragmented than from Home or Reader.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
+
+  // The framebuffer already holds the snapshot saved at the top of onEnter()
+  // — no need to restore from cache file (which would consume extra heap for
+  // the file read).  Just draw the transparent PNG over the existing content.
   if (!PngSleepRenderer::drawTransparentPng(sourcePath, renderer, 0, 0, pageWidth, pageHeight)) {
     return false;
   }

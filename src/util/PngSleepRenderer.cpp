@@ -152,10 +152,6 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
     return false;
   }
 
-  if (!MemoryBudget::hasHeapForImageDecoder("SLP", "PNG sleep image", PNG_DECODER_APPROX_SIZE)) {
-    return false;
-  }
-
   PNG* png = new (std::nothrow) PNG();
   if (!png) {
     return false;
