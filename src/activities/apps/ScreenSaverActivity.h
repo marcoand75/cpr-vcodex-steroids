@@ -14,7 +14,7 @@ class ScreenSaverActivity final : public Activity {
   unsigned long lastBatteryCheckMs_ = 0;
   bool firstRender_ = true;
   bool returnToCaller_ = false;
-  std::vector<uint8_t> callerFrameBuffer_;  // saved before first render for transparent PNG background
+  std::string callerFrameBufferPath_ = "/.crosspoint/screensaver-caller.tmp";  // temp file for caller framebuffer snapshot
 
   void loadImages();
   unsigned long getIntervalMs() const;

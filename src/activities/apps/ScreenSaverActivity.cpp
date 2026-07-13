@@ -2,7 +2,6 @@
 
 #include "CrossPointState.h"
 
-#include <cstring>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
@@ -114,6 +113,25 @@ void ScreenSaverActivity::onEnter() {
     return;
   }
 
+  // Save a snapshot of the caller's framebuffer to a temp file so that
+  // transparent PNGs can be drawn over the original caller background on
+  // each image change.  We write to SD instead of keeping a memory buffer
+  // to avoid competing heap with the PNG decoder (~44 KB).
+  if (!callerFrameBufferPath_.empty() || Storage.exists(callerFrameBufferPath_.c_str())) {
+    Storage.remove(callerFrameBufferPath_.c_str());
+  }
+  {
+    FsFile f;
+    if (Storage.openFileForWrite("SS", callerFrameBufferPath_, f)) {
+      const uint8_t* buf = display.getFrameBuffer();
+      const uint32_t size = display.getBufferSize();
+      if (buf && size > 0) {
+        f.write(buf, size);
+      }
+      f.close();
+    }
+  }
+
   intervalMs_ = getIntervalMs();
   lastChangeMs_ = millis();
   lastBatteryCheckMs_ = millis();
@@ -149,7 +167,10 @@ void ScreenSaverActivity::onExit() {
       break;
     }
   }
-  callerFrameBuffer_.clear();
+  // Clean up the temporary caller screenshot file
+  if (Storage.exists(callerFrameBufferPath_.c_str())) {
+    Storage.remove(callerFrameBufferPath_.c_str());
+  }
   // When launched from the screensaver app (returnToCaller_=false) the
   // underlying home page needs a full refresh to clear ghosting.  When
   // launched from reader the normal refresh is sufficient.
@@ -236,27 +257,20 @@ void ScreenSaverActivity::render(RenderLock&&) {
   }
 
   if (isPng) {
-    // Lazily save caller framebuffer once (on first render) for later restoration
-    // on each image change, so transparent areas show the original caller screen
-    // instead of accumulated previous images.
-    if (callerFrameBuffer_.empty()) {
-      const uint32_t bufSize = display.getBufferSize();
-      const uint8_t* buf = display.getFrameBuffer();
-      if (buf && bufSize > 0) {
-        callerFrameBuffer_.assign(buf, buf + bufSize);
+    // Restore the caller framebuffer from the temp file so that transparent
+    // PNG draws over the original caller background.  On the first render
+    // this shows the caller screen; on subsequent renders it clears residues
+    // left by the previous image.
+    {
+      FsFile f;
+      if (Storage.openFileForRead("SS", callerFrameBufferPath_, f)) {
+        const uint32_t bufSize = display.getBufferSize();
+        uint8_t* target = const_cast<uint8_t*>(display.getFrameBuffer());
+        if (bufSize > 0 && target) {
+          f.read(target, bufSize);
+        }
+        f.close();
       }
-    }
-
-    // Free the PNG decoder heap by clearing the snapshot BEFORE decoding.
-    // The snapshot is restored right before drawing.
-    std::vector<uint8_t> restoreBuf = std::move(callerFrameBuffer_);
-    callerFrameBuffer_.clear();
-
-    // Retain the caller content so the first render has a background to start from.
-    // For subsequent renders this is necessary because the screen still has the
-    // previous image.  We restore from the snapshot saved above.
-    if (!restoreBuf.empty()) {
-      memcpy(const_cast<uint8_t*>(display.getFrameBuffer()), restoreBuf.data(), restoreBuf.size());
     }
 
     // Try "SS" prefix first (screensaver directory), then "SLP" (sleep directory).
@@ -268,8 +282,6 @@ void ScreenSaverActivity::render(RenderLock&&) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      // Keep the snapshot for subsequent renders
-      callerFrameBuffer_ = std::move(restoreBuf);
       return;
     }
     // Fall through to white screen on PNG failure
