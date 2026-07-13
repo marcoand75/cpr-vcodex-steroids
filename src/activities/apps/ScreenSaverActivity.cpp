@@ -1,6 +1,7 @@
 #include "ScreenSaverActivity.h"
 
 #include "CrossPointState.h"
+#include "ReadingStatsStore.h"
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -167,9 +168,35 @@ void ScreenSaverActivity::onExit() {
       break;
     }
   }
-  // Clean up the temporary caller screenshot file
+  // Restore the cached caller framebuffer so the transition back to the
+  // underlying activity shows the original caller screen (home / reader)
+  // without ghosting from the last screensaver frame.
   if (Storage.exists(callerFrameBufferPath_.c_str())) {
+    bool restored = false;
+    {
+      FsFile f;
+      if (Storage.openFileForRead("SS", callerFrameBufferPath_, f)) {
+        const uint32_t bufSize = display.getBufferSize();
+        uint8_t* target = const_cast<uint8_t*>(display.getFrameBuffer());
+        if (bufSize > 0 && target) {
+          f.read(target, bufSize);
+          restored = true;
+        }
+        f.close();
+      }
+    }
+    if (restored) {
+      renderer.clearNextRefreshOverride();
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    }
     Storage.remove(callerFrameBufferPath_.c_str());
+  }
+
+  // When returning to the reader, reset the reading-stats interaction
+  // timestamp so that the time spent looking at the screensaver is not
+  // credited as reading time.
+  if (returnToCaller_) {
+    READING_STATS.resumeSession();
   }
 
   Activity::onExit();
