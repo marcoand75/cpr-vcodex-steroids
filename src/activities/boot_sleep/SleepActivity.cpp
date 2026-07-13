@@ -674,6 +674,23 @@ void SleepActivity::onEnter() {
     renderer.setDarkMode(false);
   }
 
+  // Snapshot the current framebuffer BEFORE any popup or sleep-screen
+  // rendering, so cycleScreensaverFromDeepSleep has a fresh background
+  // of whatever was on screen (reader, home, library, settings, …).
+  // main.cpp also saves before goToSleep(), this is an extra safety net.
+  Storage.mkdir("/.crosspoint");
+  {
+    FsFile f;
+    if (Storage.openFileForWrite("SLP", LAST_READER_PAGE_CACHE_PATH, f)) {
+      const uint8_t* buf = display.getFrameBuffer();
+      const uint32_t size = display.getBufferSize();
+      if (buf && size > 0) {
+        f.write(buf, size);
+      }
+      f.close();
+    }
+  }
+
   if (APP_STATE.lastSleepFromReader) {
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
     if (!usesCustomSleepImages()) {
@@ -684,13 +701,6 @@ void SleepActivity::onEnter() {
     if (!usesCustomSleepImages()) {
       GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
     }
-  }
-
-  // Snapshot the clean reader page before the popup is drawn over it.
-  // cycleScreensaverFromDeepSleep() uses this so transparent sleep PNGs can
-  // composite over the last book page without needing fonts or the EPUB parser.
-  if (APP_STATE.lastSleepFromReader) {
-    snapshotFramebufferForCycle();
   }
 
   switch (SETTINGS.sleepScreen) {

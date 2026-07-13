@@ -396,8 +396,24 @@ void enterDeepSleep() {
   deepSleepInProgress = true;
 
   if (SETTINGS.cycleScreensaverOnTap) {
+    // Snapshot the CURRENT frame buffer (reader page, home, library, settings,
+    // anything) so that every cycleScreensaverFromDeepSleep call has a fresh
+    // background.  Written unconditionally – unlike the old per-reader check –
+    // matching the same approach used by the screensaver activity.
+    Storage.mkdir("/.crosspoint");
+    {
+      FsFile f;
+      if (Storage.openFileForWrite("SLP", "/.crosspoint/last_reader_page.bin", f)) {
+        const uint8_t* buf = display.getFrameBuffer();
+        const uint32_t size = display.getBufferSize();
+        if (buf && size > 0) {
+          f.write(buf, size);
+        }
+        f.close();
+      }
+    }
+
     // Arm an ISR before goToSleep() so taps that land during the (blocking)
-    // e-ink render of the sleep screen are not missed.
     armSleepEntryTapIsr();
     activityManager.goToSleep();
     // Catch any taps that arrived during the render or the settle window.
