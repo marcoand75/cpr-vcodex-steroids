@@ -466,6 +466,14 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     const int panelW = rect.width - 16;
     const int carouselPanelY = rect.y + kCoverTopPad;
     const int dotsY = centerTileY + kCenterCoverH + 8;
+    constexpr int carouselGap = 14;
+
+    // Draw a thick white-filled panel area, then the cyberpunk border on top.
+    const int panelTopY = carouselPanelY + 6;
+    const int panelBotY = dotsY + kDotSize + 14;
+    const int panelH = panelBotY - panelTopY;
+    renderer.fillRect(panelX + 4, panelTopY, panelW - 8, panelH - 4, false);
+    drawCyberPanel(renderer, panelX, panelTopY, panelW, panelH, inCarouselRow);
 
     // Draw covers on white background
     const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
@@ -474,38 +482,34 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       renderer.drawRoundedRect(leftX, sideTileY, kSideCoverW, kSideCoverH, 1, kCornerRadius, true);
     if (bookCount >= 2 && drawCover(nextIdx, rightX, sideTileY, kSideCoverW, kSideCoverH))
       renderer.drawRoundedRect(rightX, sideTileY, kSideCoverW, kSideCoverH, 1, kCornerRadius, true);
-    renderer.fillRect(centerX - kCenterOutlineW, centerTileY - kCenterOutlineW,
+    renderer.fillRect(centerX - kCenterOutlineW, centerTileY + 12 - kCenterOutlineW,
                       kCenterCoverW + 2 * kCenterOutlineW, kCenterCoverH + 2 * kCenterOutlineW, false);
-    drawCover(centerIdx, centerX, centerTileY, kCenterCoverW, kCenterCoverH);
+    drawCover(centerIdx, centerX, centerTileY+12, kCenterCoverW, kCenterCoverH);
 
     // Navigation dots
     const int totalDotsW = bookCount * kDotSize + (bookCount - 1) * kDotGap;
     int dotX = centerX + (kCenterCoverW - totalDotsW) / 2;
     for (int i = 0; i < bookCount; ++i) {
-      if (i == centerIdx) renderer.fillRect(dotX, dotsY, kDotSize, kDotSize, true);
-      else renderer.drawRect(dotX, dotsY, kDotSize, kDotSize, true);
+      if (i == centerIdx) renderer.fillRect(dotX, dotsY + 12, kDotSize, kDotSize, true);
+      else renderer.drawRect(dotX, dotsY+12, kDotSize, kDotSize, true);
       dotX += kDotSize + kDotGap;
     }
 
-    // Cyberpunk panel border around the carousel — drawn LAST so it paints over everything
-    drawCyberPanel(renderer, panelX, carouselPanelY - 4, panelW, (dotsY + kDotSize + 6) - carouselPanelY + 4, inCarouselRow);
-
-
-    const int panelY = dotsY + kDotSize + kDotsToPanelGap + 4;
-    const int panelH = rect.y + rect.height - panelY - 6;
-    drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW, panelH);
+    const int panelY = dotsY + kDotSize + carouselGap + 6;
+    const int panelAvailableH = rect.y + rect.height - panelY - 6;
+    drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW, panelAvailableH);
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
   }
   const int outlineW = inCarouselRow ? kSelectionLineW : kThinOutlineW;
-  renderer.drawRoundedRect(centerX, centerTileY, kCenterCoverW, kCenterCoverH, outlineW, kCornerRadius, true);
+  renderer.drawRoundedRect(centerX, centerTileY+12, kCenterCoverW, kCenterCoverH, outlineW, kCornerRadius, true);
 }
 
 void LyraMarcoand75Theme::drawCarouselBorder(GfxRenderer& renderer, Rect rect, bool inCarouselRow) const {
   if (!inCarouselRow) return;
   const int centerTileY = rect.y + kCoverTopPad;
   const int centerX = (renderer.getScreenWidth() - kCenterCoverW) / 2;
-  renderer.drawRoundedRect(centerX, centerTileY, kCenterCoverW, kCenterCoverH, kSelectionLineW, kCornerRadius, true);
+  renderer.drawRoundedRect(centerX, centerTileY+12, kCenterCoverW, kCenterCoverH, kSelectionLineW, kCornerRadius, true);
 }
 
 void LyraMarcoand75Theme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
