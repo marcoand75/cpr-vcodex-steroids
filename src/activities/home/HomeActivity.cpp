@@ -1123,6 +1123,8 @@ void HomeActivity::loop() {
                                              selectedBook.author, selectedBook.coverBmpPath,
                                              isCompleted ? 0 : 100);
                   READING_STATS.endSession();
+                  // Force save so the change persists immediately, even with zero reading time.
+                  READING_STATS.saveToFile();
                   break;
                 }
                 case static_cast<int>(BookContextMenuActivity::MenuAction::OPEN_BOOK): {

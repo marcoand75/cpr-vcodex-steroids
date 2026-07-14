@@ -1244,6 +1244,10 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
   book.chapterProgressPercent = clampPercent(chapterProgressPercent);
   if (book.lastProgressPercent >= 100) {
     book.completed = true;
+  } else if (book.lastProgressPercent == 0 && book.completed) {
+    // Explicit un-read: clear the completed flag (e.g. user toggled "Mark as Unread")
+    book.completed = false;
+    book.completedAt = 0;
   }
 
   updateBookReadTimestamp(book, TimeUtils::getAuthoritativeTimestamp());
@@ -1324,6 +1328,10 @@ void ReadingStatsStore::updateProgress(const uint8_t progressPercent, const bool
   book.chapterProgressPercent = clampedChapterProgress;
   if (completed || clampedBookProgress >= 100) {
     book.completed = true;
+  } else if (clampedBookProgress == 0 && book.completed) {
+    // Explicit un-read: clear the completed flag
+    book.completed = false;
+    book.completedAt = 0;
   }
 
   updateBookReadTimestamp(book, TimeUtils::getAuthoritativeTimestamp());
