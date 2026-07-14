@@ -643,9 +643,6 @@ void LibraryActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
-      renderer.clearScreen();
-      renderer.requestNextFullRefresh();
-      renderer.displayBuffer();
       onGoHome();
     }
     // Long-press Up/Down to open sort/filter popups (so the user can switch
@@ -747,9 +744,6 @@ void LibraryActivity::loop() {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
     } else {
-      renderer.clearScreen();
-      renderer.requestNextFullRefresh();
-      renderer.displayBuffer();
       onGoHome();
     }
     return;
