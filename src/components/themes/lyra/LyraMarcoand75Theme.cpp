@@ -13,6 +13,7 @@
 #include "RecentBooksStore.h"
 #include "util/CoverRibbonBaker.h"
 #include "components/UITheme.h"
+#include "components/PanelDrawHelper.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/cover.h"
@@ -71,10 +72,6 @@ constexpr int kVisibleMenuSlots = 5;
 
 // Data panel layout
 constexpr int kDotsToPanelGap = 6;
-constexpr int kPanelInnerPad = 6;
-constexpr int kRowH = 22;
-constexpr int kColGap = 30;
-constexpr int kChamfer = 4;
 constexpr int kDashLen = 4;
 constexpr int kDashGap = 3;
 
@@ -157,42 +154,9 @@ void drawCoverPlaceholder(GfxRenderer& renderer, int x, int y, int maxW, int max
 
 // --- Data panel helpers ---
 
-void drawAngularRect(const GfxRenderer& r, int x, int y, int w, int h, int c, int lw, bool st) {
-  if (w < c * 2 || h < c * 2) { r.drawRect(x, y, w, h, lw, st); return; }
-  int x2 = x + w, y2 = y + h;
-  r.drawLine(x + c, y, x2 - c, y, lw, st);
-  r.drawLine(x2, y + c, x2, y2 - c, lw, st);
-  r.drawLine(x2 - c, y2, x + c, y2, lw, st);
-  r.drawLine(x, y2 - c, x, y + c, lw, st);
-  r.drawLine(x, y + c, x + c, y, 1, st);
-  r.drawLine(x2 - c, y, x2, y + c, 1, st);
-  r.drawLine(x2, y2 - c, x2 - c, y2, 1, st);
-  r.drawLine(x + c, y2, x, y2 - c, 1, st);
-}
-
-void drawCyberPanel(const GfxRenderer& r, int x, int y, int w, int h, bool sel) {
-  drawAngularRect(r, x, y, w, h, kChamfer, sel ? 2 : 1, true);
-  if (sel) drawAngularRect(r, x + 3, y + 3, w - 6, h - 6, kChamfer - 1, 1, true);
-  int cl = 5, cg = 2;
-  r.drawLine(x + cg, y + cg, x + cg + cl, y + cg, 1, true);
-  r.drawLine(x + cg, y + cg, x + cg, y + cg + cl, 1, true);
-  r.drawLine(x + w - cg - cl, y + cg, x + w - cg, y + cg, 1, true);
-  r.drawLine(x + w - cg, y + cg, x + w - cg, y + cg + cl, 1, true);
-  r.drawLine(x + cg, y + h - cg, x + cg + cl, y + h - cg, 1, true);
-  r.drawLine(x + cg, y + h - cg - cl, x + cg, y + h - cg, 1, true);
-  r.drawLine(x + w - cg - cl, y + h - cg, x + w - cg, y + h - cg, 1, true);
-  r.drawLine(x + w - cg, y + h - cg - cl, x + w - cg, y + h - cg, 1, true);
-
-  // Inner corner brackets for HUD/cyberpunk feel
-  int bi = 10, bl = 6;
-  r.drawLine(x + bi, y + bi, x + bi + bl, y + bi, 1, true);
-  r.drawLine(x + bi, y + bi, x + bi, y + bi + bl, 1, true);
-  r.drawLine(x + w - bi - bl, y + bi, x + w - bi, y + bi, 1, true);
-  r.drawLine(x + w - bi, y + bi, x + w - bi, y + bi + bl, 1, true);
-  r.drawLine(x + bi, y + h - bi, x + bi + bl, y + h - bi, 1, true);
-  r.drawLine(x + bi, y + h - bi - bl, x + bi, y + h - bi, 1, true);
-  r.drawLine(x + w - bi - bl, y + h - bi, x + w - bi, y + h - bi, 1, true);
-  r.drawLine(x + w - bi, y + h - bi - bl, x + w - bi, y + h - bi, 1, true);
+// Draw cyberpunk panel border — delegates to shared util.
+static void drawCyberPanel(const GfxRenderer& r, int x, int y, int w, int h, bool sel) {
+  PanelDrawHelper::drawCyberpunkPanel(r, x, y, w, h, sel);
 }
 
 void drawScanlineSep(const GfxRenderer& r, int x, int y, int w) {

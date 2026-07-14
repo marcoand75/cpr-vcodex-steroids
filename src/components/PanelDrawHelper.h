@@ -52,6 +52,59 @@ class PanelDrawHelper {
   static constexpr int kMaxVisibleRows = 8;
   static constexpr int kPanelWPercent = 80;
 
+  /**
+   * Unified cyberpunk-style panel border: chamfered outer rect, corner accent
+   * brackets, and inner corner brackets. Used by the Marcoand75 theme throughout
+   * homepage stats, icon bar, carousel, and popup overlays.
+   *
+   * @param sel If true draws a thicker border + inner outline for selected state.
+   */
+  static void drawCyberpunkPanel(const GfxRenderer& r, int x, int y, int w, int h, bool sel = false) {
+    constexpr int c = 4;       // chamfer
+    constexpr int lw_out = 2;  // outer line width when sel
+    constexpr int lw_in = 1;   // inner line width when not sel
+    const int lw = sel ? lw_out : lw_in;
+    if (w < c * 2 || h < c * 2) { r.drawRect(x, y, w, h, lw, true); return; }
+    int x2 = x + w, y2 = y + h;
+    // Outer chamfered border
+    r.drawLine(x + c, y, x2 - c, y, lw, true);
+    r.drawLine(x2, y + c, x2, y2 - c, lw, true);
+    r.drawLine(x2 - c, y2, x + c, y2, lw, true);
+    r.drawLine(x, y2 - c, x, y + c, lw, true);
+    r.drawLine(x, y + c, x + c, y, 1, true);
+    r.drawLine(x2 - c, y, x2, y + c, 1, true);
+    r.drawLine(x2, y2 - c, x2 - c, y2, 1, true);
+    r.drawLine(x + c, y2, x, y2 - c, 1, true);
+    // Selection: inner outline
+    if (sel) {
+      int si = 3;
+      r.drawLine(x + si + c, y + si, x2 - si - c, y + si, 1, true);
+      r.drawLine(x2 - si, y + si + c, x2 - si, y2 - si - c, 1, true);
+      r.drawLine(x2 - si - c, y2 - si, x + si + c, y2 - si, 1, true);
+      r.drawLine(x + si, y2 - si - c, x + si, y + si + c, 1, true);
+    }
+    // Corner accent brackets (short L-shapes at chamfer points)
+    constexpr int cg = 2, cl = 5;
+    r.drawLine(x + cg, y + cg, x + cg + cl, y + cg, 1, true);
+    r.drawLine(x + cg, y + cg, x + cg, y + cg + cl, 1, true);
+    r.drawLine(x + w - cg - cl, y + cg, x + w - cg, y + cg, 1, true);
+    r.drawLine(x + w - cg, y + cg, x + w - cg, y + cg + cl, 1, true);
+    r.drawLine(x + cg, y + h - cg, x + cg + cl, y + h - cg, 1, true);
+    r.drawLine(x + cg, y + h - cg - cl, x + cg, y + h - cg, 1, true);
+    r.drawLine(x + w - cg - cl, y + h - cg, x + w - cg, y + h - cg, 1, true);
+    r.drawLine(x + w - cg, y + h - cg - cl, x + w - cg, y + h - cg, 1, true);
+    // Inner corner brackets (HUD-style)
+    constexpr int bi = 10, bl = 6;
+    r.drawLine(x + bi, y + bi, x + bi + bl, y + bi, 1, true);
+    r.drawLine(x + bi, y + bi, x + bi, y + bi + bl, 1, true);
+    r.drawLine(x + w - bi - bl, y + bi, x + w - bi, y + bi, 1, true);
+    r.drawLine(x + w - bi, y + bi, x + w - bi, y + bi + bl, 1, true);
+    r.drawLine(x + bi, y + h - bi, x + bi + bl, y + h - bi, 1, true);
+    r.drawLine(x + bi, y + h - bi - bl, x + bi, y + h - bi, 1, true);
+    r.drawLine(x + w - bi - bl, y + h - bi, x + w - bi, y + h - bi, 1, true);
+    r.drawLine(x + w - bi, y + h - bi - bl, x + w - bi, y + h - bi, 1, true);
+  }
+
   static PanelLayout calculatePanel(int pageWidth, int pageHeight, int visibleRows) {
     PanelLayout layout;
     int contentH = kPadY + kTitleH + kSeparatorH + kPadY + visibleRows * kRowH + kPadY;
@@ -98,7 +151,7 @@ class PanelDrawHelper {
     UITheme& theme = UITheme::getInstance();
     if (theme.isMarcoand75()) {
       renderer.fillRect(layout.x, layout.y, layout.width, layout.height, false);
-      drawAngularPanel(renderer, layout.x, layout.y, layout.width, layout.height);
+      drawCyberpunkPanel(renderer, layout.x, layout.y, layout.width, layout.height);
     } else {
       renderer.fillRoundedRect(layout.x, layout.y, layout.width, layout.height, kCornerRadius, Color::White);
       renderer.drawRoundedRect(layout.x, layout.y, layout.width, layout.height, kBorderWidth, kCornerRadius, true);
