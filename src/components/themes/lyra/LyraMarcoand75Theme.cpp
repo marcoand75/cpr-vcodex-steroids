@@ -326,7 +326,7 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     snprintf(buf, sizeof(buf), "%s: %s - %s: %s - %s: %s",
              tr(STR_HOME_PANEL_STREAK), streakVal.c_str(),
              tr(STR_HOME_PANEL_FINISHED), booksFinished.c_str(),
-             tr(STR_HOME_PANEL_TIME), timeVal.c_str());
+             tr(STR_HOME_PANEL_ETA), etaVal.c_str());
     const auto sTrunc = r.truncatedText(dataFont, buf, pw - textLeft - pad - 4);
     r.drawText(dataFont, px + textLeft, curY + (h4 - lh) / 2, sTrunc.c_str(), true);
   }
