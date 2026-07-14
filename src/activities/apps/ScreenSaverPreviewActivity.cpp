@@ -6,6 +6,8 @@
 #include <HalStorage.h>
 #include <I18n.h>
 
+#include "FontCacheManager.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -166,6 +168,11 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
         GUI.fillPopupProgress(renderer, popupRect, 55);
       }
       drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      // Free font caches so the ~44 KB PNG decoder gets a contiguous heap block.
+      // The frame text above is already rasterised, so clearing here is safe.
+      if (auto* fcm = renderer.getFontCacheManager()) {
+        fcm->clearCache();
+      }
       rendered = drawPreviewPng(renderer, contentRect, imagePath);
     } else {
       FsFile file;
@@ -176,6 +183,9 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
             GUI.fillPopupProgress(renderer, popupRect, 55);
           }
           drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+          if (auto* fcm = renderer.getFontCacheManager()) {
+            fcm->clearCache();
+          }
           drawPreviewBitmap(renderer, contentRect, bitmap);
           rendered = true;
         }

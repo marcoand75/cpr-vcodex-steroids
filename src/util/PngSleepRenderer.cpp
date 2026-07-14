@@ -7,7 +7,6 @@
 #include <MemoryBudget.h>
 #include <PNGdec.h>
 
-#include <new>
 #include <string>
 
 namespace {
@@ -152,10 +151,18 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
     return false;
   }
 
-  PNG* png = new (std::nothrow) PNG();
-  if (!png) {
-    return false;
-  }
+  // Decode through a single static PNG decoder instance instead of `new PNG()`.
+  // PNGdec keeps its entire ~58 KB working set (32 KB zlib window + ~20 KB inflate
+  // state + row/palette/file buffers) inline in the PNG object, so `new PNG()` needs
+  // one large *contiguous* heap block. On the ESP32-C3 that block is frequently
+  // unavailable (heap fragmentation from long runtime / stacked activities), which
+  // made folder-selector PNG previews fail with "Invalid image file" even though BMP
+  // previews worked. A static instance lives in .bss, so decoding no longer depends
+  // on contiguous heap. PNG::open() memset()s the struct on every call, so reusing one
+  // instance across calls is safe; drawTransparentPng is only ever invoked
+  // synchronously from a single activity at a time.
+  static PNG s_png;
+  PNG* png = &s_png;
 
   const char* previousPrefix = g_pngStoragePrefix;
   g_pngStoragePrefix = storagePrefix ? storagePrefix : "SLP";
@@ -163,7 +170,6 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   g_pngStoragePrefix = previousPrefix;
   if (rc != PNG_SUCCESS) {
     LOG_ERR("SLP", "PNG open failed: %s (%d)", path.c_str(), rc);
-    delete png;
     return false;
   }
 
@@ -188,6 +194,5 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
 
   rc = png->decode(&ctx, 0);
   png->close();
-  delete png;
   return rc == PNG_SUCCESS;
 }
