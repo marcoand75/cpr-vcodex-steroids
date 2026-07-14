@@ -7,6 +7,7 @@
 #include "components/PanelDrawHelper.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
+#include "components/icons/cleanmonitor.h"
 #include "components/icons/heart.h"
 #include "components/icons/trophy.h"
 #include "components/icons/readingstats.h"
@@ -45,10 +46,10 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
                    isCompleted ? StrId::STR_MARK_AS_NOT_FINISHED : StrId::STR_MARK_AS_FINISHED,
                    TrophyIcon, 32, 32});
   if (isEpubFormat) {
-    items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, TransferIcon, 32, 32});
+    items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitorIcon32, 32, 32});
   }
   if (!isLibraryMode) {
-    items.push_back({MenuAction::CLEAR_THEME_CACHE, StrId::STR_CLEAR_THEME_CACHE, TransferIcon, 32, 32});
+    items.push_back({MenuAction::CLEAR_THEME_CACHE, StrId::STR_CLEAR_THEME_CACHE, CleanMonitorIcon32, 32, 32});
   }
   if (isLibraryMode) {
     items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER, ImageIcon, 32, 32});

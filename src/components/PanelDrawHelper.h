@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 
 #include "../fontIds.h"
+#include "UITheme.h"
 
 #include <cstdint>
 #include <functional>
@@ -12,12 +13,10 @@
 /**
  * Shared panel-style drawing helpers for popups, context menus, and overlays.
  *
- * The visual language mirrors KOReader's rounded white panels: white fill,
- * thin black border, bold title, separator, filled-black row highlight,
- * optional row icons, and scroll chevrons.
+ * Supports both the classic KOReader rounded-panel style and a cyberpunk
+ * angular-panel style (active when the Marcoand75 theme is selected).
  *
- * All dimensions are expressed in logical pixels; the caller is responsible
- * for passing coordinates in the same logical space as the rest of the UI.
+ * All dimensions are expressed in logical pixels.
  */
 class PanelDrawHelper {
  public:
@@ -70,9 +69,40 @@ class PanelDrawHelper {
     return layout;
   }
 
+  static void drawAngularPanel(GfxRenderer& r, int x, int y, int w, int h) {
+    constexpr int c = 4;
+    constexpr int lw = 2;
+    if (w < c * 2 || h < c * 2) { r.drawRect(x, y, w, h, lw, true); return; }
+    int x2 = x + w, y2 = y + h;
+    r.drawLine(x + c, y, x2 - c, y, lw, true);
+    r.drawLine(x2, y + c, x2, y2 - c, lw, true);
+    r.drawLine(x2 - c, y2, x + c, y2, lw, true);
+    r.drawLine(x, y2 - c, x, y + c, lw, true);
+    r.drawLine(x, y + c, x + c, y, 1, true);
+    r.drawLine(x2 - c, y, x2, y + c, 1, true);
+    r.drawLine(x2, y2 - c, x2 - c, y2, 1, true);
+    r.drawLine(x + c, y2, x, y2 - c, 1, true);
+    // Inner corner accent brackets (cyberpunk style)
+    constexpr int bi = 10, bl = 6;
+    r.drawLine(x + bi, y + bi, x + bi + bl, y + bi, 1, true);
+    r.drawLine(x + bi, y + bi, x + bi, y + bi + bl, 1, true);
+    r.drawLine(x + w - bi - bl, y + bi, x + w - bi, y + bi, 1, true);
+    r.drawLine(x + w - bi, y + bi, x + w - bi, y + bi + bl, 1, true);
+    r.drawLine(x + bi, y + h - bi, x + bi + bl, y + h - bi, 1, true);
+    r.drawLine(x + bi, y + h - bi - bl, x + bi, y + h - bi, 1, true);
+    r.drawLine(x + w - bi - bl, y + h - bi, x + w - bi, y + h - bi, 1, true);
+    r.drawLine(x + w - bi, y + h - bi - bl, x + w - bi, y + h - bi, 1, true);
+  }
+
   static void drawBackground(GfxRenderer& renderer, const PanelLayout& layout) {
-    renderer.fillRoundedRect(layout.x, layout.y, layout.width, layout.height, kCornerRadius, Color::White);
-    renderer.drawRoundedRect(layout.x, layout.y, layout.width, layout.height, kBorderWidth, kCornerRadius, true);
+    UITheme& theme = UITheme::getInstance();
+    if (theme.isMarcoand75()) {
+      renderer.fillRect(layout.x, layout.y, layout.width, layout.height, false);
+      drawAngularPanel(renderer, layout.x, layout.y, layout.width, layout.height);
+    } else {
+      renderer.fillRoundedRect(layout.x, layout.y, layout.width, layout.height, kCornerRadius, Color::White);
+      renderer.drawRoundedRect(layout.x, layout.y, layout.width, layout.height, kBorderWidth, kCornerRadius, true);
+    }
   }
 
   static void drawTitle(GfxRenderer& renderer, const PanelLayout& layout, const char* title) {
@@ -83,7 +113,18 @@ class PanelDrawHelper {
 
   static void drawSeparator(GfxRenderer& renderer, const PanelLayout& layout) {
     int sepY = layout.y + kPadY + kTitleH + kSeparatorH;
-    renderer.drawLine(layout.x + kPadX, sepY, layout.x + layout.width - kPadX, sepY, kSeparatorH, true);
+    UITheme& theme = UITheme::getInstance();
+    if (theme.isMarcoand75()) {
+      // Cyberpunk scanline separator
+      for (int cx = layout.x + kPadX; cx + 7 < layout.x + layout.width - kPadX; cx += 7) {
+        renderer.drawLine(cx, sepY, cx + 4, sepY, 1, true);
+        renderer.drawLine(cx + 1, sepY + 2, cx + 3, sepY + 2, 1, true);
+      }
+      renderer.drawLine(layout.x + kPadX, sepY + 1, layout.x + kPadX, sepY + 2, 1, true);
+      renderer.drawLine(layout.x + layout.width - kPadX - 1, sepY + 1, layout.x + layout.width - kPadX - 1, sepY + 2, 1, true);
+    } else {
+      renderer.drawLine(layout.x + kPadX, sepY, layout.x + layout.width - kPadX, sepY, kSeparatorH, true);
+    }
   }
 
   static int getSeparatorY(const PanelLayout& layout) {

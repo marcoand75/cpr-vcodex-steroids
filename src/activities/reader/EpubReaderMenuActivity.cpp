@@ -17,6 +17,7 @@
 #include "components/icons/goalsmedal24.h"
 #include "components/icons/bookshelf.h"
 #include "components/icons/bookshelf24.h"
+#include "components/icons/cleanmonitor.h"
 #include "components/icons/recent.h"
 #include "components/icons/recent24.h"
 #include "components/icons/settings2.h"
@@ -71,7 +72,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, TrophyIcon, 24, 24});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, BookshelfIcon, 24, 24});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, WifiIcon, 24, 24});
-  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, TransferIcon, 24, 24});
+  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitorIcon32, 24, 24});
   return items;
 }
 

@@ -98,6 +98,9 @@
 #include "components/icons/dictionary24.h"
 #include "components/icons/flashcardquiz.h"
 #include "components/icons/library.h"
+#include "components/icons/search.h"
+#include "components/icons/rotation.h"
+#include "components/icons/pageview.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
@@ -134,28 +137,31 @@ const uint8_t* iconForSetting(UIIcon iconId, int& outW, int& outH) {
     case Book: outW = 24; outH = 24; return BookIcon;
     case File: outW = 24; outH = 24; return FileIcon;
     case Recent: outW = 24; outH = 24; return RecentIcon;
-    case Settings: outW = 24; outH = 24; return SettingsIcon;
-    case Apps: outW = 24; outH = 24; return SettingsIcon;
-    case Transfer: outW = 24; outH = 24; return TransferIcon;
-    case Library: outW = 24; outH = 24; return LibraryIcon;
+    case Settings: outW = 32; outH = 32; return SettingsIcon;
+    case Apps: outW = 32; outH = 32; return SettingsIcon;
+    case Transfer: outW = 32; outH = 32; return TransferIcon;
+    case Library: outW = 32; outH = 32; return LibraryIcon;
     case Trophy: outW = 24; outH = 24; return TrophyIcon;
     case Wifi: outW = 24; outH = 24; return WifiIcon;
-    case Hotspot: outW = 24; outH = 24; return HotspotIcon;
+    case Hotspot: outW = 32; outH = 32; return HotspotIcon;
     case Heart: outW = 24; outH = 24; return HeartIcon;
-    case ScreenSaver: outW = 24; outH = 24; return ScreenSaverIcon;
+    case ScreenSaver: outW = 32; outH = 32; return ScreenSaverIcon;
     case Bookshelf: outW = 24; outH = 24; return BookshelfIcon;
-    case SleepMode: outW = 24; outH = 24; return SleepModeIcon32;
-    case CleanMonitor: outW = 24; outH = 24; return CleanMonitorIcon32;
-    case Heatmap: outW = 24; outH = 24; return HeatmapReadingIcon32;
-    case FlashcardQuiz: outW = 24; outH = 24; return FlashcardQuizIcon32;
-    case ReadingProfile: outW = 24; outH = 24; return ReadingProfileIcon32;
-    case LostDevice: outW = 24; outH = 24; return LostDeviceIcon32;
+    case SleepMode: outW = 32; outH = 32; return SleepModeIcon32;
+    case CleanMonitor: outW = 32; outH = 32; return CleanMonitorIcon32;
+    case Heatmap: outW = 32; outH = 32; return HeatmapReadingIcon32;
+    case FlashcardQuiz: outW = 32; outH = 32; return FlashcardQuizIcon32;
+    case ReadingProfile: outW = 32; outH = 32; return ReadingProfileIcon32;
+    case LostDevice: outW = 32; outH = 32; return LostDeviceIcon32;
     case OpdsBrowser: outW = 24; outH = 24; return OPDSBrowserIcon;
     case Dictionary: outW = 24; outH = 24; return DictionaryIcon;
     case GoalsMedal: outW = 24; outH = 24; return GoalsMedalIcon;
-    case ReadingStatsIcon: outW = 24; outH = 24; return ReadingStatsIcon32;
-    case RecentBooks: outW = 24; outH = 24; return RecentBooksIcon32;
+    case ReadingStatsIcon: outW = 32; outH = 32; return ReadingStatsIcon32;
+    case RecentBooks: outW = 32; outH = 32; return RecentBooksIcon32;
     case Bookmark: outW = 24; outH = 24; return BookmarkIcon;
+    case Search: outW = 24; outH = 24; return SearchIcon;
+    case Rotation: outW = 24; outH = 24; return RotationIcon;
+    case Pageview: outW = 24; outH = 24; return PageviewIcon;
     default: break;
   }
   return nullptr;
@@ -1118,8 +1124,7 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
     int iconW = 0, iconH = 0;
     const uint8_t* iconPixels = iconForSetting(setting->iconId, iconW, iconH);
     if (iconPixels != nullptr && iconW > 0 && iconH > 0) {
-      const int scale = kSettingIconSize / iconW;
-      if (scale > 1) {
+      if (iconW != kSettingIconSize || iconH != kSettingIconSize) {
         renderer.drawScaledIcon(iconPixels, iconDrawX, iconDrawY, iconW, iconH, kSettingIconSize, kSettingIconSize);
       } else {
         renderer.drawIcon(iconPixels, iconDrawX, iconDrawY, iconW, iconH);
@@ -1291,9 +1296,7 @@ void SettingsActivity::render(RenderLock&&) {
   } else {
     GUI.drawList(
         renderer, listRect, settingsCount, selectedSettingIndex - 1,
-        [&settings](int index) { return std::string(getSettingNameText(*settings[index])); },
-        nullptr,
-        [&settings](int index) { return settings[index]->iconId; },
+        [&settings](int index) { return std::string(getSettingNameText(*settings[index])); }, nullptr, nullptr,
         [&settings](int i) { return getSettingValueText(*settings[i]); }, true);
   }
 

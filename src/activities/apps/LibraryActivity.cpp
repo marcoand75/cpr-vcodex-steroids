@@ -26,6 +26,7 @@
 #include "RecentBooksStore.h"
 #include "components/LibraryCache.h"
 #include "components/icons/bookshelf.h"
+#include "components/icons/cleanmonitor.h"
 #include "components/icons/cover.h"
 #include "components/icons/file24.h"
 #include "components/icons/heart.h"
@@ -48,6 +49,25 @@ constexpr int COVER_CORNER_RADIUS = 2;
 static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
   for (int dy = 0; dy < leg; ++dy)
     r.fillRect(x + dy, y + dy, leg - dy, 1, black);
+}
+
+void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int w, int h) {
+  constexpr int c = 4;
+  constexpr int cl = 5;
+  constexpr int cg = 2;
+  const int bx = x - 5;
+  const int by = y - 5;
+  const int bw = w + 10;
+  const int bh = h + 10;
+  renderer.drawRect(bx, by, bw, bh, true);
+  renderer.drawLine(bx + cg, by, bx + cg + cl, by, 1, true);
+  renderer.drawLine(bx, by + cg, bx, by + cg + cl, 1, true);
+  renderer.drawLine(bx + bw - cg - cl, by, bx + bw - cg, by, 1, true);
+  renderer.drawLine(bx + bw, by + cg, bx + bw, by + cg + cl, 1, true);
+  renderer.drawLine(bx + cg, by + bh, bx + cg + cl, by + bh, 1, true);
+  renderer.drawLine(bx, by + bh - cg, bx, by + bh - cg - cl, 1, true);
+  renderer.drawLine(bx + bw - cg - cl, by + bh, bx + bw - cg, by + bh, 1, true);
+  renderer.drawLine(bx + bw, by + bh - cg, bx + bw, by + bh - cg - cl, 1, true);
 }
 
 void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
@@ -387,7 +407,7 @@ void LibraryActivity::openFilterPopup() {
   popupOverlay_.items.push_back(searchItem);
 
   PopupItem clearItem; clearItem.label = I18N.get(StrId::STR_SEARCH_CLEAR);
-  clearItem.icon = TransferIcon; clearItem.iconW = 32; clearItem.iconH = 32;
+  clearItem.icon = CleanMonitorIcon32; clearItem.iconW = 32; clearItem.iconH = 32;
   clearItem.selected = false;
   popupOverlay_.items.push_back(clearItem);
 
@@ -1012,8 +1032,7 @@ void LibraryActivity::render(RenderLock&&) {
     const int newRow = newI / gridColumns_;
     const int newX = x0 + newCol * (coverWidth_ + gap);
     const int newY = contentTop + newRow * rowH;
-    renderer.drawRoundedRect(newX - 4, newY - 4, coverWidth_ + 8, coverHeight_ + 8, 3, COVER_CORNER_RADIUS + 4, true);
-    renderer.drawRoundedRect(newX - 6, newY - 6, coverWidth_ + 12, coverHeight_ + 12, 1, COVER_CORNER_RADIUS + 6, true);
+    drawCyberpunkSelectionBorder(renderer, newX, newY, coverWidth_, coverHeight_);
 
     // Refresh the selected-title line under the header (white band + redraw).
     // The info line and pagination are unchanged on a pure selector move.
@@ -1053,8 +1072,7 @@ void LibraryActivity::render(RenderLock&&) {
     const int y = contentTop + row * rowH;
     drawTileContent(i, pageStart, x, y);
     if (idx == selectorIndex_) {
-      renderer.drawRoundedRect(x - 4, y - 4, coverWidth_ + 8, coverHeight_ + 8, 3, COVER_CORNER_RADIUS + 4, true);
-      renderer.drawRoundedRect(x - 6, y - 6, coverWidth_ + 12, coverHeight_ + 12, 1, COVER_CORNER_RADIUS + 6, true);
+      drawCyberpunkSelectionBorder(renderer, x, y, coverWidth_, coverHeight_);
     }
   }
 

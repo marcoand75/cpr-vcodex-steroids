@@ -25,6 +25,10 @@ class UITheme {
   static UIIcon getFileIcon(const std::string& filename);
   static int getStatusBarHeight();
   static int getProgressBarHeight();
+  static bool isMarcoand75() {
+    const auto& m = getInstance().getMetrics();
+    return m.homeCoverHeight == 420;
+  }
 
  private:
   const ThemeMetrics* currentMetrics;

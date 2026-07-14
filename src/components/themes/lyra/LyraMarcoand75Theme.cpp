@@ -46,11 +46,18 @@
 #include "components/icons/trophy24.h"
 #include "components/icons/transfer.h"
 #include "components/icons/wifi.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/search.h"
+#include "components/icons/search24.h"
+#include "components/icons/rotation.h"
+#include "components/icons/rotation24.h"
+#include "components/icons/pageview.h"
+#include "components/icons/pageview24.h"
 #include "fontIds.h"
 
 namespace {
 constexpr int kOverlap = 35;
-constexpr int kCoverTopPad = 8;
+constexpr int kCoverTopPad = 0;
 constexpr int kDotSize = 8;
 constexpr int kDotGap = 6;
 constexpr int kCornerRadius = 6;
@@ -63,7 +70,7 @@ constexpr int kHighlightPad = 12;
 constexpr int kVisibleMenuSlots = 5;
 
 // Data panel layout
-constexpr int kDotsToPanelGap = 10;
+constexpr int kDotsToPanelGap = 6;
 constexpr int kPanelInnerPad = 6;
 constexpr int kRowH = 22;
 constexpr int kColGap = 30;
@@ -132,6 +139,10 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::GoalsMedal: return GoalsMedalIcon;
       case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
       case UIIcon::RecentBooks: return RecentBooksIcon32;
+      case UIIcon::Bookmark: return BookmarkIcon;
+      case UIIcon::Search: return SearchIcon;
+      case UIIcon::Rotation: return RotationIcon;
+      case UIIcon::Pageview: return PageviewIcon;
       default: return nullptr;
     }
   }
@@ -249,7 +260,6 @@ std::string getEta(const ReadingBookStats& s) {
 // --- Data panel builder ---
 
 void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int px, int py, int pw, int ph) {
-  drawCyberPanel(r, px, py, pw, ph, inCar);
   const ReadingBookStats* stats = getBookStats(book);
   const uint8_t pct = getBookProgress(book);
   const bool done = stats && stats->completed;
@@ -265,87 +275,96 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
   char pbuf[8]; snprintf(pbuf, sizeof(pbuf), "%u%%", pct);
   const std::string booksFinished = std::to_string(READING_STATS.getBooksFinishedCount());
 
-  int ry = py + kPanelInnerPad;
-  int rx = px + kPanelInnerPad;
-  int rw = pw - 2 * kPanelInnerPad;
-
-  // Title with corner bracket accents
-  const auto tTrunc = r.truncatedText(UI_12_FONT_ID, book.title.c_str(), rw - 12, EpdFontFamily::BOLD);
-  r.drawText(UI_12_FONT_ID, rx + 6, ry, tTrunc.c_str(), true, EpdFontFamily::BOLD);
-  ry += r.getLineHeight(UI_12_FONT_ID) + 4;
-
-  if (!book.author.empty()) {
-    const auto aTrunc = r.truncatedText(SMALL_FONT_ID, book.author.c_str(), rw - 12);
-    r.drawText(SMALL_FONT_ID, rx + 6, ry, aTrunc.c_str(), true);
-    ry += r.getLineHeight(SMALL_FONT_ID) + 4;
-  }
-  drawScanlineSep(r, rx, ry, rw);
-  ry += 10;
-
-  const int colW = (rw - kColGap) / 2;
-  const int colLeft = rx, colRight = rx + colW + kColGap;
+  constexpr int gap = 6;
+  constexpr int pad = 5;
+  constexpr int textLeft = 20;  // 20px left margin for text inside panels
   const int dataFont = UI_10_FONT_ID;
+  const int lh = r.getLineHeight(dataFont);
+  const int smallLh = r.getLineHeight(SMALL_FONT_ID);
+  int curY = py;
 
-  // Section headers with brackets
-  r.drawText(dataFont, colLeft, ry, "[", true);
-  r.drawText(dataFont, colLeft + 8, ry, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
-  r.drawText(dataFont, colLeft + 8 + r.getTextWidth(dataFont, tr(STR_HOME_PANEL_BOOK)) + 2, ry, "]", true);
-
-  r.drawText(dataFont, colRight, ry, "[", true);
-  r.drawText(dataFont, colRight + 8, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
-  r.drawText(dataFont, colRight + 8 + r.getTextWidth(dataFont, tr(STR_HOME_PANEL_STATS)) + 2, ry, "]", true);
-  ry += r.getLineHeight(dataFont) + 6;
-
-  // Data rows with value highlighting
-  struct Row { const char* label; const std::string& value; bool highlight; };
-  const Row leftCol[] = {
-    {tr(STR_HOME_PANEL_TIME), timeVal, false},
-    {tr(STR_HOME_PANEL_SESSIONS), sessVal, false},
-    {tr(STR_HOME_PANEL_PROGRESS), std::string(pbuf), true},
-    {tr(STR_HOME_PANEL_ETA), etaVal, false}};
-  const Row rightCol[] = {
-    {tr(STR_HOME_PANEL_TODAY), dayVal, false},
-    {tr(STR_HOME_PANEL_GOAL), goalVal, false},
-    {tr(STR_HOME_PANEL_STREAK), streakVal, false},
-    {tr(STR_HOME_PANEL_FINISHED), booksFinished, false}};
-
-  int ly = ry, rry = ry;
-  for (int i = 0; i < 4; ++i) {
-    char buf[64]; snprintf(buf, sizeof(buf), "%s:", leftCol[i].label);
-    int labelW = r.getTextWidth(dataFont, buf);
-    r.drawText(dataFont, colLeft, ly, buf, true);
-    if (leftCol[i].highlight) {
-      const int vx = colLeft + labelW + 4;
-      const int vy = ly - 1;
-      const int vw = r.getTextWidth(dataFont, leftCol[i].value.c_str()) + 4;
-      const int vh = r.getLineHeight(dataFont) + 2;
-      r.fillRect(vx, vy, vw, vh, true);
-      r.drawText(dataFont, vx + 2, ly, leftCol[i].value.c_str(), false, EpdFontFamily::BOLD);
-    } else {
-      r.drawText(dataFont, colLeft + labelW + 3, ly, leftCol[i].value.c_str(), true, EpdFontFamily::BOLD);
+  // --- ROW1: Title / Author panel ---
+  {
+    const int h1 = smallLh + lh + 2 * pad + 6;
+    drawCyberPanel(r, px, curY, pw, h1, inCar);
+    const auto tTrunc = r.truncatedText(UI_12_FONT_ID, book.title.c_str(), pw - textLeft - pad, EpdFontFamily::BOLD);
+    r.drawText(UI_12_FONT_ID, px + textLeft, curY + pad + 2, tTrunc.c_str(), true, EpdFontFamily::BOLD);
+    if (!book.author.empty()) {
+      const auto aTrunc = r.truncatedText(SMALL_FONT_ID, book.author.c_str(), pw - textLeft - pad);
+      r.drawText(SMALL_FONT_ID, px + textLeft, curY + pad + 2 + lh + 2, aTrunc.c_str(), true);
     }
-    ly += kRowH;
-  }
-  for (int i = 0; i < 4; ++i) {
-    char buf[64]; snprintf(buf, sizeof(buf), "%s:", rightCol[i].label);
-    int labelW = r.getTextWidth(dataFont, buf);
-    r.drawText(dataFont, colRight, rry, buf, true);
-    r.drawText(dataFont, colRight + labelW + 3, rry, rightCol[i].value.c_str(), true, EpdFontFamily::BOLD);
-    rry += kRowH;
+    curY += h1 + gap;
   }
 
-  const int barY = (ly > rry ? ly : rry) + 8;
-  if (!done) {
-    const int segs = (pct * kProgSegCount + 50) / 100;
-    const int barTotalW = kProgSegCount * (kProgSegW + kProgSegGap) - kProgSegGap;
-    const int barX = px + 8;
-    drawSegmentProgressBar(r, barX, barY, segs, kProgSegCount);
+  // --- ROW2: Two columns — Book panel (left) | Stats panel (right) ---
+  {
+    const int colW = (pw - gap) / 2;
+    const int h2 = lh * 3 + 2 * pad + 6;
+    // Left panel: Book — no brackets
+    drawCyberPanel(r, px, curY, colW, h2, inCar);
+    int ly = curY + pad;
+    r.drawText(dataFont, px + textLeft, ly, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
+    ly += lh + 2;
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TIME), timeVal.c_str());
+    r.drawText(dataFont, px + textLeft, ly, buf, true);
+    ly += lh + 2;
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_SESSIONS), sessVal.c_str());
+    r.drawText(dataFont, px + textLeft, ly, buf, true);
+
+    // Right panel: Statistics — positioned inside its own panel, no brackets
+    const int rightX = px + colW + gap;
+    drawCyberPanel(r, rightX, curY, colW, h2, inCar);
+    int ry = curY + pad;
+    r.drawText(dataFont, rightX + textLeft, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
+    ry += lh + 2;
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TODAY), dayVal.c_str());
+    r.drawText(dataFont, rightX + textLeft, ry, buf, true);
+    ry += lh + 2;
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_GOAL), goalVal.c_str());
+    r.drawText(dataFont, rightX + textLeft, ry, buf, true);
+
+    curY += h2 + gap;
+  }
+
+  // --- ROW3: Full-width progress bar panel (reduced 16px, centered) ---
+  {
+    const int h3 = kProgSegH + 2 * pad + 8;
+    drawCyberPanel(r, px, curY, pw, h3, inCar);
     char pctBuf[8]; snprintf(pctBuf, sizeof(pctBuf), "%u%%", pct);
-    int pctX = barX + barTotalW + 10;
-    int pctY = barY + (kProgSegH - r.getLineHeight(UI_12_FONT_ID)) / 2;
-    r.drawText(UI_12_FONT_ID, pctX, pctY, pctBuf, true, EpdFontFamily::BOLD);
-  } else {
-    r.drawText(UI_12_FONT_ID, px + pw / 2 - 35, barY + 4, "COMPLETED", true, EpdFontFamily::BOLD);
+    const int pctW = r.getTextWidth(UI_12_FONT_ID, pctBuf, EpdFontFamily::BOLD) + 8;
+    const int segFull = kProgSegW + kProgSegGap;
+    const int availBarW = pw - 48;
+    const int dynSegCount = std::max(3, (availBarW - pctW - 6) / segFull);
+    const int barTotalW = dynSegCount * segFull - kProgSegGap;
+    const int totalContentW = barTotalW + 6 + pctW;
+    const int contentOffset = (pw - totalContentW) / 2;
+    if (!done) {
+      const int segs = (pct * dynSegCount + 50) / 100;
+      const int barX = px + contentOffset;
+      const int barY = curY + (h3 - kProgSegH) / 2;
+      drawSegmentProgressBar(r, barX, barY, segs, dynSegCount);
+      int pctX = barX + barTotalW + 6;
+      int pctY2 = barY + (kProgSegH - r.getLineHeight(UI_12_FONT_ID)) / 2;
+      r.drawText(UI_12_FONT_ID, pctX, pctY2, pctBuf, true, EpdFontFamily::BOLD);
+    } else {
+      r.drawText(UI_12_FONT_ID, px + pw / 2 - 35, curY + (h3 - r.getLineHeight(UI_12_FONT_ID)) / 2,
+                 "COMPLETED", true, EpdFontFamily::BOLD);
+    }
+    curY += h3 + gap;
+  }
+
+  // --- ROW4: Summary line (same height as ROW3) ---
+  {
+    const int h4 = kProgSegH + 2 * pad + 8;
+    drawCyberPanel(r, px, curY, pw, h4, inCar);
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%s: %s - %s: %s - %s: %s",
+             tr(STR_HOME_PANEL_STREAK), streakVal.c_str(),
+             tr(STR_HOME_PANEL_FINISHED), booksFinished.c_str(),
+             tr(STR_HOME_PANEL_TIME), timeVal.c_str());
+    const auto sTrunc = r.truncatedText(dataFont, buf, pw - textLeft - pad - 4);
+    r.drawText(dataFont, px + textLeft, curY + (h4 - lh) / 2, sTrunc.c_str(), true);
   }
 }
 
@@ -443,6 +462,12 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   if (!coverRendered) {
     lastCarouselSelectorIndex = centerIdx;
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+    const int panelX = rect.x + 8;
+    const int panelW = rect.width - 16;
+    const int carouselPanelY = rect.y + kCoverTopPad;
+    const int dotsY = centerTileY + kCenterCoverH + 8;
+
+    // Draw covers on white background
     const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
     const int nextIdx = (centerIdx + 1) % bookCount;
     if (bookCount >= 3 && drawCover(prevIdx, leftX, sideTileY, kSideCoverW, kSideCoverH))
@@ -453,7 +478,7 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                       kCenterCoverW + 2 * kCenterOutlineW, kCenterCoverH + 2 * kCenterOutlineW, false);
     drawCover(centerIdx, centerX, centerTileY, kCenterCoverW, kCenterCoverH);
 
-    const int dotsY = centerTileY + kCenterCoverH + 8;
+    // Navigation dots
     const int totalDotsW = bookCount * kDotSize + (bookCount - 1) * kDotGap;
     int dotX = centerX + (kCenterCoverW - totalDotsW) / 2;
     for (int i = 0; i < bookCount; ++i) {
@@ -461,10 +486,13 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       else renderer.drawRect(dotX, dotsY, kDotSize, kDotSize, true);
       dotX += kDotSize + kDotGap;
     }
-    const int panelY = dotsY + kDotSize + kDotsToPanelGap;
+
+    // Cyberpunk panel border around the carousel — drawn LAST so it paints over everything
+    drawCyberPanel(renderer, panelX, carouselPanelY - 4, panelW, (dotsY + kDotSize + 6) - carouselPanelY + 4, inCarouselRow);
+
+
+    const int panelY = dotsY + kDotSize + kDotsToPanelGap + 4;
     const int panelH = rect.y + rect.height - panelY - 6;
-    const int panelX = rect.x + 8;
-    const int panelW = rect.width - 16;
     drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW, panelH);
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
@@ -487,34 +515,49 @@ void LyraMarcoand75Theme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int b
                                          const std::function<bool(int index)>& showAccessory) const {
   (void)rect; (void)buttonLabel; (void)buttonSubtitle; (void)showAccessory;
   if (buttonCount <= 0) return;
+  constexpr int kIconSize = 32;
+  constexpr int kIconPad32 = 8;
+  constexpr int kHighlightPad32 = 8;
   const int visibleCount = std::min(buttonCount, kVisibleMenuSlots);
   const int safeSelectedIndex = (selectedIndex >= 0 && selectedIndex < buttonCount) ? selectedIndex : -1;
   const int maxWindowStart = std::max(0, buttonCount - visibleCount);
   int windowStart = 0;
   if (safeSelectedIndex >= 0) windowStart = std::clamp(safeSelectedIndex - visibleCount / 2, 0, maxWindowStart);
   const int screenW = renderer.getScreenWidth();
-  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
+  const int tileH = kIconPad32 + kIconSize + kIconPad32;
   const int tileW = screenW / visibleCount;
-  const int rowY = renderer.getScreenHeight() - LyraMarcoand75Metrics::values.buttonHintsHeight - tileH;
-  renderer.fillRect(0, rowY, screenW, tileH, false);
+  const int rowY = renderer.getScreenHeight() - LyraMarcoand75Metrics::values.buttonHintsHeight - tileH - 8;
+  // Same panel dimensions as the stats panels for consistent style
+  const int panelX = rect.x + 8;
+  const int panelW = rect.width - 16;
+  constexpr int kIconPanelPadCyber = 4;
+  const int panelIconY = rowY - kIconPanelPadCyber;
+  const int panelIconH = tileH + 2 * kIconPanelPadCyber;
+  // White fill then cyberpanel border on top so corner brackets are visible
+  renderer.fillRect(panelX + 5, panelIconY + 5, panelW - 10, panelIconH - 10, false);
+  drawCyberPanel(renderer, panelX, panelIconY, panelW, panelIconH, false);
+  // Draw icons on the cleared background
   for (int slot = 0; slot < visibleCount; ++slot) {
     const int i = windowStart + slot;
     const int tileX = slot * tileW;
-    const int iconX = tileX + (tileW - kMenuIconSize) / 2;
-    const int iconY = rowY + kMenuIconPad;
+    const int iconX = tileX + (tileW - kIconSize) / 2;
+    const int iconY = rowY + kIconPad32;
     if (safeSelectedIndex == i) {
-      const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
+      const int highlightSize = kIconSize + 2 * kHighlightPad32;
       const int highlightY = rowY + (tileH - highlightSize) / 2;
-      renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kCornerRadius, Color::Black);
+      renderer.fillRoundedRect(iconX - kHighlightPad32, highlightY, highlightSize, highlightSize, kCornerRadius, Color::Black);
     }
     if (rowIcon != nullptr) {
-      const uint8_t* bmp = iconForName(rowIcon(i), kMenuIconSize);
+      const uint8_t* bmp = iconForName(rowIcon(i), kIconSize);
       if (bmp != nullptr) {
         if (safeSelectedIndex == i) {
-          if (renderer.isDarkMode()) renderer.drawIconBlack(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
-          else renderer.drawIconInverted(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
+          if (renderer.isDarkMode()) {
+            renderer.drawIconBlack(bmp, iconX, iconY, kIconSize, kIconSize);
+          } else {
+            renderer.drawIconInverted(bmp, iconX, iconY, kIconSize, kIconSize);
+          }
         } else {
-          renderer.drawIcon(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
+          renderer.drawIcon(bmp, iconX, iconY, kIconSize, kIconSize);
         }
       }
     }

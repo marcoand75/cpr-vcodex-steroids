@@ -1078,7 +1078,7 @@ void GfxRenderer::drawScaledIcon(const uint8_t bitmap[], int x, int y, int srcW,
   }
 
   // Nearest-neighbor downscale/upscale into a stack buffer.
-  const int maxDim = 32;
+  const int maxDim = 48;
   if (dstW > maxDim || dstH > maxDim) return;
 
   const int srcStride = (srcW + 7) / 8;
@@ -1111,7 +1111,7 @@ void GfxRenderer::drawScaledIconInverted(const uint8_t bitmap[], int x, int y, i
     return;
   }
 
-  const int maxDim = 32;
+  const int maxDim = 48;
   if (dstW > maxDim || dstH > maxDim) return;
 
   const int srcStride = (srcW + 7) / 8;

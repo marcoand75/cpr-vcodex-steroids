@@ -17,6 +17,7 @@
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
+#include "components/icons/bookmark.h"
 #include "components/icons/cover.h"
 #include "components/icons/file.h"
 #include "components/icons/file24.h"
@@ -40,6 +41,12 @@
 #include "components/icons/readingprofile.h"
 #include "components/icons/lostdevice.h"
 #include "components/icons/opdsbrowser.h"
+#include "components/icons/search.h"
+#include "components/icons/search24.h"
+#include "components/icons/rotation.h"
+#include "components/icons/rotation24.h"
+#include "components/icons/pageview.h"
+#include "components/icons/pageview24.h"
 #include "components/icons/dictionary.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
@@ -66,6 +73,20 @@ constexpr int mainMenuColumns = 2;
 constexpr int progressRowGap = 8;
 constexpr int progressBarHeight = 8;
 int coverWidth = 0;
+
+void drawCyberpunkPanelBorder(const GfxRenderer& r, int x, int y, int w, int h) {
+  constexpr int cg = 3;
+  constexpr int cl = 6;
+  r.drawRect(x, y, w, h, true);
+  r.drawLine(x + cg, y, x + cg + cl, y, 1, true);
+  r.drawLine(x, y + cg, x, y + cg + cl, 1, true);
+  r.drawLine(x + w - cg - cl, y, x + w - cg, y, 1, true);
+  r.drawLine(x + w - cg, y, x + w - cg, y + cg + cl, 1, true);
+  r.drawLine(x + cg, y + h, x + cg + cl, y + h, 1, true);
+  r.drawLine(x, y + h - cg, x, y + h - cg - cl, 1, true);
+  r.drawLine(x + w - cg - cl, y + h, x + w - cg, y + h, 1, true);
+  r.drawLine(x + w - cg, y + h - cg - cl, x + w - cg, y + h, 1, true);
+}
 
 std::vector<int> allocateTabTextWidths(const std::vector<int>& desiredWidths, int textBudget) {
   const int tabCount = static_cast<int>(desiredWidths.size());
@@ -204,6 +225,14 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
         return RecentBooksIcon32;
+      case UIIcon::Bookmark:
+        return BookmarkIcon;
+      case UIIcon::Search:
+        return Search24Icon;
+      case UIIcon::Rotation:
+        return Rotation24Icon;
+      case UIIcon::Pageview:
+        return Pageview24Icon;
       default:
         return nullptr;
     }
@@ -261,6 +290,14 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
         return RecentBooksIcon32;
+      case UIIcon::Bookmark:
+        return BookmarkIcon;
+      case UIIcon::Search:
+        return SearchIcon;
+      case UIIcon::Rotation:
+        return RotationIcon;
+      case UIIcon::Pageview:
+        return PageviewIcon;
       default:
         return nullptr;
     }
@@ -535,7 +572,8 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
 
   // Draw all items
-  const auto pageStartIndex = selectedIndex / pageItems * pageItems;
+  const auto rawPageStart = selectedIndex / pageItems * pageItems;
+  const auto pageStartIndex = std::max(0, rawPageStart);
   int iconY = (rowSubtitle != nullptr) ? 16 : 10;
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
     const int itemY = rect.y + (i % pageItems) * rowHeight;
@@ -786,33 +824,51 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     const int smallLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
     const int progressRowHeight = std::max(smallLineHeight, progressBarHeight);
     const int statsLineHeight = smallLineHeight;
-    const int progressTopGap = 14;
-    const int statsTopGap = 7;
+    const int panelGap = 6;
+    const int panelPad = 4;
+    const int panelMinHeight = 28;
     const int totalBlockHeight =
-        titleBlockHeight + authorHeight + progressTopGap + progressRowHeight + statsTopGap + statsLineHeight;
+        std::max(panelMinHeight, titleBlockHeight + authorHeight + panelPad * 2) + panelGap +
+        std::max(panelMinHeight, progressRowHeight + panelPad * 2) + panelGap +
+        std::max(panelMinHeight, statsLineHeight + panelPad * 2);
     int currentY = tileY + tileHeight / 2 - totalBlockHeight / 2;
     const int textX = tileX + hPaddingInSelection + coverWidth + LyraMetrics::values.verticalSpacing;
+    const int panelX = textX - 2;
+    const int panelW = textWidth + 4;
+
+    // Panel 1: Title/Author
+    const int p1H = std::max(panelMinHeight, titleBlockHeight + authorHeight + panelPad * 2);
+    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p1H);
+    int py = currentY + panelPad;
     for (const auto& line : titleLines) {
-      renderer.drawText(UI_12_FONT_ID, textX, currentY, line.c_str(), true, EpdFontFamily::BOLD);
-      currentY += titleLineHeight;
+      renderer.drawText(UI_12_FONT_ID, textX, py, line.c_str(), true, EpdFontFamily::BOLD);
+      py += titleLineHeight;
     }
     if (!book.author.empty()) {
-      currentY += renderer.getLineHeight(UI_10_FONT_ID) / 2;
-      renderer.drawText(UI_10_FONT_ID, textX, currentY, author.c_str(), true);
-      currentY += renderer.getLineHeight(UI_10_FONT_ID);
+      py += renderer.getLineHeight(UI_10_FONT_ID) / 2;
+      renderer.drawText(UI_10_FONT_ID, textX, py, author.c_str(), true);
     }
+    currentY += p1H + panelGap;
 
-    currentY += progressTopGap;
+    // Panel 2: Book progress
+    const int p2H = std::max(panelMinHeight, progressRowHeight + panelPad * 2);
+    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p2H);
     const int progressTextWidth = renderer.getTextWidth(SMALL_FONT_ID, progressText.c_str(), EpdFontFamily::BOLD);
     const int progressBarWidth = std::max(24, textWidth - progressTextWidth - progressRowGap);
-    const int progressBarY = currentY + std::max(0, (smallLineHeight - progressBarHeight) / 2);
+    const int progressBarY = currentY + panelPad + std::max(0, (p2H - panelPad * 2 - progressBarHeight) / 2);
     drawLyraProgressBar(renderer, Rect{textX, progressBarY, progressBarWidth, progressBarHeight}, progressPercent);
-    renderer.drawText(SMALL_FONT_ID, textX + progressBarWidth + progressRowGap, currentY, progressText.c_str(), true,
-                      EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, textX + progressBarWidth + progressRowGap,
+                      currentY + panelPad + std::max(0, (p2H - panelPad * 2 - smallLineHeight) / 2),
+                      progressText.c_str(), true, EpdFontFamily::BOLD);
+    currentY += p2H + panelGap;
 
-    currentY += progressRowHeight + statsTopGap;
+    // Panel 3: Statistics
+    const int p3H = std::max(panelMinHeight, statsLineHeight + panelPad * 2);
+    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p3H);
     auto statsLine = renderer.truncatedText(SMALL_FONT_ID, statsText.c_str(), textWidth);
-    renderer.drawText(SMALL_FONT_ID, textX, currentY, statsLine.c_str(), true);
+    renderer.drawText(SMALL_FONT_ID, textX,
+                      currentY + panelPad + std::max(0, (p3H - panelPad * 2 - smallLineHeight) / 2),
+                      statsLine.c_str(), true);
   } else {
     drawEmptyRecents(renderer, rect);
   }
