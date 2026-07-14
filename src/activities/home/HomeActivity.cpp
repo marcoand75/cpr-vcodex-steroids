@@ -261,7 +261,7 @@ std::string getHomeShortcutSubtitle(const HomeShortcutEntry& entry) {
 
 UIIcon getHomeShortcutIcon(const HomeShortcutEntry& entry) {
   if (entry.isAppsHub) {
-    return UIIcon::Apps;
+    return UIIcon::AppsHub;
   }
   return entry.definition ? entry.definition->icon : UIIcon::Folder;
 }

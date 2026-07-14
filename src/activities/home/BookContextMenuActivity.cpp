@@ -16,6 +16,11 @@
 #include "components/icons/settings2.h"
 #include "components/icons/transfer.h"
 #include "components/icons/image.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/notification_unread.h"
+#include "components/icons/delete_file.h"
+#include "components/icons/cache_cleaner.h"
 #include "fontIds.h"
 
 BookContextMenuActivity::BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -35,7 +40,7 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
   // Icon choices mirror the semantic conventions of the library sort/filter popups.
   items.push_back({MenuAction::OPEN_BOOK, StrId::STR_OPEN, BookIcon, 32, 32});
   if (!isLibraryMode) {
-    items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS, RecentIcon, 32, 32});
+    items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS, RecentBooksIcon32, 32, 32});
   }
   items.push_back({MenuAction::VIEW_STATS, StrId::STR_READING_STATS, ReadingStatsIcon32, 32, 32});
   items.push_back({MenuAction::VIEW_METADATA, StrId::STR_VIEW_METADATA, Settings2Icon, 32, 32});
@@ -44,12 +49,12 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
                    HeartIcon, 32, 32});
   items.push_back({MenuAction::MARK_READ_UNREAD,
                    isCompleted ? StrId::STR_MARK_AS_NOT_FINISHED : StrId::STR_MARK_AS_FINISHED,
-                   TrophyIcon, 32, 32});
+                   isCompleted ? NotificationUnreadIcon : FinishFlagIcon, 32, 32});
   if (isEpubFormat) {
-    items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitorIcon32, 32, 32});
+    items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, DeleteFileIcon, 32, 32});
   }
   if (!isLibraryMode) {
-    items.push_back({MenuAction::CLEAR_THEME_CACHE, StrId::STR_CLEAR_THEME_CACHE, CleanMonitorIcon32, 32, 32});
+    items.push_back({MenuAction::CLEAR_THEME_CACHE, StrId::STR_CLEAR_THEME_CACHE, CacheCleanerIcon, 32, 32});
   }
   if (isLibraryMode) {
     items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER, ImageIcon, 32, 32});

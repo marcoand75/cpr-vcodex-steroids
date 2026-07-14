@@ -101,7 +101,26 @@ enum UIIcon {
   Bookmark,
   Search,
   Rotation,
-  Pageview
+  Pageview,
+  // New icons (from custom SVGs)
+  SearchPlus,
+  SearchMinus,
+  TimeFast,
+  SortAsc,
+  SortDesc,
+  LibraryNew,
+  GpsFound,
+  MedalAlt,
+  Dictionary2,
+  AppsHub,
+  CalendarTime,
+  LibraryBook,
+  DeleteFile,
+  CacheCleaner,
+  FinishFlag,
+  NotificationUnread,
+  FileTransfer,
+  Calibre
 };
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
 

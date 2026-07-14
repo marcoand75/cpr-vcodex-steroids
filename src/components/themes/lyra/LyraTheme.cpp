@@ -56,6 +56,24 @@
 #include "components/icons/trophy24.h"
 #include "components/icons/transfer.h"
 #include "components/icons/wifi.h"
+#include "components/icons/search_plus.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/time_fast.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
+#include "components/icons/library_new.h"
+#include "components/icons/gps_found.h"
+#include "components/icons/medal_alt.h"
+#include "components/icons/dictionary2.h"
+#include "components/icons/apps_hub.h"
+#include "components/icons/calendar_time.h"
+#include "components/icons/library_book.h"
+#include "components/icons/delete_file.h"
+#include "components/icons/cache_cleaner.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/notification_unread.h"
+#include "components/icons/file_transfer.h"
+#include "components/icons/calibre.h"
 #include "fontIds.h"
 #include "util/ReadingStatsAnalytics.h"
 
@@ -298,6 +316,42 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return RotationIcon;
       case UIIcon::Pageview:
         return PageviewIcon;
+      case UIIcon::SearchPlus:
+        return SearchPlusIcon;
+      case UIIcon::SearchMinus:
+        return SearchMinusIcon;
+      case UIIcon::TimeFast:
+        return TimeFastIcon;
+      case UIIcon::SortAsc:
+        return SortAscIcon;
+      case UIIcon::SortDesc:
+        return SortDescIcon;
+      case UIIcon::LibraryNew:
+        return LibraryNewIcon;
+      case UIIcon::GpsFound:
+        return GpsFoundIcon;
+      case UIIcon::MedalAlt:
+        return MedalAltIcon;
+      case UIIcon::Dictionary2:
+        return Dictionary2Icon;
+      case UIIcon::AppsHub:
+        return AppsHubIcon;
+      case UIIcon::CalendarTime:
+        return CalendarTimeIcon;
+      case UIIcon::LibraryBook:
+        return LibraryBookIcon;
+      case UIIcon::DeleteFile:
+        return DeleteFileIcon;
+      case UIIcon::CacheCleaner:
+        return CacheCleanerIcon;
+      case UIIcon::FinishFlag:
+        return FinishFlagIcon;
+      case UIIcon::NotificationUnread:
+        return NotificationUnreadIcon;
+      case UIIcon::FileTransfer:
+        return FileTransferIcon;
+      case UIIcon::Calibre:
+        return CalibreIcon;
       default:
         return nullptr;
     }

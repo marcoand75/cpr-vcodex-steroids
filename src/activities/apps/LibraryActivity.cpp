@@ -28,15 +28,17 @@
 #include "components/icons/bookshelf.h"
 #include "components/icons/cleanmonitor.h"
 #include "components/icons/cover.h"
-#include "components/icons/file24.h"
 #include "components/icons/heart.h"
 #include "components/icons/heart24.h"
 #include "components/icons/library.h"
-#include "components/icons/readingstats.h"
-#include "components/icons/recent.h"
+#include "components/icons/library_new.h"
 #include "components/icons/recentbooks.h"
-#include "components/icons/settings2.h"
+#include "components/icons/search_plus.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
 #include "components/icons/text24.h"
+#include "components/icons/time_fast.h"
 #include "components/icons/transfer.h"
 #include "components/LibraryPopupOverlay.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
@@ -354,12 +356,12 @@ void LibraryActivity::openSortPopup() {
   upLongTriggered_ = downLongTriggered_ = false;
 
   struct { StrId id; const uint8_t* icon; int iconW; int iconH; CrossPointSettings::LIBRARY_SORT sort; } sorts[] = {
-    {StrId::STR_SORT_TITLE_ASC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_TITLE_ASC},
-    {StrId::STR_SORT_TITLE_DESC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_TITLE_DESC},
-    {StrId::STR_SORT_AUTHOR_ASC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
-    {StrId::STR_SORT_AUTHOR_DESC, Text24Icon, 24, 24, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
+    {StrId::STR_SORT_TITLE_ASC, SortAscIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_TITLE_ASC},
+    {StrId::STR_SORT_TITLE_DESC, SortDescIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_TITLE_DESC},
+    {StrId::STR_SORT_AUTHOR_ASC, SortAscIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
+    {StrId::STR_SORT_AUTHOR_DESC, SortDescIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
     {StrId::STR_SORT_RECENT, RecentBooksIcon32, 32, 32, CrossPointSettings::LIBRARY_SORT_RECENT},
-    {StrId::STR_SORT_PROGRESS, ReadingStatsIcon32, 32, 32, CrossPointSettings::LIBRARY_SORT_PROGRESS},
+    {StrId::STR_SORT_PROGRESS, TimeFastIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_PROGRESS},
   };
   for (int i = 0; i < 6; ++i) {
     PopupItem item;
@@ -387,7 +389,7 @@ void LibraryActivity::openFilterPopup() {
   upLongTriggered_ = downLongTriggered_ = false;
 
   PopupItem allItem; allItem.label = I18N.get(StrId::STR_ALL_BOOKS);
-  allItem.icon = BookshelfIcon; allItem.iconW = 32; allItem.iconH = 32;
+  allItem.icon = LibraryNewIcon; allItem.iconW = 32; allItem.iconH = 32;
   allItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_ALL);
   popupOverlay_.items.push_back(allItem);
 
@@ -402,12 +404,12 @@ void LibraryActivity::openFilterPopup() {
   popupOverlay_.items.push_back(recentItem);
 
   PopupItem searchItem; searchItem.label = I18N.get(StrId::STR_SEARCH_LIBRARY);
-  searchItem.icon = Text24Icon; searchItem.iconW = 24; searchItem.iconH = 24;
+  searchItem.icon = SearchPlusIcon; searchItem.iconW = 32; searchItem.iconH = 32;
   searchItem.selected = false;
   popupOverlay_.items.push_back(searchItem);
 
   PopupItem clearItem; clearItem.label = I18N.get(StrId::STR_SEARCH_CLEAR);
-  clearItem.icon = CleanMonitorIcon32; clearItem.iconW = 32; clearItem.iconH = 32;
+  clearItem.icon = SearchMinusIcon; clearItem.iconW = 32; clearItem.iconH = 32;
   clearItem.selected = false;
   popupOverlay_.items.push_back(clearItem);
 

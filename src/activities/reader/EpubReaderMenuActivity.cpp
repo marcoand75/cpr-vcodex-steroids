@@ -13,6 +13,7 @@
 #include "components/icons/bookmark24.h"
 #include "components/icons/dictionary.h"
 #include "components/icons/dictionary24.h"
+#include "components/icons/dictionary2.h"
 #include "components/icons/goalsmedal.h"
 #include "components/icons/goalsmedal24.h"
 #include "components/icons/bookshelf.h"
@@ -61,7 +62,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   }
   items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, SearchIcon, 24, 24});
   items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, RecentIcon, 24, 24});
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, DictionaryIcon, 24, 24});
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary2Icon, 24, 24});
   items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, BookmarkIcon, 24, 24});
   items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, BookmarkIcon, 24, 24});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, RotationIcon, 24, 24});
