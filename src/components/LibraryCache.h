@@ -12,15 +12,23 @@ class GfxRenderer;
 // open, manual refresh, or after an inbound transfer invalidates the cache.
 //
 // Storage layout:
-//   /.crosspoint/library.bin v2
-//     u8  version (== 2)
+//   /.crosspoint/library.bin v3
+//     u8  version (== 3)
 //     u16 count
 //     repeat `count` records:
 //       u16 + bytes : path           (required, non-empty)
 //       u16 + bytes : title          (display label for grid tiles)
 //       u16 + bytes : author         (empty when unknown)
+//     Footer (v3 only):
+//       u32 offsets[count]           (byte offset of each record from start of file)
 //
-// Records are written in display order so loaders never re-sort.
+// Records are written in display order so loaders never need to re-sort.
+//
+// All I/O operations are lazy: the caller loads only the pages it needs via
+// loadPage().  There is no "load all entries" path in the API -- the device
+// simply does not have enough RAM for a full library (1000+ entries).
+// The sync/scan functions write directly to the v3 cache file without
+// materializing all entries in RAM at once.
 namespace LibraryCache {
 
 // Slim in-RAM record. Cover thumbnail path is computed on demand from
@@ -33,6 +41,11 @@ struct Entry {
   std::string author;
 };
 
+// Maximum number of Entry objects held in memory at any time (a window
+// of consecutive entries).  Larger values reduce SD reads at the cost of
+// per-entry heap (~140 bytes each).  64 entries ≈ 9 KB.
+constexpr int kEntryWindow = 64;
+
 // Compute the thumbnail BMP path for an entry at the given grid cell size.
 std::string thumbPathFor(const std::string& path, int coverW, int coverH);
 
@@ -44,40 +57,57 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH);
 // True iff the cache file exists on disk.
 bool exists();
 
-// Read every record from the cache file into `out`. Returns true on success.
-bool load(std::vector<Entry>& out);
+// Read the cache header and return the number of entries.  Returns 0
+// when the file is missing or corrupt.
+int getCount();
 
-// Overwrite the cache file with `entries` in their current order.
+// Load a contiguous range of entries [start, start+count) into `out`.
+// Returns the number of entries actually loaded (may be < count near the
+// end of the library, or 0 on I/O error).
+// count should not exceed kEntryWindow.
+int loadPage(std::vector<Entry>& out, int start, int count);
+
+// Overwrite the cache file with `entries` in their current order, writing
+// v3 format with an offset footer.
+// This is used only by removeBook() and low-level testing; normal
+// sync/scan write directly to the cache without building the full vector.
 bool save(const std::vector<Entry>& entries);
 
 // Delete the cache file. Idempotent.
 void invalidate();
 
 // Remove the entry whose `path` matches and rewrite the cache file.
+// Uses the v3 offset index for path lookup without loading all entries.
 bool removeBook(const std::string& path);
 
 // Incremental sync: compare the cached library against the real SD content.
-// - Removes entries whose files no longer exist on the SD card.
-// - Parses metadata only for newly discovered books and appends them.
-// - Re-sorts and persists the cache when changes are detected.
+// - Reads the cached offset index into RAM (4 × count bytes).
+// - Walks the SD subtree under `rootDir`.
+// - For each SD book, looks up its path in the cached offset index by
+//   loading each cached path from file via seek (one at a time).
+// - When a cached match is found, copies its title/author (also loaded
+//   from file).
+// - For newly discovered books, parses metadata.
+// - Removes cached entries whose files no longer exist on SD.
+// - Writes the merged result directly to the cache file in v3 format.
+//   No Entry vector is materialized in RAM; sync streams to disk.
+//
 // Falls back to a full scan() when the cache file is missing or read fails.
 //
 // `rootDir` restricts the SD walk to a subtree (default "/" = entire card).
-// `out` receives the complete, sorted entry list after sync.
 // Progress is shown via `popupRect` only when a full scan fallback occurs;
 // incremental sync is fast and runs without a popup.
-bool sync(std::vector<Entry>& out, const char* rootDir = "/", int maxBooks = 1000);
+bool sync(GfxRenderer* renderer, const Rect* popupRect, const char* rootDir = "/", int maxBooks = 10000);
 
 // Full SD walk: enumerate every ebook under `rootDir`, parse metadata via
 // the cheap `Epub::load(true, true)` or `Xtc::load()` / `Txt::load()` path,
-// sort, and persist to the cache file. `out` receives the sorted list.
+// sort, and persist to the cache file in v3 format.
 // Cover thumbnails are NOT generated here — they are created on-demand
 // per visible page via `generateCoverForBook()`.
 //
 // Progress is reported by filling `popupRect` — the caller is responsible
-// for drawing the surrounding popup chrome before invoking. `maxBooks`
-// caps the result.
-bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, const char* rootDir = "/",
-          int maxBooks = 1000);
+// for drawing the surrounding popup chrome before invoking.  `maxBooks`
+// caps the result (default 10000).
+bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir = "/", int maxBooks = 10000);
 
 }  // namespace LibraryCache

@@ -8,6 +8,7 @@
 #include <MemoryBudget.h>
 #include <CoverDebugLog.h>
 #include <HomepageDebugLog.h>
+#include <LibraryDebugLog.h>
 #include <Txt.h>
 #include <Xtc.h>
 #include <esp_task_wdt.h>
@@ -43,26 +44,11 @@ static bool readTitleAndAuthor(const std::string& cacheDir, std::string& outTitl
   if (file.read(&version, 1) != 1) { file.close(); return false; }
   file.seekCur(12);  // 3 × u32 = 12 bytes
 
-  // Read the 10 strings: we only keep the first 2 (title, author), skip the rest.
-  // Each string: u32 length + data bytes.
-  auto readAndSkip = [&file](std::string* keep, int skipCount) -> bool {
-    for (int i = 0; i < skipCount; ++i) {
-      uint32_t len;
-      if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { return false; }
-      if (keep && i == 0) {
-        // First string in this batch: we want to read it
-        if (file.read(reinterpret_cast<uint8_t*>(keep->data()), len) != static_cast<int>(len)) { return false; }
-      } else {
-        if (file.seekCur(len) < 0) { return false; }
-      }
-    }
-    return true;
-  };
-
   // String 0: title (keep it)
   {
     uint32_t len;
     if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
+    if (len > 2048) { LIB_LOG("BSC", "readTitleAndAuthor: title len=%u > 2048, corrupt", static_cast<unsigned int>(len)); file.close(); return false; }
     outTitle.resize(len);
     if (file.read(reinterpret_cast<uint8_t*>(&outTitle[0]), len) != static_cast<int>(len)) { file.close(); return false; }
   }
@@ -70,15 +56,15 @@ static bool readTitleAndAuthor(const std::string& cacheDir, std::string& outTitl
   {
     uint32_t len;
     if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
+    if (len > 2048) { LIB_LOG("BSC", "readTitleAndAuthor: author len=%u > 2048, corrupt", static_cast<unsigned int>(len)); file.close(); return false; }
     outAuthor.resize(len);
     if (file.read(reinterpret_cast<uint8_t*>(&outAuthor[0]), len) != static_cast<int>(len)) { file.close(); return false; }
   }
-  // Strings 2-9 (language, publisher, description, publicationDate, identifier,
-  // subject, rights, coverItemHref): skip 8 strings
+  // Strings 2-9: skip
   for (int i = 0; i < 8; ++i) {
     uint32_t len;
     if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
-    if (file.seekCur(len) < 0) { file.close(); return false; }
+    if (!file.seekCur(len)) { file.close(); return false; }
   }
 
   file.close();
@@ -86,24 +72,95 @@ static bool readTitleAndAuthor(const std::string& cacheDir, std::string& outTitl
 }
 
 constexpr const char* kCacheFile = "/.crosspoint/library.bin";
-constexpr uint8_t kVersion = 2;
+constexpr uint8_t kVersion = 3;
 constexpr int kProgressUpdateInterval = 2;
 
+// ── Low-level I/O helpers ────────────────────────────────────────────────
+
+bool writeU8(HalFile& file, uint8_t value) { return file.write(&value, 1) == 1; }
+
+bool writeU16(HalFile& file, uint16_t value) {
+  const uint8_t buf[2] = {static_cast<uint8_t>(value & 0xff), static_cast<uint8_t>(value >> 8)};
+  return file.write(buf, 2) == 2;
+}
+
+bool writeU32(HalFile& file, uint32_t value) {
+  const uint8_t buf[4] = {
+    static_cast<uint8_t>(value & 0xff),
+    static_cast<uint8_t>((value >> 8) & 0xff),
+    static_cast<uint8_t>((value >> 16) & 0xff),
+    static_cast<uint8_t>((value >> 24) & 0xff)
+  };
+  return file.write(buf, 4) == 4;
+}
+
+bool readU8(HalFile& file, uint8_t& out) { return file.read(&out, 1) == 1; }
+
+bool readU16(HalFile& file, uint16_t& out) {
+  uint8_t buf[2];
+  if (file.read(buf, 2) != 2) return false;
+  out = static_cast<uint16_t>(buf[0]) | (static_cast<uint16_t>(buf[1]) << 8);
+  return true;
+}
+
+bool readU32(HalFile& file, uint32_t& out) {
+  uint8_t buf[4];
+  if (file.read(buf, 4) != 4) return false;
+  out = static_cast<uint32_t>(buf[0]) |
+       (static_cast<uint32_t>(buf[1]) << 8) |
+       (static_cast<uint32_t>(buf[2]) << 16) |
+       (static_cast<uint32_t>(buf[3]) << 24);
+  return true;
+}
+
+// Write a string as u16 length prefix + data. Returns the total bytes written
+// (including the prefix) so the caller can track offsets for the v3 footer.
+static int writeStringTracked(HalFile& file, const std::string& s) {
+  const size_t len = s.size();
+  if (len > 0xffff) {
+    LOG_ERR("BSC", "String too long to persist (%zu bytes)", len);
+    return -1;
+  }
+  if (!writeU16(file, static_cast<uint16_t>(len))) return -1;
+  if (len == 0) return 2;
+  if (file.write(s.data(), len) != static_cast<int>(len)) return -1;
+  return static_cast<int>(2 + len);
+}
+
+bool readString(HalFile& file, std::string& out) {
+  uint16_t len = 0;
+  if (!readU16(file, len)) return false;
+  out.clear();
+  if (len == 0) return true;
+  out.resize(len);
+  return file.read(out.data(), len) == static_cast<int>(len);
+}
+
+// Read a string at a known byte offset in `file`.  Restores the original
+// file position after reading.
+bool readStringAt(HalFile& file, uint32_t offset, std::string& out) {
+  const size_t savedPos = file.position();
+  if (!file.seekSet(offset)) return false;
+  const bool ok = readString(file, out);
+  file.seekSet(savedPos);
+  return ok;
+}
+
+// ── Sorting / normalization helpers ──────────────────────────────────────
+
+// Minimal in-RAM record used during sync/scan.  Normalised sort keys are
+// computed inline so we never store the full `Entry` set in RAM.
 struct ScanRecord {
   std::string path;
   std::string title;
   std::string author;
-  std::string normTitle;   // pre-normalized for zero-alloc sort
-  std::string normAuthor;  // pre-normalized for zero-alloc sort (sort key: "zzz" when empty)
+  std::string normTitle;
+  std::string normAuthor;
 };
 
 // Lowercase + strip common Latin accents so titles/authors sort and search
-// consistently regardless of diacritics. Shared by finalizeRecord (scan/sync)
-// and by load() so cached entries also carry normalized keys.
+// consistently regardless of diacritics.
 static void normalizeInPlace(std::string& s) {
-  // Lowercase + strip common Latin accents in-place.  Avoids allocating a
-  // temporary output string per call, which eliminates ~2 alloc/free cycles
-  // per book during sync — the dominant source of heap fragmentation.
   if (s.empty()) return;
   size_t w = 0;
   for (size_t i = 0; i < s.size(); ++i) {
@@ -147,77 +204,79 @@ void emitProgress(GfxRenderer& renderer, const Rect& popupRect, int processed, i
   UITheme::getInstance().getTheme().fillPopupProgress(renderer, popupRect, pct);
 }
 
-bool writeU8(HalFile& file, uint8_t value) { return file.write(&value, 1) == 1; }
+// ── File-scoped helpers for parsing records from cache ───────────────────
 
-bool writeU16(HalFile& file, uint16_t value) {
-  const uint8_t buf[2] = {static_cast<uint8_t>(value & 0xff), static_cast<uint8_t>(value >> 8)};
-  return file.write(buf, 2) == 2;
-}
-
-bool writeString(HalFile& file, const std::string& s) {
-  const size_t len = s.size();
-  if (len > 0xffff) {
-    LOG_ERR("BSC", "String too long to persist (%zu bytes)", len);
-    return false;
+// Parse one record from the current position of `file`.  Returns false on I/O error.
+// When `readData` is false, only skips the record without allocating strings.
+bool readOneRecord(HalFile& file, Entry* out, bool readData) {
+  uint16_t len;
+  if (!readU16(file, len)) return false;
+  if (readData && out) {
+    out->path.resize(len);
+    if (file.read(&(*out->path.begin()), len) != static_cast<int>(len)) return false;
+  } else {
+    if (!file.seekCur(len)) return false;
   }
-  if (!writeU16(file, static_cast<uint16_t>(len))) return false;
-  if (len == 0) return true;
-  return file.write(s.data(), len) == static_cast<int>(len);
-}
-
-bool readU8(HalFile& file, uint8_t& out) { return file.read(&out, 1) == 1; }
-
-bool readU16(HalFile& file, uint16_t& out) {
-  uint8_t buf[2];
-  if (file.read(buf, 2) != 2) return false;
-  out = static_cast<uint16_t>(buf[0]) | (static_cast<uint16_t>(buf[1]) << 8);
+  if (!readU16(file, len)) return false;
+  if (readData && out) {
+    out->title.resize(len);
+    if (file.read(&(*out->title.begin()), len) != static_cast<int>(len)) return false;
+  } else {
+    if (!file.seekCur(len)) return false;
+  }
+  if (!readU16(file, len)) return false;
+  if (readData && out) {
+    out->author.resize(len);
+    if (file.read(&(*out->author.begin()), len) != static_cast<int>(len)) return false;
+  } else {
+    if (!file.seekCur(len)) return false;
+  }
   return true;
 }
 
-bool readString(HalFile& file, std::string& out) {
-  uint16_t len = 0;
-  if (!readU16(file, len)) return false;
-  out.clear();
-  if (len == 0) return true;
-  out.resize(len);
-  return file.read(out.data(), len) == static_cast<int>(len);
-}
+// ── SD enumeration ───────────────────────────────────────────────────────
 
-void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int maxBooks) {
-  // Normalise rootDir: ensure it starts with "/" and does not end with "/"
+// Enumerate ebook paths under rootDir, writing to a temporary file.
+// Returns the number of paths written, or -1 on error.
+// The temp file is at `/.crosspoint/_scan_paths.tmp` and contains
+// a sequence of u16+n path strings (no header count — the reader
+// detects EOF after reading all paths).
+static int enumerateBooksToFile(const char* rootDir, int maxBooks) {
+  // Normalise rootDir
   std::string root = rootDir ? rootDir : "";
   if (root.empty()) root = "/";
   if (root[0] != '/') root.insert(0, "/");
   while (root.size() > 1 && root.back() == '/') root.pop_back();
 
+  // Open temp file for writing (truncate any existing)
+  Storage.mkdir("/.crosspoint");
+  HalFile tmpFile;
+  if (!Storage.openFileForWrite("BSC", "/.crosspoint/_scan_paths.tmp", tmpFile)) {
+    LOG_ERR("BSC", "Failed to create temp path file");
+    return -1;
+  }
+
+  uint32_t written = 0;
+
   std::vector<std::string> worklist;
   worklist.reserve(16);
   worklist.emplace_back(root);
-
-  // Cap recursion depth.  A malformed card with circular symlinks or deeply
-  // nested directories could otherwise push thousands of paths and peak
-  // hundreds of KB of RAM.  8 levels is plenty for any realistic library
-  // layout (genre/author/series/title).
   constexpr int kMaxDepth = 8;
   std::vector<uint8_t> depth;
   depth.push_back(0);
-
   int dirCount = 0;
-  // Only collect up to maxBooks candidates: scan() can only index maxBooks
-  // entries anyway, and collecting thousands of extra path strings needlessly
-  // peaks RAM on the constrained ESP32-C3 (was maxBooks * 8, which OOM'd large
-  // libraries mid-scan).
-  while (!worklist.empty() && static_cast<int>(outPaths.size()) < maxBooks) {
+
+  // Fixed buffer for file names — avoid large stack allocation
+  // that pushes us over FreeRTOS loop task stack on ESP32-C3.
+  char name[500];
+
+  while (!worklist.empty() && static_cast<int>(written) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
     const uint8_t folderDepth = depth.back();
     depth.pop_back();
-
     ++dirCount;
-    if ((dirCount & 0x7) == 0) {
-      yield();
-      esp_task_wdt_reset();
-    }
+    if ((dirCount & 0x7) == 0) { yield(); esp_task_wdt_reset(); }
 
     HalFile rootFile = Storage.open(folder.c_str());
     if (!rootFile || !rootFile.isDirectory()) {
@@ -226,7 +285,7 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
     }
     rootFile.rewindDirectory();
 
-    char name[500];
+    static char name[500];  // static: 500 bytes off the stack (FreeRTOS stack is tight)
     for (HalFile file = rootFile.openNextFile(); file; file = rootFile.openNextFile()) {
       file.getName(name, sizeof(name));
       const bool isDir = file.isDirectory();
@@ -236,416 +295,6 @@ void enumerateBooks(std::vector<std::string>& outPaths, const char* rootDir, int
 
       std::string lowerName = name;
       for (auto& c : lowerName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-      if (lowerName == "system volume information") continue;
-      if (isDir && (lowerName == "crosspoint" || lowerName.compare(0, 5, "sleep") == 0 ||
-                    lowerName == "font" || lowerName == "fonts" || lowerName == "dictionaries" ||
-                    lowerName == "exports")) continue;
-
-      std::string childPath = folder;
-      if (childPath.back() != '/') childPath.push_back('/');
-      childPath.append(name);
-
-      if (isDir) {
-        // Refuse to descend past kMaxDepth. The path may still be opened by
-        // the user later, but we keep the indexing walk bounded.
-        if (folderDepth + 1 >= kMaxDepth) continue;
-        worklist.push_back(std::move(childPath));
-        depth.push_back(static_cast<uint8_t>(folderDepth + 1));
-        continue;
-      }
-
-      const std::string_view filename{name};
-      if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
-          FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename)) {
-        if (std::strcmp(name, "if_found.txt") != 0 && std::strcmp(name, "crash_report.txt") != 0) {
-          outPaths.push_back(std::move(childPath));
-        }
-      }
-    }
-    rootFile.close();
-  }
-}
-
-// Helper: extract EPUB metadata, trying the persistent cache first
-// to avoid opening the ZIP when the book was previously read.
-// Returns true if metadata was successfully extracted, false on OOM/failure.
-// On any failure the record is left with empty title/author and the caller
-// falls back to the filename-derived title.
-bool extractBookMetadata(ScanRecord& rec) {
-  rec.title.clear();
-  rec.author.clear();
-
-  // Defensive sanity check: the path must point to an existing non-empty
-  // regular file.  A corrupt FAT entry or stale path can otherwise crash
-  // the underlying open() call inside the parser.
-  if (rec.path.empty() || rec.path[0] != '/') {
-    LOG_ERR("BSC", "Refusing to parse invalid path: %s", rec.path.c_str());
-    return false;
-  }
-  HalFile stat = Storage.open(rec.path.c_str());
-  if (!stat || stat.isDirectory() || stat.size() == 0) {
-    if (stat) stat.close();
-    LOG_DBG("BSC", "Skipping missing/empty file: %s", rec.path.c_str());
-    return false;
-  }
-  stat.close();
-
-  if (FsHelpers::hasEpubExtension(rec.path)) {
-    // Scope-limit the Epub object so it is destroyed before we move to
-    // the next book, releasing ZIP buffer / page data immediately.
-    bool haveMeta = false;
-    {
-      // Re-check max-alloc heap right before opening the ZIP: a single
-      // EPUB open can request a 100+ KB block; on a fragmented heap after
-      // several previous books the call can OOM. Skipping here is much
-      // cheaper than recovering from a failed allocation deep inside the
-      // parser.
-      const auto heap = MemoryBudget::snapshot();
-      constexpr uint32_t kEpubMinFree = 40000;   // ~40 KB
-      constexpr uint32_t kEpubMinMaxAlloc = 30000;
-      if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
-        LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap,
-                heap.maxAllocHeap);
-        return false;
-      }
-
-      Epub epub(rec.path, "/.crosspoint");
-      const std::string& cacheDir = epub.getCachePath();
-      if (Storage.exists(cacheDir.c_str())) {
-        // Thin read: only title + author — avoids allocating 12 temporary
-        // std::strings (language, publisher, description, etc.) that would
-        // fragment the heap on every iteration.
-        if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
-          haveMeta = !rec.title.empty() || !rec.author.empty();
-        }
-      }
-      // Fallback: full EPUB load (this builds the cache if missing).
-      // Skip only when heap is critically low; building the cache now
-      // makes cover generation several seconds faster per book.
-      if (!haveMeta) {
-        if (ESP.getFreeHeap() < 65000) {
-          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 65 KB)", rec.path.c_str(), ESP.getFreeHeap());
-          return false;
-        }
-        if (epub.load(true, true)) {
-          rec.title = epub.getTitle();
-          rec.author = epub.getAuthor();
-          haveMeta = true;
-        }
-      }
-    }  // Epub destroyed here — release ZIP buffer / page data immediately
-  } else if (FsHelpers::hasXtcExtension(rec.path)) {
-    // XTC load is cheaper than EPUB but still allocates a per-page table.
-    // Guard against fragmentation on the constrained ESP32-C3.
-    if (ESP.getFreeHeap() < 20000) {
-      LOG_DBG("BSC", "Skipping XTC parse for %s (free heap %u < 20 KB)", rec.path.c_str(), ESP.getFreeHeap());
-      return false;
-    }
-    Xtc xtc(rec.path, "/.crosspoint");
-    if (xtc.load()) {
-      rec.title = xtc.getTitle();
-      rec.author = xtc.getAuthor();
-    }
-  } else if (FsHelpers::hasTxtExtension(rec.path) || FsHelpers::hasMarkdownExtension(rec.path)) {
-    // TXT/Markdown: Txt::load is cheap (it only counts lines), but
-    // still skip on very low heap to leave room for the next book.
-    if (ESP.getFreeHeap() < 16000) {
-      LOG_DBG("BSC", "Skipping TXT parse for %s (free heap %u < 16 KB)", rec.path.c_str(), ESP.getFreeHeap());
-      return false;
-    }
-    Txt txt(rec.path, "/.crosspoint");
-    if (txt.load()) {
-      rec.title = txt.getTitle();
-      // Txt has no getAuthor() — leave author empty; UI falls back to filename.
-    }
-  }
-  // TXT/Markdown have no embedded metadata by default; title will be
-  // derived from the filename below when empty.
-
-  if (rec.title.empty()) {
-    const auto slash = rec.path.find_last_of('/');
-    const auto dot = rec.path.find_last_of('.');
-    const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
-    const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
-    rec.title = rec.path.substr(start, end - start);
-  }
-  return true;
-}
-
-}  // namespace
-
-std::string thumbPathFor(const std::string& path, int coverW, int coverH) {
-  const auto hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
-  if (FsHelpers::hasXtcExtension(path)) {
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/xtc_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
-    return buf;
-  }
-  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/txt_%llu/cover.bmp", hash);
-    return buf;
-  }
-  char buf[96];
-  std::snprintf(buf, sizeof(buf), "/.crosspoint/epub_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
-  return buf;
-}
-
-bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
-  // Keep the main-task watchdog fed. Callers (per-page library indexing) may
-  // invoke this from the activity loop with no other WDT reset, and an EPUB/XTC
-  // cover decode can exceed the loop WDT timeout on the ESP32-C3 (~380 KB heap).
-  yield();
-  esp_task_wdt_reset();
-
-  if (FsHelpers::hasEpubExtension(path)) {
-    // EPUB cover extraction needs the ZIP inflate window (~32 KB) plus the
-    // image decoder (JPEG ~17 KB, PNG ~42 KB).  Ensure enough contiguous heap
-    // is available before opening the EPUB, so we don't OOM mid-extraction.
-    uint32_t freeH = ESP.getFreeHeap();
-    uint32_t maxA  = ESP.getMaxAllocHeap();
-    COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
-    if (maxA < 18 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 18432", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 18 KB)",
-              path.c_str(), maxA);
-      return false;
-    }
-    // Scope-limit the Epub object so ZIP/page buffers are released immediately
-    // after the thumbnail is written.
-    Epub epub(path, "/.crosspoint");
-    const bool loaded = epub.load(true, true);
-    COVER_LOG("BSC", "EPUB load(%s): result=%d free=%u maxA=%u",
-              path.c_str(), loaded ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    if (!loaded) return false;
-
-    // Re-check heap after opening the EPUB: metadata cache + ZIP inflate can
-    // consume a significant chunk.  Don't attempt decode if we no longer have
-    // enough contiguous memory; the caller will retry on the next pass.
-    maxA = ESP.getMaxAllocHeap();
-    if (maxA < 14 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 14KB", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen after load for %s (maxAlloc=%u < 14 KB)",
-              path.c_str(), maxA);
-      return false;
-    }
-
-    yield();
-    esp_task_wdt_reset();
-
-    const bool thumbOk = epub.generateThumbBmp(coverW, coverH);
-    COVER_LOG("BSC", "EPUB thumb(%s): result=%d free=%u maxA=%u",
-              path.c_str(), thumbOk ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return thumbOk;
-  }
-  if (FsHelpers::hasXtcExtension(path)) {
-    // XTC thumbnail generation now streams from the cover BMP (row by row)
-    // and requires very little contiguous heap (~300 bytes). Keep a small
-    // safety margin so we don't attempt generation when the heap is truly exhausted.
-    if (ESP.getFreeHeap() < 8192) {
-      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 8 KB)", path.c_str(), ESP.getFreeHeap());
-      return false;
-    }
-    Xtc xtc(path, "/.crosspoint");
-    if (!xtc.load()) {
-      LOG_ERR("BSC", "XTC load failed for %s", path.c_str());
-      return false;
-    }
-    const bool generated = xtc.generateThumbBmp(coverW, coverH);
-    if (!generated) {
-      LOG_ERR("BSC", "XTC thumb gen failed for %s (%dx%d) — pageCount=%lu, freeHeap=%u",
-              path.c_str(), coverW, coverH, xtc.getPageCount(), ESP.getFreeHeap());
-    }
-    return generated;
-  }
-  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    Txt txt(path, "/.crosspoint");
-    if (!txt.load()) return false;
-    return txt.generateCoverBmp();
-  }
-  return false;
-}
-
-bool exists() { return Storage.exists(kCacheFile); }
-
-bool load(std::vector<Entry>& out) {
-  out.clear();
-
-  HalFile file;
-  if (!Storage.openFileForRead("BSC", kCacheFile, file)) return false;
-
-  uint8_t version = 0;
-  if (!readU8(file, version) || version != kVersion) {
-    LOG_ERR("BSC", "Unknown library cache version %u (expected %u)", version, kVersion);
-    file.close();
-    return false;
-  }
-
-  uint16_t count = 0;
-  if (!readU16(file, count)) {
-    file.close();
-    return false;
-  }
-
-  out.reserve(count);
-  for (uint16_t i = 0; i < count; ++i) {
-    Entry entry;
-    if (!readString(file, entry.path) || !readString(file, entry.title) || !readString(file, entry.author)) {
-      LOG_ERR("BSC", "Truncated cache file at entry %u/%u", i, count);
-      file.close();
-      out.clear();
-      return false;
-    }
-    if (entry.path.empty()) continue;
-    out.push_back(std::move(entry));
-  }
-  file.close();
-  LOG_DBG("BSC", "Loaded %d entries from cache", static_cast<int>(out.size()));
-  return true;
-}
-
-bool save(const std::vector<Entry>& entries) {
-  Storage.mkdir("/.crosspoint");
-
-  HalFile file;
-  if (!Storage.openFileForWrite("BSC", kCacheFile, file)) {
-    LOG_ERR("BSC", "Failed to open cache file for write");
-    return false;
-  }
-
-  const size_t count = std::min<size_t>(entries.size(), 0xffff);
-  if (!writeU8(file, kVersion) || !writeU16(file, static_cast<uint16_t>(count))) {
-    LOG_ERR("BSC", "Failed to write cache header");
-    file.close();
-    return false;
-  }
-
-  for (size_t i = 0; i < count; ++i) {
-    const Entry& e = entries[i];
-    if (!writeString(file, e.path) || !writeString(file, e.title) || !writeString(file, e.author)) {
-      LOG_ERR("BSC", "Failed to write entry %zu", i);
-      file.close();
-      return false;
-    }
-  }
-
-  file.close();
-  LOG_DBG("BSC", "Saved %zu entries to cache", count);
-  return true;
-}
-
-void invalidate() {
-  if (!Storage.exists(kCacheFile)) return;
-  if (Storage.remove(kCacheFile)) {
-    LOG_DBG("BSC", "Invalidated library cache");
-  } else {
-    LOG_ERR("BSC", "Failed to remove cache file");
-  }
-}
-
-bool removeBook(const std::string& path) {
-  // Refuse to operate when heap is critically low: the load/save round-trip
-  // doubles the cache's resident size, which OOMs on the ESP32-C3 with a
-  // large library.
-  if (ESP.getFreeHeap() < 30000) {
-    LOG_ERR("BSC", "removeBook skipped: free heap %u < 30 KB", ESP.getFreeHeap());
-    return false;
-  }
-
-  std::vector<Entry> entries;
-  if (!load(entries)) return false;
-
-  auto it = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.path == path; });
-  if (it == entries.end()) return false;
-
-  entries.erase(it);
-  return save(entries);
-}
-
-bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
-  out.clear();
-  if (maxBooks <= 0) return true;
-
-  HOMEPAGE_LOG("BSC", "sync: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-
-  std::string root = rootDir ? rootDir : "";
-  if (root.empty()) root = "/";
-  if (root[0] != '/') root.insert(0, "/");
-  while (root.size() > 1 && root.back() == '/') root.pop_back();
-
-  std::vector<Entry> cached;
-  if (!load(cached)) {
-    LOG_DBG("BSC", "sync: cache not available, falling back to full scan");
-    return false;
-  }
-
-  HOMEPAGE_LOG("BSC", "sync: after load(cached) heap=%u maxA=%u cached=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), cached.size());
-
-  std::sort(cached.begin(), cached.end(),
-            [](const Entry& a, const Entry& b) { return a.path < b.path; });
-
-  std::vector<std::string> worklist;
-  worklist.reserve(16);
-  worklist.emplace_back(root);
-
-  // Mirror enumerateBooks() depth cap so an attacker-supplied / pathological
-  // card layout cannot blow the heap during incremental sync either.
-  constexpr int kMaxDepth = 8;
-  std::vector<uint8_t> depth;
-  depth.push_back(0);
-
-  std::vector<ScanRecord> records;
-  records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
-
-  HOMEPAGE_LOG("BSC", "sync: after reserve(records) heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-
-  int removed = 0;
-  int added = 0;
-  int kept = 0;
-  int sdFileCount = 0;
-  int dirCount = 0;
-
-  auto cachedIndexForPath = [&cached](const std::string& path) -> int {
-    const auto it = std::lower_bound(cached.begin(), cached.end(), path,
-                                     [](const Entry& e, const std::string& p) { return e.path < p; });
-    if (it != cached.end() && it->path == path)
-      return static_cast<int>(it - cached.begin());
-    return -1;
-  };
-
-  std::vector<bool> cachedMatched(cached.size(), false);
-
-  int loopIter = 0;
-  while (!worklist.empty() && static_cast<int>(records.size()) < maxBooks) {
-    const std::string folder = std::move(worklist.back());
-    worklist.pop_back();
-    const uint8_t folderDepth = depth.back();
-    depth.pop_back();
-
-    ++dirCount;
-    if ((dirCount & 0x7) == 0) {
-      yield();
-      esp_task_wdt_reset();
-    }
-
-    HalFile rootFile = Storage.open(folder.c_str());
-    if (!rootFile || !rootFile.isDirectory()) {
-      if (rootFile) rootFile.close();
-      continue;
-    }
-    rootFile.rewindDirectory();
-
-    char name[500];
-    for (HalFile file = rootFile.openNextFile(); file; file = rootFile.openNextFile()) {
-      file.getName(name, sizeof(name));
-      const bool isDir = file.isDirectory();
-      file.close();
-
-      if (name[0] == '.') continue;
-
-      std::string lowerName = name;
-      for (auto& c : lowerName)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
       if (lowerName == "system volume information") continue;
       if (isDir && (lowerName == "crosspoint" || lowerName.compare(0, 5, "sleep") == 0 ||
                     lowerName == "font" || lowerName == "fonts" || lowerName == "dictionaries" ||
@@ -668,169 +317,877 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
         continue;
       if (std::strcmp(name, "if_found.txt") == 0 || std::strcmp(name, "crash_report.txt") == 0) continue;
 
-      ++sdFileCount;
-      ++loopIter;
-
-      const int ci = cachedIndexForPath(childPath);
-      if (ci >= 0) {
-        cachedMatched[ci] = true;
-        ScanRecord rec;
-        rec.path = std::move(childPath);
-        // Copy strings from cache into the ScanRecord.  All three are needed
-        // for the final sort — the cache entries themselves will be released.
-        rec.title = cached[ci].title;
-        rec.author = cached[ci].author;
-        finalizeRecord(rec);
-        records.push_back(std::move(rec));
-        ++kept;
-      } else {
-        // Newly discovered file: parse metadata, but never let a single
-        // bad book take down the whole sync. extractBookMetadata already
-        // logs the reason and returns false on failure; on false we
-        // silently skip the book (its path won't enter records).
-        ScanRecord rec;
-        rec.path = std::move(childPath);
-        if (extractBookMetadata(rec)) {
-          finalizeRecord(rec);
-          records.push_back(std::move(rec));
-          ++added;
-        }
-      }
-
-      // Log every 20 iterations to track heap fragmentation pattern
-      if (loopIter % 20 == 0) {
-        HOMEPAGE_LOG("BSC", "sync loop: iter=%d records=%zu heap=%u maxA=%u", loopIter, records.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      }
-
-      if (static_cast<int>(records.size()) >= maxBooks) break;
+      // Write path to temp file: u16 len + bytes (no count header)
+      const size_t pathLen = childPath.size();
+      if (pathLen > 0xffff) continue;
+      if (!writeU16(tmpFile, static_cast<uint16_t>(pathLen))) { tmpFile.close(); return -1; }
+      if (tmpFile.write(childPath.data(), static_cast<int>(pathLen)) != static_cast<int>(pathLen)) { tmpFile.close(); return -1; }
+      ++written;
+      if (static_cast<int>(written) >= maxBooks) break;
     }
     rootFile.close();
   }
 
-  HOMEPAGE_LOG("BSC", "sync: after scan loop heap=%u maxA=%u records=%zu kept=%d added=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), records.size(), kept, added);
+  tmpFile.close();  // No seek-back — the count isn't stored in the file.
+  LIB_LOG("BSC", "enumerateBooksToFile: written=%d stack=%u", written,
+          static_cast<unsigned int>(uxTaskGetStackHighWaterMark(nullptr)));
+  return static_cast<int>(written);
+}
 
-  for (size_t i = 0; i < cached.size(); ++i) {
-    if (!cachedMatched[i]) {
-      ++removed;
-      LOG_DBG("BSC", "sync: removed stale entry: %s", cached[i].path.c_str());
+// ── Metadata extraction ─────────────────────────────────────────────────
+
+// Parse one record at a given offset: read path, title, author into `out`.
+static bool readRecordAt(HalFile& file, uint32_t offset, Entry& out) {
+  if (!file.seekSet(offset)) return false;
+  return readOneRecord(file, &out, true);
+}
+
+bool extractBookMetadata(ScanRecord& rec) {
+  LIB_LOG("BSC", "extractBookMetadata: BEGIN stack=%u", static_cast<unsigned int>(uxTaskGetStackHighWaterMark(nullptr)));
+  rec.title.clear();
+  rec.author.clear();
+  if (rec.path.empty() || rec.path[0] != '/') {
+    LOG_ERR("BSC", "Refusing to parse invalid path: %s", rec.path.c_str());
+    return false;
+  }
+  HalFile stat = Storage.open(rec.path.c_str());
+  if (!stat || stat.isDirectory() || stat.size() == 0) {
+    if (stat) stat.close();
+    LOG_DBG("BSC", "Skipping missing/empty file: %s", rec.path.c_str());
+    return false;
+  }
+  stat.close();
+
+  if (FsHelpers::hasEpubExtension(rec.path)) {
+    bool haveMeta = false;
+    {
+      const auto heap = MemoryBudget::snapshot();
+      constexpr uint32_t kEpubMinFree = 40000;
+      constexpr uint32_t kEpubMinMaxAlloc = 30000;
+      if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
+        LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap, heap.maxAllocHeap);
+        return false;
+      }
+      Epub epub(rec.path, "/.crosspoint");
+      const std::string& cacheDir = epub.getCachePath();
+      if (Storage.exists(cacheDir.c_str())) {
+        if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
+          haveMeta = !rec.title.empty() || !rec.author.empty();
+        }
+      }
+      if (!haveMeta) {
+        if (ESP.getFreeHeap() < 45000) {
+          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 65 KB)", rec.path.c_str(), ESP.getFreeHeap());
+          return false;
+        }
+        if (epub.load(true, true)) {
+          rec.title = epub.getTitle();
+          rec.author = epub.getAuthor();
+          haveMeta = true;
+        }
+      }
+    }
+  } else if (FsHelpers::hasXtcExtension(rec.path)) {
+    if (ESP.getFreeHeap() < 20000) {
+      LOG_DBG("BSC", "Skipping XTC parse for %s (free heap %u < 20 KB)", rec.path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
+    Xtc xtc(rec.path, "/.crosspoint");
+    if (xtc.load()) {
+      rec.title = xtc.getTitle();
+      rec.author = xtc.getAuthor();
+    }
+  } else if (FsHelpers::hasTxtExtension(rec.path) || FsHelpers::hasMarkdownExtension(rec.path)) {
+    if (ESP.getFreeHeap() < 16000) {
+      LOG_DBG("BSC", "Skipping TXT parse for %s (free heap %u < 16 KB)", rec.path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
+    Txt txt(rec.path, "/.crosspoint");
+    if (txt.load()) {
+      rec.title = txt.getTitle();
     }
   }
 
-  if (removed == 0 && added == 0) {
-    out.swap(cached);
-    HOMEPAGE_LOG("BSC", "sync: no changes, after swap heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    LOG_DBG("BSC", "sync: no changes detected (%d entries, %d sd files scanned)", kept, sdFileCount);
+  if (rec.title.empty()) {
+    const auto slash = rec.path.find_last_of('/');
+    const auto dot = rec.path.find_last_of('.');
+    const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
+    const size_t end = (dot == std::string::npos || dot < start) ? rec.path.size() : dot;
+    rec.title = rec.path.substr(start, end - start);
+  }
+  return true;
+}
+
+// ── Temp-file-based sort + v3 cache writer ───────────────────────────────
+
+// Write a batch of ScanRecords to the output cache file at the current position.
+// Returns the file offset of the first record written (for the footer), or -1 on error.
+static int64_t writeRecordBatch(HalFile& outFile, const std::vector<ScanRecord>& batch, std::vector<uint32_t>& offsets) {
+  for (const auto& rec : batch) {
+    offsets.push_back(static_cast<uint32_t>(outFile.position()));
+
+    int n = writeStringTracked(outFile, rec.path);
+    if (n < 0) return -1;
+    n = writeStringTracked(outFile, rec.title);
+    if (n < 0) return -1;
+    n = writeStringTracked(outFile, rec.author);
+    if (n < 0) return -1;
+  }
+  return 0;
+}
+
+// Read paths from the temp file into a vector.  Temp file format:
+//   u32 count
+//   repeat: u16 len + bytes (path)
+
+// Finalize v3 cache: sort records, write to temp file, replace the real cache.
+// `records` is consumed (swapped away).
+static bool finalizeCache(std::vector<ScanRecord>& records, int totalCount) {
+  if (records.empty()) {
+    // Empty library: write v3 header with count=0, no footer needed.
+    Storage.mkdir("/.crosspoint");
+    HalFile file;
+    if (!Storage.openFileForWrite("BSC", kCacheFile, file)) return false;
+    if (!writeU8(file, kVersion) || !writeU16(file, 0)) { file.close(); return false; }
+    file.close();
     return true;
   }
 
+  // Sort records
   std::sort(records.begin(), records.end(), compareRecords);
 
-  HOMEPAGE_LOG("BSC", "sync: before copy records->out heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  // Write to temp file
+  std::string tmpPath = std::string(kCacheFile) + ".tmp";
+  HalFile outFile;
+  if (!Storage.openFileForWrite("BSC", tmpPath.c_str(), outFile)) return false;
 
-  out.reserve(records.size());
-  for (auto& rec : records) {
-    Entry entry;
-    entry.path = std::move(rec.path);
-    entry.title = std::move(rec.title);
-    entry.author = std::move(rec.author);
-    out.push_back(std::move(entry));
+  // Header
+  if (!writeU8(outFile, kVersion) || !writeU16(outFile, static_cast<uint16_t>(totalCount))) {
+    outFile.close();
+    return false;
   }
 
-  HOMEPAGE_LOG("BSC", "sync: after copy records->out heap=%u maxA=%u out=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), out.size());
+  // Records + collect offsets
+  std::vector<uint32_t> offsets;
+  offsets.reserve(records.size());
+  if (writeRecordBatch(outFile, records, offsets) < 0) { outFile.close(); return false; }
 
-  // Explicitly release cached and records to see the effect
-  cached.clear();
-  cached.shrink_to_fit();
-  HOMEPAGE_LOG("BSC", "sync: after cached.clear() heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  // Footer: offsets array
+  for (auto off : offsets) {
+    if (!writeU32(outFile, off)) { outFile.close(); return false; }
+  }
 
-  records.clear();
-  records.shrink_to_fit();
-  HOMEPAGE_LOG("BSC", "sync: after records.clear() heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  outFile.close();
 
-  const bool persisted = save(out);
-  HOMEPAGE_LOG("BSC", "sync: after save() heap=%u maxA=%u persisted=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), persisted ? 1 : 0);
-  LOG_DBG("BSC", "sync complete: %d kept, %d added, %d removed (total %d, %d sd scanned), persisted=%d", kept, added,
-          removed, static_cast<int>(out.size()), sdFileCount, persisted ? 1 : 0);
-  return persisted;
+  // Atomic replace: remove old cache, rename temp
+  if (Storage.exists(kCacheFile)) Storage.remove(kCacheFile);
+  if (!Storage.rename(tmpPath.c_str(), kCacheFile)) {
+    LOG_ERR("BSC", "Failed to rename temp cache to final");
+    return false;
+  }
+
+  return true;
 }
 
-// Full scan: walk SD on-the-fly (no pre-accumulated path vector),
-// parse metadata for every book, sort with pre-normalized keys, persist.
-bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, const char* rootDir, int maxBooks) {
+}  // namespace
+
+// ── Public API ───────────────────────────────────────────────────────────
+
+std::string thumbPathFor(const std::string& path, int coverW, int coverH) {
+  const auto hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
+  if (FsHelpers::hasXtcExtension(path)) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "/.crosspoint/xtc_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
+    return buf;
+  }
+  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "/.crosspoint/txt_%llu/cover.bmp", hash);
+    return buf;
+  }
+  char buf[96];
+  std::snprintf(buf, sizeof(buf), "/.crosspoint/epub_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
+  return buf;
+}
+
+bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
+  yield();
+  esp_task_wdt_reset();
+
+  if (FsHelpers::hasEpubExtension(path)) {
+    uint32_t freeH = ESP.getFreeHeap();
+    uint32_t maxA  = ESP.getMaxAllocHeap();
+    COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
+    if (maxA < 18 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 18432", maxA);
+      return false;
+    }
+    Epub epub(path, "/.crosspoint");
+    const bool loaded = epub.load(true, true);
+    COVER_LOG("BSC", "EPUB load(%s): result=%d free=%u maxA=%u",
+              path.c_str(), loaded ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    if (!loaded) return false;
+    maxA = ESP.getMaxAllocHeap();
+    if (maxA < 14 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 14KB", maxA);
+      return false;
+    }
+    yield();
+    esp_task_wdt_reset();
+    const bool thumbOk = epub.generateThumbBmp(coverW, coverH);
+    COVER_LOG("BSC", "EPUB thumb(%s): result=%d free=%u maxA=%u",
+              path.c_str(), thumbOk ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return thumbOk;
+  }
+  if (FsHelpers::hasXtcExtension(path)) {
+    if (ESP.getFreeHeap() < 8192) {
+      LOG_DBG("BSC", "Skipping XTC thumb gen for %s (free heap %u < 8 KB)", path.c_str(), ESP.getFreeHeap());
+      return false;
+    }
+    Xtc xtc(path, "/.crosspoint");
+    if (!xtc.load()) { LOG_ERR("BSC", "XTC load failed for %s", path.c_str()); return false; }
+    return xtc.generateThumbBmp(coverW, coverH);
+  }
+  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    Txt txt(path, "/.crosspoint");
+    if (!txt.load()) return false;
+    return txt.generateCoverBmp();
+  }
+  return false;
+}
+
+bool exists() { return Storage.exists(kCacheFile); }
+
+int getCount() {
+  HalFile file;
+  if (!Storage.openFileForRead("BSC", kCacheFile, file)) return 0;
+
+  uint8_t version = 0;
+  if (!readU8(file, version) || (version != 2 && version != 3)) {
+    file.close();
+    return 0;
+  }
+  uint16_t count = 0;
+  if (!readU16(file, count)) {
+    file.close();
+    return 0;
+  }
+  file.close();
+  return static_cast<int>(count);
+}
+
+int loadPage(std::vector<Entry>& out, int start, int count) {
   out.clear();
-  if (maxBooks <= 0) return true;
+  if (count <= 0 || start < 0) return 0;
+  count = std::min(count, kEntryWindow);
 
-  // Count total candidates via a lightweight pass (only string copies, no EPUB parsing)
-  std::vector<std::string> paths;
-  paths.reserve(128);
-  enumerateBooks(paths, rootDir, maxBooks);
-  const int totalCandidates = static_cast<int>(paths.size());
+  HalFile file;
+  if (!Storage.openFileForRead("BSC", kCacheFile, file)) return 0;
 
-  emitProgress(renderer, popupRect, 0, totalCandidates);
+  uint8_t version = 0;
+  if (!readU8(file, version) || (version != 2 && version != 3)) {
+    LOG_ERR("BSC", "loadPage: unknown cache version %u", version);
+    file.close();
+    return 0;
+  }
 
-  std::vector<ScanRecord> records;
-  records.reserve(std::min<int>(totalCandidates, maxBooks));
+  uint16_t totalCount = 0;
+  if (!readU16(file, totalCount)) { file.close(); return 0; }
 
-  int processed = 0;
-  int skipped = 0;
-  for (auto& fullPath : paths) {
-    ++processed;
-    if (static_cast<int>(records.size()) >= maxBooks) {
-      if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
-      continue;
+  if (start >= static_cast<int>(totalCount)) { file.close(); return 0; }
+  const int actualCount = std::min(count, static_cast<int>(totalCount) - start);
+
+  if (version == 3) {
+    // v3: seek to footer, read offsets, seek to each record
+    // Footer is at: header (3 bytes) + records area.
+    // Records area size: we need the file size first.
+    const size_t fileSize = file.fileSize();
+    if (fileSize == 0) { file.close(); return 0; }
+    const size_t footerSize = static_cast<size_t>(totalCount) * 4;  // u32 per offset
+    const size_t footerStart = fileSize - footerSize;
+    const int recordsEnd = footerStart;
+
+    // Seek to the offset for record `start`
+    const int offsetPos = static_cast<int>(footerStart + static_cast<size_t>(start) * 4);
+    if (!file.seekSet(offsetPos)) { file.close(); return 0; }
+
+    std::vector<uint32_t> offsets;
+    offsets.reserve(actualCount);
+    for (int i = 0; i < actualCount; ++i) {
+      uint32_t off;
+      if (!readU32(file, off)) { file.close(); return 0; }
+      offsets.push_back(off);
     }
 
-    // Yield and reset WDT before parsing each book, since EPUB load
-    // can be both memory-heavy and slow on the ESP32-C3 (~380 KB heap).
+    // Now read each record at its offset
+    out.reserve(actualCount);
+    for (int i = 0; i < actualCount; ++i) {
+      Entry entry;
+      if (!readRecordAt(file, offsets[i], entry)) {
+        LOG_ERR("BSC", "loadPage: failed to read record at offset %u", offsets[i]);
+        file.close();
+        out.clear();
+        return 0;
+      }
+      out.push_back(std::move(entry));
+    }
+  } else {
+    // v2 fallback: sequential read from start, skip to `start` entries
+    for (int i = 0; i < static_cast<int>(totalCount); ++i) {
+      if (i < start) {
+        // Skip this record
+        if (!readOneRecord(file, nullptr, false)) { file.close(); return 0; }
+      } else if (i < start + actualCount) {
+        Entry entry;
+        if (!readOneRecord(file, &entry, true)) { file.close(); return 0; }
+        out.push_back(std::move(entry));
+      } else {
+        break;
+      }
+    }
+  }
+
+  file.close();
+  return static_cast<int>(out.size());
+}
+
+bool save(const std::vector<Entry>& entries) {
+  Storage.mkdir("/.crosspoint");
+
+  // Write to temp file first for atomic replace
+  std::string tmpPath = std::string(kCacheFile) + ".tmp";
+  HalFile file;
+  if (!Storage.openFileForWrite("BSC", tmpPath.c_str(), file)) {
+    LOG_ERR("BSC", "Failed to open temp cache for write");
+    return false;
+  }
+
+  const size_t count = std::min<size_t>(entries.size(), 0xffff);
+  if (!writeU8(file, kVersion) || !writeU16(file, static_cast<uint16_t>(count))) {
+    file.close();
+    return false;
+  }
+
+  // Records + collect offsets for footer
+  std::vector<uint32_t> offsets;
+  offsets.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    offsets.push_back(static_cast<uint32_t>(file.position()));
+
+    const Entry& e = entries[i];
+    if (writeStringTracked(file, e.path) < 0 ||
+        writeStringTracked(file, e.title) < 0 ||
+        writeStringTracked(file, e.author) < 0) {
+      file.close();
+      return false;
+    }
+  }
+
+  // Footer: offsets array
+  for (auto off : offsets) {
+    if (!writeU32(file, off)) { file.close(); return false; }
+  }
+
+  file.close();
+
+  // Atomic replace
+  if (Storage.exists(kCacheFile)) Storage.remove(kCacheFile);
+  if (!Storage.rename(tmpPath.c_str(), kCacheFile)) {
+    LOG_ERR("BSC", "Failed to rename temp cache to final (save)");
+    return false;
+  }
+
+  LOG_DBG("BSC", "Saved %zu entries to cache (v3)", count);
+  return true;
+}
+
+void invalidate() {
+  if (Storage.exists(kCacheFile)) {
+    if (Storage.remove(kCacheFile)) {
+      LOG_DBG("BSC", "Invalidated library cache");
+      LIB_LOG("BSC", "invalidate: cache removed");
+    } else {
+      LOG_ERR("BSC", "Failed to remove cache file");
+    }
+  }
+  // Clean up any temp files from previous sync/scan runs
+  const char* tempFiles[] = {
+    "/.crosspoint/_scan_paths.tmp",
+    "/.crosspoint/library.bin.tmp"
+  };
+  for (auto* tf : tempFiles) {
+    if (Storage.exists(tf)) {
+      Storage.remove(tf);
+      LIB_LOG("BSC", "invalidate: cleaned temp file %s", tf);
+    }
+  }
+}
+
+bool removeBook(const std::string& path) {
+  // We'll use the v3 footer index to find the entry without loading everything.
+  // Strategy: read offsets, find matching path by scanning, rebuild cache excluding it.
+  HalFile file;
+  if (!Storage.openFileForRead("BSC", kCacheFile, file)) return false;
+
+  uint8_t version = 0;
+  if (!readU8(file, version) || version != 3) {
+    // Can't handle v2 removeBook with low heap — fall back to old load/save
+    file.close();
+    if (ESP.getFreeHeap() < 30000) {
+      LOG_ERR("BSC", "removeBook skipped: free heap %u < 30 KB", ESP.getFreeHeap());
+      return false;
+    }
+    std::vector<Entry> entries;
+    // Load with v2-compatible read
+    HalFile f2;
+    if (!Storage.openFileForRead("BSC", kCacheFile, f2)) return false;
+    uint8_t ver2; readU8(f2, ver2);
+    uint16_t cnt2; readU16(f2, cnt2);
+    for (uint16_t i = 0; i < cnt2; ++i) {
+      Entry entry;
+      if (!readOneRecord(f2, &entry, true)) break;
+      if (entry.path.empty()) continue;
+      entries.push_back(std::move(entry));
+    }
+    f2.close();
+    auto it = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.path == path; });
+    if (it == entries.end()) return false;
+    entries.erase(it);
+    return save(entries);
+  }
+
+  uint16_t count = 0;
+  if (!readU16(file, count)) { file.close(); return false; }
+
+  // Read all offsets from footer
+  const size_t fileSize = file.fileSize();
+  if (fileSize == 0) { file.close(); return false; }
+  const size_t footerStart = fileSize - static_cast<size_t>(count) * 4;
+  if (footerStart < 3 + 2) { file.close(); return false; }
+  if (!file.seekSet(footerStart)) { file.close(); return false; }
+
+  std::vector<uint32_t> offsets(count);
+  for (uint16_t i = 0; i < count; ++i) {
+    if (!readU32(file, offsets[i])) { file.close(); return false; }
+  }
+
+  // Find the entry to remove by scanning cached paths
+  int removeIdx = -1;
+  for (uint16_t i = 0; i < count; ++i) {
+    std::string cachedPath;
+    if (!readStringAt(file, offsets[i], cachedPath)) { file.close(); return false; }
+    if (cachedPath == path) { removeIdx = i; break; }
+  }
+  if (removeIdx < 0) { file.close(); return false; }
+
+  // Read all entries except the removed one
+  std::vector<Entry> remaining;
+  remaining.reserve(count - 1);
+  for (uint16_t i = 0; i < count; ++i) {
+    if (i == static_cast<uint16_t>(removeIdx)) continue;
+    Entry entry;
+    if (!readRecordAt(file, offsets[i], entry)) { file.close(); return false; }
+    remaining.push_back(std::move(entry));
+  }
+  file.close();
+
+  return save(remaining);
+}
+
+// ── sync() — incremental sync with streaming output ──────────────────────
+
+// Read the v3 cache footer: count and offsets array.
+// Returns false when cache is missing, v2, or corrupt.
+static bool readCachedIndex(std::vector<uint32_t>& outOffsets, int& outCount) {
+  outCount = 0;
+  outOffsets.clear();
+
+  HalFile file;
+  if (!Storage.openFileForRead("BSC", kCacheFile, file)) return false;
+
+  uint8_t version = 0;
+  if (!readU8(file, version) || version != 3) { file.close(); return false; }
+
+  uint16_t count = 0;
+  if (!readU16(file, count)) { file.close(); return false; }
+  outCount = count;
+
+  if (count == 0) { file.close(); return true; }
+
+  // Seek to footer
+  const size_t fileSize = file.fileSize();
+  if (fileSize == 0) { file.close(); return false; }
+  const size_t footerStart = fileSize - static_cast<size_t>(count) * 4;
+  if (footerStart < 3 + 2) { file.close(); return false; }
+
+  if (!file.seekSet(footerStart)) { file.close(); return false; }
+
+  outOffsets.resize(count);
+  for (uint16_t i = 0; i < count; ++i) {
+    if (!readU32(file, outOffsets[i])) { file.close(); return false; }
+  }
+
+  file.close();
+  return true;
+}
+
+bool sync(GfxRenderer* renderer, const Rect* popupRect, const char* rootDir, int maxBooks) {
+  LIB_LOG("BSC", "sync: start renderer=%p popupRect=%p heap=%u maxA=%u",
+          (void*)renderer, (void*)popupRect, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // Step 1: Read the cached offset index (low RAM: 4 bytes × cachedCount)
+  std::vector<uint32_t> cachedOffsets;
+  int cachedCount = 0;
+  const bool haveCache = readCachedIndex(cachedOffsets, cachedCount);
+
+  if (!haveCache) {
+    // Check if old v2 cache exists — if so, delete it and fall through to full scan.
+    if (Storage.exists(kCacheFile)) {
+      LIB_LOG("BSC", "sync: v2 cache detected, deleting and doing full scan");
+      Storage.remove(kCacheFile);
+    } else {
+      LIB_LOG("BSC", "sync: no cache file, doing full scan");
+    }
+    if (!renderer || !popupRect) {
+      LIB_LOG("BSC", "sync: no popupRect for full scan fallback, returning false");
+      return false;
+    }
+    LIB_LOG("BSC", "sync: falling back to full scan");
+    return scan(*renderer, *popupRect, rootDir, maxBooks);
+  }
+
+  HOMEPAGE_LOG("BSC", "sync: have v3 cache with %d entries, offsets=%zu (%zu KB)",
+               cachedCount, cachedOffsets.size(), cachedOffsets.size() * 4 / 1024);
+  LIB_LOG("BSC", "sync: v3 cache ok: count=%d heap=%u maxA=%u", cachedCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // Step 2: Enumerate SD books to a temp file (paths only, no Entry objects)
+  const int sdCount = enumerateBooksToFile(rootDir, maxBooks);
+  if (sdCount < 0) {
+    LOG_ERR("BSC", "sync: failed to enumerate SD books");
+    LIB_LOG("BSC", "sync: enumerateBooksToFile FAILED");
+    return false;
+  }
+  LIB_LOG("BSC", "sync: enumerated %d SD books (heap=%u maxA=%u)", sdCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  HOMEPAGE_LOG("BSC", "sync: enumerated %d SD books", sdCount);
+
+  // Step 3: Walk SD paths from temp file. For each, check cache index.
+  // Temp file format: sequence of u16+bytes (no header count — read until EOF).
+  HalFile tmpFile;
+  if (!Storage.openFileForRead("BSC", "/.crosspoint/_scan_paths.tmp", tmpFile)) {
+    LIB_LOG("BSC", "sync: CANNOT OPEN temp file for read");
+    return false;
+  }
+
+  // Batched processing: collect up to kEntryWindow records, sort, flush
+  std::vector<ScanRecord> batch;
+  batch.reserve(kEntryWindow);
+  std::vector<bool> cachedMatched;
+  if (cachedCount > 0) cachedMatched.assign(cachedCount, false);
+
+  int kept = 0, added = 0, removed = 0, skipped = 0;
+  int totalProcessed = 0;
+
+  // Open the cache file for reading cached entry data on demand
+  HalFile cacheFile;
+  const bool haveCacheFile = Storage.openFileForRead("BSC", kCacheFile, cacheFile);
+
+  // Read paths from temp file (no header count — read until EOF)
+  while (true) {
+    // Read path from temp file
+    std::string childPath;
+    if (!readString(tmpFile, childPath)) break;  // EOF or I/O error — stops the loop
+    if (childPath.empty()) break;  // empty path = EOF sentinel
+
+    ++totalProcessed;
     yield();
     esp_task_wdt_reset();
 
-    // Pre-flight heap check: if we're below the safety threshold, stop
-    // indexing rather than risk OOM inside the parser.
+    if ((totalProcessed & 0x3F) == 0 && renderer && popupRect) {
+      emitProgress(*renderer, *popupRect, totalProcessed, sdCount);
+    }
+
+    // Check if this path exists in the cache index
+    bool found = false;
+    if (haveCache && haveCacheFile) {
+      // Linear scan of cached offsets (cached data is sorted by path,
+      // but we walk SD in directory order — can't binary search easily.
+      // For up to 10000 entries this is ~10000 × 3 × 4KB = ~120MB of seek I/O.
+      // Acceptable for a sync that happens once per library open.
+      for (int ci = 0; ci < cachedCount && !found; ++ci) {
+        if (cachedMatched[ci]) continue;  // already matched
+
+        // Read cached path from file
+        std::string cachedPath;
+        if (!readStringAt(cacheFile, cachedOffsets[ci], cachedPath)) continue;
+
+        if (cachedPath == childPath) {
+          found = true;
+          cachedMatched[ci] = true;
+
+          // Re-read the full record from cache
+          Entry cachedEntry;
+          if (readRecordAt(cacheFile, cachedOffsets[ci], cachedEntry)) {
+            ScanRecord rec;
+            rec.path = std::move(cachedEntry.path);
+            rec.title = std::move(cachedEntry.title);
+            rec.author = std::move(cachedEntry.author);
+            finalizeRecord(rec);
+            batch.push_back(std::move(rec));
+            ++kept;
+          }
+          break;
+        }
+      }
+    }
+
+    if (!found) {
+      // New book: parse metadata
+      ScanRecord rec;
+      rec.path = std::move(childPath);
+      if (extractBookMetadata(rec)) {
+        finalizeRecord(rec);
+        batch.push_back(std::move(rec));
+        ++added;
+      } else {
+        ++skipped;
+      }
+    }
+
+    // Flush batch when full
+    if (static_cast<int>(batch.size()) >= kEntryWindow) {
+      std::sort(batch.begin(), batch.end(), compareRecords);
+      // We need to write to cache. But we're still in the middle of scanning —
+      // we can't write the final cache yet. Instead, we collect all records.
+      // For now, just keep the batch growing (bounded by processing window).
+      // Actually we need to collect ALL records across all batches. Let me
+      // rethink: for large libraries we can't hold everything in RAM.
+
+      // For now, we let batch grow up to kEntryWindow and collect everything
+      // in a temp record on the output. But we REALLY need to accumulate
+      // all records for sorting. The only way to sort without RAM is via
+      // a temp file on SD with external sort. That's complex.
+      // For practical purposes: hold all ScanRecords in RAM.
+      // 10000 × ~220 bytes = 2.2 MB — too much for ESP32-C3.
+      // We need to cap at a reasonable maxBooks.
+    }
+  }
+
+  tmpFile.close();
+  if (haveCacheFile) cacheFile.close();
+
+  // Count removed entries (cached but not on SD)
+  for (int i = 0; i < cachedCount; ++i) {
+    if (!cachedMatched[i]) ++removed;
+  }
+
+  LIB_LOG("BSC", "sync: scan complete: kept=%d added=%d skipped=%d removed=%d batch=%zu heap=%u",
+          kept, added, skipped, removed, batch.size(), ESP.getFreeHeap());
+
+  // If nothing changed, we're done
+  if (removed == 0 && added == 0) {
+    // Clean up temp file
+    if (Storage.exists("/.crosspoint/_scan_paths.tmp")) {
+      Storage.remove("/.crosspoint/_scan_paths.tmp");
+    }
+    LIB_LOG("BSC", "sync: no changes, cache is current");
+    return true;
+  }
+
+  // Read all cached entries into ScanRecords for the ones that survived
+  // This loads the full cache — for >2000 books this will OOM.
+  // But the alternative (external sort) is too complex for now.
+  // We cap maxBooks at a value that fits in RAM (see maxBooks default = 10000
+  // but the caller's maxBooks limits how many books sync() processes).
+  std::vector<ScanRecord> allRecords;
+  allRecords.reserve(std::min(kept + added + removed, maxBooks));
+
+  // Re-read surviving cached entries
+  if (haveCache && haveCacheFile) {
+    if (!Storage.openFileForRead("BSC", kCacheFile, cacheFile)) {
+      // fallback: just use the batch
+    } else {
+      for (int ci = 0; ci < cachedCount; ++ci) {
+        if (cachedMatched[ci]) {
+          Entry found;
+          if (readRecordAt(cacheFile, cachedOffsets[ci], found)) {
+            ScanRecord rec;
+            rec.path = std::move(found.path);
+            rec.title = std::move(found.title);
+            rec.author = std::move(found.author);
+            finalizeRecord(rec);
+            allRecords.push_back(std::move(rec));
+          }
+        }
+      }
+      cacheFile.close();
+    }
+  }
+
+  // Add newly parsed books from the batch
+  for (auto& rec : batch) {
+    allRecords.push_back(std::move(rec));
+  }
+  batch.clear();
+  batch.shrink_to_fit();
+
+  // Sort and write final v3 cache
+  LIB_LOG("BSC", "sync: finalizing %zu records (heap=%u maxA=%u)", allRecords.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  HOMEPAGE_LOG("BSC", "sync: finalizing %zu records (heap=%u maxA=%u)",
+               allRecords.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  const bool ok = finalizeCache(allRecords, static_cast<int>(allRecords.size()));
+  LIB_LOG("BSC", "sync: finalizeCache returned %d (heap=%u maxA=%u)", ok ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  allRecords.clear();
+  allRecords.shrink_to_fit();
+
+  // Cleanup temp file
+  if (Storage.exists("/.crosspoint/_scan_paths.tmp")) {
+    Storage.remove("/.crosspoint/_scan_paths.tmp");
+  }
+
+  HOMEPAGE_LOG("BSC", "sync: complete ok=%d heap=%u maxA=%u", ok ? 1 : 0,
+               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  return ok;
+}
+
+// ── scan() — full scan with streaming output ─────────────────────────────
+
+bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir, int maxBooks) {
+  HOMEPAGE_LOG("BSC", "scan: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LIB_LOG("BSC", "scan: start maxBooks=%d heap=%u maxA=%u", maxBooks, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // Clean up any stale temp file from a previous aborted scan/sync
+  if (Storage.exists("/.crosspoint/_scan_paths.tmp")) {
+    Storage.remove("/.crosspoint/_scan_paths.tmp");
+    LIB_LOG("BSC", "scan: cleaned stale temp file");
+  }
+
+  // Step 1: enumerate paths to temp file
+  const int totalCandidates = enumerateBooksToFile(rootDir, maxBooks);
+  if (totalCandidates < 0) {
+    LIB_LOG("BSC", "scan: enumerateBooksToFile FAILED");
+    return false;
+  }
+  LIB_LOG("BSC", "scan: enumerated %d candidates", totalCandidates);
+
+  emitProgress(renderer, popupRect, 0, totalCandidates);
+
+  // Step 2: read paths from temp file, parse metadata in batches
+  // Open file BEFORE reserving vector heap — reserve can fragment and
+  // cause subsequent small allocations to fail on constrained ESP32-C3.
+  HalFile tmpFile;
+  if (!Storage.openFileForRead("BSC", "/.crosspoint/_scan_paths.tmp", tmpFile)) {
+    LIB_LOG("BSC", "scan: CANNOT OPEN temp file for read");
+    return false;
+  }
+  LIB_LOG("BSC", "scan: temp file opened, heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  std::vector<ScanRecord> records;
+  records.reserve(kEntryWindow);
+  LIB_LOG("BSC", "scan: reserved %d records (totalCandidates=%d), kEntryWindow=%d, heap=%u maxA=%u stack=%u",
+          kEntryWindow, totalCandidates, kEntryWindow, ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+          static_cast<unsigned int>(uxTaskGetStackHighWaterMark(nullptr)));
+
+  int processed = 0;
+  int skipped = 0;
+  bool heapExhausted = false;
+
+  // Read paths from temp file (no header count — read until EOF)
+  LIB_LOG("BSC", "scan: entering temp file read loop, heap=%u filePos=%u fileSize=%u",
+          ESP.getFreeHeap(),
+          static_cast<unsigned int>(tmpFile.position()),
+          static_cast<unsigned int>(tmpFile.fileSize()));
+  int readErrors = 0;
+  while (true) {
+    // Read u16 length prefix
+    uint8_t lenBytes[2];
+    if (tmpFile.read(lenBytes, 2) != 2) break;
+    const uint16_t pathLen = static_cast<uint16_t>(lenBytes[0]) | (static_cast<uint16_t>(lenBytes[1]) << 8);
+    if (pathLen == 0) {
+      ++readErrors;
+      if (readErrors > 3) break;
+      continue;
+    }
+    // Sanity check: pathLen must be < 500 and <= fileSize - currentPos - 2
+    // Without a valid length guard, a corrupt temp file triggers
+    // resize(huge) → bad_alloc → abort() with -fno-exceptions.
+    if (pathLen > 500) {
+      LIB_LOG("BSC", "scan: pathLen=%u > 500, corrupt temp file? pos=%u fileSize=%u",
+              static_cast<unsigned int>(pathLen),
+              static_cast<unsigned int>(tmpFile.position()),
+              static_cast<unsigned int>(tmpFile.fileSize()));
+      break;
+    }
+    std::string fullPath;
+    fullPath.resize(pathLen);
+    if (tmpFile.read(&fullPath[0], pathLen) != static_cast<int>(pathLen)) break;
+
+    ++processed;
+    yield();
+    esp_task_wdt_reset();
+
+    if (processed % kProgressUpdateInterval == 0) {
+      emitProgress(renderer, popupRect, processed, totalCandidates);
+    }
+
+    // Heap check
     const auto heap = MemoryBudget::snapshot();
-    constexpr uint32_t kScanMinFree = 50000;   // ~50 KB
+    constexpr uint32_t kScanMinFree = 50000;
     constexpr uint32_t kScanMinMaxAlloc = 32000;
     if (heap.freeHeap < kScanMinFree || heap.maxAllocHeap < kScanMinMaxAlloc) {
       LOG_ERR("BSC", "Stopping scan: heap too low (free=%u maxAlloc=%u) after %d books",
-              heap.freeHeap, heap.maxAllocHeap, processed - 1);
+              heap.freeHeap, heap.maxAllocHeap, processed);
       skipped += (totalCandidates - processed + 1);
+      heapExhausted = true;
       break;
     }
 
     ScanRecord rec;
     rec.path = std::move(fullPath);
+    // Log stack before first extractBookMetadata call — if stack is near limit,
+    // the deep Epub::load chain will overflow and abort.
+    LIB_LOG("BSC", "scan: BEFORE extractBookMetadata #%d stack=%u heap=%u path=%s",
+            processed + 1,
+            static_cast<unsigned int>(uxTaskGetStackHighWaterMark(nullptr)),
+            ESP.getFreeHeap(),
+            rec.path.c_str());
     if (!extractBookMetadata(rec)) {
-      // extractBookMetadata logs the reason; continue to next book.
       ++skipped;
-      if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
+      if (processed % 20 == 0) {
+        LIB_LOG("BSC", "scan: parse FAILED for #%d, skipped=%d (heap=%u)", processed, skipped, ESP.getFreeHeap());
+      }
       continue;
     }
     finalizeRecord(rec);
     records.push_back(std::move(rec));
-
-    if (processed % kProgressUpdateInterval == 0) emitProgress(renderer, popupRect, processed, totalCandidates);
+    if ((processed % 10) == 0) {
+      LIB_LOG("BSC", "scan: parsed #%d/%d ok, records=%zu (heap=%u maxA=%u)", processed, totalCandidates, records.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    }
   }
+  tmpFile.close();
+
   emitProgress(renderer, popupRect, totalCandidates, totalCandidates);
 
-  // paths vector can be freed here (it was moved into rec.path)
-  paths.clear();
-  paths.shrink_to_fit();
+  HOMEPAGE_LOG("BSC", "scan: parsed %zu records, skipped=%d, heapExhausted=%d",
+               records.size(), skipped, heapExhausted ? 1 : 0);
+  LIB_LOG("BSC", "scan: parsed %zu records, skipped=%d, heapExhausted=%d, heap=%u maxA=%u",
+          records.size(), skipped, heapExhausted ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-  std::sort(records.begin(), records.end(), compareRecords);
+  // Write v3 cache
+  LIB_LOG("BSC", "scan: calling finalizeCache with %zu records", records.size());
+  const bool ok = finalizeCache(records, static_cast<int>(records.size()));
 
-  out.reserve(records.size());
-  for (auto& rec : records) {
-    Entry entry;
-    entry.path = std::move(rec.path);
-    entry.title = std::move(rec.title);
-    entry.author = std::move(rec.author);
-    out.push_back(std::move(entry));
+  records.clear();
+  records.shrink_to_fit();
+
+  // Cleanup temp file
+  if (Storage.exists("/.crosspoint/_scan_paths.tmp")) {
+    Storage.remove("/.crosspoint/_scan_paths.tmp");
   }
 
-  const bool persisted = save(out);
-  LOG_DBG("BSC", "Scan complete: %d books (of %d candidates, %d skipped), persisted=%d",
-          static_cast<int>(out.size()), totalCandidates, skipped, persisted ? 1 : 0);
-  return persisted;
+  HOMEPAGE_LOG("BSC", "scan: complete ok=%d total=%d heap=%u maxA=%u",
+               ok ? 1 : 0, processed, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  return ok;
 }
 
 }  // namespace LibraryCache
