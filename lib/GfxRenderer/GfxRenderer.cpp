@@ -14,12 +14,21 @@
 
 namespace {
 
-std::vector<uint8_t> invertMonochromeBitmap(const uint8_t* bitmap, size_t size) {
-  std::vector<uint8_t> inverted(size);
+// All 32×32 1‑bpp icons use exactly 128 bytes; 24×24 use 72 bytes.
+// kMaxIconBytes is the stack buffer for dark-mode bitmap inversion and must
+// be ≥ the largest icon byte count.  Derived from a known max and checked
+// at build time via an included icon reference in LibraryActivity.cpp.
+static constexpr size_t kMaxIconBytes = 128;
+
+/// Invert a monochrome icon bitmap into a caller-provided fixed-size buffer.
+/// Returns false if `size` exceeds the buffer capacity.
+bool invertMonochromeBitmap(const uint8_t* bitmap, size_t size,
+                            uint8_t (&out)[kMaxIconBytes]) {
+  if (size > kMaxIconBytes) return false;
   for (size_t i = 0; i < size; ++i) {
-    inverted[i] = static_cast<uint8_t>(~bitmap[i]);
+    out[i] = static_cast<uint8_t>(~bitmap[i]);
   }
-  return inverted;
+  return true;
 }
 
 /**
@@ -1004,13 +1013,24 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
   const int destX = y;
   const int destY = getScreenWidth() - width - x;
   if (!(darkMode && renderMode == BW)) {
-    display.drawImageTransparent(bitmap, destX, destY, height, width);
+    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
     return;
   }
 
+  // Dark mode + BW: icons are black-on-white; invert them to show as white-on-black.
   const size_t imageWidthBytes = (static_cast<size_t>(height) + 7U) / 8U;
-  auto invertedBitmap = invertMonochromeBitmap(bitmap, imageWidthBytes * width);
-  display.drawImage(invertedBitmap.data(), destX, destY, height, width);
+  const size_t totalBytes = imageWidthBytes * static_cast<size_t>(width);
+  if (totalBytes > kMaxIconBytes) {
+    // Fallback: draw as-is (rare; all current icons fit in kMaxIconBytes).
+    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
+    return;
+  }
+  uint8_t inverted[kMaxIconBytes] = {0};
+  if (!invertMonochromeBitmap(bitmap, totalBytes, inverted)) {
+    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
+    return;
+  }
+  display.drawImage(inverted, destX, destY, height, width);
 }
 
 void GfxRenderer::drawIconBlack(const uint8_t bitmap[], const int x, const int y, const int width,

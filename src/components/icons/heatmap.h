@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — HeatmapReadingIcon32 (rotated 90 left)
-static const uint8_t HeatmapReadingIcon32[] = {
+static const uint8_t PROGMEM HeatmapReadingIcon32[] = {
     0x00, 0x00, 0x00, 0x00,
     0x7F, 0xE0, 0x00, 0x00,
     0x40, 0x60, 0x00, 0x00,

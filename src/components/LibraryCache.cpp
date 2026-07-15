@@ -7,6 +7,7 @@
 #include <Logging.h>
 #include <MemoryBudget.h>
 #include <CoverDebugLog.h>
+#include <HomepageDebugLog.h>
 #include <Txt.h>
 #include <Xtc.h>
 #include <esp_task_wdt.h>
@@ -15,12 +16,74 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 
 #include "components/UITheme.h"
 
 namespace LibraryCache {
 
 namespace {
+
+// Minimal book.bin reader: reads only title and author from a BookMetadataCache
+// file, skipping the other 10 metadata strings. This avoids allocating 12
+// temporary std::strings per EPUB during sync — the major source of heap
+// fragmentation in the scan loop.
+//
+// Format: u8 version, u32 lutOffset, u32 spineCount, u32 tocCount,
+//         then 10 × (u32 length + data): title, author, language, publisher,
+//         description, publicationDate, identifier, subject, rights,
+//         coverItemHref, textReferenceHref
+static bool readTitleAndAuthor(const std::string& cacheDir, std::string& outTitle, std::string& outAuthor) {
+  const std::string cachePath = cacheDir + "/book.bin";
+  FsFile file;
+  if (!Storage.openFileForRead("BSC", cachePath, file)) return false;
+
+  // Skip header: version (u8), lutOffset (u32), spineCount (u32), tocCount (u32)
+  uint8_t version;
+  if (file.read(&version, 1) != 1) { file.close(); return false; }
+  file.seekCur(12);  // 3 × u32 = 12 bytes
+
+  // Read the 10 strings: we only keep the first 2 (title, author), skip the rest.
+  // Each string: u32 length + data bytes.
+  auto readAndSkip = [&file](std::string* keep, int skipCount) -> bool {
+    for (int i = 0; i < skipCount; ++i) {
+      uint32_t len;
+      if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { return false; }
+      if (keep && i == 0) {
+        // First string in this batch: we want to read it
+        if (file.read(reinterpret_cast<uint8_t*>(keep->data()), len) != static_cast<int>(len)) { return false; }
+      } else {
+        if (file.seekCur(len) < 0) { return false; }
+      }
+    }
+    return true;
+  };
+
+  // String 0: title (keep it)
+  {
+    uint32_t len;
+    if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
+    outTitle.resize(len);
+    if (file.read(reinterpret_cast<uint8_t*>(&outTitle[0]), len) != static_cast<int>(len)) { file.close(); return false; }
+  }
+  // String 1: author (keep it)
+  {
+    uint32_t len;
+    if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
+    outAuthor.resize(len);
+    if (file.read(reinterpret_cast<uint8_t*>(&outAuthor[0]), len) != static_cast<int>(len)) { file.close(); return false; }
+  }
+  // Strings 2-9 (language, publisher, description, publicationDate, identifier,
+  // subject, rights, coverItemHref): skip 8 strings
+  for (int i = 0; i < 8; ++i) {
+    uint32_t len;
+    if (file.read(reinterpret_cast<uint8_t*>(&len), sizeof(len)) != sizeof(len)) { file.close(); return false; }
+    if (file.seekCur(len) < 0) { file.close(); return false; }
+  }
+
+  file.close();
+  return true;
+}
 
 constexpr const char* kCacheFile = "/.crosspoint/library.bin";
 constexpr uint8_t kVersion = 2;
@@ -37,33 +100,38 @@ struct ScanRecord {
 // Lowercase + strip common Latin accents so titles/authors sort and search
 // consistently regardless of diacritics. Shared by finalizeRecord (scan/sync)
 // and by load() so cached entries also carry normalized keys.
-std::string normalizeString(const std::string& s) {
-  std::string out;
-  out.reserve(s.size());
+static void normalizeInPlace(std::string& s) {
+  // Lowercase + strip common Latin accents in-place.  Avoids allocating a
+  // temporary output string per call, which eliminates ~2 alloc/free cycles
+  // per book during sync — the dominant source of heap fragmentation.
+  if (s.empty()) return;
+  size_t w = 0;
   for (size_t i = 0; i < s.size(); ++i) {
     unsigned char c = static_cast<unsigned char>(s[i]);
     switch (c) {
-      case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: out.push_back('a'); break;
-      case 0xC8: case 0xC9: case 0xCA: case 0xCB: out.push_back('e'); break;
-      case 0xCC: case 0xCD: case 0xCE: case 0xCF: out.push_back('i'); break;
-      case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: out.push_back('o'); break;
-      case 0xD9: case 0xDA: case 0xDB: case 0xDC: out.push_back('u'); break;
-      case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: out.push_back('a'); break;
-      case 0xE8: case 0xE9: case 0xEA: case 0xEB: out.push_back('e'); break;
-      case 0xEC: case 0xED: case 0xEE: case 0xEF: out.push_back('i'); break;
-      case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: out.push_back('o'); break;
-      case 0xF9: case 0xFA: case 0xFB: case 0xFC: out.push_back('u'); break;
-      case 0xD1: case 0xF1: out.push_back('n'); break;
-      case 0xC7: case 0xE7: out.push_back('c'); break;
-      default: out.push_back(static_cast<char>(std::tolower(c))); break;
+      case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: s[w++] = 'a'; break;
+      case 0xC8: case 0xC9: case 0xCA: case 0xCB: s[w++] = 'e'; break;
+      case 0xCC: case 0xCD: case 0xCE: case 0xCF: s[w++] = 'i'; break;
+      case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: s[w++] = 'o'; break;
+      case 0xD9: case 0xDA: case 0xDB: case 0xDC: s[w++] = 'u'; break;
+      case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: s[w++] = 'a'; break;
+      case 0xE8: case 0xE9: case 0xEA: case 0xEB: s[w++] = 'e'; break;
+      case 0xEC: case 0xED: case 0xEE: case 0xEF: s[w++] = 'i'; break;
+      case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: s[w++] = 'o'; break;
+      case 0xF9: case 0xFA: case 0xFB: case 0xFC: s[w++] = 'u'; break;
+      case 0xD1: case 0xF1: s[w++] = 'n'; break;
+      case 0xC7: case 0xE7: s[w++] = 'c'; break;
+      default: s[w++] = static_cast<char>(std::tolower(c)); break;
     }
   }
-  return out;
+  s.resize(w);
 }
 
 void finalizeRecord(ScanRecord& rec) {
-  rec.normTitle = normalizeString(rec.title);
-  rec.normAuthor = normalizeString(rec.author.empty() ? "zzz" : rec.author);
+  rec.normTitle = rec.title;
+  normalizeInPlace(rec.normTitle);
+  rec.normAuthor = rec.author.empty() ? "zzz" : rec.author;
+  normalizeInPlace(rec.normAuthor);
 }
 
 bool compareRecords(const ScanRecord& a, const ScanRecord& b) {
@@ -244,11 +312,11 @@ bool extractBookMetadata(ScanRecord& rec) {
       Epub epub(rec.path, "/.crosspoint");
       const std::string& cacheDir = epub.getCachePath();
       if (Storage.exists(cacheDir.c_str())) {
-        BookMetadataCache metaCache(cacheDir);
-        if (metaCache.load()) {
-          rec.title = metaCache.coreMetadata.title;
-          rec.author = metaCache.coreMetadata.author;
-          haveMeta = true;
+        // Thin read: only title + author — avoids allocating 12 temporary
+        // std::strings (language, publisher, description, etc.) that would
+        // fragment the heap on every iteration.
+        if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
+          haveMeta = !rec.title.empty() || !rec.author.empty();
         }
       }
       // Fallback: full EPUB load (this builds the cache if missing).
@@ -337,9 +405,9 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
     uint32_t freeH = ESP.getFreeHeap();
     uint32_t maxA  = ESP.getMaxAllocHeap();
     COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
-    if (maxA < 32 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 32768", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 32 KB)",
+    if (maxA < 18 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 18432", maxA);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 18 KB)",
               path.c_str(), maxA);
       return false;
     }
@@ -355,9 +423,9 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
     // consume a significant chunk.  Don't attempt decode if we no longer have
     // enough contiguous memory; the caller will retry on the next pass.
     maxA = ESP.getMaxAllocHeap();
-    if (maxA < 28 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 28KB", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen after load for %s (maxAlloc=%u < 28 KB)",
+    if (maxA < 14 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 14KB", maxA);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen after load for %s (maxAlloc=%u < 14 KB)",
               path.c_str(), maxA);
       return false;
     }
@@ -498,6 +566,8 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;
 
+  HOMEPAGE_LOG("BSC", "sync: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   std::string root = rootDir ? rootDir : "";
   if (root.empty()) root = "/";
   if (root[0] != '/') root.insert(0, "/");
@@ -508,6 +578,8 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
     LOG_DBG("BSC", "sync: cache not available, falling back to full scan");
     return false;
   }
+
+  HOMEPAGE_LOG("BSC", "sync: after load(cached) heap=%u maxA=%u cached=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), cached.size());
 
   std::sort(cached.begin(), cached.end(),
             [](const Entry& a, const Entry& b) { return a.path < b.path; });
@@ -525,6 +597,8 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   std::vector<ScanRecord> records;
   records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
 
+  HOMEPAGE_LOG("BSC", "sync: after reserve(records) heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   int removed = 0;
   int added = 0;
   int kept = 0;
@@ -541,6 +615,7 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
 
   std::vector<bool> cachedMatched(cached.size(), false);
 
+  int loopIter = 0;
   while (!worklist.empty() && static_cast<int>(records.size()) < maxBooks) {
     const std::string folder = std::move(worklist.back());
     worklist.pop_back();
@@ -594,12 +669,15 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
       if (std::strcmp(name, "if_found.txt") == 0 || std::strcmp(name, "crash_report.txt") == 0) continue;
 
       ++sdFileCount;
+      ++loopIter;
 
       const int ci = cachedIndexForPath(childPath);
       if (ci >= 0) {
         cachedMatched[ci] = true;
         ScanRecord rec;
-        rec.path = childPath;
+        rec.path = std::move(childPath);
+        // Copy strings from cache into the ScanRecord.  All three are needed
+        // for the final sort — the cache entries themselves will be released.
         rec.title = cached[ci].title;
         rec.author = cached[ci].author;
         finalizeRecord(rec);
@@ -619,10 +697,17 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
         }
       }
 
+      // Log every 20 iterations to track heap fragmentation pattern
+      if (loopIter % 20 == 0) {
+        HOMEPAGE_LOG("BSC", "sync loop: iter=%d records=%zu heap=%u maxA=%u", loopIter, records.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      }
+
       if (static_cast<int>(records.size()) >= maxBooks) break;
     }
     rootFile.close();
   }
+
+  HOMEPAGE_LOG("BSC", "sync: after scan loop heap=%u maxA=%u records=%zu kept=%d added=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), records.size(), kept, added);
 
   for (size_t i = 0; i < cached.size(); ++i) {
     if (!cachedMatched[i]) {
@@ -633,11 +718,14 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
 
   if (removed == 0 && added == 0) {
     out.swap(cached);
+    HOMEPAGE_LOG("BSC", "sync: no changes, after swap heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     LOG_DBG("BSC", "sync: no changes detected (%d entries, %d sd files scanned)", kept, sdFileCount);
     return true;
   }
 
   std::sort(records.begin(), records.end(), compareRecords);
+
+  HOMEPAGE_LOG("BSC", "sync: before copy records->out heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   out.reserve(records.size());
   for (auto& rec : records) {
@@ -648,7 +736,19 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
     out.push_back(std::move(entry));
   }
 
+  HOMEPAGE_LOG("BSC", "sync: after copy records->out heap=%u maxA=%u out=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), out.size());
+
+  // Explicitly release cached and records to see the effect
+  cached.clear();
+  cached.shrink_to_fit();
+  HOMEPAGE_LOG("BSC", "sync: after cached.clear() heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  records.clear();
+  records.shrink_to_fit();
+  HOMEPAGE_LOG("BSC", "sync: after records.clear() heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   const bool persisted = save(out);
+  HOMEPAGE_LOG("BSC", "sync: after save() heap=%u maxA=%u persisted=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), persisted ? 1 : 0);
   LOG_DBG("BSC", "sync complete: %d kept, %d added, %d removed (total %d, %d sd scanned), persisted=%d", kept, added,
           removed, static_cast<int>(out.size()), sdFileCount, persisted ? 1 : 0);
   return persisted;

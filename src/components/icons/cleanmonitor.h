@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — CleanMonitorIcon32 (rotated 90 left)
-static const uint8_t CleanMonitorIcon32[] = {
+static const uint8_t PROGMEM CleanMonitorIcon32[] = {
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,
     0xC0, 0x00, 0x0F, 0xFF,

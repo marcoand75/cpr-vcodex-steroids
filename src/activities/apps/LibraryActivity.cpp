@@ -8,11 +8,15 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <CoverDebugLog.h>
+#include <HomepageDebugLog.h>
+#include <FontCacheManager.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <numeric>
 #include <vector>
 
 #include "../home/BookContextMenuActivity.h"
@@ -44,6 +48,10 @@
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+// Compile-time verification: the largest icon (32×32 1‑bpp) is exactly 128 B.
+// This must match kMaxIconBytes in lib/GfxRenderer/GfxRenderer.cpp.
+static_assert(sizeof(CoverIcon) == 128, "unexpected icon size, update kMaxIconBytes");
 
 namespace {
 constexpr int COVER_CORNER_RADIUS = 2;
@@ -136,6 +144,22 @@ std::string normalizeForSort(const std::string& s) {
   return out;
 }
 
+/// Compare two strings using the same normalisation as normalizeForSort,
+/// but without allocating any heap memory — works on a on-stack buffer.
+/// Returns -1, 0, or +1 (like strcmp).
+static int compareNormalized(const std::string& a, const std::string& b) {
+  const size_t na = a.size();
+  const size_t nb = b.size();
+  const size_t n = std::min(na, nb);
+  for (size_t i = 0; i < n; ++i) {
+    const char ca = normalizeChar(static_cast<unsigned char>(a[i]));
+    const char cb = normalizeChar(static_cast<unsigned char>(b[i]));
+    if (ca != cb) return (ca < cb) ? -1 : 1;
+  }
+  if (na != nb) return (na < nb) ? -1 : 1;
+  return 0;
+}
+
 std::string filenameWithoutExtension(const std::string& path) {
   std::string name = path;
   const size_t lastSlash = name.find_last_of('/');
@@ -143,6 +167,22 @@ std::string filenameWithoutExtension(const std::string& path) {
   const size_t lastDot = name.find_last_of('.');
   if (lastDot != std::string::npos && lastDot > 0) name = name.substr(0, lastDot);
   return name;
+}
+
+// Helper shared by scanSd() and rebuildForFilter().
+static bool includeBookByFilter(const LibraryCache::Entry& e, CrossPointSettings::LIBRARY_FILTER filter) {
+  switch (filter) {
+    case CrossPointSettings::LIBRARY_FILTER_ALL: return true;
+    case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: return FAVORITES.isFavorite(e.path);
+    case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: {
+      const auto& recent = RECENT_BOOKS.getBooks();
+      for (const auto& rb : recent) {
+        if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) return true;
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -160,20 +200,6 @@ void LibraryActivity::applyLayoutFromSettings() {
   gridsPerPage_ = gridColumns_ * gridColumns_;
   rowPad_ = (gridColumns_ >= 4) ? 8 : 14;
   pageTitleCacheKey_ = -1;  // cover width changed -> wrapping width is stale
-}
-
-bool LibraryActivity::isBookCoverReady(const LibraryCache::Entry& entry) const {
-  // Resolve the page-relative slot for this entry (if it is on the current
-  // page) and delegate to the slot-aware overload.
-  const size_t pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-  const auto it = std::find_if(entries_.begin(), entries_.end(),
-                               [&](const LibraryCache::Entry& e) { return e.path == entry.path; });
-  size_t slot = 0;
-  if (it != entries_.end()) {
-    const size_t entryIdx = static_cast<size_t>(it - entries_.begin());
-    if (entryIdx >= pageStart) slot = entryIdx - pageStart;
-  }
-  return isBookCoverReady(entry.path, slot);
 }
 
 bool LibraryActivity::isBookCoverReady(const std::string& path, size_t slot) const {
@@ -196,30 +222,12 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
     LibraryCache::scan(renderer, popupRect, allEntries, SETTINGS.libraryRootDir);
   }
 
-  // Push matching entries into unfilteredEntries_.  Using the original two-
-  // container pattern (rather than compacting in place) avoids self-move
-  // issues: the system STL (libstdc++ on ESP32-C3) clears std::string on
-  // self-move-assignment, which would empty every path + title when the
-  // ALL filter is selected (every iteration of the compact loop would be
-  // allEntries[w] = move(allEntries[r]) with w == r).
   unfilteredEntries_.clear();
   for (int r = 0; r < static_cast<int>(allEntries.size()); ++r) {
     // Keep the WDT fed on very large libraries.
     if ((r & 0xF) == 0) { yield(); esp_task_wdt_reset(); }
-    bool include = false;
-    const LibraryCache::Entry& e = allEntries[r];
-    switch (filter) {
-      case CrossPointSettings::LIBRARY_FILTER_ALL: include = true; break;
-      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: include = FAVORITES.isFavorite(e.path); break;
-      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: {
-        const auto& recent = RECENT_BOOKS.getBooks();
-        for (const auto& rb : recent) {
-          if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) { include = true; break; }
-        }
-        break;
-      }
-    }
-    if (include) unfilteredEntries_.push_back(std::move(allEntries[r]));
+    if (includeBookByFilter(allEntries[r], filter))
+      unfilteredEntries_.push_back(std::move(allEntries[r]));
   }
 
   currentFilter_ = filter;
@@ -231,7 +239,10 @@ void LibraryActivity::applyFilterAndSort() {
 
   entries_.clear();
   if (searchLower.empty()) {
-    entries_ = unfilteredEntries_;
+    // Move instead of copy: entries_ takes ownership of the Entry objects
+    // and their internal strings without duplicating heap allocations.
+    entries_ = std::move(unfilteredEntries_);
+    unfilteredEntries_.clear();
   } else {
     for (const auto& e : unfilteredEntries_) {
       if (normalizeForSort(e.title).find(searchLower) != std::string::npos) {
@@ -248,52 +259,81 @@ void LibraryActivity::applyFilterAndSort() {
     }
   }
 
-  auto compareEntries = [this](const LibraryCache::Entry& a, const LibraryCache::Entry& b) -> bool {
-    switch (currentSort_) {
-      case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:
-        return normalizeForSort(a.title) < normalizeForSort(b.title);
-      case CrossPointSettings::LIBRARY_SORT_TITLE_DESC:
-        return normalizeForSort(a.title) > normalizeForSort(b.title);
-      case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: {
-        auto la = normalizeForSort(a.author.empty() ? "zzz" : a.author);
-        auto lb = normalizeForSort(b.author.empty() ? "zzz" : b.author);
-        if (la != lb) return la < lb;
-        return normalizeForSort(a.title) < normalizeForSort(b.title);
-      }
-      case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: {
-        auto la = normalizeForSort(a.author.empty() ? "zzz" : a.author);
-        auto lb = normalizeForSort(b.author.empty() ? "zzz" : b.author);
-        if (la != lb) return la > lb;
-        return normalizeForSort(a.title) > normalizeForSort(b.title);
-      }
-      case CrossPointSettings::LIBRARY_SORT_RECENT: {
-        const auto* sa = READING_STATS.findBook(a.path);
-        const auto* sb = READING_STATS.findBook(b.path);
-        uint32_t ta = sa ? sa->lastReadAt : 0;
-        uint32_t tb = sb ? sb->lastReadAt : 0;
-        if (ta != tb) return ta > tb;
-        return a.title < b.title;
-      }
-      case CrossPointSettings::LIBRARY_SORT_PROGRESS: {
-        const auto* sa = READING_STATS.findBook(a.path);
-        const auto* sb = READING_STATS.findBook(b.path);
-        uint8_t pa = sa ? sa->lastProgressPercent : 0;
-        uint8_t pb = sb ? sb->lastProgressPercent : 0;
-        bool ca = sa && sa->completed;
-        bool cb = sb && sb->completed;
-        if (ca != cb) return ca;
-        if (pa != pb) return pa > pb;
-        return a.title < b.title;
+  const int n = static_cast<int>(entries_.size());
+  HOMEPAGE_LOG("LIB", "filter+sort: n=%d heap=%u maxA=%u", n, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  if (n > 1) {
+    // Sort without pre-computed sort keys: compareNormalized works on stack
+    // buffers and never allocates heap memory.  This avoids ~206 temporary
+    // std::string allocations that would otherwise fragment the heap.
+    struct SortMeta {
+      uint32_t lastReadAt = 0;
+      uint8_t progress = 0;
+      bool completed = false;
+    };
+    // Compact allocation: SortMeta is 7 bytes, rounded to 8 by alignment.
+    // For 103 entries that's ~824 bytes in one contiguous block.
+    std::vector<SortMeta> meta(n);
+    for (int i = 0; i < n; ++i) {
+      const auto* s = READING_STATS.findBook(entries_[i].path);
+      if (s) {
+        meta[i].lastReadAt = s->lastReadAt;
+        meta[i].progress = s->lastProgressPercent;
+        meta[i].completed = s->completed;
       }
     }
-    return a.path < b.path;
-  };
-  // Reset WDT before the sort — for large libraries the RECENT/PROGRESS
-  // comparator (which calls READING_STATS.findBook per comparison) can
-  // be CPU-heavy and the sort itself has no yield points.
-  yield();
-  esp_task_wdt_reset();
-  std::sort(entries_.begin(), entries_.end(), compareEntries);
+    HOMEPAGE_LOG("LIB", "filter+sort: after meta heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+    std::vector<int> idx(n);
+    std::iota(idx.begin(), idx.end(), 0);
+    yield();
+    esp_task_wdt_reset();
+    HOMEPAGE_LOG("LIB", "filter+sort: before sort heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) -> bool {
+      const auto& ea = entries_[a];
+      const auto& eb = entries_[b];
+      const auto& ma = meta[a];
+      const auto& mb = meta[b];
+      switch (currentSort_) {
+        case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:
+          return compareNormalized(ea.title, eb.title) < 0;
+        case CrossPointSettings::LIBRARY_SORT_TITLE_DESC:
+          return compareNormalized(ea.title, eb.title) > 0;
+        case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: {
+          const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
+                                            eb.author.empty() ? "zzz" : eb.author);
+          if (cmp != 0) return cmp < 0;
+          return compareNormalized(ea.title, eb.title) < 0;
+        }
+        case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: {
+          const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
+                                            eb.author.empty() ? "zzz" : eb.author);
+          if (cmp != 0) return cmp > 0;
+          return compareNormalized(ea.title, eb.title) > 0;
+        }
+        case CrossPointSettings::LIBRARY_SORT_RECENT:
+          if (ma.lastReadAt != mb.lastReadAt) return ma.lastReadAt > mb.lastReadAt;
+          return compareNormalized(ea.title, eb.title) < 0;
+        case CrossPointSettings::LIBRARY_SORT_PROGRESS:
+          if (ma.completed != mb.completed) return ma.completed;
+          if (ma.progress != mb.progress) return ma.progress > mb.progress;
+          return compareNormalized(ea.title, eb.title) < 0;
+      }
+      return a < b;
+    });
+
+    HOMEPAGE_LOG("LIB", "filter+sort: after sort heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+    // Reorder entries_ according to the sorted index permutation.
+    std::vector<LibraryCache::Entry> reordered;
+    reordered.reserve(n);
+    HOMEPAGE_LOG("LIB", "filter+sort: after reserve(reordered) heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    for (int i : idx)
+      reordered.push_back(std::move(entries_[i]));
+    HOMEPAGE_LOG("LIB", "filter+sort: after reorder heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    entries_.swap(reordered);
+    HOMEPAGE_LOG("LIB", "filter+sort: after swap heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  }
+
   selectorIndex_ = 0;
   coversComplete_ = false;
   coverGenIndex_ = -1;
@@ -310,7 +350,9 @@ void LibraryActivity::scanSd() {
   // Try incremental sync first; falls back to full scan only
   // when the cache file is missing or corrupt.
   if (LibraryCache::sync(unfilteredEntries_, SETTINGS.libraryRootDir)) {
+    HOMEPAGE_LOG("LIB", "scanSd: after sync heap=%u maxA=%u unfiltered=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), unfilteredEntries_.size());
     applyFilterAndSort();
+    HOMEPAGE_LOG("LIB", "scanSd: after filter+sort heap=%u maxA=%u entries=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), entries_.size());
     LOG_DBG("LIB", "Synced %d entries from library cache (root=%s)", static_cast<int>(entries_.size()), SETTINGS.libraryRootDir);
     return;
   }
@@ -326,19 +368,8 @@ void LibraryActivity::scanSd() {
 
   unfilteredEntries_.clear();
   for (auto& e : allEntries) {
-    bool include = false;
-    switch (currentFilter_) {
-      case CrossPointSettings::LIBRARY_FILTER_ALL: include = true; break;
-      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: include = FAVORITES.isFavorite(e.path); break;
-      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: {
-        const auto& recent = RECENT_BOOKS.getBooks();
-        for (const auto& rb : recent) {
-          if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) { include = true; break; }
-        }
-        break;
-      }
-    }
-    if (include) unfilteredEntries_.push_back(std::move(e));
+    if (includeBookByFilter(e, currentFilter_))
+      unfilteredEntries_.push_back(std::move(e));
   }
 
   applyFilterAndSort();
@@ -494,6 +525,7 @@ void LibraryActivity::beginTextSearch() {
 
 void LibraryActivity::onEnter() {
   Activity::onEnter();
+  HOMEPAGE_LOG("LIB", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   applyLayoutFromSettings();
   selectorIndex_ = 0; coverGenIndex_ = -1; coversComplete_ = false;
   lastPage_ = 0;  // start on page 0 so intra-page Left/Right don't falsely trigger page change
@@ -503,7 +535,9 @@ void LibraryActivity::onEnter() {
   downHeld_ = false; downLongTriggered_ = false;
   popupSpawnButton_ = -1;
   lastLayoutSetting_ = SETTINGS.libraryLayout;
+  HOMEPAGE_LOG("LIB", "onEnter: before scanSd heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   scanSd();
+  HOMEPAGE_LOG("LIB", "onEnter: after scanSd heap=%u maxA=%u entries=%zu", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), entries_.size());
   requestUpdate();
 }
 
@@ -577,6 +611,7 @@ void LibraryActivity::loop() {
         if (!isBookCoverReady(entries_[pageStart + s].path, static_cast<size_t>(s))) allReady = false;
       }
       if (allReady) {
+        COVER_LOG("LIB", "Covers: ALL READY pageStart=%d pageCount=%d", pageStart, pageCount);
         coversComplete_ = true;
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
@@ -585,6 +620,15 @@ void LibraryActivity::loop() {
         requestUpdate();
         return;
       }
+      // Heap diagnostics before starting a cover pass.
+      // The two persistent vectors (entries_, unfilteredEntries_) hold ~3000
+      // small std::string allocations that fragment the heap.  Log both here
+      // and after cache clear so we can track how much contiguous memory the
+      // clear recovers.
+      const uint32_t freeBefore = ESP.getFreeHeap();
+      const uint32_t maxABefore = ESP.getMaxAllocHeap();
+      COVER_LOG("LIB", "Covers: pass#%d START pageStart=%d pageCount=%d free=%u maxA=%u",
+                coverPassCount_, pageStart, pageCount, freeBefore, maxABefore);
       // First frame of this pass: redraw the full grid so placeholders + any
       // existing covers from previous sessions are visible immediately.
       forceRender_ = true;
@@ -601,18 +645,44 @@ void LibraryActivity::loop() {
       if (!isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot))) {
         yield();
         esp_task_wdt_reset();
-        if (LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_) &&
-            slot < 64) {
-          coverGeneratedMask_ |= (uint64_t{1} << slot);
+        COVER_LOG("LIB", "Cover: att#%d slot=%d idx=%d gen... path=%s free=%u maxA=%u",
+                  attempt, slot, idx, entries_[idx].path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        // Free render caches so the EPUB cover decoder gets more contiguous heap.
+        // Font cache, page-title cache and header strings all hold medium-size
+        // allocations that fragment the heap; none are needed during cover generation.
+        if (auto* fcm = renderer.getFontCacheManager()) {
+          fcm->clearCache();
         }
-        generatedOne = true;
+        cachedInfo_.clear();
+        cachedInfo_.shrink_to_fit();
+        cachedSelTitle_.clear();
+        cachedSelTitle_.shrink_to_fit();
+        pageTitleCache_.clear();
+        pageTitleCache_.shrink_to_fit();
+        pageTitleCacheKey_ = -1;
+        COVER_LOG("LIB", "Cover: post-clear free=%u maxA=%u",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
+        const bool slotOk = slot < 64;
+        COVER_LOG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        if (genOk && slotOk) {
+          coverGeneratedMask_ |= (uint64_t{1} << slot);
+          generatedOne = true;
+        }
+        // Force a render update in both success and failure so the user
+        // sees either the new thumb or the placeholder right away.
         forceRender_ = true;
         coverGenRenderBatch_++;
         if (coverGenRenderBatch_ >= kCoverRenderBatchEvery) {
           coverGenRenderBatch_ = 0;
           requestUpdate();
         }
-        return;  // one cover per frame, block input
+        // Only block input & return when we actually generated a cover.
+        // On failure, continue the inner loop so we try other missing
+        // slots in this frame instead of retrying the same failing slot
+        // forever.  The retry budget still gives failing slots another
+        // chance on the next pass.
+        if (generatedOne) return;
       }
     }
 
@@ -624,7 +694,9 @@ void LibraryActivity::loop() {
       for (int slot = 0; slot < pageCount && !stillMissing; ++slot) {
         if (!isBookCoverReady(entries_[pageStart + slot].path, static_cast<size_t>(slot))) stillMissing = true;
       }
+      COVER_LOG("LIB", "Cover: pass#%d DONE stillMissing=%d (free=%u)", coverPassCount_ + 1, stillMissing, ESP.getFreeHeap());
       if (!stillMissing || ++coverPassCount_ >= kMaxCoverPasses) {
+        COVER_LOG("LIB", "Cover: pass#%d COMPLETE (stillMissing=%d budgetExceeded=%d)", coverPassCount_, stillMissing, coverPassCount_ >= kMaxCoverPasses);
         coversComplete_ = true;
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
@@ -834,6 +906,7 @@ void LibraryActivity::loop() {
 }
 
 void LibraryActivity::render(RenderLock&&) {
+  esp_task_wdt_reset();
   const int total = static_cast<int>(entries_.size());
   const int curPageRaw = total > 0 ? selectorIndex_ / gridsPerPage_ : 0;
   // Guard: skip full redraw when nothing changed.  During cover indexing
@@ -860,6 +933,10 @@ void LibraryActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int totalPages = total > 0 ? (total + gridsPerPage_ - 1) / gridsPerPage_ : 0;
   const int curPage = total > 0 ? curPageRaw + 1 : 0;
+
+  // Diagnostic: log heap state at render start to isolate if rendering fragments heap
+  COVER_LOG("LIB", "Render: start free=%u maxA=%u total=%d page=%d",
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap(), total, curPage);
 
   // Draw header bar (black background + battery) without title/subtitle
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, nullptr, nullptr);
@@ -1098,6 +1175,8 @@ void LibraryActivity::render(RenderLock&&) {
   }
 
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
+  // Diagnostic: log heap state at render end to measure fragmentation caused by rendering
+  COVER_LOG("LIB", "Render: end free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   renderer.displayBuffer();
 }
 
@@ -1131,13 +1210,15 @@ void LibraryActivity::drawTileContent(int i, int pageStart, int x, int y) const 
     const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
     renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
     const int textAreaH = 2 * coverHeight_ / 3 - 8;
-    const auto& lines = pageTitleCache_[i];
-    int lh = renderer.getLineHeight(SMALL_FONT_ID);
-    int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
-    for (auto& ln : lines) {
-      int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
-      renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-      ty += lh;
+    if (i < static_cast<int>(pageTitleCache_.size())) {
+      const auto& lines = pageTitleCache_[i];
+      int lh = renderer.getLineHeight(SMALL_FONT_ID);
+      int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+      for (auto& ln : lines) {
+        int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+        renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+        ty += lh;
+      }
     }
   }
   if (drawn) {

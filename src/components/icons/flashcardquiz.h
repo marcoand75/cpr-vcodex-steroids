@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — FlashcardQuizIcon32 (rotated 90 left)
-static const uint8_t FlashcardQuizIcon32[] = {
+static const uint8_t PROGMEM FlashcardQuizIcon32[] = {
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,

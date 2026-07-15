@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — RecentBooksIcon32 (rotated 90 left)
-static const uint8_t RecentBooksIcon32[] = {
+static const uint8_t PROGMEM RecentBooksIcon32[] = {
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFC, 0x1F, 0xFF, 0xFF,

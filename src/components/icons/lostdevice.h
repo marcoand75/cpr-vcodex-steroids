@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — LostDeviceIcon32 (rotated 90 left)
-static const uint8_t LostDeviceIcon32[] = {
+static const uint8_t PROGMEM LostDeviceIcon32[] = {
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,

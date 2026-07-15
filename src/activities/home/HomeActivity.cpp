@@ -12,6 +12,7 @@
 #include <Utf8.h>
 #include <Xtc.h>
 #include <CoverDebugLog.h>
+#include <HomepageDebugLog.h>
 #include <esp_task_wdt.h>
 
 #include <algorithm>
@@ -406,6 +407,7 @@ int HomeActivity::getMenuItemCount() const {
 }
 
 void HomeActivity::loadRecentBooks(const int maxBooks) {
+  HOMEPAGE_LOG("HOME", "loadRecentBooks: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   invalidateResidentCarouselFrame();
   invalidateCarouselFrameHash();
   recentBooks.clear();
@@ -431,6 +433,8 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
     for (const std::string& key : staleFavorites) {
       FAVORITES.removeBook(key);
     }
+    HOMEPAGE_LOG("HOME", "loadRecentBooks: favorites end heap=%u maxA=%u books=%zu",
+                 ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
     return;
   }
 
@@ -445,6 +449,8 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
       recentBooks.push_back(book);
     }
   }
+  HOMEPAGE_LOG("HOME", "loadRecentBooks: end heap=%u maxA=%u books=%zu",
+               ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
 }
 
 void HomeActivity::reloadHomeBooks(const int maxBooks) {
@@ -481,6 +487,8 @@ bool HomeActivity::needsRecentCoverLoad(const int coverHeight) const {
 }
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
+  HOMEPAGE_LOG("HOME", "loadRecentCovers: start heap=%u maxA=%u books=%zu",
+               ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
   recentsLoading = true;
   // The first home render can cache a placeholder while thumbnails are still missing.
   // Drop that cache before generating covers so the next render reads the fresh BMPs.
@@ -630,10 +638,15 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       carouselFramesReady = false;
       invalidateResidentCarouselFrame();
       invalidateCarouselFrameHash();
+      HOMEPAGE_LOG("HOME", "loadRecentCovers: before preRenderCarouselFrames heap=%u maxA=%u",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       preRenderCarouselFrames();
+      HOMEPAGE_LOG("HOME", "loadRecentCovers: after preRenderCarouselFrames heap=%u maxA=%u",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
     requestUpdate();
   }
+  HOMEPAGE_LOG("HOME", "loadRecentCovers: end heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 void HomeActivity::scheduleCarouselCoverLoadIfNeeded() {
@@ -652,6 +665,8 @@ void HomeActivity::scheduleCarouselCoverLoadIfNeeded() {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
+  HOMEPAGE_LOG("HOME", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   hasOpdsServers = OPDS_STORE.hasServers();
 
   selectorIndex = 0;
@@ -667,6 +682,9 @@ void HomeActivity::onEnter() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   reloadHomeBooks(metrics.homeRecentBooksCount);
 
+  HOMEPAGE_LOG("HOME", "onEnter: after reloadHomeBooks heap=%u maxA=%u books=%zu",
+               ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
+
   // Drop any stale carousel frame cache (e.g. frames rendered with old reading
   // statistics) and force a fresh render — important after returning from a
   // finished read so the carousel shows updated progress/last-read at once.
@@ -677,49 +695,61 @@ void HomeActivity::onEnter() {
     pruneCarouselFrameCache();
   }
 
+  HOMEPAGE_LOG("HOME", "onEnter: end heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   requestUpdate();
 }
 
 void HomeActivity::onExit() {
   Activity::onExit();
-  freeCoverBuffer();
+  coverBufferStored = false;  // invalidate before free
+  free(coverBuffer);
+  coverBuffer = nullptr;
+  coverBufferSize = 0;
 }
 
 bool HomeActivity::storeCoverBuffer() {
   if (coverRectW <= 0 || coverRectH <= 0) return false;
-  freeCoverBuffer();
 
   const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
   if (needed == 0) return false;
 
-  coverBuffer = static_cast<uint8_t*>(malloc(needed));
-  if (!coverBuffer) {
-    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
-    return false;
-  }
-  coverBufferSize = needed;
-
-  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize)) {
+  // Reuse an already-allocated buffer if it is large enough.  This avoids
+  // freeing a ~40 KB block on every store/restore cycle, which would leave
+  // a hole in the heap that later activities (Library cover generation) need.
+  if (needed > coverBufferSize) {
     free(coverBuffer);
-    coverBuffer = nullptr;
-    coverBufferSize = 0;
+    coverBuffer = static_cast<uint8_t*>(malloc(needed));
+    if (!coverBuffer) {
+      coverBufferSize = 0;
+      LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
+      return false;
+    }
+    coverBufferSize = needed;
+  }
+  // coverBufferSize >= needed: we can reuse.
+
+  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, needed)) {
+    // Keep the buffer allocated — a transient copy failure is not a reason
+    // to free it and re-fragment the heap.
+    coverBufferStored = false;
     return false;
   }
 
+  coverBufferStored = true;
   return true;
 }
 
 bool HomeActivity::restoreCoverBuffer() {
   if (!coverBuffer || coverRectW <= 0 || coverRectH <= 0) return false;
-  return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize);
+  const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
+  if (needed > coverBufferSize) return false;
+  return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, needed);
 }
 
+/// Mark the cover buffer as stale so the next render re-stores it.
+/// Does NOT free the underlying allocation — only onExit() does that.
 void HomeActivity::freeCoverBuffer() {
-  if (coverBuffer) {
-    free(coverBuffer);
-    coverBuffer = nullptr;
-  }
-  coverBufferSize = 0;
   coverBufferStored = false;
 }
 

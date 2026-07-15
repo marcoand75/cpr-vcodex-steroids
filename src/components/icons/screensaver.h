@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+#include <pgmspace.h>
 
 // size: 32x32 — ScreenSaverIcon (rotated 90 left)
-static const uint8_t ScreenSaverIcon[] = {
+static const uint8_t PROGMEM ScreenSaverIcon[] = {
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF,
     0xFC, 0x00, 0x01, 0xFF,

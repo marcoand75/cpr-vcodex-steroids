@@ -72,10 +72,8 @@ class LibraryActivity final : public Activity {
   void ensureLayoutUpToDate();
   void scanSd();
   void applyFilterAndSort();
-  bool isBookCoverReady(const LibraryCache::Entry& entry) const;
-  // Slot-aware overload: skips the linear search over `entries_` and checks the
-  // thumbnail file + the current-page generation mask directly. `slot` is the
-  // zero-based position within the current page (pageStart-relative).
+  // Checks the thumbnail file + the current-page generation mask directly.
+  // `slot` is the zero-based position within the current page (pageStart-relative).
   bool isBookCoverReady(const std::string& path, size_t slot) const;
   // Draw the content of grid cell `i` (cover thumbnail, or placeholder with
   // wrapped title + ribbon badge) at pixel (x, y). Does NOT draw the selection
