@@ -239,11 +239,22 @@ void LibraryActivity::applyFilterAndSort() {
 
   entries_.clear();
   if (searchLower.empty()) {
+    // If unfilteredEntries_ is empty we've already moved it into entries_
+    // on a previous call (e.g. after an initial sort).  Reload from the
+    // on-disk cache so we don't lose the unfiltered set.
+    if (unfilteredEntries_.empty()) {
+      LibraryCache::load(unfilteredEntries_);
+    }
     // Move instead of copy: entries_ takes ownership of the Entry objects
     // and their internal strings without duplicating heap allocations.
     entries_ = std::move(unfilteredEntries_);
     unfilteredEntries_.clear();
   } else {
+    // Search text is non-empty: reload the unfiltered set if it was consumed
+    // by a previous move, then filter by text match.
+    if (unfilteredEntries_.empty()) {
+      LibraryCache::load(unfilteredEntries_);
+    }
     for (const auto& e : unfilteredEntries_) {
       if (normalizeForSort(e.title).find(searchLower) != std::string::npos) {
         entries_.push_back(e);
@@ -339,6 +350,14 @@ void LibraryActivity::applyFilterAndSort() {
   coverGenIndex_ = -1;
   lastPage_ = 0;  // selectorIndex_ was just reset to 0, which is on page 0
   pageTitleCacheKey_ = -1;  // entries order/contents changed
+  // Force cached header info (filter/sort/title) to be rebuilt on next render.
+  // Without this, the render guard sees cached values matching current values
+  // and skips the rebuild, leaving the header empty after a filter/sort change.
+  cachedRenderSelector_ = -1;
+  cachedRenderPage_ = -1;
+  cachedInfoFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(-1);
+  cachedInfoSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(-1);
+  cachedInfoSearch_.clear();
   forceRender_ = true;
 }
 
@@ -701,6 +720,14 @@ void LibraryActivity::loop() {
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
         coverGenRenderBatch_ = 0;
+        // Invalidate cached header strings cleared during cover gen (line 670-672).
+        // Without this, the next render sees infoKeyChanged=false and the header
+        // is left empty on screen.
+        cachedRenderSelector_ = -1;
+        cachedRenderPage_ = -1;
+        cachedInfoFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(-1);
+        cachedInfoSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(-1);
+        cachedInfoSearch_.clear();
         forceRender_ = true;
         requestUpdate();
         return;
@@ -712,6 +739,10 @@ void LibraryActivity::loop() {
   }
 
   if (total <= 0) {
+    // Reset held-key state when transitioning to empty, so long-press
+    // sort/filter triggers work even if navigation left stale state.
+    upHeld_ = false; upLongTriggered_ = false;
+    downHeld_ = false; downLongTriggered_ = false;
     // The list is empty (e.g., a filter produced zero matches). Only allow
     // Back (go home) and long-press popup triggers so the user is never stuck.
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -960,91 +991,92 @@ void LibraryActivity::render(RenderLock&&) {
                       EpdFontFamily::REGULAR);
   }
 
-  if (total > 0) {
-    // Rebuild the cached header/title strings only when their inputs change.
-    // This keeps render effectively allocation-free in the steady state and
-    // during per-page cover indexing, where render runs every frame.
-    const bool infoKeyChanged =
-        cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
-        cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
-        cachedInfoSearch_ != currentSearchText_;
-    if (infoKeyChanged) {
-      cachedInfo_.clear();
-      switch (currentFilter_) {
-        case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
-        case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
-        default: cachedInfo_ = tr(STR_ALL_BOOKS); break;
-      }
-      const char* sortLabel = nullptr;
-      switch (currentSort_) {
-        case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
-        case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
-        case CrossPointSettings::LIBRARY_SORT_RECENT:     sortLabel = tr(STR_SORT_RECENT); break;
-        case CrossPointSettings::LIBRARY_SORT_PROGRESS:   sortLabel = tr(STR_SORT_PROGRESS); break;
-        default: break;
-      }
-      if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
-      if (!currentSearchText_.empty()) {
-        cachedInfo_ += " [";
-        cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + ".." : currentSearchText_;
-        cachedInfo_ += "]";
-      }
+  // Rebuild the cached header/title strings only when their inputs change.
+  // This keeps render effectively allocation-free in the steady state and
+  // during per-page cover indexing, where render runs every frame.
+  // Runs regardless of total so that filter/sort info is shown even when
+  // the library is empty (zero search results, etc.).
+  const bool infoKeyChanged =
+      cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
+      cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
+      cachedInfoSearch_ != currentSearchText_;
+  if (infoKeyChanged) {
+    cachedInfo_.clear();
+    switch (currentFilter_) {
+      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
+      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
+      default: cachedInfo_ = tr(STR_ALL_BOOKS); break;
+    }
+    const char* sortLabel = nullptr;
+    switch (currentSort_) {
+      case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
+      case CrossPointSettings::LIBRARY_SORT_RECENT:     sortLabel = tr(STR_SORT_RECENT); break;
+      case CrossPointSettings::LIBRARY_SORT_PROGRESS:   sortLabel = tr(STR_SORT_PROGRESS); break;
+      default: break;
+    }
+    if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
+    if (!currentSearchText_.empty()) {
+      cachedInfo_ += " [";
+      cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + ".." : currentSearchText_;
+      cachedInfo_ += "]";
+    }
 
-      if (selectorIndex_ < total) {
-        cachedSelTitle_ = entries_[selectorIndex_].title;
-        if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
-        const int maxSelW = pageWidth - 20;
-        if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-          while (cachedSelTitle_.size() > 3 &&
-                 renderer.getTextWidth(UI_10_FONT_ID, (cachedSelTitle_ + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-            cachedSelTitle_.pop_back();
-          }
-          cachedSelTitle_ += "..";
+    if (selectorIndex_ < total) {
+      cachedSelTitle_ = entries_[selectorIndex_].title;
+      if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
+      const int maxSelW = pageWidth - 20;
+      if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+        while (cachedSelTitle_.size() > 3 &&
+               renderer.getTextWidth(UI_10_FONT_ID, (cachedSelTitle_ + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
+          cachedSelTitle_.pop_back();
         }
-      } else {
-        cachedSelTitle_.clear();
+        cachedSelTitle_ += "..";
       }
-
-      cachedInfoFilter_ = currentFilter_;
-      cachedInfoSort_ = currentSort_;
-      cachedInfoSearch_ = currentSearchText_;
-      cachedRenderSelector_ = selectorIndex_;
-      cachedRenderPage_ = curPageRaw;
+    } else {
+      cachedSelTitle_.clear();
     }
 
-    int lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
-    if (lblW > pageWidth - 20) {
-      while (cachedInfo_.size() > 5 && renderer.getTextWidth(UI_10_FONT_ID, (cachedInfo_ + "..").c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
-        cachedInfo_.pop_back();
-      }
-      cachedInfo_ += "..";
-    }
-    lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
-    int centerX = (pageWidth - lblW) / 2;
-    int headerY = metrics.topPadding + 8;
-    renderer.drawText(UI_10_FONT_ID, centerX, headerY, cachedInfo_.c_str(), true, EpdFontFamily::REGULAR);
+    cachedInfoFilter_ = currentFilter_;
+    cachedInfoSort_ = currentSort_;
+    cachedInfoSearch_ = currentSearchText_;
+    cachedRenderSelector_ = selectorIndex_;
+    cachedRenderPage_ = curPageRaw;
+  }
 
-    // Draw selected book title below the info line, centered
-    if (selectorIndex_ < total && !cachedSelTitle_.empty()) {
-      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
-      const int selTitleX = (pageWidth - selTitleW) / 2;
-      const int selTitleY = headerY + renderer.getLineHeight(UI_10_FONT_ID) + 2;
-      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
+  int lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
+  if (lblW > pageWidth - 20) {
+    while (cachedInfo_.size() > 5 && renderer.getTextWidth(UI_10_FONT_ID, (cachedInfo_ + "..").c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
+      cachedInfo_.pop_back();
     }
+    cachedInfo_ += "..";
+  }
+  lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
+  int centerX = (pageWidth - lblW) / 2;
+  int headerY = metrics.topPadding + 8;
+  renderer.drawText(UI_10_FONT_ID, centerX, headerY, cachedInfo_.c_str(), true, EpdFontFamily::REGULAR);
+
+  // Draw selected book title below the info line, centered
+  if (total > 0 && selectorIndex_ < total && !cachedSelTitle_.empty()) {
+    const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
+    const int selTitleX = (pageWidth - selTitleW) / 2;
+    const int selTitleY = headerY + renderer.getLineHeight(UI_10_FONT_ID) + 2;
+    renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
   }
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   if (total == 0) {
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_LIBRARY_EMPTY));
     const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
-    renderer.displayBuffer();
-    return;
+    // No return — fall through to the header info + popup at the end of this function
+    // so the sort/filter/title bar is rendered even when the library is empty.
   }
 
+  if (total > 0) {
   const int pageStart = (curPage - 1) * gridsPerPage_;
   const int pageCount = std::min(gridsPerPage_, total - pageStart);
   const int gap = gap_;
@@ -1159,7 +1191,8 @@ void LibraryActivity::render(RenderLock&&) {
       if (p == curPage - 1) renderer.fillRect(dx, sy, DS, DS, true);
       else renderer.drawRect(dx, sy, DS, DS, true);
     }
-  }
+  }  // end if (totalPages > 1)
+  }  // end if (total > 0)
 
   if (popupMode_ != PopupMode::None) {
     // While a popup is open the Up/Down side buttons scroll the list and the
