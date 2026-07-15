@@ -12,25 +12,19 @@
 class LibraryActivity final : public Activity {
  private:
   int selectorIndex_ = 0;
-  // Cached window: a consecutive block of entries loaded from the v3 cache file.
-  // This is the ONLY Entry storage in the activity — no full-library vector exists.
-  // The window is at most kEntryWindow (64) entries, refreshed on page boundary.
-  std::vector<LibraryCache::Entry> windowEntries_;
-  int windowStart_ = 0;        // global index of the first entry in window_
-  int windowCount_ = 0;        // actual number of entries in window_
-  int totalBooks_ = 0;         // total books reported by cache header
-
+  std::vector<LibraryCache::Entry> entries_;
+  std::vector<LibraryCache::Entry> unfilteredEntries_;
   int coverGenIndex_ = -1;
   bool coversComplete_ = false;
-  int coverPassCount_ = 0;
-  uint64_t coverGeneratedMask_ = 0;
-  int coverGenRenderBatch_ = 0;
-  static constexpr int kCoverRenderBatchEvery = 1;
-  static constexpr int kMaxCoverPasses = 2;
+  int coverPassCount_ = 0;  // number of full indexing passes attempted on the current page
+  uint64_t coverGeneratedMask_ = 0;  // bitmask of slots already generated this page pass
+  int coverGenRenderBatch_ = 0;      // count of covers generated since last render
+  static constexpr int kCoverRenderBatchEvery = 1;  // render every N covers (1 = per-cover, 2 = every other, etc.)
+  static constexpr int kMaxCoverPasses = 2;  // give up after this many passes; failed covers fall back to placeholder
   int lastPage_ = -1;
   mutable int lastRenderedPage_ = -1;
   mutable int lastRenderedSelectorIndex_ = -1;
-  mutable bool lastRenderedCoversComplete_ = false;
+  mutable bool lastRenderedCoversComplete_ = false;  // avoids redundant redraws during indexing
   mutable bool forceRender_ = true;
 
   // Render cache: header info / selected title are rebuilt only when their
@@ -42,6 +36,9 @@ class LibraryActivity final : public Activity {
   CrossPointSettings::LIBRARY_FILTER cachedInfoFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
   CrossPointSettings::LIBRARY_SORT cachedInfoSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
   std::string cachedInfoSearch_;
+  // Wrapped cover-title lines for the currently rendered page (at most
+  // gridsPerPage_ entries). Built once per page change so the render loop does
+  // not allocate during per-page cover indexing. Keyed by pageStart.
   std::vector<std::vector<std::string>> pageTitleCache_;
   int pageTitleCacheKey_ = -1;
 
@@ -66,6 +63,8 @@ class LibraryActivity final : public Activity {
   bool upLongTriggered_ = false;
   bool downHeld_ = false;
   bool downLongTriggered_ = false;
+  // Button whose long-press spawned the active popup (ordinal, or -1 when
+  // none); its release is consumed so it does not also move the popup selection.
   int popupSpawnButton_ = -1;
   static constexpr unsigned long kLongPressMs = 800;
 
@@ -73,11 +72,13 @@ class LibraryActivity final : public Activity {
   void ensureLayoutUpToDate();
   void scanSd();
   void applyFilterAndSort();
-  // Ensure the cached window covers the current selector position.
-  // Loads a new window from the cache file when the selector moves outside
-  // the current window range.
-  void ensureWindowForIndex(int index);
+  // Checks the thumbnail file + the current-page generation mask directly.
+  // `slot` is the zero-based position within the current page (pageStart-relative).
   bool isBookCoverReady(const std::string& path, size_t slot) const;
+  // Draw the content of grid cell `i` (cover thumbnail, or placeholder with
+  // wrapped title + ribbon badge) at pixel (x, y). Does NOT draw the selection
+  // border — callers add that afterwards. Shared by the full grid redraw and
+  // the incremental selector-move path (P3) so both produce identical tiles.
   void drawTileContent(int i, int pageStart, int x, int y) const;
   void deleteLibraryCovers(const std::string& bookPath);
   void deletePageCovers();
