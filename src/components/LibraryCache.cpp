@@ -754,12 +754,12 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
     const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(
         coverJpg, thumbBmp, coverW, coverH, nullptr);
     
-    coverJpg.close();
     thumbBmp.close();
-    Storage.remove(coverTempPath.c_str());
 
     if (success) {
-      Storage.remove(thumbPath.c_str());           // remove stale BMP if any
+      coverJpg.close();
+      Storage.remove(coverTempPath.c_str());
+      Storage.remove(thumbPath.c_str());
       if (Storage.rename(thumbTmpPath.c_str(), thumbPath.c_str())) {
         LOG_DBG("BSC", "Cover: JPEG thumb OK %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       } else {
@@ -767,11 +767,51 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
         Storage.remove(thumbTmpPath.c_str());
         return false;
       }
+      return true;
+    }
+
+    // Full JPEG decode failed (likely OOM). Try EXIF thumbnail fallback
+    // which uses far less memory (~4KB vs ~28KB for full decode).
+    Storage.remove(thumbTmpPath.c_str());
+    coverJpg.close();
+    coverJpg = FsFile();  // re-open below
+
+    LOG_DBG("BSC", "Cover: JPEG full decode failed, trying EXIF thumbnail free=%u maxA=%u",
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+    if (!Storage.openFileForRead("BSC", coverTempPath, coverJpg)) {
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    // Re-open BMP temp for the EXIF attempt
+    if (!Storage.openFileForWrite("BSC", thumbTmpPath, thumbBmp)) {
+      coverJpg.close();
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    const bool exifOk = JpegToBmpConverter::jpegExifThumbnailTo1BitBmpStreamWithSize(
+        coverJpg, thumbTmpPath, thumbBmp, coverW, coverH, nullptr);
+
+    coverJpg.close();
+    thumbBmp.close();
+    Storage.remove(coverTempPath.c_str());
+
+    if (exifOk) {
+      Storage.remove(thumbPath.c_str());
+      if (Storage.rename(thumbTmpPath.c_str(), thumbPath.c_str())) {
+        LOG_DBG("BSC", "Cover: EXIF thumb OK %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      } else {
+        LOG_DBG("BSC", "Cover: EXIF thumb rename failed %s -> %s", thumbTmpPath.c_str(), thumbPath.c_str());
+        Storage.remove(thumbTmpPath.c_str());
+        return false;
+      }
     } else {
-      LOG_DBG("BSC", "Cover: JPEG thumb FAILED %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      LOG_DBG("BSC", "Cover: EXIF thumb FAILED %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       Storage.remove(thumbTmpPath.c_str());
     }
-    return success;
+    return exifOk;
 
   } else if (FsHelpers::hasPngExtension(coverTempPath)) {
     // Check heap for PNG decoding
@@ -820,12 +860,22 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   yield();
   esp_task_wdt_reset();
 
+  // Aggressive early-out: if contiguous heap is critically low, return
+  // immediately without touching ZIP / SD. The caller will retry on the
+  // next frame or when the user scrolls. This prevents "Failed to init
+  // inflate reader" aborts and keeps the render loop responsive.
+  uint32_t maxA = ESP.getMaxAllocHeap();
+  if (maxA < 40 * 1024) {
+    LOG_DBG("BSC", "Skipping cover gen for %s (maxAlloc=%u < 40 KB)", path.c_str(), maxA);
+    return false;
+  }
+
   if (FsHelpers::hasEpubExtension(path)) {
     // EPUB cover extraction using minimal direct ZIP reading (no expat).
     // This avoids the heap fragmentation caused by XML_GetBuffer() allocations
     // in the full EPUB load path.
     uint32_t freeH = ESP.getFreeHeap();
-    uint32_t maxA  = ESP.getMaxAllocHeap();
+    maxA  = ESP.getMaxAllocHeap();
     COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
     
     // Minimal heap requirement: ZIP inflate reader needs ~32KB contiguous

@@ -1,14 +1,12 @@
 #pragma once
 
 #include <GfxRenderer.h>
+#include <algorithm>
 
 #include "../fontIds.h"
 #include "UITheme.h"
 
 #include <cstdint>
-#include <functional>
-#include <string>
-#include <vector>
 
 /**
  * Shared panel-style drawing helpers for popups, context menus, and overlays.
@@ -29,16 +27,6 @@ class PanelDrawHelper {
     int contentY;
     int contentWidth;
     int contentHeight;
-  };
-
-  struct RowDrawContext {
-    int y;
-    int height;
-    bool selected;
-    const char* label;
-    const uint8_t* iconPixels;
-    int iconW;
-    int iconH;
   };
 
   static constexpr int kCornerRadius = 12;

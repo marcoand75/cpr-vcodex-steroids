@@ -11,67 +11,56 @@
 #include "I18n.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
-#include "util/CoverRibbonBaker.h"
 #include "components/UITheme.h"
 #include "components/PanelDrawHelper.h"
+#include "components/icons/apps_hub.h"
 #include "components/icons/book.h"
-#include "components/icons/book24.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/cache_cleaner.h"
+#include "components/icons/calendar_time.h"
+#include "components/icons/calibre.h"
+#include "components/icons/cleanmonitor.h"
 #include "components/icons/cover.h"
-#include "components/icons/file24.h"
+#include "components/icons/delete_file.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/dictionary2.h"
+#include "components/icons/file_transfer.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/flashcardquiz.h"
 #include "components/icons/folder.h"
-#include "components/icons/folder24.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/gps_found.h"
+#include "components/icons/heatmap.h"
 #include "components/icons/heart.h"
-#include "components/icons/heart24.h"
 #include "components/icons/hotspot.h"
 #include "components/icons/image.h"
-#include "components/icons/image24.h"
 #include "components/icons/library.h"
-#include "components/icons/recent.h"
-#include "components/icons/screensaver.h"
-#include "components/icons/goalsmedal.h"
-#include "components/icons/readingstats.h"
-#include "components/icons/recentbooks.h"
-#include "components/icons/heatmap.h"
-#include "components/icons/cleanmonitor.h"
-#include "components/icons/sleep.h"
-#include "components/icons/bookshelf.h"
-#include "components/icons/flashcardquiz.h"
-#include "components/icons/readingprofile.h"
+#include "components/icons/library_book.h"
+#include "components/icons/library_new.h"
 #include "components/icons/lostdevice.h"
+#include "components/icons/medal_alt.h"
+#include "components/icons/notification_unread.h"
 #include "components/icons/opdsbrowser.h"
-#include "components/icons/dictionary.h"
+#include "components/icons/pageview.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/recent.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/rotation.h"
+#include "components/icons/screensaver.h"
+#include "components/icons/search.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/search_plus.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
-#include "components/icons/text24.h"
-#include "components/icons/trophy.h"
-#include "components/icons/trophy24.h"
-#include "components/icons/transfer.h"
-#include "components/icons/wifi.h"
-#include "components/icons/bookmark.h"
-#include "components/icons/search.h"
-#include "components/icons/search24.h"
-#include "components/icons/rotation.h"
-#include "components/icons/rotation24.h"
-#include "components/icons/pageview.h"
-#include "components/icons/pageview24.h"
-#include "components/icons/search_plus.h"
-#include "components/icons/search_minus.h"
-#include "components/icons/time_fast.h"
+#include "components/icons/sleep.h"
 #include "components/icons/sort_asc.h"
 #include "components/icons/sort_desc.h"
-#include "components/icons/library_new.h"
-#include "components/icons/gps_found.h"
-#include "components/icons/medal_alt.h"
-#include "components/icons/dictionary2.h"
-#include "components/icons/apps_hub.h"
-#include "components/icons/calendar_time.h"
-#include "components/icons/library_book.h"
-#include "components/icons/delete_file.h"
-#include "components/icons/cache_cleaner.h"
-#include "components/icons/finish_flag.h"
-#include "components/icons/notification_unread.h"
-#include "components/icons/file_transfer.h"
-#include "components/icons/calibre.h"
+#include "components/icons/time_fast.h"
+#include "components/icons/transfer.h"
+#include "components/icons/trophy.h"
+#include "components/icons/wifi.h"
 #include "fontIds.h"
 
 namespace {
@@ -90,8 +79,6 @@ constexpr int kVisibleMenuSlots = 5;
 
 // Data panel layout
 constexpr int kDotsToPanelGap = 6;
-constexpr int kDashLen = 4;
-constexpr int kDashGap = 3;
 
 // Segment progress bar
 constexpr int kProgSegW = 14;
@@ -101,85 +88,57 @@ constexpr int kProgSegCount = 15;
 
 int lastCarouselSelectorIndex = -1;
 
-const uint8_t* iconForName(UIIcon icon, int size) {
-  if (size == 24) {
-    switch (icon) {
-      case UIIcon::Folder:  return Folder24Icon;
-      case UIIcon::Text:    return Text24Icon;
-      case UIIcon::Image:   return Image24Icon;
-      case UIIcon::Book:    return Book24Icon;
-      case UIIcon::File:    return File24Icon;
-      case UIIcon::Trophy:  return Trophy24Icon;
-      case UIIcon::Heart:   return Heart24Icon;
-      case UIIcon::ScreenSaver: return ScreenSaverIcon;
-      case UIIcon::Bookshelf: return BookshelfIcon;
-      case UIIcon::SleepMode: return SleepModeIcon32;
-      case UIIcon::CleanMonitor: return CleanMonitorIcon32;
-      case UIIcon::Heatmap: return HeatmapReadingIcon32;
-      case UIIcon::FlashcardQuiz: return FlashcardQuizIcon32;
-      case UIIcon::ReadingProfile: return ReadingProfileIcon32;
-      case UIIcon::LostDevice: return LostDeviceIcon32;
-      case UIIcon::OpdsBrowser: return OPDSBrowserIcon;
-      case UIIcon::Dictionary: return DictionaryIcon;
-      case UIIcon::GoalsMedal: return GoalsMedalIcon;
-      case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
-      case UIIcon::RecentBooks: return RecentBooksIcon32;
-      default: return nullptr;
-    }
+const uint8_t* iconForName(UIIcon icon) {
+  switch (icon) {
+    case UIIcon::Folder:    return FolderIcon;
+    case UIIcon::Book:      return BookIcon;
+    case UIIcon::Recent:    return RecentIcon;
+    case UIIcon::Settings:  return Settings2Icon;
+    case UIIcon::Apps:      return SettingsIcon;
+    case UIIcon::Transfer:  return TransferIcon;
+    case UIIcon::Library:   return LibraryIcon;
+    case UIIcon::Trophy:    return TrophyIcon;
+    case UIIcon::Wifi:      return WifiIcon;
+    case UIIcon::Hotspot:   return HotspotIcon;
+    case UIIcon::Image:     return ImageIcon;
+    case UIIcon::Heart:     return HeartIcon;
+    case UIIcon::ScreenSaver: return ScreenSaverIcon;
+    case UIIcon::Bookshelf: return BookshelfIcon;
+    case UIIcon::SleepMode: return SleepModeIcon32;
+    case UIIcon::CleanMonitor: return CleanMonitorIcon32;
+    case UIIcon::Heatmap: return HeatmapReadingIcon32;
+    case UIIcon::FlashcardQuiz: return FlashcardQuizIcon32;
+    case UIIcon::ReadingProfile: return ReadingProfileIcon32;
+    case UIIcon::LostDevice: return LostDeviceIcon32;
+    case UIIcon::OpdsBrowser: return OPDSBrowserIcon;
+    case UIIcon::Dictionary: return DictionaryIcon;
+    case UIIcon::GoalsMedal: return GoalsMedalIcon;
+    case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
+    case UIIcon::RecentBooks: return RecentBooksIcon32;
+    case UIIcon::Bookmark: return BookmarkIcon;
+    case UIIcon::Search: return SearchIcon;
+    case UIIcon::Rotation: return RotationIcon;
+    case UIIcon::Pageview: return PageviewIcon;
+    case UIIcon::SearchPlus: return SearchPlusIcon;
+    case UIIcon::SearchMinus: return SearchMinusIcon;
+    case UIIcon::TimeFast: return TimeFastIcon;
+    case UIIcon::SortAsc: return SortAscIcon;
+    case UIIcon::SortDesc: return SortDescIcon;
+    case UIIcon::LibraryNew: return LibraryNewIcon;
+    case UIIcon::GpsFound: return GpsFoundIcon;
+    case UIIcon::MedalAlt: return MedalAltIcon;
+    case UIIcon::Dictionary2: return Dictionary2Icon;
+    case UIIcon::AppsHub: return AppsHubIcon;
+    case UIIcon::CalendarTime: return CalendarTimeIcon;
+    case UIIcon::LibraryBook: return LibraryBookIcon;
+    case UIIcon::DeleteFile: return DeleteFileIcon;
+    case UIIcon::CacheCleaner: return CacheCleanerIcon;
+    case UIIcon::FinishFlag: return FinishFlagIcon;
+    case UIIcon::NotificationUnread: return NotificationUnreadIcon;
+    case UIIcon::FileTransfer: return FileTransferIcon;
+    case UIIcon::Calibre: return CalibreIcon;
+    default: return nullptr;
   }
-  if (size == 32) {
-    switch (icon) {
-      case UIIcon::Folder:    return FolderIcon;
-      case UIIcon::Book:      return BookIcon;
-      case UIIcon::Recent:    return RecentIcon;
-      case UIIcon::Settings:  return Settings2Icon;
-      case UIIcon::Apps:      return SettingsIcon;
-      case UIIcon::Transfer:  return TransferIcon;
-      case UIIcon::Library:   return LibraryIcon;
-      case UIIcon::Trophy:    return TrophyIcon;
-      case UIIcon::Wifi:      return WifiIcon;
-      case UIIcon::Hotspot:   return HotspotIcon;
-      case UIIcon::Image:     return ImageIcon;
-      case UIIcon::Heart:     return HeartIcon;
-      case UIIcon::ScreenSaver: return ScreenSaverIcon;
-      case UIIcon::Bookshelf: return BookshelfIcon;
-      case UIIcon::SleepMode: return SleepModeIcon32;
-      case UIIcon::CleanMonitor: return CleanMonitorIcon32;
-      case UIIcon::Heatmap: return HeatmapReadingIcon32;
-      case UIIcon::FlashcardQuiz: return FlashcardQuizIcon32;
-      case UIIcon::ReadingProfile: return ReadingProfileIcon32;
-      case UIIcon::LostDevice: return LostDeviceIcon32;
-      case UIIcon::OpdsBrowser: return OPDSBrowserIcon;
-      case UIIcon::Dictionary: return DictionaryIcon;
-      case UIIcon::GoalsMedal: return GoalsMedalIcon;
-      case UIIcon::ReadingStatsIcon: return ReadingStatsIcon32;
-      case UIIcon::RecentBooks: return RecentBooksIcon32;
-      case UIIcon::Bookmark: return BookmarkIcon;
-      case UIIcon::Search: return SearchIcon;
-      case UIIcon::Rotation: return RotationIcon;
-      case UIIcon::Pageview: return PageviewIcon;
-      case UIIcon::SearchPlus: return SearchPlusIcon;
-      case UIIcon::SearchMinus: return SearchMinusIcon;
-      case UIIcon::TimeFast: return TimeFastIcon;
-      case UIIcon::SortAsc: return SortAscIcon;
-      case UIIcon::SortDesc: return SortDescIcon;
-      case UIIcon::LibraryNew: return LibraryNewIcon;
-      case UIIcon::GpsFound: return GpsFoundIcon;
-      case UIIcon::MedalAlt: return MedalAltIcon;
-      case UIIcon::Dictionary2: return Dictionary2Icon;
-      case UIIcon::AppsHub: return AppsHubIcon;
-      case UIIcon::CalendarTime: return CalendarTimeIcon;
-      case UIIcon::LibraryBook: return LibraryBookIcon;
-      case UIIcon::DeleteFile: return DeleteFileIcon;
-      case UIIcon::CacheCleaner: return CacheCleanerIcon;
-      case UIIcon::FinishFlag: return FinishFlagIcon;
-      case UIIcon::NotificationUnread: return NotificationUnreadIcon;
-      case UIIcon::FileTransfer: return FileTransferIcon;
-      case UIIcon::Calibre: return CalibreIcon;
-      default: return nullptr;
-    }
-  }
-  return nullptr;
 }
 
 void drawCoverPlaceholder(GfxRenderer& renderer, int x, int y, int maxW, int maxH) {
@@ -193,16 +152,6 @@ void drawCoverPlaceholder(GfxRenderer& renderer, int x, int y, int maxW, int max
 // Draw cyberpunk panel border — delegates to shared util.
 static void drawCyberPanel(const GfxRenderer& r, int x, int y, int w, int h, bool sel) {
   PanelDrawHelper::drawCyberpunkPanel(r, x, y, w, h, sel);
-}
-
-void drawScanlineSep(const GfxRenderer& r, int x, int y, int w) {
-  for (int cx = x; cx + kDashLen < x + w; cx += kDashLen + kDashGap) {
-    r.drawLine(cx, y, cx + kDashLen, y, 1, true);
-    r.drawLine(cx + 1, y + 2, cx + kDashLen - 1, y + 2, 1, true);
-  }
-  // End caps
-  r.drawLine(x, y + 1, x, y + 2, 1, true);
-  r.drawLine(x + w - 1, y + 1, x + w - 1, y + 2, 1, true);
 }
 
 void drawSegmentProgressBar(const GfxRenderer& r, int x, int y, int filled, int total) {
@@ -239,11 +188,12 @@ const ReadingBookStats* getBookStats(const RecentBook& b) {
   return s;
 }
 
-std::string fmtDuration(uint64_t ms) {
-  if (ms == 0) return "0m";
+void fmtDuration(uint64_t ms, char* buf, size_t bufSize) {
+  if (ms == 0) { snprintf(buf, bufSize, "0m"); return; }
   uint64_t m = ms / 60000ULL, h = m / 60;
   m %= 60;
-  return h ? (std::to_string(h) + "h" + std::to_string(m) + "m") : (std::to_string(m) + "m");
+  if (h) snprintf(buf, bufSize, "%lluh%llum", h, m);
+  else snprintf(buf, bufSize, "%llum", m);
 }
 
 std::string getEta(const ReadingBookStats& s) {
@@ -259,33 +209,38 @@ std::string getEta(const ReadingBookStats& s) {
 
 // --- Data panel builder ---
 
-void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int px, int py, int pw, int ph) {
+void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int px, int py, int pw) {
   const ReadingBookStats* stats = getBookStats(book);
   const uint8_t pct = getBookProgress(book);
   const bool done = stats && stats->completed;
   const uint64_t tMs = stats ? stats->totalReadingMs : 0;
   const uint32_t sess = stats ? stats->sessions : 0;
-  const std::string eta = stats ? getEta(*stats) : "";
-  const std::string timeVal = fmtDuration(tMs);
-  const std::string sessVal = std::to_string(sess);
-  const std::string goalVal = fmtDuration(getDailyReadingGoalMs());
-  const std::string dayVal = fmtDuration(READING_STATS.getTodayReadingMs());
-  const std::string streakVal = std::to_string(READING_STATS.getCurrentStreakDays()) + "d";
-  const std::string etaVal = done ? "--" : (eta.empty() ? "..." : eta);
-  char pbuf[8]; snprintf(pbuf, sizeof(pbuf), "%u%%", pct);
-  const std::string booksFinished = std::to_string(READING_STATS.getBooksFinishedCount());
+  char etaBuf[32] = {};
+  if (stats) {
+    const auto e = getEta(*stats);
+    snprintf(etaBuf, sizeof(etaBuf), "%s", e.c_str());
+  } else {
+    snprintf(etaBuf, sizeof(etaBuf), "...");
+  }
+  char timeVal[32], sessVal[16], streakVal[16], goalVal[32], dayVal[32], booksFinished[16];
+  fmtDuration(tMs, timeVal, sizeof(timeVal));
+  snprintf(sessVal, sizeof(sessVal), "%u", sess);
+  fmtDuration(getDailyReadingGoalMs(), goalVal, sizeof(goalVal));
+  fmtDuration(READING_STATS.getTodayReadingMs(), dayVal, sizeof(dayVal));
+  snprintf(streakVal, sizeof(streakVal), "%dd", READING_STATS.getCurrentStreakDays());
+  snprintf(booksFinished, sizeof(booksFinished), "%d", READING_STATS.getBooksFinishedCount());
+  const char* etaVal = done ? "--" : etaBuf;
 
   constexpr int gap = 6;
   constexpr int pad = 5;
   constexpr int textLeft = 20;  // 20px left margin for text inside panels
   const int dataFont = UI_10_FONT_ID;
   const int lh = r.getLineHeight(dataFont);
-  const int smallLh = r.getLineHeight(SMALL_FONT_ID);
   int curY = py;
 
   // --- ROW1: Title / Author panel ---
   {
-    const int h1 = smallLh + lh + 2 * pad + 6;
+    const int h1 = r.getLineHeight(SMALL_FONT_ID) + lh + 2 * pad + 6;
     drawCyberPanel(r, px, curY, pw, h1, inCar);
     const auto tTrunc = r.truncatedText(UI_12_FONT_ID, book.title.c_str(), pw - textLeft - pad, EpdFontFamily::BOLD);
     r.drawText(UI_12_FONT_ID, px + textLeft, curY + pad + 2, tTrunc.c_str(), true, EpdFontFamily::BOLD);
@@ -306,10 +261,10 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     r.drawText(dataFont, px + textLeft, ly, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
     ly += lh + 2;
     char buf[40];
-    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TIME), timeVal.c_str());
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TIME), timeVal);
     r.drawText(dataFont, px + textLeft, ly, buf, true);
     ly += lh + 2;
-    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_SESSIONS), sessVal.c_str());
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_SESSIONS), sessVal);
     r.drawText(dataFont, px + textLeft, ly, buf, true);
 
     // Right panel: Statistics — positioned inside its own panel, no brackets
@@ -318,10 +273,10 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     int ry = curY + pad;
     r.drawText(dataFont, rightX + textLeft, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
     ry += lh + 2;
-    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TODAY), dayVal.c_str());
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TODAY), dayVal);
     r.drawText(dataFont, rightX + textLeft, ry, buf, true);
     ry += lh + 2;
-    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_GOAL), goalVal.c_str());
+    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_GOAL), goalVal);
     r.drawText(dataFont, rightX + textLeft, ry, buf, true);
 
     curY += h2 + gap;
@@ -360,9 +315,9 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     drawCyberPanel(r, px, curY, pw, h4, inCar);
     char buf[80];
     snprintf(buf, sizeof(buf), "%s: %s - %s: %s - %s: %s",
-             tr(STR_HOME_PANEL_STREAK), streakVal.c_str(),
-             tr(STR_HOME_PANEL_FINISHED), booksFinished.c_str(),
-             tr(STR_HOME_PANEL_ETA), etaVal.c_str());
+             tr(STR_HOME_PANEL_STREAK), streakVal,
+             tr(STR_HOME_PANEL_FINISHED), booksFinished,
+             tr(STR_HOME_PANEL_ETA), etaVal);
     const auto sTrunc = r.truncatedText(dataFont, buf, pw - textLeft - pad - 4);
     r.drawText(dataFont, px + textLeft, curY + (h4 - lh) / 2, sTrunc.c_str(), true);
   }
@@ -447,14 +402,15 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       }
     }
     if (!hasCover) { drawCoverPlaceholder(renderer, x, y, maxW, maxH); }
-    if (hasCover && !thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-      CoverRibbonBaker::bakeIntoFile(thumbPath, book.path);
-    }
-    const ReadingBookStats* readStats = nullptr;
-    if (!book.bookId.empty()) readStats = READING_STATS.findBook(book.bookId);
-    if (readStats == nullptr) readStats = READING_STATS.findBook(book.path);
-    if (readStats != nullptr && readStats->completed) {
-      drawReadRibbon(renderer, x, y, maxW, maxH);
+    if (hasCover && !book.path.empty()) {
+      // Draw completion ribbon directly on framebuffer instead of
+      // baking it into the BMP file (which requires 3-10KB heap + SD I/O).
+      const ReadingBookStats* readStats = nullptr;
+      if (!book.bookId.empty()) readStats = READING_STATS.findBook(book.bookId);
+      if (readStats == nullptr) readStats = READING_STATS.findBook(book.path);
+      if (readStats != nullptr && readStats->completed) {
+        drawReadRibbon(renderer, x, y, maxW, maxH);
+      }
     }
     return true;
   };
@@ -497,7 +453,7 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
     const int panelY = dotsY + kDotSize + carouselGap + 6;
     const int panelAvailableH = rect.y + rect.height - panelY - 6;
-    drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW, panelAvailableH);
+    drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW);
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
   }
@@ -517,7 +473,7 @@ void LyraMarcoand75Theme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int b
                                          const std::function<UIIcon(int index)>& rowIcon,
                                          const std::function<std::string(int index)>& buttonSubtitle,
                                          const std::function<bool(int index)>& showAccessory) const {
-  (void)rect; (void)buttonLabel; (void)buttonSubtitle; (void)showAccessory;
+  (void)buttonLabel; (void)buttonSubtitle; (void)showAccessory;
   if (buttonCount <= 0) return;
   constexpr int kIconSize = 32;
   constexpr int kIconPad32 = 8;
@@ -552,7 +508,7 @@ void LyraMarcoand75Theme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int b
       renderer.fillRoundedRect(iconX - kHighlightPad32, highlightY, highlightSize, highlightSize, kCornerRadius, Color::Black);
     }
     if (rowIcon != nullptr) {
-      const uint8_t* bmp = iconForName(rowIcon(i), kIconSize);
+      const uint8_t* bmp = iconForName(rowIcon(i));
       if (bmp != nullptr) {
         if (safeSelectedIndex == i) {
           if (renderer.isDarkMode()) {

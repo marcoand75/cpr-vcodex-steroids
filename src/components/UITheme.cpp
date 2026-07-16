@@ -6,16 +6,10 @@
 
 #include <memory>
 
-#include "MappedInputManager.h"
-#include "RecentBooksStore.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraCustomTheme.h"
 #include "components/themes/lyra/LyraMarcoand75Theme.h"
 #include "components/themes/lyra/LyraTheme.h"
-
-namespace {
-constexpr int SKIP_PAGE_MS = 700;
-}  // namespace
 
 UITheme UITheme::instance;
 
@@ -103,7 +97,7 @@ std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverWidth,
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {
-  if (filename.back() == '/') {
+  if (!filename.empty() && filename.back() == '/') {
     return Folder;
   }
   if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename)) {

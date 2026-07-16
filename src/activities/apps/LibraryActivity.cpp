@@ -709,11 +709,9 @@ void LibraryActivity::loop() {
         cachedSelTitle_.shrink_to_fit();
         pageTitleCache_.clear();
         pageTitleCache_.shrink_to_fit();
-        // pageTitleCacheKey_ stays valid so incremental selector-redraw
-        // (P3) works immediately after covers complete. The cache itself
-        // is rebuilt on the next full render.
-        COVER_LOG("LIB", "Cover: post-clear free=%u maxA=%u",
-                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        // Give the allocator a tick to merge freed blocks before the
+        // next allocation (ZIP inflate or JPEG decode needs contiguity).
+        vTaskDelay(1);
         const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
         const bool slotOk = slot < 64;
         LOG_DBG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -1031,7 +1029,7 @@ void LibraryActivity::render(RenderLock&&) {
       }
       snprintf(hdrBuf, sizeof(hdrBuf), "covers %d/%d", pgCountI - missing, pgCountI);
     } else {
-      snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d", curPage, totalPages);
+      snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d (%d)", curPage, totalPages, total);
     }
     renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, metrics.topPadding + 6, hdrBuf, true,
                       EpdFontFamily::REGULAR);

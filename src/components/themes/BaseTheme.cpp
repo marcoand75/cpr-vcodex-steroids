@@ -18,8 +18,6 @@
 
 // Internal constants
 namespace {
-constexpr int homeMenuMargin = 20;
-constexpr int homeMarginTop = 30;
 constexpr int subtitleY = 738;
 
 std::vector<int> allocateTabTextWidths(const std::vector<int>& desiredWidths, int textBudget) {
@@ -116,7 +114,7 @@ void drawBatteryIcon(const GfxRenderer& renderer, int x, int y, int battWidth, i
     filledWidth = std::min(minFillForBolt, maxFillWidth);
   }
 
-  renderer.fillRect(x + 2, y + 2, filledWidth, fillHeight);
+  renderer.fillRect(x + 2, y + 2, filledWidth, fillHeight, true);
 
   // Draw lightning bolt when charging (white/inverted on black fill for visibility)
   if (charging) {
@@ -136,7 +134,7 @@ void BaseTheme::drawBatteryOutline(const GfxRenderer& renderer, int x, int y, in
   renderer.drawLine(x + battWidth - 2, y + 1, x + battWidth - 2, y + rectHeight - 2);
   renderer.drawPixel(x + battWidth - 1, y + 3);
   renderer.drawPixel(x + battWidth - 1, y + rectHeight - 4);
-  renderer.drawLine(x + battWidth - 0, y + 4, x + battWidth - 0, y + rectHeight - 5);
+  renderer.drawLine(x + battWidth, y + 4, x + battWidth, y + rectHeight - 5);
 }
 
 void BaseTheme::drawBatteryLightningBolt(const GfxRenderer& renderer, int boltX, int boltY) {
@@ -195,14 +193,14 @@ void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const si
   // Use 64-bit arithmetic to avoid overflow for large files
   const int percent = static_cast<int>((static_cast<uint64_t>(current) * 100) / total);
 
-  LOG_DBG("UI", "Drawing progress bar: current=%u, total=%u, percent=%d", current, total, percent);
+  LOG_DBG("UI", "Drawing progress bar: current=%zu, total=%zu, percent=%d", current, total, percent);
   // Draw outline
   renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
 
   // Draw filled portion
   const int fillWidth = (rect.width - 4) * percent / 100;
   if (fillWidth > 0) {
-    renderer.fillRect(rect.x + 2, rect.y + 2, fillWidth, rect.height - 4);
+    renderer.fillRect(rect.x + 2, rect.y + 2, fillWidth, rect.height - 4, true);
   }
 
   // Draw percentage text centered below bar
@@ -349,7 +347,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   // Draw selection
   int contentWidth = rect.width - 5;
   if (selectedIndex >= 0) {
-    renderer.fillRect(0, rect.y + selectedIndex % pageItems * rowHeight - 2, rect.width, rowHeight);
+    renderer.fillRect(rect.x, rect.y + selectedIndex % pageItems * rowHeight - 2, rect.width, rowHeight, true);
   }
   // Draw all items
   const auto pageStartIndex = selectedIndex / pageItems * pageItems;
@@ -474,9 +472,9 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     // Draw underline for selected tab
     if (tab.selected) {
       if (selected) {
-        renderer.fillRect(currentX - 3, rect.y, textWidth + 6, lineHeight + underlineGap);
+        renderer.fillRect(currentX - 3, rect.y, textWidth + 6, lineHeight + underlineGap, true);
       } else {
-        renderer.fillRect(currentX, rect.y + lineHeight + underlineGap, textWidth, underlineHeight);
+        renderer.fillRect(currentX, rect.y + lineHeight + underlineGap, textWidth, underlineHeight, true);
       }
     }
 
@@ -595,7 +593,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     if (!bufferRestored && !coverRendered) {
       // No cover image: draw border or fill, plus bookmark as visual flair
       if (bookSelected) {
-        renderer.fillRect(bookX, bookY, bookWidth, bookHeight);
+        renderer.fillRect(bookX, bookY, bookWidth, bookHeight, true);
       } else {
         renderer.drawRect(bookX, bookY, bookWidth, bookHeight);
       }
@@ -741,7 +739,7 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
 
     if (selected) {
       renderer.fillRect(rect.x + BaseMetrics::values.contentSidePadding, tileY,
-                        rect.width - BaseMetrics::values.contentSidePadding * 2, rowHeight);
+                        rect.width - BaseMetrics::values.contentSidePadding * 2, rowHeight, true);
     } else {
       renderer.drawRect(rect.x + BaseMetrics::values.contentSidePadding, tileY,
                         rect.width - BaseMetrics::values.contentSidePadding * 2, rowHeight);

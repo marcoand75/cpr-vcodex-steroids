@@ -706,6 +706,10 @@ void HomeActivity::onExit() {
   free(coverBuffer);
   coverBuffer = nullptr;
   coverBufferSize = 0;
+  // Log heap state after freeing the 63 KB cover buffer. The next activity
+  // (typically Library) can use this to schedule its scan with awareness of
+  // fragmentation.
+  HOMEPAGE_LOG("HOME", "onExit: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 bool HomeActivity::storeCoverBuffer() {
