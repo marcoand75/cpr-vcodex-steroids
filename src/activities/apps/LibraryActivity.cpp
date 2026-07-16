@@ -856,10 +856,6 @@ void LibraryActivity::loop() {
                 case BookContextMenuActivity::MenuAction::DELETE_ALL_LIBRARY_COVERS:
                   deleteAllLibraryCovers();
                   coversComplete_ = false; coverGenIndex_ = -1; forceRender_ = true; requestUpdate(); return;
-                case BookContextMenuActivity::MenuAction::REINDEX_LIBRARY:
-                  LibraryCache::invalidate();
-                  scanSd();
-                  coversComplete_ = false; coverGenIndex_ = -1; forceRender_ = true; requestUpdate(); return;
                 default: forceRender_ = true; requestUpdate(); return;
               }
             });
