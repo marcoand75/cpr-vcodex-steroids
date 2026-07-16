@@ -60,7 +60,7 @@ static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
     r.fillRect(x + dy, y + dy, leg - dy, 1, black);
 }
 
-void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int w, int h) {
+void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int w, int h, bool color = true) {
   constexpr int c = 4;
   constexpr int cl = 5;
   constexpr int cg = 2;
@@ -68,15 +68,15 @@ void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int
   const int by = y - 5;
   const int bw = w + 10;
   const int bh = h + 10;
-  renderer.drawRect(bx, by, bw, bh, true);
-  renderer.drawLine(bx + cg, by, bx + cg + cl, by, 1, true);
-  renderer.drawLine(bx, by + cg, bx, by + cg + cl, 1, true);
-  renderer.drawLine(bx + bw - cg - cl, by, bx + bw - cg, by, 1, true);
-  renderer.drawLine(bx + bw, by + cg, bx + bw, by + cg + cl, 1, true);
-  renderer.drawLine(bx + cg, by + bh, bx + cg + cl, by + bh, 1, true);
-  renderer.drawLine(bx, by + bh - cg, bx, by + bh - cg - cl, 1, true);
-  renderer.drawLine(bx + bw - cg - cl, by + bh, bx + bw - cg, by + bh, 1, true);
-  renderer.drawLine(bx + bw, by + bh - cg, bx + bw, by + bh - cg - cl, 1, true);
+  renderer.drawRect(bx, by, bw, bh, color);
+  renderer.drawLine(bx + cg, by, bx + cg + cl, by, 1, color);
+  renderer.drawLine(bx, by + cg, bx, by + cg + cl, 1, color);
+  renderer.drawLine(bx + bw - cg - cl, by, bx + bw - cg, by, 1, color);
+  renderer.drawLine(bx + bw, by + cg, bx + bw, by + cg + cl, 1, color);
+  renderer.drawLine(bx + cg, by + bh, bx + cg + cl, by + bh, 1, color);
+  renderer.drawLine(bx, by + bh - cg, bx, by + bh - cg - cl, 1, color);
+  renderer.drawLine(bx + bw - cg - cl, by + bh, bx + bw - cg, by + bh, 1, color);
+  renderer.drawLine(bx + bw, by + bh - cg, bx + bw, by + bh - cg - cl, 1, color);
 }
 
 void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
@@ -709,7 +709,9 @@ void LibraryActivity::loop() {
         cachedSelTitle_.shrink_to_fit();
         pageTitleCache_.clear();
         pageTitleCache_.shrink_to_fit();
-        pageTitleCacheKey_ = -1;
+        // pageTitleCacheKey_ stays valid so incremental selector-redraw
+        // (P3) works immediately after covers complete. The cache itself
+        // is rebuilt on the next full render.
         COVER_LOG("LIB", "Cover: post-clear free=%u maxA=%u",
                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
@@ -945,17 +947,50 @@ void LibraryActivity::loop() {
 
   bool moved = false;
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    selectorIndex_ = (selectorIndex_ > 0) ? selectorIndex_ - 1 : total - 1; moved = true;
+    if (selectorIndex_ > 0) {
+      selectorIndex_--;
+    } else {
+      selectorIndex_ = total - 1;
+    }
+    moved = true;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    selectorIndex_ = (selectorIndex_ < total - 1) ? selectorIndex_ + 1 : 0; moved = true;
+    if (selectorIndex_ < total - 1) {
+      selectorIndex_++;
+    } else {
+      selectorIndex_ = 0;
+    }
+    moved = true;
   }
   if (moved) {
     int curPage = selectorIndex_ / gridsPerPage_;
     if (curPage != lastPage_) {
-        coversComplete_ = false; coverGenIndex_ = -1; coverPassCount_ = 0;
-        coverGeneratedMask_ = 0; lastPage_ = curPage;
-      }
+      coversComplete_ = false; coverGenIndex_ = -1; coverPassCount_ = 0;
+      coverGeneratedMask_ = 0; lastPage_ = curPage;
+    }
+    // prevBorderIdx_ tracks the tile that still has the visible selection
+    // border. At startup it is -1 (no border on screen). After the first
+    // move and every subsequent move we erase the border on prevBorderIdx_
+    // and draw it on the new position.
+    if (total > 0 && prevBorderIdx_ >= 0 && prevBorderIdx_ < total) {
+      // Compute coordinates for the old tile and erase its border in white.
+      const int pageStartOld = (prevBorderIdx_ / gridsPerPage_) * gridsPerPage_;
+      const int tileIdxOld = prevBorderIdx_ - pageStartOld;
+      const int colOld = tileIdxOld % gridColumns_;
+      const int rowOld = tileIdxOld / gridColumns_;
+      const int gap = gap_;
+      const auto pageWidth = renderer.getScreenWidth();
+      const int gridW = gridColumns_ * coverWidth_ + (gridColumns_ - 1) * gap;
+      const int x0 = (pageWidth - gridW) / 4;
+      const auto& metrics = UITheme::getInstance().getMetrics();
+      const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+      const int rowH = coverHeight_ + rowPad_;
+      const int prevX = x0 + colOld * (coverWidth_ + gap);
+      const int prevY = contentTop + rowOld * rowH;
+      drawCyberpunkSelectionBorder(renderer, prevX, prevY, coverWidth_, coverHeight_, false);
+    }
+    // Track the new position for next erase
+    prevBorderIdx_ = selectorIndex_;
     requestUpdate();
   }
 }
@@ -964,23 +999,14 @@ void LibraryActivity::render(RenderLock&&) {
   esp_task_wdt_reset();
   const int total = static_cast<int>(entries_.size());
   const int curPageRaw = total > 0 ? selectorIndex_ / gridsPerPage_ : 0;
-  // Guard: skip full redraw when nothing changed.  During cover indexing
-  // forceRender_ is only set when a thumb was generated or the initial popup
-  // needs to appear, so we don't redraw the entire screen every idle frame.
+  // Guard: skip render when nothing changed.
   if (!forceRender_ && popupMode_ == PopupMode::None &&
       curPageRaw == lastRenderedPage_ && selectorIndex_ == lastRenderedSelectorIndex_ &&
       coversComplete_ == lastRenderedCoversComplete_) {
     return;
   }
-  // Capture whether this is a forced redraw (cover completion, menu actions
-  // that change ribbons, etc.) before clearing the flag. The incremental
-  // selector path (P3) must NOT run on a forced redraw, because a forced
-  // redraw can change tile content beyond just the selection highlight.
   const bool forcedRender = forceRender_;
   forceRender_ = false;
-  lastRenderedPage_ = curPageRaw;
-  lastRenderedSelectorIndex_ = selectorIndex_;
-  lastRenderedCoversComplete_ = coversComplete_;
 
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
@@ -1051,6 +1077,7 @@ void LibraryActivity::render(RenderLock&&) {
     if (selectorIndex_ < total) {
       cachedSelTitle_ = entries_[selectorIndex_].title;
       if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
+      cachedSelAuthor_ = entries_[selectorIndex_].author;
       const int maxSelW = pageWidth - 20;
       if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
         while (cachedSelTitle_.size() > 3 &&
@@ -1061,6 +1088,7 @@ void LibraryActivity::render(RenderLock&&) {
       }
     } else {
       cachedSelTitle_.clear();
+      cachedSelAuthor_.clear();
     }
 
     cachedInfoFilter_ = currentFilter_;
@@ -1084,10 +1112,29 @@ void LibraryActivity::render(RenderLock&&) {
 
   // Draw selected book title below the info line, centered
   if (total > 0 && selectorIndex_ < total && !cachedSelTitle_.empty()) {
+    const int lh = renderer.getLineHeight(UI_10_FONT_ID);
+    const int selTitleY = headerY + lh + 2;
+    // Clear title + author area (2 lines)
+    renderer.fillRect(0, selTitleY, pageWidth, lh * 2 + 1, false);
     const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
     const int selTitleX = (pageWidth - selTitleW) / 2;
-    const int selTitleY = headerY + renderer.getLineHeight(UI_10_FONT_ID) + 2;
     renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
+
+    // Draw author below title if present
+    if (!cachedSelAuthor_.empty()) {
+      std::string author = cachedSelAuthor_;
+      const int authorY = selTitleY + lh + 1;
+      if (renderer.getTextWidth(UI_10_FONT_ID, author.c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
+        while (author.size() > 5 &&
+               renderer.getTextWidth(UI_10_FONT_ID, (author + "..").c_str(), EpdFontFamily::REGULAR) > pageWidth - 20) {
+          author.pop_back();
+        }
+        author += "..";
+      }
+      const int authorW = renderer.getTextWidth(UI_10_FONT_ID, author.c_str(), EpdFontFamily::REGULAR);
+      const int authorX = (pageWidth - authorW) / 2;
+      renderer.drawText(UI_10_FONT_ID, authorX, authorY, author.c_str(), true, EpdFontFamily::REGULAR);
+    }
   }
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
@@ -1127,71 +1174,6 @@ void LibraryActivity::render(RenderLock&&) {
                                                      coverWidth_ - 2 * kCoverTextPad, 3, EpdFontFamily::BOLD));
     }
     pageTitleCacheKey_ = pageStart;
-  }
-
-  // P3: incremental selector update. When only the selection moved within the
-  // already-rendered page (same page, same cover state, no forced redraw), we
-  // avoid clearScreen() + full grid redraw. We repaint just the previously
-  // selected tile (removing its border), draw the new selection border, and
-  // refresh the selected-title line — a fraction of the full-screen work.
-  // The framebuffer already holds this page's full render, so the e-ink diff
-  // is tiny (same FAST_REFRESH as a full update). Falls through to the full
-  // redraw for any other change.
-  const bool selectionOnlyMove =
-      !forcedRender && popupMode_ == PopupMode::None &&
-      curPageRaw == lastRenderedPage_ && coversComplete_ == lastRenderedCoversComplete_ &&
-      pageTitleCacheKey_ == pageStart &&
-      lastRenderedSelectorIndex_ >= 0 && lastRenderedSelectorIndex_ < total &&
-      selectorIndex_ != lastRenderedSelectorIndex_ && selectorIndex_ < total;
-
-  if (selectionOnlyMove) {
-    const int prevSel = lastRenderedSelectorIndex_;
-    const int prevI = prevSel - pageStart;
-    const int prevCol = prevI % gridColumns_;
-    const int prevRow = prevI / gridColumns_;
-    const int prevX = x0 + prevCol * (coverWidth_ + gap);
-    const int prevY = contentTop + prevRow * rowH;
-    // The selection border is two concentric rounded rects (offsets 4 and 6px);
-    // clear the full 6px bounding box so both are removed. With gap >= 7 the
-    // 6px clear still never reaches a neighbour tile (1px spare on each side).
-    renderer.fillRect(prevX - 6, prevY - 6, coverWidth_ + 12, coverHeight_ + 12, false);
-    drawTileContent(prevI, pageStart, prevX, prevY);
-
-    const int newI = selectorIndex_ - pageStart;
-    const int newCol = newI % gridColumns_;
-    const int newRow = newI / gridColumns_;
-    const int newX = x0 + newCol * (coverWidth_ + gap);
-    const int newY = contentTop + newRow * rowH;
-    drawCyberpunkSelectionBorder(renderer, newX, newY, coverWidth_, coverHeight_);
-
-    // Refresh the selected-title line under the header (white band + redraw).
-    // The info line and pagination are unchanged on a pure selector move.
-    const int headerY = metrics.topPadding + 8;
-    const int lh = renderer.getLineHeight(UI_10_FONT_ID);
-    const int selTitleY = headerY + lh + 2;
-    cachedSelTitle_ = entries_[selectorIndex_].title;
-    if (cachedSelTitle_.empty()) cachedSelTitle_ = filenameWithoutExtension(entries_[selectorIndex_].path);
-    const int maxSelW = pageWidth - 20;
-    if (renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-      while (cachedSelTitle_.size() > 3 &&
-             renderer.getTextWidth(UI_10_FONT_ID, (cachedSelTitle_ + "..").c_str(), EpdFontFamily::REGULAR) > maxSelW) {
-        cachedSelTitle_.pop_back();
-      }
-      cachedSelTitle_ += "..";
-    }
-    renderer.fillRect(0, selTitleY, pageWidth, lh, false);
-    if (!cachedSelTitle_.empty()) {
-      const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::REGULAR);
-      const int selTitleX = (pageWidth - selTitleW) / 2;
-      renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
-    }
-    cachedRenderSelector_ = selectorIndex_;
-
-    lastRenderedSelectorIndex_ = selectorIndex_;
-    lastRenderedPage_ = curPageRaw;
-    lastRenderedCoversComplete_ = coversComplete_;
-    renderer.displayBuffer();
-    return;
   }
 
   for (int i = 0; i < pageCount; ++i) {
@@ -1235,6 +1217,12 @@ void LibraryActivity::render(RenderLock&&) {
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
   // Diagnostic: log heap state at render end to measure fragmentation caused by rendering
   COVER_LOG("LIB", "Render: end free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  lastRenderedSelectorIndex_ = selectorIndex_;
+  lastRenderedPage_ = curPageRaw;
+  lastRenderedCoversComplete_ = coversComplete_;
+  prevBorderIdx_ = selectorIndex_;  // full render drew the border here
+
   renderer.displayBuffer();
 }
 

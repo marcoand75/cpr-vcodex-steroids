@@ -31,6 +31,7 @@ class LibraryActivity final : public Activity {
   // inputs change, keeping render allocation-free during per-page indexing.
   std::string cachedInfo_;
   std::string cachedSelTitle_;
+  std::string cachedSelAuthor_;
   int cachedRenderSelector_ = -1;
   int cachedRenderPage_ = -1;
   CrossPointSettings::LIBRARY_FILTER cachedInfoFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
@@ -41,6 +42,10 @@ class LibraryActivity final : public Activity {
   // not allocate during per-page cover indexing. Keyed by pageStart.
   std::vector<std::vector<std::string>> pageTitleCache_;
   int pageTitleCacheKey_ = -1;
+
+  // Tracks which tile currently has the visible selection border on screen.
+  // Set to -1 at startup (no border) and updated on every cursor move in loop().
+  int prevBorderIdx_ = -1;
 
   int coverWidth_ = 100;
   int coverHeight_ = 150;
