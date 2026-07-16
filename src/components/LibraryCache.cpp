@@ -4,12 +4,15 @@
 #include <Epub/BookMetadataCache.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <JpegToBmpConverter.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
 #include <CoverDebugLog.h>
 #include <HomepageDebugLog.h>
+#include <PngToBmpConverter.h>
 #include <Txt.h>
 #include <Xtc.h>
+#include <ZipFile.h>
 #include <esp_task_wdt.h>
 
 #include <algorithm>
@@ -83,6 +86,119 @@ static bool readTitleAndAuthor(const std::string& cacheDir, std::string& outTitl
 
   file.close();
   return true;
+}
+
+// Minimal EPUB metadata reader: reads only title and author directly from the
+// EPUB ZIP, without using expat XML parser or requiring book.bin cache.
+// This avoids the heap fragmentation caused by XML_GetBuffer() allocations
+// in the full EPUB load path.
+//
+// Flow:
+// 1. Read META-INF/container.xml to find content.opf path
+// 2. Read content.opf into a buffer
+// 3. Search for <dc:title> and <dc:creator> tags with simple string matching
+//
+// Memory: only 2 temporary heap allocations (container.xml + content.opf buffers),
+// both freed immediately after parsing. Much lighter than expat-based parsing.
+static bool readTitleAndAuthorFromEpub(const std::string& epubPath, std::string& outTitle, std::string& outAuthor) {
+  ZipFile zip(epubPath);
+
+  // 1. Read container.xml to find content.opf path
+  size_t containerSize = 0;
+  if (!zip.getInflatedFileSize("META-INF/container.xml", &containerSize)) return false;
+  if (containerSize == 0 || containerSize > 8192) return false;  // sanity check
+
+  uint8_t* containerData = zip.readFileToMemory("META-INF/container.xml", &containerSize);
+  if (!containerData) return false;
+
+  // Find full-path="..." in container.xml
+  std::string contentOpfPath;
+  const char* fpAttr = strstr((const char*)containerData, "full-path=\"");
+  if (fpAttr) {
+    fpAttr += 11;  // skip 'full-path="'
+    const char* fpEnd = strchr(fpAttr, '"');
+    if (fpEnd) {
+      contentOpfPath.assign(fpAttr, fpEnd - fpAttr);
+    }
+  }
+  free(containerData);
+  containerData = nullptr;
+
+  if (contentOpfPath.empty()) return false;
+
+  // Normalize the path (resolve relative paths like "../OEBPS/content.opf")
+  contentOpfPath = FsHelpers::normalisePath(contentOpfPath);
+
+  // 2. Read content.opf
+  size_t opfSize = 0;
+  if (!zip.getInflatedFileSize(contentOpfPath.c_str(), &opfSize)) return false;
+  if (opfSize == 0) return false;
+  // Limit to 32KB to avoid large heap allocations on fragmented heap
+  if (opfSize > 32 * 1024) opfSize = 32 * 1024;
+
+  uint8_t* opfData = zip.readFileToMemory(contentOpfPath.c_str(), &opfSize);
+  if (!opfData) return false;
+
+  const char* opfStr = (const char*)opfData;
+  const char* opfEnd = opfStr + opfSize;
+
+  // 3. Find <dc:title...>...</dc:title> and <dc:creator...>...</dc:creator>
+  auto findDcTag = [opfStr, opfEnd](const char* localName, std::string& out) -> bool {
+    char tagPattern[32];
+    snprintf(tagPattern, sizeof(tagPattern), "dc:%s", localName);
+    const size_t patternLen = strlen(tagPattern);
+
+    const char* pos = opfStr;
+
+    while (pos < opfEnd) {
+      const char* tagStart = strstr(pos, tagPattern);
+      if (!tagStart || tagStart >= opfEnd) break;
+
+      // Verify it's an opening tag: preceded by '<'
+      if (tagStart == opfStr || *(tagStart - 1) != '<') {
+        pos = tagStart + patternLen;
+        continue;
+      }
+
+      // Find end of opening tag '>'
+      const char* openEnd = tagStart + patternLen;
+      while (openEnd < opfEnd && *openEnd != '>') openEnd++;
+      if (openEnd >= opfEnd) break;
+      openEnd++;  // skip '>'
+
+      // Build closing tag: "</dc:localName>"
+      char closePattern[40];
+      snprintf(closePattern, sizeof(closePattern), "</dc:%s>", localName);
+
+      // Find closing tag
+      const char* closePos = strstr(openEnd, closePattern);
+      if (!closePos || closePos >= opfEnd) {
+        pos = openEnd;
+        continue;
+      }
+
+      // Extract content
+      out.assign(openEnd, closePos - openEnd);
+
+      // Trim whitespace
+      while (!out.empty() && (out.back() == ' ' || out.back() == '\n' || out.back() == '\r' || out.back() == '\t'))
+        out.pop_back();
+      size_t start = 0;
+      while (start < out.size() && (out[start] == ' ' || out[start] == '\n' || out[start] == '\r' || out[start] == '\t'))
+        start++;
+      if (start > 0) out = out.substr(start);
+
+      return !out.empty();
+    }
+    return false;
+  };
+
+  findDcTag("title", outTitle);
+  findDcTag("creator", outAuthor);
+
+  free(opfData);
+
+  return !outTitle.empty() || !outAuthor.empty();
 }
 
 constexpr const char* kCacheFile = "/.crosspoint/library.bin";
@@ -295,42 +411,58 @@ bool extractBookMetadata(ScanRecord& rec) {
     // the next book, releasing ZIP buffer / page data immediately.
     bool haveMeta = false;
     {
-      // Re-check max-alloc heap right before opening the ZIP: a single
-      // EPUB open can request a 100+ KB block; on a fragmented heap after
-      // several previous books the call can OOM. Skipping here is much
-      // cheaper than recovering from a failed allocation deep inside the
-      // parser.
-      const auto heap = MemoryBudget::snapshot();
-      constexpr uint32_t kEpubMinFree = 40000;   // ~40 KB
-      constexpr uint32_t kEpubMinMaxAlloc = 30000;
-      if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
-        LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap,
-                heap.maxAllocHeap);
-        return false;
+      // First, try to read title+author directly from the EPUB ZIP without
+      // using expat XML parser or requiring book.bin cache. This is the
+      // lightest approach: only 2 temporary heap allocations (container.xml
+      // + content.opf buffers), both freed immediately after parsing.
+      if (readTitleAndAuthorFromEpub(rec.path, rec.title, rec.author)) {
+        haveMeta = !rec.title.empty() || !rec.author.empty();
       }
 
-      Epub epub(rec.path, "/.crosspoint");
-      const std::string& cacheDir = epub.getCachePath();
-      if (Storage.exists(cacheDir.c_str())) {
-        // Thin read: only title + author — avoids allocating 12 temporary
-        // std::strings (language, publisher, description, etc.) that would
-        // fragment the heap on every iteration.
-        if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
-          haveMeta = !rec.title.empty() || !rec.author.empty();
-        }
-      }
-      // Fallback: full EPUB load (this builds the cache if missing).
-      // Skip only when heap is critically low; building the cache now
-      // makes cover generation several seconds faster per book.
+      // If direct ZIP read failed, try reading from book.bin cache (if it exists).
+      // This is also lightweight but requires the cache to have been built previously.
       if (!haveMeta) {
-        if (ESP.getFreeHeap() < 65000) {
-          LOG_DBG("BSC", "Skipping EPUB load for %s (free heap %u < 65 KB)", rec.path.c_str(), ESP.getFreeHeap());
-          return false;
+        Epub epub(rec.path, "/.crosspoint");
+        const std::string& cacheDir = epub.getCachePath();
+        if (Storage.exists(cacheDir.c_str())) {
+          if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
+            haveMeta = !rec.title.empty() || !rec.author.empty();
+          }
         }
-        if (epub.load(true, true)) {
-          rec.title = epub.getTitle();
-          rec.author = epub.getAuthor();
-          haveMeta = true;
+
+        // Last resort: full EPUB load (this builds the cache if missing).
+        // This uses expat XML parser which requires contiguous memory for
+        // XML_GetBuffer(). Skip only when heap is critically low.
+        if (!haveMeta) {
+          // Re-check max-alloc heap right before opening the ZIP: a single
+          // EPUB open can request a 100+ KB block; on a fragmented heap after
+          // several previous books the call can OOM. Skipping here is much
+          // cheaper than recovering from a failed allocation deep inside the
+          // parser.
+          const auto heap = MemoryBudget::snapshot();
+          constexpr uint32_t kEpubMinFree = 40000;   // ~40 KB
+          constexpr uint32_t kEpubMinMaxAlloc = 30000;
+          if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
+            LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap,
+                    heap.maxAllocHeap);
+            return false;
+          }
+
+          // CRITICAL: expat XML parser requires contiguous memory for XML_GetBuffer().
+          // Even if freeHeap is high, fragmented heap (low maxAlloc) will cause
+          // XML_GetBuffer() to fail. Check both freeHeap AND maxAlloc.
+          const uint32_t freeH = ESP.getFreeHeap();
+          const uint32_t maxA = ESP.getMaxAllocHeap();
+          if (freeH < 65000 || maxA < 35000) {
+            LOG_DBG("BSC", "Skipping EPUB load for %s (free=%u < 65 KB || maxAlloc=%u < 35 KB)",
+                    rec.path.c_str(), freeH, maxA);
+            return false;
+          }
+          if (epub.load(true, true)) {
+            rec.title = epub.getTitle();
+            rec.author = epub.getAuthor();
+            haveMeta = true;
+          }
         }
       }
     }  // Epub destroyed here — release ZIP buffer / page data immediately
@@ -391,6 +523,271 @@ std::string thumbPathFor(const std::string& path, int coverW, int coverH) {
   return buf;
 }
 
+// Minimal EPUB cover extractor: finds and extracts cover image directly from
+// the EPUB ZIP, without using expat XML parser or requiring book.bin cache.
+// This avoids the heap fragmentation caused by XML_GetBuffer() allocations.
+//
+// Flow:
+// 1. Read META-INF/container.xml to find content.opf path
+// 2. Read content.opf into a buffer
+// 3. Search for cover image reference using string matching:
+//    - <meta name="cover" content="ID"/> → then find <item id="ID" href="..."/>
+//    - Or <item properties="cover-image" href="..."/> (EPUB3)
+// 4. Extract cover image from ZIP
+// 5. Decode (JPEG/PNG) and convert to BMP thumbnail
+//
+// Memory: only 2-3 temporary heap allocations (container.xml + content.opf + image),
+// all freed immediately after processing. Much lighter than expat-based parsing.
+static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int coverH) {
+  ZipFile zip(epubPath);
+
+  // 1. Read container.xml to find content.opf path
+  size_t containerSize = 0;
+  if (!zip.getInflatedFileSize("META-INF/container.xml", &containerSize)) return false;
+  if (containerSize == 0 || containerSize > 8192) return false;
+
+  uint8_t* containerData = zip.readFileToMemory("META-INF/container.xml", &containerSize);
+  if (!containerData) return false;
+
+  // Find full-path="..." in container.xml
+  std::string contentOpfPath;
+  const char* fpAttr = strstr((const char*)containerData, "full-path=\"");
+  if (fpAttr) {
+    fpAttr += 11;
+    const char* fpEnd = strchr(fpAttr, '"');
+    if (fpEnd) {
+      contentOpfPath.assign(fpAttr, fpEnd - fpAttr);
+    }
+  }
+  free(containerData);
+  containerData = nullptr;
+
+  if (contentOpfPath.empty()) return false;
+  contentOpfPath = FsHelpers::normalisePath(contentOpfPath);
+
+  // Compute base path for resolving relative hrefs
+  std::string basePath;
+  const size_t lastSlash = contentOpfPath.find_last_of('/');
+  if (lastSlash != std::string::npos) {
+    basePath = contentOpfPath.substr(0, lastSlash + 1);
+  }
+
+  // 2. Read content.opf
+  size_t opfSize = 0;
+  if (!zip.getInflatedFileSize(contentOpfPath.c_str(), &opfSize)) return false;
+  if (opfSize == 0) return false;
+  if (opfSize > 32 * 1024) opfSize = 32 * 1024;
+
+  uint8_t* opfData = zip.readFileToMemory(contentOpfPath.c_str(), &opfSize);
+  if (!opfData) return false;
+
+  const char* opfStr = (const char*)opfData;
+  const char* opfEnd = opfStr + opfSize;
+
+  // 3. Find cover image href
+  std::string coverImageHref;
+
+  // Strategy 1: Look for <meta name="cover" content="ID"/>
+  const char* metaCover = strstr(opfStr, "name=\"cover\"");
+  if (metaCover && metaCover < opfEnd) {
+    // Find the enclosing <meta> tag
+    const char* tagStart = metaCover;
+    while (tagStart > opfStr && *(tagStart - 1) != '<') tagStart--;
+    const char* tagEnd = metaCover;
+    while (tagEnd < opfEnd && *tagEnd != '>') tagEnd++;
+    
+    // Find content="ID" within this tag
+    const char* contentAttr = strstr(tagStart, "content=\"");
+    if (contentAttr && contentAttr < tagEnd) {
+      contentAttr += 9;
+      const char* contentEnd = strchr(contentAttr, '"');
+      if (contentEnd && contentEnd <= tagEnd) {
+        std::string coverId(contentAttr, contentEnd - contentAttr);
+        
+        // Now find <item id="ID" href="..."/>
+        char idPattern[128];
+        snprintf(idPattern, sizeof(idPattern), "id=\"%s\"", coverId.c_str());
+        const char* itemTag = strstr(opfStr, idPattern);
+        if (itemTag && itemTag < opfEnd) {
+          // Find href="..." within this item tag
+          const char* itemStart = itemTag;
+          while (itemStart > opfStr && *(itemStart - 1) != '<') itemStart--;
+          const char* itemEnd = itemTag;
+          while (itemEnd < opfEnd && *itemEnd != '>') itemEnd++;
+          
+          const char* hrefAttr = strstr(itemStart, "href=\"");
+          if (hrefAttr && hrefAttr < itemEnd) {
+            hrefAttr += 6;
+            const char* hrefEnd = strchr(hrefAttr, '"');
+            if (hrefEnd && hrefEnd <= itemEnd) {
+              std::string href(hrefAttr, hrefEnd - hrefAttr);
+              coverImageHref = FsHelpers::normalisePath(basePath + FsHelpers::decodeUriEscapes(href));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Strategy 2: Look for <item properties="cover-image" href="..."/> (EPUB3)
+  if (coverImageHref.empty()) {
+    const char* propCover = strstr(opfStr, "properties=\"cover-image\"");
+    if (!propCover) propCover = strstr(opfStr, "properties=\"cover-image ");
+    if (!propCover) propCover = strstr(opfStr, "properties=\" cover-image\"");
+    
+    if (propCover && propCover < opfEnd) {
+      // Find the enclosing <item> tag
+      const char* tagStart = propCover;
+      while (tagStart > opfStr && *(tagStart - 1) != '<') tagStart--;
+      const char* tagEnd = propCover;
+      while (tagEnd < opfEnd && *tagEnd != '>') tagEnd++;
+      
+      // Find href="..." within this tag
+      const char* hrefAttr = strstr(tagStart, "href=\"");
+      if (hrefAttr && hrefAttr < tagEnd) {
+        hrefAttr += 6;
+        const char* hrefEnd = strchr(hrefAttr, '"');
+        if (hrefEnd && hrefEnd <= tagEnd) {
+          std::string href(hrefAttr, hrefEnd - hrefAttr);
+          coverImageHref = FsHelpers::normalisePath(basePath + FsHelpers::decodeUriEscapes(href));
+        }
+      }
+    }
+  }
+
+  free(opfData);
+  opfData = nullptr;
+
+  if (coverImageHref.empty()) {
+    COVER_LOG("BSC", "Cover: no cover image found in content.opf");
+    return false;
+  }
+
+  COVER_LOG("BSC", "Cover: found href=%s free=%u maxA=%u",
+            coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // 4. Extract cover image from ZIP to temp file
+  const size_t hash = static_cast<unsigned long long>(std::hash<std::string>{}(epubPath));
+  char cacheDir[64];
+  snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", hash);
+  
+  std::string coverTempPath;
+  if (FsHelpers::hasJpgExtension(coverImageHref)) {
+    coverTempPath = std::string(cacheDir) + "/.cover.jpg";
+  } else if (FsHelpers::hasPngExtension(coverImageHref)) {
+    coverTempPath = std::string(cacheDir) + "/.cover.png";
+  } else {
+    COVER_LOG("BSC", "Cover: unsupported format href=%s", coverImageHref.c_str());
+    return false;
+  }
+
+  // Ensure cache directory exists
+  Storage.mkdir(cacheDir);
+
+  // Extract image from ZIP - stream directly to file to avoid large memory allocation
+  FsFile coverFile;
+  if (!Storage.openFileForWrite("BSC", coverTempPath, coverFile)) {
+    COVER_LOG("BSC", "Cover: failed to open temp file for writing");
+    return false;
+  }
+
+  // Use streaming extraction (4KB chunks) instead of loading entire image into memory
+  // This works much better with fragmented heap
+  if (!zip.readFileToStream(coverImageHref.c_str(), coverFile, 4096)) {
+    coverFile.close();
+    Storage.remove(coverTempPath.c_str());
+    COVER_LOG("BSC", "Cover: failed to extract image from ZIP href=%s", coverImageHref.c_str());
+    return false;
+  }
+  
+  size_t imageSize = coverFile.position();
+  coverFile.close();
+
+  COVER_LOG("BSC", "Cover: extracted to %s size=%u free=%u maxA=%u",
+            coverTempPath.c_str(), imageSize, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // 5. Decode and convert to BMP
+  const std::string thumbPath = thumbPathFor(epubPath, coverW, coverH);
+  
+  // Ensure thumb directory exists
+  Storage.mkdir(cacheDir);
+
+  if (FsHelpers::hasJpgExtension(coverTempPath)) {
+    // Check heap for JPEG decoding
+    if (ESP.getMaxAllocHeap() < 28 * 1024) {
+      COVER_LOG("BSC", "Cover: insufficient heap for JPEG decode maxA=%u", ESP.getMaxAllocHeap());
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    FsFile coverJpg;
+    if (!Storage.openFileForRead("BSC", coverTempPath, coverJpg)) {
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    FsFile thumbBmp;
+    if (!Storage.openFileForWrite("BSC", thumbPath, thumbBmp)) {
+      coverJpg.close();
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(
+        coverJpg, thumbBmp, coverW, coverH, nullptr);
+    
+    coverJpg.close();
+    thumbBmp.close();
+    Storage.remove(coverTempPath.c_str());
+
+    if (success) {
+      COVER_LOG("BSC", "Cover: JPEG thumb OK free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    } else {
+      COVER_LOG("BSC", "Cover: JPEG thumb FAILED free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(thumbPath.c_str());
+    }
+    return success;
+
+  } else if (FsHelpers::hasPngExtension(coverTempPath)) {
+    // Check heap for PNG decoding
+    if (ESP.getMaxAllocHeap() < 40 * 1024) {
+      COVER_LOG("BSC", "Cover: insufficient heap for PNG decode maxA=%u", ESP.getMaxAllocHeap());
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    FsFile coverPng;
+    if (!Storage.openFileForRead("BSC", coverTempPath, coverPng)) {
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    FsFile thumbBmp;
+    if (!Storage.openFileForWrite("BSC", thumbPath, thumbBmp)) {
+      coverPng.close();
+      Storage.remove(coverTempPath.c_str());
+      return false;
+    }
+
+    const bool success = PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(
+        coverPng, thumbBmp, coverW, coverH);
+    
+    coverPng.close();
+    thumbBmp.close();
+    Storage.remove(coverTempPath.c_str());
+
+    if (success) {
+      COVER_LOG("BSC", "Cover: PNG thumb OK free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    } else {
+      COVER_LOG("BSC", "Cover: PNG thumb FAILED free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(thumbPath.c_str());
+    }
+    return success;
+  }
+
+  return false;
+}
+
 bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   // Keep the main-task watchdog fed. Callers (per-page library indexing) may
   // invoke this from the activity loop with no other WDT reset, and an EPUB/XTC
@@ -399,41 +796,24 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   esp_task_wdt_reset();
 
   if (FsHelpers::hasEpubExtension(path)) {
-    // EPUB cover extraction needs the ZIP inflate window (~32 KB) plus the
-    // image decoder (JPEG ~17 KB, PNG ~42 KB).  Ensure enough contiguous heap
-    // is available before opening the EPUB, so we don't OOM mid-extraction.
+    // EPUB cover extraction using minimal direct ZIP reading (no expat).
+    // This avoids the heap fragmentation caused by XML_GetBuffer() allocations
+    // in the full EPUB load path.
     uint32_t freeH = ESP.getFreeHeap();
     uint32_t maxA  = ESP.getMaxAllocHeap();
     COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
-    if (maxA < 18 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (low heap): maxA=%u < 18432", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 18 KB)",
-              path.c_str(), maxA);
-      return false;
-    }
-    // Scope-limit the Epub object so ZIP/page buffers are released immediately
-    // after the thumbnail is written.
-    Epub epub(path, "/.crosspoint");
-    const bool loaded = epub.load(true, true);
-    COVER_LOG("BSC", "EPUB load(%s): result=%d free=%u maxA=%u",
-              path.c_str(), loaded ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    if (!loaded) return false;
-
-    // Re-check heap after opening the EPUB: metadata cache + ZIP inflate can
-    // consume a significant chunk.  Don't attempt decode if we no longer have
-    // enough contiguous memory; the caller will retry on the next pass.
-    maxA = ESP.getMaxAllocHeap();
-    if (maxA < 14 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (post-load heap): maxA=%u < 14KB", maxA);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen after load for %s (maxAlloc=%u < 14 KB)",
-              path.c_str(), maxA);
+    
+    // Minimal heap requirement: ZIP inflate (~32KB) + image decoder (JPEG ~28KB, PNG ~40KB)
+    // Using 18KB threshold for safety margin
+    if (maxA < 18 * 1024 || freeH < 20 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (insufficient heap): maxA=%u < 18432 || free=%u < 20480", maxA, freeH);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 18 KB || free=%u < 20 KB)",
+              path.c_str(), maxA, freeH);
       return false;
     }
 
-    yield();
-    esp_task_wdt_reset();
-
-    const bool thumbOk = epub.generateThumbBmp(coverW, coverH);
+    // Use custom minimal extractor (no expat, no book.bin cache needed)
+    const bool thumbOk = extractCoverFromEpub(path, coverW, coverH);
     COVER_LOG("BSC", "EPUB thumb(%s): result=%d free=%u maxA=%u",
               path.c_str(), thumbOk ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     return thumbOk;
