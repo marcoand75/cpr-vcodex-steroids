@@ -659,15 +659,15 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
   opfData = nullptr;
 
   if (coverImageHref.empty()) {
-    COVER_LOG("BSC", "Cover: no cover image found in content.opf");
+    LOG_DBG("BSC", "Cover: no cover image found in content.opf path=%s", epubPath.c_str());
     return false;
   }
 
-  COVER_LOG("BSC", "Cover: found href=%s free=%u maxA=%u",
-            coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LOG_DBG("BSC", "Cover: found href=%s free=%u maxA=%u",
+          coverImageHref.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   // 4. Extract cover image from ZIP to temp file
-  const size_t hash = static_cast<unsigned long long>(std::hash<std::string>{}(epubPath));
+  const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(epubPath));
   char cacheDir[64];
   snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", hash);
   
@@ -681,41 +681,53 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
     return false;
   }
 
-  // Ensure cache directory exists
-  Storage.mkdir(cacheDir);
+  // Ensure cache directory exists before writing the temp cover file.
+  // mkdir returns false if the directory already exists on some FAT drivers,
+  // so accept "exists" as success too.
+  if (!Storage.exists(cacheDir) && !Storage.mkdir(cacheDir)) {
+    LOG_DBG("BSC", "Cover: failed to create cache dir %s", cacheDir);
+    return false;
+  }
 
   // Extract image from ZIP - stream directly to file to avoid large memory allocation
   FsFile coverFile;
   if (!Storage.openFileForWrite("BSC", coverTempPath, coverFile)) {
-    COVER_LOG("BSC", "Cover: failed to open temp file for writing");
+    LOG_DBG("BSC", "Cover: failed to open temp file %s", coverTempPath.c_str());
     return false;
   }
 
   // Use streaming extraction (4KB chunks) instead of loading entire image into memory
   // This works much better with fragmented heap
+  LOG_DBG("BSC", "Cover: extracting href=%s to=%s free=%u maxA=%u",
+          coverImageHref.c_str(), coverTempPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   if (!zip.readFileToStream(coverImageHref.c_str(), coverFile, 4096)) {
     coverFile.close();
     Storage.remove(coverTempPath.c_str());
-    COVER_LOG("BSC", "Cover: failed to extract image from ZIP href=%s", coverImageHref.c_str());
+    LOG_DBG("BSC", "Cover: failed to extract image from ZIP href=%s", coverImageHref.c_str());
     return false;
   }
   
   size_t imageSize = coverFile.position();
   coverFile.close();
 
-  COVER_LOG("BSC", "Cover: extracted to %s size=%u free=%u maxA=%u",
-            coverTempPath.c_str(), imageSize, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LOG_DBG("BSC", "Cover: extracted to %s size=%u free=%u maxA=%u",
+          coverTempPath.c_str(), imageSize, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   // 5. Decode and convert to BMP
   const std::string thumbPath = thumbPathFor(epubPath, coverW, coverH);
   
-  // Ensure thumb directory exists
-  Storage.mkdir(cacheDir);
+  // Ensure the cache directory exists before writing the BMP.
+  // mkdir returns false if the directory already exists on some FAT drivers,
+  // so accept "exists" as success too.
+  if (!Storage.exists(cacheDir) && !Storage.mkdir(cacheDir)) {
+    LOG_DBG("BSC", "Cover: failed to create cache dir for BMP %s", cacheDir);
+    return false;
+  }
 
   if (FsHelpers::hasJpgExtension(coverTempPath)) {
     // Check heap for JPEG decoding
     if (ESP.getMaxAllocHeap() < 28 * 1024) {
-      COVER_LOG("BSC", "Cover: insufficient heap for JPEG decode maxA=%u", ESP.getMaxAllocHeap());
+      LOG_DBG("BSC", "Cover: insufficient heap for JPEG decode maxA=%u", ESP.getMaxAllocHeap());
       Storage.remove(coverTempPath.c_str());
       return false;
     }
@@ -726,10 +738,16 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
       return false;
     }
 
+    // Write BMP to a temp file first, then rename atomically.
+    // This prevents isBookCoverReady (which runs in parallel with JPEG
+    // conversion across activity frames) from seeing a 0-byte file and
+    // deleting it before the conversion completes.
+    const std::string thumbTmpPath = thumbPath + ".tmp";
     FsFile thumbBmp;
-    if (!Storage.openFileForWrite("BSC", thumbPath, thumbBmp)) {
+    if (!Storage.openFileForWrite("BSC", thumbTmpPath, thumbBmp)) {
       coverJpg.close();
       Storage.remove(coverTempPath.c_str());
+      LOG_DBG("BSC", "Cover: failed to open BMP temp for writing %s", thumbTmpPath.c_str());
       return false;
     }
 
@@ -741,10 +759,17 @@ static bool extractCoverFromEpub(const std::string& epubPath, int coverW, int co
     Storage.remove(coverTempPath.c_str());
 
     if (success) {
-      COVER_LOG("BSC", "Cover: JPEG thumb OK free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(thumbPath.c_str());           // remove stale BMP if any
+      if (Storage.rename(thumbTmpPath.c_str(), thumbPath.c_str())) {
+        LOG_DBG("BSC", "Cover: JPEG thumb OK %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      } else {
+        LOG_DBG("BSC", "Cover: JPEG thumb rename failed %s -> %s", thumbTmpPath.c_str(), thumbPath.c_str());
+        Storage.remove(thumbTmpPath.c_str());
+        return false;
+      }
     } else {
-      COVER_LOG("BSC", "Cover: JPEG thumb FAILED free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      Storage.remove(thumbPath.c_str());
+      LOG_DBG("BSC", "Cover: JPEG thumb FAILED %s free=%u maxA=%u", thumbPath.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      Storage.remove(thumbTmpPath.c_str());
     }
     return success;
 
@@ -803,11 +828,13 @@ bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
     uint32_t maxA  = ESP.getMaxAllocHeap();
     COVER_LOG("BSC", "EPUB start: path=%s W=%d H=%d free=%u maxA=%u", path.c_str(), coverW, coverH, freeH, maxA);
     
-    // Minimal heap requirement: ZIP inflate (~32KB) + image decoder (JPEG ~28KB, PNG ~40KB)
-    // Using 18KB threshold for safety margin
-    if (maxA < 18 * 1024 || freeH < 20 * 1024) {
-      COVER_LOG("BSC", "EPUB SKIP (insufficient heap): maxA=%u < 18432 || free=%u < 20480", maxA, freeH);
-      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 18 KB || free=%u < 20 KB)",
+    // Minimal heap requirement: ZIP inflate reader needs ~32KB contiguous
+    // for the streaming decompression buffer. Raising the guard prevents
+    // "Failed to init inflate reader" errors from ZipFile internals.
+    // Books that fail here will be retried on the next pass when heap recovers.
+    if (maxA < 32 * 1024 || freeH < 28 * 1024) {
+      COVER_LOG("BSC", "EPUB SKIP (insufficient heap for ZIP inflate): maxA=%u < 32768 || free=%u < 28672", maxA, freeH);
+      LOG_DBG("BSC", "Skipping EPUB thumb gen for %s (maxAlloc=%u < 32 KB || free=%u < 28 KB)",
               path.c_str(), maxA, freeH);
       return false;
     }

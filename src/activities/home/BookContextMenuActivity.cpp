@@ -12,15 +12,13 @@
 #include "components/icons/trophy.h"
 #include "components/icons/readingstats.h"
 #include "components/icons/library.h"
-#include "components/icons/recent.h"
-#include "components/icons/settings2.h"
-#include "components/icons/transfer.h"
 #include "components/icons/image.h"
 #include "components/icons/recentbooks.h"
 #include "components/icons/finish_flag.h"
 #include "components/icons/notification_unread.h"
 #include "components/icons/delete_file.h"
 #include "components/icons/cache_cleaner.h"
+#include "components/icons/settings2.h"
 #include "fontIds.h"
 
 BookContextMenuActivity::BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -43,14 +41,20 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
     items.push_back({MenuAction::REMOVE_FROM_RECENTS, StrId::STR_DELETE_FROM_RECENTS, RecentBooksIcon32, 32, 32});
   }
   items.push_back({MenuAction::VIEW_STATS, StrId::STR_READING_STATS, ReadingStatsIcon32, 32, 32});
-  items.push_back({MenuAction::VIEW_METADATA, StrId::STR_VIEW_METADATA, Settings2Icon, 32, 32});
+  // VIEW_METADATA only in homepage mode — in library mode the book cache
+  // may not exist since we read metadata directly from the ZIP.
+  if (!isLibraryMode) {
+    items.push_back({MenuAction::VIEW_METADATA, StrId::STR_VIEW_METADATA, Settings2Icon, 32, 32});
+  }
   items.push_back({MenuAction::ADD_TO_FAVORITES,
                    isFavorite ? StrId::STR_REMOVE_FROM_FAVORITES : StrId::STR_ADD_TO_FAVORITES,
                    HeartIcon, 32, 32});
   items.push_back({MenuAction::MARK_READ_UNREAD,
                    isCompleted ? StrId::STR_MARK_AS_NOT_FINISHED : StrId::STR_MARK_AS_FINISHED,
                    isCompleted ? NotificationUnreadIcon : FinishFlagIcon, 32, 32});
-  if (isEpubFormat) {
+  // DELETE_CACHE only in homepage mode — in library mode the book cache
+  // is optional since we read metadata directly from the ZIP.
+  if (!isLibraryMode && isEpubFormat) {
     items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, DeleteFileIcon, 32, 32});
   }
   if (!isLibraryMode) {

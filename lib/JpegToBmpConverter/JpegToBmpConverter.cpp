@@ -335,8 +335,9 @@ struct BmpConvertCtx {
   std::unique_ptr<uint8_t[]> bmpRow;
 
   // Write buffer for batching BMP row writes
-  static constexpr int WRITE_BUF_ROWS = 8;
+  static constexpr int WRITE_BUF_MAX_ROWS = 16;
   std::unique_ptr<uint8_t[]> writeBuf;
+  int writeBufMaxRows;   // actual capacity (≤ WRITE_BUF_MAX_ROWS, dynamic based on MaxAlloc)
   int writeBufUsedRows;
 
   std::unique_ptr<AtkinsonDitherer> atkinsonDitherer;
@@ -356,7 +357,7 @@ static void flushWriteBuffer(BmpConvertCtx* ctx) {
 
 // Append a row to write buffer, flushing if necessary
 static void appendToWriteBuffer(BmpConvertCtx* ctx, const uint8_t* row) {
-  if (ctx->writeBufUsedRows >= BmpConvertCtx::WRITE_BUF_ROWS) {
+  if (ctx->writeBufUsedRows >= ctx->writeBufMaxRows) {
     flushWriteBuffer(ctx);
   }
   memcpy(ctx->writeBuf.get() + ctx->writeBufUsedRows * ctx->bytesPerRow, row, ctx->bytesPerRow);
@@ -682,7 +683,6 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   ctx.scaleX_fp = scaleX_fp;
   ctx.scaleY_fp = scaleY_fp;
   ctx.error = false;
-  ctx.writeBufUsedRows = 0;
 
   // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
   ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
@@ -727,13 +727,24 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
     }
   }
 
-  // BMP output write buffer: batch multiple rows to reduce SD write calls
-  ctx.writeBuf = makeUniqueNoThrow<uint8_t[]>(BmpConvertCtx::WRITE_BUF_ROWS * bytesPerRow);
+  // BMP output write buffer: batch rows to reduce SD write calls.
+  // Scale proportionally to available contiguous heap so bigger free blocks
+  // produce faster writes, while tight heaps stay conservative to avoid OOM.
+  const uint32_t maxA = ESP.getMaxAllocHeap();
+  const uint32_t maxWriteBuf = maxA / 16;                            // ≤ 1/16 of contiguous heap
+  const int maxByBudget = maxWriteBuf / bytesPerRow;                // rows that fit in budget
+  int writeBufRows = maxByBudget;
+  if (writeBufRows < 2) writeBufRows = 2;                           // floor: at least 2 rows
+  if (writeBufRows > BmpConvertCtx::WRITE_BUF_MAX_ROWS) writeBufRows = BmpConvertCtx::WRITE_BUF_MAX_ROWS;  // cap: 16 rows
+
+  ctx.writeBuf = makeUniqueNoThrow<uint8_t[]>(writeBufRows * bytesPerRow);
   if (!ctx.writeBuf) {
     LOG_ERR("JPG", "OOM: BMP write buffer");
     setPermanent(false);  // transient: OOM
     return false;
   }
+  ctx.writeBufMaxRows = writeBufRows;
+  ctx.writeBufUsedRows = 0;
 
   if (oneBit) {
     ctx.atkinson1BitDitherer = makeUniqueNoThrow<Atkinson1BitDitherer>(outWidth);

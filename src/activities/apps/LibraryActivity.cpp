@@ -20,7 +20,6 @@
 #include <vector>
 
 #include "../home/BookContextMenuActivity.h"
-#include "../home/BookMetadataActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "../util/KeyboardEntryActivity.h"
 #include "CrossPointSettings.h"
@@ -204,7 +203,30 @@ void LibraryActivity::applyLayoutFromSettings() {
 
 bool LibraryActivity::isBookCoverReady(const std::string& path, size_t slot) const {
   const std::string tp = LibraryCache::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (!tp.empty() && Storage.exists(tp.c_str())) return true;
+  if (!tp.empty() && Storage.exists(tp.c_str())) {
+    // File exists but could be corrupt (e.g. truncated due to OOM during
+    // write, or written before directory was created). Verify headers
+    // parse correctly before declaring the cover "ready".
+    FsFile file;
+    if (Storage.openFileForRead("LIB", tp, file)) {
+      if (file.size() > 0) {
+        Bitmap bmp(file);
+        const auto err = bmp.parseHeaders();
+        if (err == BmpReaderError::Ok &&
+            bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+          file.close();
+          return true;
+        }
+        LOG_DBG("LIB", "Cover: BMP corrupt slot=%zu err=%d w=%d h=%d size=%u path=%s",
+                slot, static_cast<int>(err), bmp.getWidth(), bmp.getHeight(), file.size(), tp.c_str());
+      } else {
+        LOG_DBG("LIB", "Cover: BMP empty slot=%zu size=0 path=%s", slot, tp.c_str());
+      }
+      file.close();
+    }
+    // Corrupt/empty/headerless file — clean up so we retry generation
+    Storage.remove(tp.c_str());
+  }
   // Also accept slots we've already generated this pass — the FAT driver
   // may not make the BMP visible immediately after write. Only valid for the
   // current page (slot < 64). The bit is set only on a successful generation.
@@ -653,7 +675,7 @@ void LibraryActivity::loop() {
       // clear recovers.
       const uint32_t freeBefore = ESP.getFreeHeap();
       const uint32_t maxABefore = ESP.getMaxAllocHeap();
-      COVER_LOG("LIB", "Covers: pass#%d START pageStart=%d pageCount=%d free=%u maxA=%u",
+      LOG_DBG("LIB", "Covers: pass#%d START pageStart=%d pageCount=%d free=%u maxA=%u",
                 coverPassCount_, pageStart, pageCount, freeBefore, maxABefore);
       // First frame of this pass: redraw the full grid so placeholders + any
       // existing covers from previous sessions are visible immediately.
@@ -668,7 +690,9 @@ void LibraryActivity::loop() {
     for (int attempt = 0; attempt < pageCount && !generatedOne; ++attempt) {
       const int slot = (coverGenIndex_ + attempt) % pageCount;
       const int idx = pageStart + slot;
-      if (!isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot))) {
+      const bool ready = isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot));
+      LOG_DBG("LIB", "Cover: scan slot=%d idx=%d ready=%d path=%s", slot, idx, ready, entries_[idx].path.c_str());
+      if (!ready) {
         yield();
         esp_task_wdt_reset();
         COVER_LOG("LIB", "Cover: att#%d slot=%d idx=%d gen... path=%s free=%u maxA=%u",
@@ -690,7 +714,7 @@ void LibraryActivity::loop() {
                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
         const bool slotOk = slot < 64;
-        COVER_LOG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        LOG_DBG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         if (genOk && slotOk) {
           coverGeneratedMask_ |= (uint64_t{1} << slot);
           generatedOne = true;
@@ -809,10 +833,6 @@ void LibraryActivity::loop() {
                   startActivityForResult(std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, path),
                                          [this](const ActivityResult&) { forceRender_ = true; requestUpdate(); });
                   return;
-                case BookContextMenuActivity::MenuAction::VIEW_METADATA:
-                  startActivityForResult(std::make_unique<BookMetadataActivity>(renderer, mappedInput, path),
-                                         [this](const ActivityResult&) { forceRender_ = true; requestUpdate(); });
-                  return;
                 case BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES:
                   FAVORITES.toggleBook(path); forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::MARK_READ_UNREAD: {
@@ -825,9 +845,6 @@ void LibraryActivity::loop() {
                   READING_STATS.endSession();
                   forceRender_ = true; requestUpdate(); return;
                 }
-                case BookContextMenuActivity::MenuAction::DELETE_CACHE:
-                  if (isEpub) { Epub epub(path, "/.crosspoint"); epub.load(false, true); epub.clearCache(); }
-                  forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB:
                   deleteLibraryCovers(path);
                   coversComplete_ = false; coverGenIndex_ = -1; forceRender_ = true; requestUpdate(); return;
