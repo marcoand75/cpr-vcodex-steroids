@@ -7,6 +7,7 @@
 #include <MemoryBudget.h>
 #include <PNGdec.h>
 
+#include <memory>
 #include <string>
 
 namespace {
@@ -151,18 +152,27 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
     return false;
   }
 
-  // Decode through a single static PNG decoder instance instead of `new PNG()`.
+  // Use a lazily-allocated PNG decoder instead of a static instance.
+  //
   // PNGdec keeps its entire ~58 KB working set (32 KB zlib window + ~20 KB inflate
-  // state + row/palette/file buffers) inline in the PNG object, so `new PNG()` needs
-  // one large *contiguous* heap block. On the ESP32-C3 that block is frequently
-  // unavailable (heap fragmentation from long runtime / stacked activities), which
-  // made folder-selector PNG previews fail with "Invalid image file" even though BMP
-  // previews worked. A static instance lives in .bss, so decoding no longer depends
-  // on contiguous heap. PNG::open() memset()s the struct on every call, so reusing one
-  // instance across calls is safe; drawTransparentPng is only ever invoked
+  // state + row/palette/file buffers) inline in the PNG object. A true heap
+  // allocation (new PNG()) was unreliable on the ESP32-C3 due to heap fragmentation,
+  // which is why the original code used a static instance in .bss.
+  //
+  // This lazy pattern keeps the 59 KB out of .bss while still performing only a
+  // single allocation (the first call ever) — subsequent calls reuse the pointer
+  // and never fragment the heap further. PNG::open() memset()s the struct on every
+  // call, so reusing one instance is safe; drawTransparentPng is only ever invoked
   // synchronously from a single activity at a time.
-  static PNG s_png;
-  PNG* png = &s_png;
+  static std::unique_ptr<PNG> s_png;
+  if (!s_png) {
+    s_png = std::make_unique<PNG>();
+    if (!s_png) {
+      LOG_ERR("SLP", "Failed to allocate PNG decoder (59 KB)");
+      return false;
+    }
+  }
+  PNG* png = s_png.get();
 
   const char* previousPrefix = g_pngStoragePrefix;
   g_pngStoragePrefix = storagePrefix ? storagePrefix : "SLP";

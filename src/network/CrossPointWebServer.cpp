@@ -906,6 +906,13 @@ void CrossPointWebServer::handleFontUploadData() {
     case UPLOAD_FILE_START: {
       esp_task_wdt_reset();
       String family = server->arg("family");
+
+      // Allocate font upload buffer on heap (saves ~4KB of DRAM when not uploading)
+      if (!fontUpload.allocateBuffer()) {
+        LOG_ERR("WEB", "Failed to allocate font upload buffer");
+        break;
+      }
+
       fontUpload.file = HalFile();
       fontUpload.valid = false;
       fontUpload.magicChecked = false;
@@ -966,13 +973,13 @@ void CrossPointWebServer::handleFontUploadData() {
       while (remaining > 0) {
         const size_t space = FontUploadState::BUFFER_SIZE - fontUpload.bufferPos;
         const size_t chunk = (remaining < space) ? remaining : space;
-        memcpy(fontUpload.buffer.data() + fontUpload.bufferPos, src, chunk);
+        memcpy(fontUpload.buffer.get() + fontUpload.bufferPos, src, chunk);
         fontUpload.bufferPos += chunk;
         src += chunk;
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
           fontUpload.bytesWritten += fontUpload.bufferPos;
           fontUpload.bufferPos = 0;
           esp_task_wdt_reset();
@@ -983,7 +990,7 @@ void CrossPointWebServer::handleFontUploadData() {
 
     case UPLOAD_FILE_END: {
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
         fontUpload.bytesWritten += fontUpload.bufferPos;
         fontUpload.bufferPos = 0;
       }
@@ -996,6 +1003,7 @@ void CrossPointWebServer::handleFontUploadData() {
       }
 
       LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
+      fontUpload.freeBuffer();
       break;
     }
 
@@ -1008,6 +1016,7 @@ void CrossPointWebServer::handleFontUploadData() {
       }
       fontUpload.valid = false;
       LOG_DBG("WEB", "Font upload aborted");
+      fontUpload.freeBuffer();
       break;
     }
   }
@@ -1277,7 +1286,7 @@ static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
   if (state.bufferPos > 0 && state.file) {
     esp_task_wdt_reset();  // Reset watchdog before potentially slow SD write
     const unsigned long writeStart = millis();
-    const size_t written = state.file.write(state.buffer.data(), state.bufferPos);
+    const size_t written = state.file.write(state.buffer.get(), state.bufferPos);
     totalWriteTime += millis() - writeStart;
     writeCount++;
     esp_task_wdt_reset();  // Reset watchdog after SD write
@@ -1309,6 +1318,9 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
   if (upload.status == UPLOAD_FILE_START) {
     // Reset watchdog - this is the critical 1% crash point
     esp_task_wdt_reset();
+
+    // Allocate upload buffer on heap (saves ~4KB of DRAM when not uploading)
+    state.allocateBuffer();
 
     state.fileName = upload.filename;
     state.size = 0;
@@ -1374,7 +1386,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         const size_t space = UploadState::UPLOAD_BUFFER_SIZE - state.bufferPos;
         const size_t toCopy = (remaining < space) ? remaining : space;
 
-        memcpy(state.buffer.data() + state.bufferPos, data, toCopy);
+        memcpy(state.buffer.get() + state.bufferPos, data, toCopy);
         state.bufferPos += toCopy;
         data += toCopy;
         remaining -= toCopy;
@@ -1424,6 +1436,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         filePath += state.fileName;
         clearBookCache(filePath.c_str());
       }
+      state.freeBuffer();
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     state.bufferPos = 0;  // Discard buffered data
@@ -1437,6 +1450,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
     state.error = "Upload aborted";
     LOG_DBG("WEB", "Upload aborted");
+    state.freeBuffer();
   }
 }
 

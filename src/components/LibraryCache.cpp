@@ -133,8 +133,10 @@ static bool readTitleAndAuthorFromEpub(const std::string& epubPath, std::string&
   size_t opfSize = 0;
   if (!zip.getInflatedFileSize(contentOpfPath.c_str(), &opfSize)) return false;
   if (opfSize == 0) return false;
-  // Limit to 32KB to avoid large heap allocations on fragmented heap
-  if (opfSize > 32 * 1024) opfSize = 32 * 1024;
+  // Limit to 64KB to avoid large heap allocations on fragmented heap.
+  // 32KB was too restrictive for EPUBs with many spine items (500+)
+  // where the OPF file can exceed this limit.
+  if (opfSize > 64 * 1024) opfSize = 64 * 1024;
 
   uint8_t* opfData = zip.readFileToMemory(contentOpfPath.c_str(), &opfSize);
   if (!opfData) return false;
@@ -411,6 +413,12 @@ bool extractBookMetadata(ScanRecord& rec) {
     // the next book, releasing ZIP buffer / page data immediately.
     bool haveMeta = false;
     {
+      // Diagnostic: log heap fragmentation state before metadata extraction
+      // to help debug the MinFree=8432 issue on real hardware.
+      COVER_LOG("BSC", "pre-extract(%s): free=%u maxA=%u largest=%u",
+                rec.path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+                heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+
       // First, try to read title+author directly from the EPUB ZIP without
       // using expat XML parser or requiring book.bin cache. This is the
       // lightest approach: only 2 temporary heap allocations (container.xml
@@ -427,41 +435,6 @@ bool extractBookMetadata(ScanRecord& rec) {
         if (Storage.exists(cacheDir.c_str())) {
           if (readTitleAndAuthor(cacheDir, rec.title, rec.author)) {
             haveMeta = !rec.title.empty() || !rec.author.empty();
-          }
-        }
-
-        // Last resort: full EPUB load (this builds the cache if missing).
-        // This uses expat XML parser which requires contiguous memory for
-        // XML_GetBuffer(). Skip only when heap is critically low.
-        if (!haveMeta) {
-          // Re-check max-alloc heap right before opening the ZIP: a single
-          // EPUB open can request a 100+ KB block; on a fragmented heap after
-          // several previous books the call can OOM. Skipping here is much
-          // cheaper than recovering from a failed allocation deep inside the
-          // parser.
-          const auto heap = MemoryBudget::snapshot();
-          constexpr uint32_t kEpubMinFree = 40000;   // ~40 KB
-          constexpr uint32_t kEpubMinMaxAlloc = 30000;
-          if (heap.freeHeap < kEpubMinFree || heap.maxAllocHeap < kEpubMinMaxAlloc) {
-            LOG_DBG("BSC", "Skipping EPUB parse for %s (free=%u maxAlloc=%u)", rec.path.c_str(), heap.freeHeap,
-                    heap.maxAllocHeap);
-            return false;
-          }
-
-          // CRITICAL: expat XML parser requires contiguous memory for XML_GetBuffer().
-          // Even if freeHeap is high, fragmented heap (low maxAlloc) will cause
-          // XML_GetBuffer() to fail. Check both freeHeap AND maxAlloc.
-          const uint32_t freeH = ESP.getFreeHeap();
-          const uint32_t maxA = ESP.getMaxAllocHeap();
-          if (freeH < 65000 || maxA < 35000) {
-            LOG_DBG("BSC", "Skipping EPUB load for %s (free=%u < 65 KB || maxAlloc=%u < 35 KB)",
-                    rec.path.c_str(), freeH, maxA);
-            return false;
-          }
-          if (epub.load(true, true)) {
-            rec.title = epub.getTitle();
-            rec.author = epub.getAuthor();
-            haveMeta = true;
           }
         }
       }
@@ -1206,8 +1179,10 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
 
   const bool persisted = save(out);
   HOMEPAGE_LOG("BSC", "sync: after save() heap=%u maxA=%u persisted=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), persisted ? 1 : 0);
-  LOG_DBG("BSC", "sync complete: %d kept, %d added, %d removed (total %d, %d sd scanned), persisted=%d", kept, added,
-          removed, static_cast<int>(out.size()), sdFileCount, persisted ? 1 : 0);
+  LOG_DBG("BSC", "sync complete: %d kept, %d added, %d removed (total %d, %d sd scanned), persisted=%d. post-sync heap: free=%u maxA=%u largest=%u minFree=%u",
+          kept, added, removed, static_cast<int>(out.size()), sdFileCount, persisted ? 1 : 0,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+          heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT), ESP.getMinFreeHeap());
   return persisted;
 }
 

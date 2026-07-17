@@ -640,6 +640,15 @@ void LibraryActivity::loop() {
     const int pageCount = std::min(gridsPerPage_, total - pageStart);
 
     if (coverGenIndex_ < 0) {
+      // If user pressed a button while we were about to start a new pass,
+      // let navigation be processed first. The pass will retry next frame.
+      if (mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+          mappedInput.wasPressed(MappedInputManager::Button::Right) ||
+          mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+          mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+          mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+        return;
+      }
       coverGeneratedMask_ = 0;
       coverPassCount_ = 0;
       coverGenRenderBatch_ = 0;
@@ -751,6 +760,11 @@ void LibraryActivity::loop() {
         coverGenIndex_ = -1;
         coverGeneratedMask_ = 0;
         coverGenRenderBatch_ = 0;
+        // Sync lastRenderedCoversComplete_ so the render guard does not see
+        // a spurious change and trigger a full grid redraw — the page still
+        // shows the same content (placeholders + any covers generated during
+        // the pass). A render is only forced when covers were actually generated.
+        lastRenderedCoversComplete_ = true;
         // Invalidate cached header strings cleared during cover gen.
         // Without this, the next render sees infoKeyChanged=false and the header
         // is left empty on screen.
@@ -759,8 +773,14 @@ void LibraryActivity::loop() {
         cachedInfoFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(-1);
         cachedInfoSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(-1);
         cachedInfoSearch_.clear();
-        forceRender_ = true;
-        requestUpdate();
+        // Force a render only if at least one cover was generated during the
+        // pass. If all slots were already ready or all failed, the page already
+        // shows the correct content (placeholders + existing covers) and an
+        // extra redraw is just wasted cycles.
+        if (coverGeneratedMask_ != 0) {
+          forceRender_ = true;
+          requestUpdate();
+        }
         return;
       }
       coverGenIndex_ = 0;
