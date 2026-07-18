@@ -48,7 +48,6 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-// Compile-time verification: the largest icon (32×32 1‑bpp) is exactly 128 B.
 static_assert(sizeof(CoverIcon) == 128, "unexpected icon size, update kMaxIconBytes");
 
 namespace {
@@ -637,46 +636,9 @@ void LibraryActivity::loop() {
       return;
     }
 
-    bool generatedOne = false;
-    for (int attempt = 0; attempt < pageCount && !generatedOne; ++attempt) {
-      const int slot = (coverGenIndex_ + attempt) % pageCount;
-      const int idx = pageStart + slot;
-      const bool ready = isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot));
-      LOG_DBG("LIB", "Cover: scan slot=%d idx=%d ready=%d path=%s", slot, idx, ready, entries_[idx].path.c_str());
-      if (!ready) {
-        yield();
-        esp_task_wdt_reset();
-        COVER_LOG("LIB", "Cover: att#%d slot=%d idx=%d gen... path=%s free=%u maxA=%u",
-                  attempt, slot, idx, entries_[idx].path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        
-        if (auto* fcm = renderer.getFontCacheManager()) {
-          fcm->clearCache();
-        }
-        cachedInfo_.clear();
-        cachedInfo_.shrink_to_fit();
-        cachedSelTitle_.clear();
-        cachedSelTitle_.shrink_to_fit();
-        
-        vTaskDelay(1);
-        const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
-        const bool slotOk = slot < 64;
-        LOG_DBG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        if (genOk && slotOk) {
-          coverGeneratedMask_ |= (uint64_t{1} << slot);
-          generatedOne = true;
-        }
-        forceRender_ = true;
-        coverGenRenderBatch_++;
-        if (coverGenRenderBatch_ >= kCoverRenderBatchEvery) {
-          coverGenRenderBatch_ = 0;
-          requestUpdate();
-        }
-        if (generatedOne) return;
-      }
-    }
-
-    coverGenIndex_++;
+    // FIX: Logica semplificata - controlla solo lo slot corrente
     if (coverGenIndex_ >= pageCount) {
+      // Tutti gli slot sono stati processati, controlla se mancano ancora cover
       bool stillMissing = false;
       for (int slot = 0; slot < pageCount && !stillMissing; ++slot) {
         if (!isBookCoverReady(entries_[pageStart + slot].path, static_cast<size_t>(slot))) stillMissing = true;
@@ -702,6 +664,41 @@ void LibraryActivity::loop() {
       }
       coverGenIndex_ = 0;
     }
+
+    const int slot = coverGenIndex_;
+    const int idx = pageStart + slot;
+    const bool ready = isBookCoverReady(entries_[idx].path, static_cast<size_t>(slot));
+    
+    if (!ready) {
+      yield();
+      esp_task_wdt_reset();
+      COVER_LOG("LIB", "Cover: slot=%d idx=%d gen... path=%s free=%u maxA=%u",
+                slot, idx, entries_[idx].path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      
+      if (auto* fcm = renderer.getFontCacheManager()) {
+        fcm->clearCache();
+      }
+      cachedInfo_.clear();
+      cachedInfo_.shrink_to_fit();
+      cachedSelTitle_.clear();
+      cachedSelTitle_.shrink_to_fit();
+      
+      vTaskDelay(1);
+      const bool genOk = LibraryCache::generateCoverForBook(entries_[idx].path, coverWidth_, coverHeight_);
+      const bool slotOk = slot < 64;
+      LOG_DBG("LIB", "Cover: slot=%d gen=%d slotOk=%d free=%u maxA=%u", slot, genOk, slotOk, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      if (genOk && slotOk) {
+        coverGeneratedMask_ |= (uint64_t{1} << slot);
+      }
+      forceRender_ = true;
+      coverGenRenderBatch_++;
+      if (coverGenRenderBatch_ >= kCoverRenderBatchEvery) {
+        coverGenRenderBatch_ = 0;
+        requestUpdate();
+      }
+    }
+
+    coverGenIndex_++;
     return;
   }
 
@@ -910,7 +907,6 @@ void LibraryActivity::render(RenderLock&&) {
     return;
   }
   
-  // Rendering Parziale Reale: aggiorna solo bordo e testi senza clearScreen()
   if (!forceRender_ && popupMode_ == PopupMode::None &&
       curPageRaw == lastRenderedPage_ && coversComplete_ == lastRenderedCoversComplete_ &&
       selectorIndex_ != lastRenderedSelectorIndex_ && total > 0) {
@@ -924,9 +920,6 @@ void LibraryActivity::render(RenderLock&&) {
       
       const int rowH = coverHeight_ + rowPad_;
 
-      // FIX CRITICO: Usa prevBorderIdx_ per cancellare il vecchio bordo, non lastRenderedSelectorIndex_.
-      // Dopo un cambio pagina, lastRenderedSelectorIndex_ punta all'indice della pagina precedente,
-      // mentre prevBorderIdx_ tiene traccia dell'ultima posizione valida sulla pagina corrente.
       if (prevBorderIdx_ >= 0 && prevBorderIdx_ < total) {
           const int lastPageStart = (prevBorderIdx_ / gridsPerPage_) * gridsPerPage_;
           const int lastTileIdx = prevBorderIdx_ - lastPageStart;
@@ -939,10 +932,8 @@ void LibraryActivity::render(RenderLock&&) {
           drawCyberpunkSelectionBorder(renderer, lastX, lastY, coverWidth_, coverHeight_, false);
       }
 
-      // 2. Cancella vecchia area titolo/autore (riempie di bianco)
       renderer.fillRect(0, selTitleY, pageWidth, lh * 2 + 1, false);
 
-      // 3. Aggiorna cache testi selezione
       const bool infoKeyChanged = cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
                                   cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
                                   cachedInfoSearch_ != currentSearchText_;
@@ -994,7 +985,6 @@ void LibraryActivity::render(RenderLock&&) {
           cachedRenderPage_ = curPageRaw;
       }
 
-      // 4. Disegna nuovo bordo (nero)
       const int pageStart = curPageRaw * gridsPerPage_;
       const int tileIdx = selectorIndex_ - pageStart;
       const int col = tileIdx % gridColumns_;
@@ -1005,7 +995,6 @@ void LibraryActivity::render(RenderLock&&) {
       const int newY = contentTop + row * rowH;
       drawCyberpunkSelectionBorder(renderer, newX, newY, coverWidth_, coverHeight_, true);
 
-      // 5. Disegna nuovi titolo/autore
       if (selectorIndex_ < total && !cachedSelTitle_.empty()) {
           const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::BOLD);
           const int selTitleX = (pageWidth - selTitleW) / 2;
@@ -1026,9 +1015,7 @@ void LibraryActivity::render(RenderLock&&) {
           }
       }
 
-      // 6. Aggiorna stato e aggiorna display
       lastRenderedSelectorIndex_ = selectorIndex_;
-      // FIX: Aggiorna anche prevBorderIdx_ qui per mantenere la coerenza.
       prevBorderIdx_ = selectorIndex_;
       renderer.displayBuffer();
       return;
