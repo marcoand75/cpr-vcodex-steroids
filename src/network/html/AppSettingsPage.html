@@ -238,6 +238,10 @@
   </style>
 </head>
 <body>
+  <div style="text-align: center; margin-bottom: 15px">
+    <img src="/logo.png" alt="CPR-vCodex Steroids" style="max-width: 220px; height: auto" />
+  </div>
+
   <h1>📚 CPR-vCodex Steroids</h1>
 
   <div class="nav-links">
@@ -348,31 +352,123 @@
   }
 
   // App settings page: loads only category 4 (STR_APPS). The device-side
-  // /api/settings endpoint already filters by ?category=N, so the same POST
-  // save path works unchanged.
+  // Maps each setting key to the section label used in the device App settings UI,
+  // so the web page mirrors the on-device grouping (SyncDay, Reading Stats, etc.).
+  const SETTING_SECTIONS = {
+    displayDay: 'SyncDay',
+    syncDayWifiChoice: 'SyncDay',
+    syncDayReminderStarts: 'SyncDay',
+    dateFormat: 'Reading Stats',
+    dailyGoalTarget: 'Reading Stats',
+    readingStatsAutoBackup: 'Reading Stats',
+    showStatsAfterReading: 'Reading Stats',
+    moveCompletedBooks: 'Reading Stats',
+    achievementsEnabled: 'Achievements',
+    achievementPopups: 'Achievements',
+    libraryLayout: 'Library',
+    libraryFilter: 'Library',
+    libraryRootDir: 'Library',
+    screenSaverInterval: 'Screensaver',
+    screenSaverWakeButton: 'Screensaver',
+    screenSaverReplaceSleep: 'Screensaver',
+    screenSaverText: 'Screensaver',
+    screenSaverFontSize: 'Screensaver',
+    screenSaverTextPosition: 'Screensaver',
+    screenSaverTextStyle: 'Screensaver',
+    screenSaverShowPanel: 'Screensaver',
+    screenSaverPanelColor: 'Screensaver',
+    screenSaverPanelOpacity: 'Screensaver',
+    screenSaverMinBattery: 'Screensaver',
+    flashcardStudyMode: 'Flashcards',
+    flashcardSessionSize: 'Flashcards',
+    // Shortcuts (App list & visibility in Home/Apps)
+    browseFilesShortcut: 'App List & Visibility',
+    syncDayShortcut: 'App List & Visibility',
+    settingsShortcut: 'App List & Visibility',
+    readingStatsShortcut: 'App List & Visibility',
+    readingHeatmapShortcut: 'App List & Visibility',
+    readingProfileShortcut: 'App List & Visibility',
+    achievementsShortcut: 'App List & Visibility',
+    ifFoundShortcut: 'App List & Visibility',
+    recentBooksShortcut: 'App List & Visibility',
+    bookmarksShortcut: 'App List & Visibility',
+    sleepShortcut: 'App List & Visibility',
+    wifiShortcut: 'App List & Visibility',
+    fileManagerShortcut: 'App List & Visibility',
+    sdCardShortcut: 'App List & Visibility',
+    calendarShortcut: 'App List & Visibility',
+    calculatorShortcut: 'App List & Visibility',
+    recentsShortcut: 'App List & Visibility',
+    // KoReader sync
+    koUsername: 'KoReader Sync',
+    koPassword: 'KoReader Sync',
+    koServerUrl: 'KoReader Sync',
+    koMatchMethod: 'KoReader Sync',
+    koSyncAutoPullOnOpen: 'KoReader Sync',
+    // Status bar
+    statusBarChapterPageCount: 'Status Bar',
+    statusBarBookProgressPercentage: 'Status Bar',
+    statusBarProgressBar: 'Status Bar',
+    statusBarProgressBarThickness: 'Status Bar',
+    statusBarTitle: 'Status Bar',
+    statusBarBattery: 'Status Bar',
+    xtcStatusBarMode: 'Status Bar'
+  };
+  const SECTION_ORDER = ['SyncDay', 'Reading Stats', 'Achievements', 'Library', 'Screensaver', 'Flashcards',
+                         'App List & Visibility', 'KoReader Sync', 'Status Bar'];
+
+  // Loads all app-related settings (categories 4-7) that were previously shown
+  // on the single Settings page, now grouped into sections like the device UI.
   async function loadSettings() {
     try {
       allSettings = [];
-      const response = await fetch('/api/settings?category=4');
-      if (!response.ok) {
-        throw new Error('Failed to load app settings: ' + response.status);
+      for (const category of [4, 5, 6, 7]) {
+        const response = await fetch('/api/settings?category=' + category);
+        if (!response.ok) {
+          throw new Error('Failed to load app settings category ' + category + ': ' + response.status);
+        }
+        const categorySettings = await response.json();
+        allSettings = allSettings.concat(categorySettings);
       }
-      allSettings = await response.json();
 
       originalValues = {};
       allSettings.forEach(function(s) {
         originalValues[s.key] = s.value;
       });
 
-      const container = document.getElementById('settings-container');
-      let html = '<div class="card"><h2>' + escapeHtml('Apps') + '</h2>';
+      // Group settings by section (mirrors the device App settings UI)
+      const groups = {};
       allSettings.forEach(function(s) {
-        html += '<div class="setting-row">' +
-          '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
-          '<span class="setting-control">' + renderControl(s) + '</span>' +
-          '</div>';
+        const section = SETTING_SECTIONS[s.key] || 'Apps';
+        if (!groups[section]) groups[section] = [];
+        groups[section].push(s);
       });
-      html += '</div>';
+
+      const container = document.getElementById('settings-container');
+      let html = '';
+      SECTION_ORDER.forEach(function(section) {
+        if (!groups[section]) return;
+        html += '<div class="card"><h2>' + escapeHtml(section) + '</h2>';
+        groups[section].forEach(function(s) {
+          html += '<div class="setting-row">' +
+            '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
+            '<span class="setting-control">' + renderControl(s) + '</span>' +
+            '</div>';
+        });
+        html += '</div>';
+      });
+      // Any section not in SECTION_ORDER (e.g. future additions)
+      for (const section in groups) {
+        if (SECTION_ORDER.indexOf(section) !== -1) continue;
+        html += '<div class="card"><h2>' + escapeHtml(section) + '</h2>';
+        groups[section].forEach(function(s) {
+          html += '<div class="setting-row">' +
+            '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
+            '<span class="setting-control">' + renderControl(s) + '</span>' +
+            '</div>';
+        });
+        html += '</div>';
+      }
 
       container.innerHTML = html;
       document.getElementById('save-container').style.display = '';

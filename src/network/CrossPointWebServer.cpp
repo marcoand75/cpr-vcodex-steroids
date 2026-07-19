@@ -29,6 +29,7 @@
 #include "html/IfFoundPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/AppSettingsPageHtml.generated.h"
+#include "html/LogoPng.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/IfFoundFile.h"
@@ -215,7 +216,7 @@ int webSettingsCategoryIndex(StrId category) {
 }
 
 enum class WebSettingType : uint8_t { Toggle, Enum, Value, String };
-enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod };
+enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod, LibraryRootDir, ScreenSaverText, SdFontFamily };
 
 struct WebSettingDef {
   StrId nameId;
@@ -249,11 +250,6 @@ constexpr StrId OPT_REFRESH_FREQ[] = {StrId::STR_PAGES_1, StrId::STR_PAGES_5, St
                                       StrId::STR_PAGES_30};
 constexpr StrId OPT_UI_THEME[] = {StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_CUSTOM, StrId::STR_THEME_LYRA_CAROUSEL,
                                    StrId::STR_THEME_LYRA_MARCOAND75};
-#ifdef OMIT_LEXEND
-constexpr StrId OPT_FONT_FAMILY[] = {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS};
-#else
-constexpr StrId OPT_FONT_FAMILY[] = {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS, StrId::STR_LEXEND};
-#endif
 constexpr StrId OPT_FONT_SIZE[] = {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE,
                                    StrId::STR_X_LARGE};
 constexpr StrId OPT_LINE_SPACING[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE};
@@ -294,6 +290,36 @@ constexpr StrId OPT_BOOK_CHAPTER_HIDE[] = {StrId::STR_BOOK, StrId::STR_CHAPTER, 
 constexpr StrId OPT_BAR_THICKNESS[] = {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM,
                                        StrId::STR_PROGRESS_BAR_THICK};
 constexpr StrId OPT_XTC_STATUS_BAR[] = {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP};
+
+// Library (App settings) options
+constexpr StrId OPT_LIBRARY_LAYOUT[] = {StrId::STR_LIBRARY_4X4, StrId::STR_LIBRARY_3X3, StrId::STR_LIBRARY_2X2};
+constexpr StrId OPT_LIBRARY_FILTER[] = {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ};
+
+// Screensaver (App settings) options
+constexpr StrId OPT_SCREENSAVER_INTERVAL[] = {
+    StrId::STR_SCREENSAVER_INTERVAL_1M, StrId::STR_SCREENSAVER_INTERVAL_5M, StrId::STR_SCREENSAVER_INTERVAL_15M,
+    StrId::STR_SCREENSAVER_INTERVAL_30M, StrId::STR_SCREENSAVER_INTERVAL_1H, StrId::STR_SCREENSAVER_INTERVAL_2H,
+    StrId::STR_SCREENSAVER_INTERVAL_4H, StrId::STR_SCREENSAVER_INTERVAL_8H};
+constexpr StrId OPT_SCREENSAVER_WAKE[] = {
+    StrId::STR_SCREENSAVER_WAKE_ANY,  StrId::STR_SCREENSAVER_WAKE_BACK,    StrId::STR_SCREENSAVER_WAKE_CONFIRM,
+    StrId::STR_SCREENSAVER_WAKE_LEFT, StrId::STR_SCREENSAVER_WAKE_RIGHT,   StrId::STR_SCREENSAVER_WAKE_UP,
+    StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER,   StrId::STR_SCREENSAVER_WAKE_PAGE_BACK,
+    StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD};
+constexpr StrId OPT_SCREENSAVER_FONT_SIZE[] = {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE};
+constexpr StrId OPT_SCREENSAVER_TEXT_POSITION[] = {
+    StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT,  StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
+    StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,
+    StrId::STR_SCREENSAVER_TEXT_POS_CENTER, StrId::STR_SCREENSAVER_TEXT_POS_RANDOM};
+constexpr StrId OPT_SCREENSAVER_TEXT_STYLE[] = {
+    StrId::STR_SCREENSAVER_TEXT_WHITE, StrId::STR_SCREENSAVER_TEXT_BLACK, StrId::STR_SCREENSAVER_TEXT_WHITE_OUTLINED,
+    StrId::STR_SCREENSAVER_TEXT_BLACK_OUTLINED};
+constexpr StrId OPT_SCREENSAVER_PANEL_COLOR[] = {StrId::STR_DARK, StrId::STR_LIGHT};
+constexpr StrId OPT_SCREENSAVER_PANEL_OPACITY[] = {StrId::STR_SCREENSAVER_OPACITY_25, StrId::STR_SCREENSAVER_OPACITY_50,
+                                                   StrId::STR_SCREENSAVER_OPACITY_75, StrId::STR_SCREENSAVER_OPACITY_100};
+constexpr StrId OPT_SCREENSAVER_MIN_BATTERY[] = {
+    StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20, StrId::STR_SCREENSAVER_BAT_30,
+    StrId::STR_SCREENSAVER_BAT_40, StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
+    StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80, StrId::STR_SCREENSAVER_BAT_90};
 
 #define WEB_TOGGLE(name, member, key, category)                                                                       \
   {name, category, WebSettingType::Toggle, &CrossPointSettings::member, nullptr, 0, 0, 0, 0, WebDynamicSetting::None, \
@@ -346,7 +372,7 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_TOGGLE(StrId::STR_DARK_MODE, darkMode, "darkMode", StrId::STR_CAT_DISPLAY),
     WEB_TOGGLE(StrId::STR_SUNLIGHT_FADING_FIX, fadingFix, "fadingFix", StrId::STR_CAT_DISPLAY),
 
-    WEB_ENUM(StrId::STR_FONT_FAMILY, fontFamily, OPT_FONT_FAMILY, "fontFamily", StrId::STR_CAT_READER),
+    WEB_DYNAMIC_STRING(StrId::STR_FONT_INSTALLED, WebDynamicSetting::SdFontFamily, "sdFontFamily", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_FONT_SIZE, fontSize, OPT_FONT_SIZE, "fontSize", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_LINE_SPACING, lineSpacing, OPT_LINE_SPACING, "lineSpacing", StrId::STR_CAT_READER),
     WEB_VALUE(StrId::STR_SCREEN_MARGIN, screenMargin, 5, 40, 5, "screenMargin", StrId::STR_CAT_READER),
@@ -390,6 +416,32 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_TOGGLE(StrId::STR_MOVE_COMPLETED_BOOKS, moveCompletedBooks, "moveCompletedBooks", StrId::STR_APPS),
     WEB_TOGGLE(StrId::STR_ENABLE_ACHIEVEMENTS, achievementsEnabled, "achievementsEnabled", StrId::STR_APPS),
     WEB_TOGGLE(StrId::STR_ACHIEVEMENT_POPUPS, achievementPopups, "achievementPopups", StrId::STR_APPS),
+
+    // Library settings (App tab)
+    WEB_ENUM(StrId::STR_LIBRARY_LAYOUT, libraryLayout, OPT_LIBRARY_LAYOUT, "libraryLayout", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_LIBRARY_FILTER, libraryFilter, OPT_LIBRARY_FILTER, "libraryFilter", StrId::STR_APPS),
+    WEB_DYNAMIC_STRING(StrId::STR_LIBRARY_ROOT_DIR, WebDynamicSetting::LibraryRootDir, "libraryRootDir", StrId::STR_APPS),
+
+    // Screensaver settings (App tab)
+    WEB_ENUM(StrId::STR_SCREENSAVER_INTERVAL, screenSaverInterval, OPT_SCREENSAVER_INTERVAL, "screenSaverInterval",
+             StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_WAKE_BUTTON, screenSaverWakeButton, OPT_SCREENSAVER_WAKE, "screenSaverWakeButton",
+             StrId::STR_APPS),
+    WEB_TOGGLE(StrId::STR_SCREENSAVER_REPLACE_SLEEP, screenSaverReplaceSleep, "screenSaverReplaceSleep", StrId::STR_APPS),
+    WEB_DYNAMIC_STRING(StrId::STR_SCREENSAVER_TEXT, WebDynamicSetting::ScreenSaverText, "screenSaverText", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_FONT_SIZE_OPT, screenSaverFontSize, OPT_SCREENSAVER_FONT_SIZE, "screenSaverFontSize",
+             StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_TEXT_POSITION_OPT, screenSaverTextPosition, OPT_SCREENSAVER_TEXT_POSITION,
+             "screenSaverTextPosition", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_TEXT_STYLE_OPT, screenSaverTextStyle, OPT_SCREENSAVER_TEXT_STYLE,
+             "screenSaverTextStyle", StrId::STR_APPS),
+    WEB_TOGGLE(StrId::STR_SCREENSAVER_SHOW_PANEL, screenSaverShowPanel, "screenSaverShowPanel", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_PANEL_COLOR, screenSaverPanelColor, OPT_SCREENSAVER_PANEL_COLOR,
+             "screenSaverPanelColor", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_PANEL_OPACITY, screenSaverPanelOpacity, OPT_SCREENSAVER_PANEL_OPACITY,
+             "screenSaverPanelOpacity", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_MIN_BATTERY, screenSaverMinBattery, OPT_SCREENSAVER_MIN_BATTERY,
+             "screenSaverMinBattery", StrId::STR_APPS),
 
     WEB_ENUM(StrId::STR_BROWSE_FILES, browseFilesShortcut, OPT_SHORTCUT_LOCATION, "browseFilesShortcut",
              StrId::STR_SHORTCUTS_SECTION),
@@ -546,6 +598,7 @@ void CrossPointWebServer::begin() {
   // Settings endpoints
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
   server->on("/app-settings", HTTP_GET, [this] { handleAppSettingsPage(); });
+  server->on("/logo.png", HTTP_GET, [this] { handleLogo(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
 
@@ -1822,6 +1875,11 @@ void CrossPointWebServer::handleAppSettingsPage() const {
   LOG_DBG("WEB", "Served app settings page");
 }
 
+void CrossPointWebServer::handleLogo() const {
+  server->sendHeader("Cache-Control", "public, max-age=86400");
+  server->send_P(200, "image/png", LogoPng, LogoPngSize);
+}
+
 void CrossPointWebServer::handleGetSettings() const {
   int requestedCategory = -1;
   if (server->hasArg("category")) {
@@ -1920,6 +1978,15 @@ void CrossPointWebServer::handleGetSettings() const {
             break;
           case WebDynamicSetting::KoServerUrl:
             value = KOREADER_STORE.getServerUrl();
+            break;
+          case WebDynamicSetting::LibraryRootDir:
+            value = SETTINGS.libraryRootDir;
+            break;
+          case WebDynamicSetting::ScreenSaverText:
+            value = SETTINGS.screenSaverText;
+            break;
+          case WebDynamicSetting::SdFontFamily:
+            value = SETTINGS.sdFontFamilyName;
             break;
           default:
             break;
@@ -2029,6 +2096,21 @@ void CrossPointWebServer::handlePostSettings() {
           case WebDynamicSetting::KoServerUrl:
             KOREADER_STORE.setServerUrl(val);
             saveKOReader = true;
+            break;
+          case WebDynamicSetting::LibraryRootDir:
+            strncpy(SETTINGS.libraryRootDir, val.c_str(), sizeof(SETTINGS.libraryRootDir) - 1);
+            SETTINGS.libraryRootDir[sizeof(SETTINGS.libraryRootDir) - 1] = '\0';
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverText:
+            strncpy(SETTINGS.screenSaverText, val.c_str(), sizeof(SETTINGS.screenSaverText) - 1);
+            SETTINGS.screenSaverText[sizeof(SETTINGS.screenSaverText) - 1] = '\0';
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::SdFontFamily:
+            strncpy(SETTINGS.sdFontFamilyName, val.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
+            SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+            saveSettings = true;
             break;
           default:
             break;

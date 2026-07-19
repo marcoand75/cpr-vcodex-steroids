@@ -111,6 +111,7 @@ class CrossPointWebServer {
   // Settings handlers
   void handleSettingsPage() const;
   void handleAppSettingsPage() const;
+  void handleLogo() const;
   void handleGetSettings() const;
   void handlePostSettings();
 

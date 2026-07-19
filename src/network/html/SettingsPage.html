@@ -280,7 +280,11 @@
   </style>
 </head>
 <body>
-  <h1>📚 CPR-vCodex</h1>
+  <div style="text-align: center; margin-bottom: 15px">
+    <img src="/logo.png" alt="CPR-vCodex Steroids" style="max-width: 220px; height: auto" />
+  </div>
+
+  <h1>📚 CPR-vCodex Steroids</h1>
 
   <div class="nav-links">
     <a href="/">Home</a>
@@ -359,6 +363,12 @@
     }
 
     if (setting.type === 'string') {
+      if (setting.key === 'sdFontFamily') {
+        // Populated dynamically from installed fonts after /api/fonts is loaded.
+        const val = setting.value || '';
+        return '<select id="' + id + '" onchange="markChanged()">' +
+          '<option value="">' + escapeHtml(val || '(none)') + '</option></select>';
+      }
       const inputType = setting.name.toLowerCase().includes('password') ? 'password' : 'text';
       const val = setting.value || '';
       return '<input type="' + inputType + '" id="' + id + '" value="' + escapeHtml(val) + '"' +
@@ -394,7 +404,10 @@
   async function loadSettings() {
     try {
       allSettings = [];
-      for (let category = 0; category < 8; category++) {
+      // Device Settings: only the device hardware/reading categories
+      // (Display, Reader, Controls, System). App settings live on /app-settings.
+      const deviceCategories = [0, 1, 2, 3];
+      for (const category of deviceCategories) {
         const response = await fetch('/api/settings?category=' + category);
         if (!response.ok) {
           throw new Error('Failed to load settings category ' + category + ': ' + response.status);
@@ -433,10 +446,46 @@
       container.innerHTML = html;
       document.getElementById('save-container').style.display = '';
       document.getElementById('saveBtn').disabled = true;
+
+      // Populate the installed-font selector from /api/fonts (mirrors device UI)
+      populateInstalledFonts();
     } catch (e) {
       console.error(e);
       document.getElementById('settings-container').innerHTML =
         '<div class="card"><p style="text-align:center;color:#e74c3c;">Failed to load settings</p></div>';
+    }
+  }
+
+  async function populateInstalledFonts() {
+    const sel = document.getElementById('setting-sdFontFamily');
+    if (!sel) return;
+    try {
+      const resp = await fetch('/api/fonts');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const families = (data.families || []).map(function(f) { return f.name; });
+      const current = sel.value && sel.value !== '(none)' ? sel.value : '';
+      sel.innerHTML = '';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(none)';
+      sel.appendChild(noneOpt);
+      families.forEach(function(name) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (current && families.indexOf(current) === -1) {
+        const opt = document.createElement('option');
+        opt.value = current;
+        opt.textContent = current;
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+    } catch (e) {
+      console.error('Failed to load installed fonts', e);
     }
   }
 
