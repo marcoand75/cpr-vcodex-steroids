@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REPO = "franssjz/cpr-vcodex"
+DEFAULT_REPO = "marcoand75/cpr-vcodex-steroids"
 APP_PARTITION_SIZE = 6_553_600
 MIN_FIRMWARE_SIZE = 1_000_000
 VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-[0-9A-Za-z._-]*cpr-vcodex\b")

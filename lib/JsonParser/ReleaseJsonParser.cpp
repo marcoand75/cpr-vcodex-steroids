@@ -44,19 +44,42 @@ const char* ReleaseJsonParser::getTagName() const { return tagName; }
 const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
 
+bool endsWith(const char* str, const char* suffix) {
+  const size_t strLen = strlen(str);
+  const size_t suffixLen = strlen(suffix);
+  return strLen >= suffixLen && strcmp(str + strLen - suffixLen, suffix) == 0;
+}
+
+bool contains(const char* str, const char* sub) { return strstr(str, sub) != nullptr; }
+
 void ReleaseJsonParser::commitAsset() {
-  char releaseAssetName[48];
-  snprintf(releaseAssetName, sizeof(releaseAssetName), "%s.bin", tagName);
-  const bool isReleaseAsset = tagFound && strcmp(currentAssetName, releaseAssetName) == 0;
+  // Accept any .bin firmware asset published in the release. The exact asset
+  // name no longer has to match "<tag>.bin": this fork publishes assets such as
+  // "1.3.0.35.dev6-2dc61f1c-cpr-vcodex-steroids.bin" while the release tag is
+  // "1.3.0.35-dev6-cpr-vcodex-steroids", so a strict tag match would never
+  // resolve. Prefer a fork-named asset over a generic "firmware.bin" legacy one.
+  const bool isBin = endsWith(currentAssetName, ".bin");
+  if (!isBin) {
+    currentAssetName[0] = '\0';
+    currentAssetUrl[0] = '\0';
+    currentAssetSize = 0;
+    return;
+  }
+
+  const bool isForkAsset = contains(currentAssetName, "cpr-vcodex-steroids");
   const bool isLegacyAsset = strcmp(currentAssetName, "firmware.bin") == 0;
 
-  // CPR-vCodex releases publish tag-named firmware assets. Keep accepting
-  // upstream's legacy firmware.bin name as a fallback, but prefer the tag match.
-  if (isReleaseAsset || (isLegacyAsset && !firmwareFound)) {
+  if (!firmwareFound) {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;
     firmwareFound = true;
+  } else if (isForkAsset && !contains(firmwareUrl, "cpr-vcodex-steroids")) {
+    // Upgrade a previously accepted generic/firmware.bin asset to the fork asset.
+    memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
+    firmwareSize = currentAssetSize;
   }
+
+  (void)isLegacyAsset;
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;

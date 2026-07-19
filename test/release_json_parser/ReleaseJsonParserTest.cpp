@@ -771,6 +771,40 @@ void testVcodexTagNamedAssetPreferredOverLegacy() {
   PASS();
 }
 
+void testForkAssetNameMismatchWithTag() {
+  printf("testForkAssetNameMismatchWithTag...\n");
+
+  // Real marcoand75/cpr-vcodex-steroids payload: the release tag uses a dash
+  // between the base version and the dev suffix (1.3.0.35-dev6-...), while the
+  // uploaded asset uses a dot (1.3.0.35.dev6-<hash>-cpr-vcodex-steroids.bin).
+  // The strict "<tag>.bin" match must NOT be required; any .bin asset should be
+  // resolved, preferring the fork-named one.
+  const char* json = R"({
+      "tag_name": "1.3.0.35-dev6-cpr-vcodex-steroids",
+      "prerelease": false,
+      "draft": false,
+      "assets": [
+        {
+          "name": "1.3.0.35.dev6-2dc61f1c-cpr-vcodex-steroids.bin",
+          "size": 6243104,
+          "browser_download_url": "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.3.0.35-dev6-cpr-vcodex-steroids/1.3.0.35.dev6-2dc61f1c-cpr-vcodex-steroids.bin"
+        }
+      ]
+    })";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  ASSERT_TRUE(p.foundTag());
+  ASSERT_STREQ(p.getTagName(), "1.3.0.35-dev6-cpr-vcodex-steroids");
+  ASSERT_TRUE(p.foundFirmware());
+  ASSERT_EQ(p.getFirmwareSize(), 6243104u);
+  ASSERT_TRUE(strstr(p.getFirmwareUrl(), "cpr-vcodex-steroids") != nullptr);
+
+  printf("  passed\n");
+  PASS();
+}
+
 void testLargeSize() {
   printf("testLargeSize...\n");
 
@@ -924,6 +958,7 @@ int main() {
   testFirmwareBinExactMatch();
   testVcodexTagNamedAsset();
   testVcodexTagNamedAssetPreferredOverLegacy();
+  testForkAssetNameMismatchWithTag();
   testLargeSize();
   testSizeZero();
   testMinimalValidJson();
