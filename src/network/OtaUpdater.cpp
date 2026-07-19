@@ -33,6 +33,7 @@ struct ParsedVersion {
   bool parsed = false;
   bool isRc = false;
   bool isDev = false;
+  int preReleaseNum = 0;  // numeric part after -dev/-rc (e.g. 6 for dev6), 0 if none
 };
 
 const char* currentVersionString() {
@@ -78,6 +79,26 @@ ParsedVersion parseVersion(const char* version) {
 
   parsedVersion.isRc = strstr(version, "-rc") != nullptr || strstr(version, ".rc") != nullptr;
   parsedVersion.isDev = strstr(version, "-dev") != nullptr || strstr(version, ".dev") != nullptr;
+
+  // Extract the numeric part of the pre-release suffix (e.g. 6 from dev6 or rc2)
+  // so that dev6 > dev5 and rc2 > rc1 are detected even when the base version
+  // (1.3.0.35) is identical.
+  const char* preMarker = strstr(version, "-dev");
+  if (!preMarker) preMarker = strstr(version, ".dev");
+  if (!preMarker) preMarker = strstr(version, "-rc");
+  if (!preMarker) preMarker = strstr(version, ".rc");
+  if (preMarker) {
+    const char* num = preMarker + 4;  // skip "-dev"/".dev"/"-rc"/".rc"
+    int value = 0;
+    bool hasDigit = false;
+    while (std::isdigit(static_cast<unsigned char>(*num))) {
+      value = value * 10 + (*num - '0');
+      ++num;
+      hasDigit = true;
+    }
+    if (hasDigit) parsedVersion.preReleaseNum = value;
+  }
+
   return parsedVersion;
 }
 
@@ -282,6 +303,12 @@ bool OtaUpdater::isUpdateNewer() const {
 
   if (currentVersion.isRc != latest.isRc) {
     return !latest.isRc && currentVersion.isRc;
+  }
+
+  // Base version (and rc/dev flags) are identical: compare the pre-release
+  // number so a newer dev/rc build (dev6 over dev5) is detected as an update.
+  if (currentPreRelease && latestPreRelease) {
+    return latest.preReleaseNum > currentVersion.preReleaseNum;
   }
 
   return false;
