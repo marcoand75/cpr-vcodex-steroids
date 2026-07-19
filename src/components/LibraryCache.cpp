@@ -1,5 +1,6 @@
 #include "LibraryCache.h"
 
+#include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -17,7 +18,7 @@
 #include <cstdint>
 
 #include "components/UITheme.h"
-#include "EpubParser.h" // <-- Nuova dipendenza pulita
+#include "EpubParser.h"
 
 namespace LibraryCache {
 
@@ -216,23 +217,106 @@ std::string thumbPathFor(const std::string& path, int coverW, int coverH) {
   return buf;
 }
 
+// ============================================================================
+// FIX CRITICO: Allineamento totale al sistema di failover di HomeActivity
+// ============================================================================
 bool generateCoverForBook(const std::string& path, int coverW, int coverH) {
   yield(); esp_task_wdt_reset();
   if (ESP.getMaxAllocHeap() < 40 * 1024) return false;
 
   if (FsHelpers::hasEpubExtension(path)) {
     if (ESP.getMaxAllocHeap() < 32 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
-    return EpubParser::generateCover(path, coverW, coverH);
+    
+    // 1. Primo tentativo: estrattore leggero ZIP-only (nessun expat, nessun book.bin)
+    if (EpubParser::generateCover(path, coverW, coverH)) return true;
+
+    // 2. Fallback: generazione stile HomeActivity (parser completo)
+    Epub epub(path, "/.crosspoint");
+    if (epub.load(true, true)) {
+      yield();
+      esp_task_wdt_reset();
+      
+      // Ricontrolla l'heap dopo il caricamento, poiché il parsing OPF/TOC può frammentarlo
+      if (ESP.getMaxAllocHeap() < 28 * 1024) {
+        LOG_DBG("BSC", "EPUB SKIP post-load (low heap): maxA=%u", ESP.getMaxAllocHeap());
+        return false;
+      }
+
+      const bool genOk = epub.generateThumbBmp(coverW, coverH);
+      if (genOk) {
+        // VALIDAZIONE OBBLIGATORIA: verifica che il file sia stato scritto correttamente
+        const std::string epubThumbPath = epub.getThumbBmpPath();
+        FsFile file;
+        bool isValid = false;
+        if (!epubThumbPath.empty() && Storage.openFileForRead("LIB", epubThumbPath, file)) {
+          Bitmap bmp(file);
+          isValid = (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0);
+          file.close();
+        }
+        
+        if (!isValid) {
+          LOG_DBG("BSC", "EPUB fallback generated invalid cover, removing: %s", epubThumbPath.c_str());
+          if (!epubThumbPath.empty()) Storage.remove(epubThumbPath.c_str());
+          return false;
+        }
+        return true;
+      }
+    }
+    return false;
   }
+  
   if (FsHelpers::hasXtcExtension(path)) {
-    if (ESP.getFreeHeap() < 8192) return false;
-    Xtc xtc(path, "/.crosspoint");
-    return xtc.load() && xtc.generateThumbBmp(coverW, coverH);
+    if (ESP.getFreeHeap() < 20000) return false;
+    
+    // Lambda per tentativo di generazione con validazione
+    auto tryXtc = [&]() -> bool {
+      Xtc xtc(path, "/.crosspoint");
+      if (!xtc.load()) return false;
+      if (!xtc.generateThumbBmp(coverW, coverH)) return false;
+      
+      const std::string xtcThumbPath = xtc.getThumbBmpPath();
+      FsFile file;
+      bool isValid = false;
+      if (!xtcThumbPath.empty() && Storage.openFileForRead("LIB", xtcThumbPath, file)) {
+        Bitmap bmp(file);
+        isValid = (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0);
+        file.close();
+      }
+      if (!isValid && !xtcThumbPath.empty()) {
+        Storage.remove(xtcThumbPath.c_str());
+      }
+      return isValid;
+    };
+
+    // Primo tentativo
+    if (tryXtc()) return true;
+    
+    // Fallback: riprova con un'istanza fresca in caso di frammentazione temporanea dell'heap
+    if (tryXtc()) return true;
+    
+    return false;
   }
+  
   if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    if (ESP.getFreeHeap() < 16000) return false;
     Txt txt(path, "/.crosspoint");
-    return txt.load() && txt.generateCoverBmp();
+    if (txt.load() && txt.generateCoverBmp()) {
+      const std::string txtCoverPath = txt.getCoverBmpPath();
+      FsFile file;
+      bool isValid = false;
+      if (!txtCoverPath.empty() && Storage.openFileForRead("LIB", txtCoverPath, file)) {
+        Bitmap bmp(file);
+        isValid = (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0);
+        file.close();
+      }
+      if (!isValid && !txtCoverPath.empty()) {
+        Storage.remove(txtCoverPath.c_str());
+      }
+      return isValid;
+    }
+    return false;
   }
+  
   return false;
 }
 
