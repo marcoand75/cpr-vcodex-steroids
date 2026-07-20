@@ -216,7 +216,7 @@ int webSettingsCategoryIndex(StrId category) {
 }
 
 enum class WebSettingType : uint8_t { Toggle, Enum, Value, String };
-enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod, LibraryRootDir, ScreenSaverText, SdFontFamily };
+enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod, LibraryRootDir, ScreenSaverText, SdFontFamily, ScreenSaverDir, ScreenSaverReaderDir };
 
 struct WebSettingDef {
   StrId nameId;
@@ -305,7 +305,7 @@ constexpr StrId OPT_SCREENSAVER_WAKE[] = {
     StrId::STR_SCREENSAVER_WAKE_LEFT, StrId::STR_SCREENSAVER_WAKE_RIGHT,   StrId::STR_SCREENSAVER_WAKE_UP,
     StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER,   StrId::STR_SCREENSAVER_WAKE_PAGE_BACK,
     StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD};
-constexpr StrId OPT_SCREENSAVER_FONT_SIZE[] = {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE};
+constexpr StrId OPT_SCREENSAVER_FONT_SIZE[] = {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE};
 constexpr StrId OPT_SCREENSAVER_TEXT_POSITION[] = {
     StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT,  StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
     StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,
@@ -320,6 +320,7 @@ constexpr StrId OPT_SCREENSAVER_MIN_BATTERY[] = {
     StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20, StrId::STR_SCREENSAVER_BAT_30,
     StrId::STR_SCREENSAVER_BAT_40, StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
     StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80, StrId::STR_SCREENSAVER_BAT_90};
+constexpr StrId OPT_SCREENSAVER_ORDER[] = {StrId::STR_RANDOM, StrId::STR_SEQUENTIAL};
 
 #define WEB_TOGGLE(name, member, key, category)                                                                       \
   {name, category, WebSettingType::Toggle, &CrossPointSettings::member, nullptr, 0, 0, 0, 0, WebDynamicSetting::None, \
@@ -442,6 +443,10 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
              "screenSaverPanelOpacity", StrId::STR_APPS),
     WEB_ENUM(StrId::STR_SCREENSAVER_MIN_BATTERY, screenSaverMinBattery, OPT_SCREENSAVER_MIN_BATTERY,
              "screenSaverMinBattery", StrId::STR_APPS),
+    WEB_DYNAMIC_STRING(StrId::STR_SCREENSAVER_DIRECTORY, WebDynamicSetting::ScreenSaverDir, "screenSaverDir", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_ORDER, screenSaverOrder, OPT_SCREENSAVER_ORDER, "screenSaverOrder", StrId::STR_APPS),
+    WEB_DYNAMIC_STRING(StrId::STR_SCREENSAVER_READER_DIR, WebDynamicSetting::ScreenSaverReaderDir, "screenSaverReaderDir", StrId::STR_APPS),
+    WEB_ENUM(StrId::STR_SCREENSAVER_ORDER, screenSaverReaderOrder, OPT_SCREENSAVER_ORDER, "screenSaverReaderOrder", StrId::STR_APPS),
 
     WEB_ENUM(StrId::STR_BROWSE_FILES, browseFilesShortcut, OPT_SHORTCUT_LOCATION, "browseFilesShortcut",
              StrId::STR_SHORTCUTS_SECTION),
@@ -1985,6 +1990,12 @@ void CrossPointWebServer::handleGetSettings() const {
           case WebDynamicSetting::ScreenSaverText:
             value = SETTINGS.screenSaverText;
             break;
+          case WebDynamicSetting::ScreenSaverDir:
+            value = SETTINGS.screenSaverDirectory;
+            break;
+          case WebDynamicSetting::ScreenSaverReaderDir:
+            value = SETTINGS.screenSaverReaderDir;
+            break;
           case WebDynamicSetting::SdFontFamily:
             value = SETTINGS.sdFontFamilyName;
             break;
@@ -2105,6 +2116,16 @@ void CrossPointWebServer::handlePostSettings() {
           case WebDynamicSetting::ScreenSaverText:
             strncpy(SETTINGS.screenSaverText, val.c_str(), sizeof(SETTINGS.screenSaverText) - 1);
             SETTINGS.screenSaverText[sizeof(SETTINGS.screenSaverText) - 1] = '\0';
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverDir:
+            strncpy(SETTINGS.screenSaverDirectory, val.c_str(), sizeof(SETTINGS.screenSaverDirectory) - 1);
+            SETTINGS.screenSaverDirectory[sizeof(SETTINGS.screenSaverDirectory) - 1] = '\0';
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverReaderDir:
+            strncpy(SETTINGS.screenSaverReaderDir, val.c_str(), sizeof(SETTINGS.screenSaverReaderDir) - 1);
+            SETTINGS.screenSaverReaderDir[sizeof(SETTINGS.screenSaverReaderDir) - 1] = '\0';
             saveSettings = true;
             break;
           case WebDynamicSetting::SdFontFamily:

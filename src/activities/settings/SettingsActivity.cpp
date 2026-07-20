@@ -243,7 +243,7 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Section(StrId::STR_SCREENSAVER_TEXT_SECTION),
       SettingInfo::String(StrId::STR_SCREENSAVER_TEXT, SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText)),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_FONT_SIZE_OPT, &CrossPointSettings::screenSaverFontSize,
-                        {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE}),
+                        {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE}),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_TEXT_POSITION_OPT, &CrossPointSettings::screenSaverTextPosition,
                         {StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
                          StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,

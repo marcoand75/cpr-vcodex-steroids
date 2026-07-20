@@ -292,6 +292,11 @@
     setTimeout(function() { msg.style.display = 'none'; }, 4000);
   }
 
+  const OVERRIDE_OPTIONS = {
+    screenSaverOrder: ['Casuale', 'Sequenziale'],
+    screenSaverReaderOrder: ['Casuale', 'Sequenziale']
+  };
+
   function renderControl(setting) {
     const id = 'setting-' + setting.key;
 
@@ -304,9 +309,10 @@
 
     if (setting.type === 'enum') {
       let html = '<select id="' + id + '" onchange="markChanged()">';
-      setting.options.forEach(function(opt, idx) {
+      const options = OVERRIDE_OPTIONS[setting.key] || setting.options;
+      options.forEach(function(label, idx) {
         const selected = idx === setting.value ? ' selected' : '';
-        html += '<option value="' + idx + '"' + selected + '>' + escapeHtml(opt) + '</option>';
+        html += '<option value="' + idx + '"' + selected + '>' + escapeHtml(label) + '</option>';
       });
       html += '</select>';
       return html;
@@ -354,6 +360,10 @@
   // App settings page: loads only category 4 (STR_APPS). The device-side
   // Maps each setting key to the section label used in the device App settings UI,
   // so the web page mirrors the on-device grouping (SyncDay, Reading Stats, etc.).
+  // Override display names where the same StrId is reused for a distinct setting
+  const SETTING_LABELS = {
+  };
+
   const SETTING_SECTIONS = {
     displayDay: 'SyncDay',
     syncDayWifiChoice: 'SyncDay',
@@ -379,6 +389,10 @@
     screenSaverPanelColor: 'Screensaver',
     screenSaverPanelOpacity: 'Screensaver',
     screenSaverMinBattery: 'Screensaver',
+    screenSaverDir: 'Screensaver',
+    screenSaverOrder: 'Screensaver',
+    screenSaverReaderDir: 'Reader Screensaver',
+    screenSaverReaderOrder: 'Reader Screensaver',
     flashcardStudyMode: 'Flashcards',
     flashcardSessionSize: 'Flashcards',
     // Shortcuts (App list & visibility in Home/Apps)
@@ -414,7 +428,7 @@
     statusBarBattery: 'Status Bar',
     xtcStatusBarMode: 'Status Bar'
   };
-  const SECTION_ORDER = ['SyncDay', 'Reading Stats', 'Achievements', 'Library', 'Screensaver', 'Flashcards',
+  const SECTION_ORDER = ['SyncDay', 'Reading Stats', 'Achievements', 'Library', 'Screensaver', 'Reader Screensaver', 'Flashcards',
                          'App List & Visibility', 'KoReader Sync', 'Status Bar'];
 
   // Loads all app-related settings (categories 4-7) that were previously shown
@@ -451,7 +465,7 @@
         html += '<div class="card"><h2>' + escapeHtml(section) + '</h2>';
         groups[section].forEach(function(s) {
           html += '<div class="setting-row">' +
-            '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
+            '<span class="setting-name">' + escapeHtml(SETTING_LABELS[s.key] || s.name) + '</span>' +
             '<span class="setting-control">' + renderControl(s) + '</span>' +
             '</div>';
         });
@@ -463,7 +477,7 @@
         html += '<div class="card"><h2>' + escapeHtml(section) + '</h2>';
         groups[section].forEach(function(s) {
           html += '<div class="setting-row">' +
-            '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
+            '<span class="setting-name">' + escapeHtml(SETTING_LABELS[s.key] || s.name) + '</span>' +
             '<span class="setting-control">' + renderControl(s) + '</span>' +
             '</div>';
         });

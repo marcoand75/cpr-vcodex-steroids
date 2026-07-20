@@ -448,7 +448,8 @@
       document.getElementById('saveBtn').disabled = true;
 
       // Populate the installed-font selector from /api/fonts (mirrors device UI)
-      populateInstalledFonts();
+      const fontSetting = allSettings.find(function(s) { return s.key === 'sdFontFamily'; });
+      populateInstalledFonts(fontSetting ? (fontSetting.value || '') : '');
     } catch (e) {
       console.error(e);
       document.getElementById('settings-container').innerHTML =
@@ -456,31 +457,49 @@
     }
   }
 
-  async function populateInstalledFonts() {
+  // Built-in fonts shipped with the firmware (same list as the device UI).
+  // Index matches CrossPointSettings::FONT_FAMILY (0=Bookerly, 1=Noto Sans, 2=Lexend).
+  const BUILTIN_FONTS = ['Bookerly', 'Noto Sans', 'Lexend'];
+
+  async function populateInstalledFonts(current) {
     const sel = document.getElementById('setting-sdFontFamily');
     if (!sel) return;
     try {
       const resp = await fetch('/api/fonts');
       if (!resp.ok) return;
       const data = await resp.json();
-      const families = (data.families || []).map(function(f) { return f.name; });
-      const current = sel.value && sel.value !== '(none)' ? sel.value : '';
+      const sdFamilies = (data.families || []).map(function(f) { return f.name; });
+      const cur = current || '';
       sel.innerHTML = '';
+
       const noneOpt = document.createElement('option');
       noneOpt.value = '';
       noneOpt.textContent = '(none)';
       sel.appendChild(noneOpt);
-      families.forEach(function(name) {
+
+      // Built-in firmware fonts
+      BUILTIN_FONTS.forEach(function(name, idx) {
+        const opt = document.createElement('option');
+        opt.value = '__builtin_' + idx;
+        opt.textContent = name;
+        if (cur === opt.value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+
+      // Installed SD fonts
+      sdFamilies.forEach(function(name) {
         const opt = document.createElement('option');
         opt.value = name;
         opt.textContent = name;
-        if (name === current) opt.selected = true;
+        if (name === cur) opt.selected = true;
         sel.appendChild(opt);
       });
-      if (current && families.indexOf(current) === -1) {
+
+      // Current value not present in either list (e.g. removed SD font): keep it
+      if (cur && cur.indexOf('__builtin_') !== 0 && sdFamilies.indexOf(cur) === -1) {
         const opt = document.createElement('option');
-        opt.value = current;
-        opt.textContent = current;
+        opt.value = cur;
+        opt.textContent = cur;
         opt.selected = true;
         sel.appendChild(opt);
       }

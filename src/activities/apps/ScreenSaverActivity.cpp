@@ -399,10 +399,14 @@ void ScreenSaverActivity::drawTextOverlay() {
 
   int fontId = UI_10_FONT_ID;
   EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR;
+  // Use Bookerly (always available) at the size corresponding to the setting.
+  // Regular for X_SMALL through MEDIUM, Bold for LARGE and X_LARGE.
   switch (SETTINGS.screenSaverFontSize) {
-    case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = UI_10_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = UI_12_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = UI_12_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
+    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = BOOKERLY_14_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = BOOKERLY_16_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
+    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: fontId = BOOKERLY_18_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
   }
 
   const int lineHeight = renderer.getLineHeight(fontId);
