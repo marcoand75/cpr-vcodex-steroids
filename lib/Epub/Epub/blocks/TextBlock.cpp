@@ -226,6 +226,12 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
         drawDecorationLine(renderer, decoration.startX, underlineY, decoration.width);
       }
     }
+
+    // Guide Dot: draw a middle dot between words at the stored X offset.
+    if (i > 0 && i < wordGuideDotXOffset.size() && wordGuideDotXOffset[i] > 0) {
+      const int dotX = wordX + static_cast<int>(wordGuideDotXOffset[i]);
+      renderer.drawText(fontId, dotX, wordY, "\xc2\xb7", true, EpdFontFamily::REGULAR);
+    }
   }
 }
 

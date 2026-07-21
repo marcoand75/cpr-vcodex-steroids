@@ -20,3 +20,4 @@ build
 *.local*
 *.log
 /.codex-build/
+/tmp

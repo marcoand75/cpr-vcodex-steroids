@@ -367,6 +367,7 @@ class CrossPointSettings {
   uint8_t readerRefreshMode = READER_REFRESH_AUTO;
   uint8_t hyphenationEnabled = 0;
   uint8_t bionicReading = 0;
+  uint8_t guideReadingEnabled = 0;
   char sdFontFamilyName[32] = "";
 
   // EPUB Render Mode (Default / Balanced / Light)

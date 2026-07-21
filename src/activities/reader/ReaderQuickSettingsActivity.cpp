@@ -66,6 +66,7 @@ const std::vector<ReaderQuickSettingsActivity::QuickSetting>& ReaderQuickSetting
        QuickSettingType::Enum,
        &CrossPointSettings::bionicReading,
        {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}},
+      {StrId::STR_GUIDE_READING, QuickSettingType::Toggle, &CrossPointSettings::guideReadingEnabled},
       {StrId::STR_ORIENTATION,
        QuickSettingType::Enum,
        &CrossPointSettings::orientation,

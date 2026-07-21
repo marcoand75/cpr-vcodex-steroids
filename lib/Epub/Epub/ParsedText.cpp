@@ -729,6 +729,32 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
+  // Guide Dots: calculate X offset for middle dot before each word that has a space gap before it.
+  std::vector<uint16_t> lineGuideDotXOffset;
+  if (guideReadingEnabled && lineWords.size() > 1) {
+    lineGuideDotXOffset.reserve(lineWords.size());
+    // First word: no dot before it (dot is between words, not at line start)
+    lineGuideDotXOffset.push_back(0);
+    for (size_t i = 1; i < lineWords.size(); i++) {
+      const bool attachesToPrevious = (lastBreakAt + i < wordContinues.size()) && wordContinues[lastBreakAt + i];
+      if (attachesToPrevious) {
+        lineGuideDotXOffset.push_back(0);
+      } else {
+        // Calculate the dot's X position at the midpoint of the space between word i-1 and word i.
+        // The dot is centered in the gap: wordXpos[i] is word i's start. The dot should be placed
+        // at the midpoint between word i-1's end and word i's start.
+        const int prevWordEnd = lineXPos[i - 1] + renderer.getTextWidth(fontId, lineWords[i - 1].c_str(), lineWordStyles[i - 1]);
+        const int gap = lineXPos[i] - prevWordEnd;
+        if (gap > 0) {
+          // The dot is placed at the visual center of the gap.
+          lineGuideDotXOffset.push_back(static_cast<uint16_t>(std::max(0, prevWordEnd + gap / 2 - lineXPos[i])));
+        } else {
+          lineGuideDotXOffset.push_back(0);
+        }
+      }
+    }
+  }
+
   // Fast path: when no word on this line was split for focus reading, skip the merge work
   // entirely and pass empty boundary/suffixX vectors. TextBlock pays zero per-word RAM cost
   // for these annotations when the vectors are empty.
@@ -742,7 +768,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
   if (!lineHasFocusSplit) {
     processLine(std::make_shared<TextBlock>(std::move(lineWords), std::move(lineXPos), std::move(lineWordStyles),
-                                            std::vector<uint8_t>{}, std::vector<uint16_t>{}, blockStyle));
+                                            std::vector<uint8_t>{}, std::vector<uint16_t>{},
+                                            std::move(lineGuideDotXOffset), std::vector<uint8_t>{}, blockStyle));
     return;
   }
 
@@ -754,11 +781,13 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   std::vector<EpdFontFamily::Style> outStyles;
   std::vector<uint8_t> outBoundaries;
   std::vector<uint16_t> outSuffixX;
+  std::vector<uint16_t> outGuideDotXOffset;
   outWords.reserve(lineWordCount);
   outXPos.reserve(lineWordCount);
   outStyles.reserve(lineWordCount);
   outBoundaries.reserve(lineWordCount);
   outSuffixX.reserve(lineWordCount);
+  if (guideReadingEnabled) outGuideDotXOffset.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; i++) {
     if (wordIsFocusSuffix[lastBreakAt + i] && !outWords.empty()) {
@@ -783,9 +812,13 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       outStyles.push_back(storedStyle);
       outBoundaries.push_back(boundary);
       outSuffixX.push_back(suffixX);
+      if (guideReadingEnabled && i < lineGuideDotXOffset.size()) {
+        outGuideDotXOffset.push_back(lineGuideDotXOffset[i]);
+      }
     }
   }
 
   processLine(std::make_shared<TextBlock>(std::move(outWords), std::move(outXPos), std::move(outStyles),
-                                          std::move(outBoundaries), std::move(outSuffixX), blockStyle));
+                                          std::move(outBoundaries), std::move(outSuffixX),
+                                          std::move(outGuideDotXOffset), std::vector<uint8_t>{}, blockStyle));
 }

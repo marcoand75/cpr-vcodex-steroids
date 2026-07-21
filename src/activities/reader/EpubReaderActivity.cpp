@@ -1192,6 +1192,7 @@ EpubReaderActivity::ReaderSettingsSnapshot EpubReaderActivity::captureReaderSett
       SETTINGS.embeddedStyle,
       SETTINGS.hyphenationEnabled,
       SETTINGS.bionicReading,
+      SETTINGS.guideReadingEnabled,
       SETTINGS.orientation,
       SETTINGS.extraParagraphSpacing,
       SETTINGS.forceParagraphIndents,
@@ -1778,7 +1779,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                     SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                     SETTINGS.imageRendering,
                                     SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                    false, attemptMode)) {
+                                    SETTINGS.guideReadingEnabled != 0, attemptMode)) {
         LOG_DBG("ERS", "Section cache found (renderMode=%u, suffix=%s)", attemptMode,
                 cacheSuffix ? cacheSuffix : "");
         sectionLoadSuccess = true;
@@ -1797,7 +1798,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
               popupFn,
               SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-              false, attemptMode)) {
+              SETTINGS.guideReadingEnabled != 0, attemptMode)) {
         releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section cache build");
         sectionLoadSuccess = true;
         usedRenderMode = attemptMode;
@@ -1970,9 +1971,9 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                   SETTINGS.imageRendering,
-                                   SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                   false, userRenderMode)) {
+                                    SETTINGS.imageRendering,
+                                    SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                    SETTINGS.guideReadingEnabled != 0, userRenderMode)) {
     return;
   }
 
@@ -1986,9 +1987,9 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                      SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                     SETTINGS.imageRendering, nullptr,
-                                     SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                     false, userRenderMode)) {
+                                      SETTINGS.imageRendering, nullptr,
+                                      SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                      SETTINGS.guideReadingEnabled != 0, userRenderMode)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   } else {
     releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent section cache build");
