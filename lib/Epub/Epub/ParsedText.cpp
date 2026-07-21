@@ -729,28 +729,32 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
-  // Guide Dots: calculate X offset for middle dot before each word that has a space gap before it.
+  // Guide Dots: calculate X offset for middle dot after each word.
+  // Matches CrossInk's approach: dot is stored at index i-1 (the word it follows),
+  // offset relative to that word's X position (lineXPos[i-1]).
+  // The dot sits in the gap between word i-1 and word i, positioned using font metrics
+  // so the dot is centered with proper spacing on both sides.
   std::vector<uint16_t> lineGuideDotXOffset;
   if (guideReadingEnabled && lineWords.size() > 1) {
-    lineGuideDotXOffset.reserve(lineWords.size());
-    // First word: no dot before it (dot is between words, not at line start)
-    lineGuideDotXOffset.push_back(0);
+    lineGuideDotXOffset.assign(lineWords.size(), 0);
+    // Cache font metrics for dots (constant for this render pass)
+    const int dotWidth = renderer.getTextAdvanceX(fontId, "\xc2\xb7", EpdFontFamily::REGULAR);
     for (size_t i = 1; i < lineWords.size(); i++) {
       const bool attachesToPrevious = (lastBreakAt + i < wordContinues.size()) && wordContinues[lastBreakAt + i];
-      if (attachesToPrevious) {
-        lineGuideDotXOffset.push_back(0);
-      } else {
-        // Calculate the dot's X position at the midpoint of the space between word i-1 and word i.
-        // The dot is centered in the gap: wordXpos[i] is word i's start. The dot should be placed
-        // at the midpoint between word i-1's end and word i's start.
-        const int prevWordEnd = lineXPos[i - 1] + renderer.getTextWidth(fontId, lineWords[i - 1].c_str(), lineWordStyles[i - 1]);
-        const int gap = lineXPos[i] - prevWordEnd;
-        if (gap > 0) {
-          // The dot is placed at the visual center of the gap.
-          lineGuideDotXOffset.push_back(static_cast<uint16_t>(std::max(0, prevWordEnd + gap / 2 - lineXPos[i])));
-        } else {
-          lineGuideDotXOffset.push_back(0);
-        }
+      if (attachesToPrevious) continue;
+
+      // CrossInk places the dot at: lineXPos[i] - guideDotSecondGap - dotWidth
+      // guideDotSecondGap = space between dot end and word start
+      // We approximate through the natural gap width:
+      const int wordStart = lineXPos[i];
+      const int prevWordEnd = lineXPos[i - 1] + static_cast<int>(wordWidths[lastBreakAt + i - 1]);
+      const int gap = wordStart - prevWordEnd;
+      if (gap > dotWidth) {
+        // Center the dot in the gap: position = prevWordEnd + (gap - dotWidth) / 2
+        // Offset from word i-1's start: (gap - dotWidth) / 2 + wordWidths[i-1]
+        const int dotPixel = prevWordEnd + (gap - dotWidth) / 2;
+        const int dotOffset = dotPixel - lineXPos[i - 1];
+        lineGuideDotXOffset[i - 1] = static_cast<uint16_t>(std::clamp(dotOffset, 0, static_cast<int>(UINT16_MAX)));
       }
     }
   }
