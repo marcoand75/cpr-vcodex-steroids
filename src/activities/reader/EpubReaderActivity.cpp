@@ -819,7 +819,9 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
   if (!clippingModeActive || clippingWords.empty()) return;
 
   const int fontId = SETTINGS.getReaderFontId();
-  const int lineHeight = renderer.getFontAscenderSize(fontId) + 2;
+  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int lineHeight = ascender + 2;
+  const int descenderPad = 6; // copre discendenti (g q y p j)
   const int padX = 1;
   const int padY = 1;
 
@@ -838,7 +840,7 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     // Solo cursore: evidenzia la parola corrente come fa il dizionario
     if (cursorGlobalIndex >= 0 && cursorGlobalIndex < static_cast<int>(clippingWords.size())) {
       const auto& w = clippingWords[cursorGlobalIndex];
-      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + padY * 2, true);
+      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, true);
       renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     }
     return;
@@ -854,10 +856,10 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
 
     const bool isCursor = w.globalIndex == cursorGlobalIndex;
     if (isCursor) {
-      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + padY * 2, true);
+      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, true);
       renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     } else {
-      renderer.fillRectDither(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + padY * 2, Color::LightGray);
+      renderer.fillRectDither(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, Color::LightGray);
       renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), true, EpdFontFamily::REGULAR);
     }
   }
@@ -902,8 +904,9 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
                                                                fontId,
                                                                words[i].c_str(),
                                                                EpdFontFamily::REGULAR)));
-      const int lineHeight = renderer.getFontAscenderSize(fontId) + 2;
-      renderer.fillRect(screenX - 1, screenY - 1, width + 2, lineHeight, true);
+      const int ascender = renderer.getFontAscenderSize(fontId);
+      const int descenderPad = 6;
+      renderer.fillRect(screenX - 1, screenY - 1, width + 2, ascender + descenderPad, true);
       renderer.drawText(fontId, screenX, screenY, words[i].c_str(), false, EpdFontFamily::REGULAR);
       ++globalWordIndex;
     }

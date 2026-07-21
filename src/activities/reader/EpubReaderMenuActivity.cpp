@@ -14,6 +14,7 @@
 #include "components/icons/dictionary.h"
 #include "components/icons/dictionary24.h"
 #include "components/icons/dictionary2.h"
+#include "components/icons/dictionary224.h"
 #include "components/icons/goalsmedal.h"
 #include "components/icons/goalsmedal24.h"
 #include "components/icons/bookshelf.h"
@@ -57,26 +58,26 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes) {
   std::vector<MenuItem> items;
   items.reserve(17);
-  items.push_back({MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS, Settings2Icon, 24, 24});
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER, BookIcon, 24, 24});
+  items.push_back({MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS, Settings224Icon, 24, 24});
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER, Book24Icon, 24, 24});
   if (hasFootnotes) {
-    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES, BookmarkIcon, 24, 24});
+    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES, Bookmark24Icon, 24, 24});
   }
-  items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, SearchIcon, 24, 24});
-  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, RecentIcon, 24, 24});
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary2Icon, 24, 24});
-  items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, BookmarkIcon, 24, 24});
-  items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, BookmarkIcon, 24, 24});
+  items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, Search24Icon, 24, 24});
+  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, Recent24Icon, 24, 24});
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary224Icon, 24, 24});
+  items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, Bookmark24Icon, 24, 24});
+  items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, Bookmark24Icon, 24, 24});
   items.push_back({MenuAction::CREATE_CLIPPING, StrId::STR_CREATE_CLIPPING, ClipIcon, 24, 24});
   items.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS, ClippingListIcon, 24, 24});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, RotationIcon, 24, 24});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, PageviewIcon, 24, 24});
+  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, Rotation24Icon, 24, 24});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, Pageview24Icon, 24, 24});
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT, ProgressIcon, 24, 24});
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON, CameraIcon, 24, 24});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR, QrCodeIcon, 24, 24});
-  items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, TrophyIcon, 24, 24});
-  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, BookshelfIcon, 24, 24});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, WifiIcon, 24, 24});
+  items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, Trophy24Icon, 24, 24});
+  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, Bookshelf24Icon, 24, 24});
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, Wifi24Icon, 24, 24});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitorIcon32, 24, 24});
   return items;
 }
