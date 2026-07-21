@@ -38,6 +38,8 @@
 #include "components/icons/CameraIcon.h"
 #include "components/icons/QrCodeIcon.h"
 #include "components/icons/ProgressIcon.h"
+#include "components/icons/ClipIcon.h"
+#include "components/icons/ClippingListIcon.h"
 #include "fontIds.h"
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -65,8 +67,8 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary2Icon, 24, 24});
   items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, BookmarkIcon, 24, 24});
   items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, BookmarkIcon, 24, 24});
-  items.push_back({MenuAction::CREATE_CLIPPING, StrId::STR_CREATE_CLIPPING, nullptr, 0, 0});
-  items.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS, nullptr, 0, 0});
+  items.push_back({MenuAction::CREATE_CLIPPING, StrId::STR_CREATE_CLIPPING, ClipIcon, 24, 24});
+  items.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS, ClippingListIcon, 24, 24});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, RotationIcon, 24, 24});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, PageviewIcon, 24, 24});
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT, ProgressIcon, 24, 24});

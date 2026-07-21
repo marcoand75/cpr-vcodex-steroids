@@ -1992,6 +1992,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const auto tDisplay = millis();
 
   const bool needsGrayscale = enableTextAA || enableImageGrayscaleOnly;
+  const bool hasClippingHighlights = !clippingModeActive && !clippingStore.isEmpty();
   ReaderUtils::TiledGrayscaleTimings tiledTimings;
   const bool tiledGrayscale =
       needsGrayscale && ReaderUtils::renderTiledGrayscale(
@@ -2002,7 +2003,6 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                               } else {
                                 page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
                                              orientedMarginTop, SETTINGS.bionicReading);
-                                renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
                               }
                               renderStatusBar();
                             },
@@ -2017,6 +2017,11 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
             tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tiledTimings.grayLsb - tDisplay,
             tiledTimings.grayMsb - tiledTimings.grayLsb, tiledTimings.grayDisplay - tiledTimings.grayMsb,
             tiledTimings.cleanup - tiledTimings.grayDisplay, tEnd - t0);
+    if (hasClippingHighlights) {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
     return;
   }
 
@@ -2040,7 +2045,6 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
       page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
-      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
     renderer.copyGrayscaleLsbBuffers();
@@ -2053,7 +2057,6 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
       page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
-      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
     renderer.copyGrayscaleMsbBuffers();
@@ -2068,6 +2071,11 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     // restore the bw data
     renderer.restoreBwBuffer();
     const auto tBwRestore = millis();
+
+    if (hasClippingHighlights) {
+      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
 
     const auto tEnd = millis();
     LOG_DBG("ERS",
