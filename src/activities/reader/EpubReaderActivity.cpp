@@ -1711,10 +1711,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
 
     if (!section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                  SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
-                                  SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-                                  SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                  SETTINGS.imageRendering)) {
+                                   SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                   SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
+                                   SETTINGS.imageRendering,
+                                   SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                   false, 0)) {
       LOG_DBG("ERS", "Cache not found, building...");
 
       const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
@@ -1723,7 +1725,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
               SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
               SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
-              popupFn)) {
+              popupFn,
+              SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+              false, 0)) {
         LOG_ERR("ERS", "Failed to persist page data to SD");
         section.reset();
         renderSectionLoadFailure();
@@ -1874,10 +1878,12 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   Section nextSection(epub, nextSpineIndex, renderer);
   const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
   if (nextSection.loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                  SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
-                                  SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-                                  SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                  SETTINGS.imageRendering)) {
+                                   SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                   SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
+                                   SETTINGS.imageRendering,
+                                   SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                   false, 0)) {
     return;
   }
 
@@ -1891,7 +1897,9 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                      SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                     SETTINGS.imageRendering)) {
+                                     SETTINGS.imageRendering, nullptr,
+                                     SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                     false, 0)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   } else {
     releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent section cache build");
