@@ -16,6 +16,7 @@
 
 #include "AchievementsStore.h"
 #include "BookmarksActivity.h"
+#include "ClippingsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderChapterSelectionActivity.h"
@@ -221,6 +222,7 @@ void EpubReaderActivity::onEnter() {
   applyPendingSyncSession();
   stableBookId = BookIdentity::resolveStableBookId(epub->getPath());
   bookmarkStore.load(epub->getCachePath(), stableBookId);
+  clippingStore.load(epub->getPath());
 
   FsFile f;
   bool loadedProgress = false;
@@ -356,6 +358,68 @@ void EpubReaderActivity::loop() {
 
   if (ReaderUtils::shouldToggleStatusBar(mappedInput)) {
     toggleTemporaryStatusBar();
+    return;
+  }
+
+  if (clippingModeActive) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      if (!clippingStartMarkSet) {
+        // Calcola il globalIndex della parola corrente come in moveClippingSelection
+        int startIdx = 0;
+        for (int r = 0; r < clippingCurrentRow; ++r) {
+          startIdx += clippingRowWordCounts[r];
+        }
+        startIdx += clippingCurrentWordInRow;
+        if (startIdx >= 0 && startIdx < static_cast<int>(clippingWords.size())) {
+          clippingStartWordIndex = clippingWords[startIdx].globalIndex;
+          clippingEndWordIndex = clippingStartWordIndex;
+          clippingStartRow = clippingCurrentRow;
+          clippingEndRow = clippingCurrentRow;
+        }
+        clippingStartMarkSet = true;
+        requestUpdate();
+        return;
+      }
+      createClippingFromSelection();
+      return;
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      if (clippingStartMarkSet) {
+        clippingStartMarkSet = false;
+        clippingStartWordIndex = -1;
+        clippingEndWordIndex = -1;
+        clippingStartRow = -1;
+        clippingEndRow = -1;
+        requestUpdate();
+        return;
+      }
+      exitClippingMode();
+      requestUpdate();
+      return;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
+      moveClippingSelection(-1, 0);
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+      moveClippingSelection(1, 0);
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Left)) {
+      moveClippingSelection(0, -1);
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
+      moveClippingSelection(0, 1);
+      requestUpdate();
+      return;
+    }
+
     return;
   }
 
@@ -643,6 +707,363 @@ void EpubReaderActivity::saveCurrentPageBookmark() {
   requestUpdate();
 }
 
+void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int marginLeft, int marginTop) {
+  clippingWords.clear();
+  clippingRowWordCounts.clear();
+  clippingMarginLeft = static_cast<int16_t>(marginLeft);
+  clippingMarginTop = static_cast<int16_t>(marginTop);
+
+  if (!page) return;
+
+  int globalIndex = 0;
+  int currentRow = -1;
+  int rowWordCount = 0;
+  int16_t lastY = 0;
+
+  for (const auto& element : page->elements) {
+    if (!element || element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = line.getBlock();
+    if (!block) continue;
+
+    const auto& words = block->getWords();
+    const auto& xPositions = block->getWordXpos();
+    const size_t count = std::min(words.size(), xPositions.size());
+
+    for (size_t i = 0; i < count; ++i) {
+      const int16_t screenX = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
+      const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
+
+      if (currentRow < 0 || std::abs(screenY - lastY) > 2) {
+        if (currentRow >= 0) {
+          clippingRowWordCounts.push_back(rowWordCount);
+        }
+        ++currentRow;
+        rowWordCount = 0;
+        lastY = screenY;
+      }
+
+      ++rowWordCount;
+      clippingWords.push_back(ClippingWordInfo{words[i], screenX, screenY,
+                                               static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
+                                                                                 SETTINGS.getReaderFontId(),
+                                                                                 words[i].c_str(),
+                                                                                 EpdFontFamily::REGULAR))),
+                                               currentRow, globalIndex++});
+    }
+  }
+
+  if (currentRow >= 0) {
+    clippingRowWordCounts.push_back(rowWordCount);
+  }
+}
+
+void EpubReaderActivity::enterClippingMode() {
+  if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
+    return;
+  }
+
+  int marginLeft = 0;
+  int marginTop = 0;
+  auto page = loadCurrentPageForOverlay(marginLeft, marginTop);
+  if (!page) {
+    return;
+  }
+
+  extractClippingWords(page, marginLeft, marginTop);
+  if (clippingWords.empty()) {
+    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+    renderer.displayBuffer();
+    delay(500);
+    return;
+  }
+
+  clippingModeActive = true;
+  clippingStartMarkSet = false;
+  clippingStartWordIndex = -1;
+  clippingEndWordIndex = -1;
+  clippingStartRow = -1;
+  clippingEndRow = -1;
+  clippingCurrentRow = 0;
+  clippingCurrentWordInRow = 0;
+  requestUpdate();
+}
+
+void EpubReaderActivity::moveClippingSelection(int deltaRow, int deltaWord) {
+  if (!clippingModeActive || clippingWords.empty()) return;
+
+  const int totalRows = static_cast<int>(clippingRowWordCounts.size());
+  if (totalRows == 0) return;
+
+  int targetRow = clippingCurrentRow + deltaRow;
+  targetRow = std::clamp(targetRow, 0, totalRows - 1);
+
+  int rowStartGlobalIndex = 0;
+  for (int r = 0; r < targetRow; ++r) {
+    rowStartGlobalIndex += clippingRowWordCounts[r];
+  }
+  const int rowWordCount = clippingRowWordCounts[targetRow];
+
+  int targetWordInRow = clippingCurrentWordInRow + deltaWord;
+  targetWordInRow = std::clamp(targetWordInRow, 0, rowWordCount - 1);
+
+  clippingCurrentRow = targetRow;
+  clippingCurrentWordInRow = targetWordInRow;
+
+  const int globalIndex = rowStartGlobalIndex + targetWordInRow;
+  clippingEndWordIndex = globalIndex;
+  clippingEndRow = targetRow;
+}
+
+void EpubReaderActivity::renderClippingSelectionOverlay() {
+  if (!clippingModeActive || clippingWords.empty()) return;
+
+  const int fontId = SETTINGS.getReaderFontId();
+  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int lineHeight = ascender + 2;
+  const int descenderPad = 6; // copre discendenti (g q y p j)
+  const int padX = 1;
+  const int padY = 1;
+
+  // Calcola il globalIndex della parola corrente al cursore
+  int cursorGlobalIndex = 0;
+  {
+    int idx = 0;
+    for (int r = 0; r < clippingCurrentRow; ++r) {
+      idx += clippingRowWordCounts[r];
+    }
+    idx += clippingCurrentWordInRow;
+    cursorGlobalIndex = idx;
+  }
+
+  if (!clippingStartMarkSet) {
+    // Solo cursore: evidenzia la parola corrente come fa il dizionario
+    if (cursorGlobalIndex >= 0 && cursorGlobalIndex < static_cast<int>(clippingWords.size())) {
+      const auto& w = clippingWords[cursorGlobalIndex];
+      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, true);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+    }
+    return;
+  }
+
+  // Start mark fisso: mostra selezione da startWord a endWord
+  const int startWord = std::min(clippingStartWordIndex, clippingEndWordIndex);
+  const int endWord = std::max(clippingStartWordIndex, clippingEndWordIndex);
+  if (startWord < 0 || endWord < 0) return;
+
+  for (const auto& w : clippingWords) {
+    if (w.globalIndex < startWord || w.globalIndex > endWord) continue;
+
+    const bool isCursor = w.globalIndex == cursorGlobalIndex;
+    if (isCursor) {
+      renderer.fillRect(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, true);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+    } else {
+      renderer.fillRectDither(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, Color::LightGray);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), true, EpdFontFamily::REGULAR);
+    }
+  }
+}
+
+void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop) {
+  if (clippingStore.isEmpty()) return;
+  if (!page) return;
+
+  const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
+  const uint16_t currentPage = static_cast<uint16_t>(section ? section->currentPage : -1);
+  const int fontId = SETTINGS.getReaderFontId();
+
+  int globalWordIndex = 0;
+  for (const auto& element : page->elements) {
+    if (!element || element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = line.getBlock();
+    if (!block) continue;
+
+    const auto& words = block->getWords();
+    const auto& xPositions = block->getWordXpos();
+    const size_t count = std::min(words.size(), xPositions.size());
+
+    for (size_t i = 0; i < count; ++i) {
+      bool highlighted = false;
+      for (const auto& clipping : clippingStore.getAll()) {
+        if (clipping.spineIndex != currentSpine || clipping.startPage != currentPage) continue;
+        if (globalWordIndex >= clipping.startWordIndex && globalWordIndex <= clipping.endWordIndex) {
+          highlighted = true;
+          break;
+        }
+      }
+      if (!highlighted) {
+        ++globalWordIndex;
+        continue;
+      }
+
+      const int16_t screenX = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
+      const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
+      const int16_t width = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
+                                                               fontId,
+                                                               words[i].c_str(),
+                                                               EpdFontFamily::REGULAR)));
+      const int ascender = renderer.getFontAscenderSize(fontId);
+      const int descenderPad = 6;
+      renderer.fillRect(screenX - 1, screenY - 1, width + 2, ascender + descenderPad, true);
+      renderer.drawText(fontId, screenX, screenY, words[i].c_str(), false, EpdFontFamily::REGULAR);
+      ++globalWordIndex;
+    }
+  }
+}
+
+void EpubReaderActivity::createClippingFromSelection() {
+  if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
+    requestUpdate();
+    return;
+  }
+
+  if (!clippingStartMarkSet || clippingStartWordIndex < 0 || clippingEndWordIndex < 0 || clippingStartRow < 0 || clippingEndRow < 0) {
+    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+    renderer.displayBuffer();
+    delay(500);
+    exitClippingMode();
+    requestUpdate();
+    return;
+  }
+
+  const int startRow = std::min(clippingStartRow, clippingEndRow);
+  const int endRow = std::max(clippingStartRow, clippingEndRow);
+  const int startWord = std::min(clippingStartWordIndex, clippingEndWordIndex);
+  const int endWord = std::max(clippingStartWordIndex, clippingEndWordIndex);
+
+  ClippingStore::Clipping clipping;
+  clipping.spineIndex = static_cast<uint16_t>(currentSpineIndex);
+  clipping.startPage = static_cast<uint16_t>(section->currentPage);
+  clipping.endPage = static_cast<uint16_t>(section->currentPage);
+  clipping.pageCount = static_cast<uint16_t>(section->pageCount);
+  clipping.startWordIndex = static_cast<uint16_t>(startWord);
+  clipping.endWordIndex = static_cast<uint16_t>(endWord);
+  clipping.wordCount = static_cast<uint16_t>(std::max(0, endWord - startWord) + 1);
+  clipping.paragraphIndex = UINT16_MAX;
+  clipping.timestamp = static_cast<uint32_t>(millis() / 1000);
+
+  const std::string chapterTitle = getStatsChapterTitle(*epub, currentSpineIndex);
+  strncpy(clipping.chapterTitle, chapterTitle.c_str(), sizeof(clipping.chapterTitle) - 1);
+  clipping.chapterTitle[sizeof(clipping.chapterTitle) - 1] = '\0';
+
+  std::string selectedText;
+  auto page = section->loadPageFromSectionFile();
+  if (page) {
+    int globalWordIndex = 0;
+    int prevLineY = -10000;
+    bool firstLine = true;
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+
+      const auto& words = block->getWords();
+      bool lineHasSelectedWord = false;
+      std::string lineText;
+      for (size_t i = 0; i < words.size(); ++i) {
+        if (globalWordIndex >= startWord && globalWordIndex <= endWord) {
+          lineHasSelectedWord = true;
+          if (!lineText.empty()) lineText.push_back(' ');
+          lineText += words[i];
+        }
+        ++globalWordIndex;
+      }
+      if (lineHasSelectedWord) {
+        if (!firstLine) {
+          // Se la riga corrente ha un gap verticale significativo rispetto
+          // alla precedente, inserisci \n (nuovo paragrafo), altrimenti spazio.
+          const int gap = std::abs(line.yPos - prevLineY);
+          if (gap > renderer.getFontAscenderSize(SETTINGS.getReaderFontId()) + 4) {
+            selectedText.push_back('\n');
+          } else {
+            selectedText.push_back(' ');
+          }
+        }
+        selectedText += lineText;
+        firstLine = false;
+        prevLineY = line.yPos;
+      }
+    }
+  }
+  clipping.selectedText = selectedText;
+
+  if (clipping.selectedText.empty()) {
+    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+    renderer.displayBuffer();
+    delay(500);
+    exitClippingMode();
+    requestUpdate();
+    return;
+  }
+
+  clippingStore.add(clipping);
+  clippingStore.save();
+
+  exportClippingToTextFile(clipping);
+
+  GUI.drawPopup(renderer, tr(STR_CLIPPING_ADDED));
+  renderer.displayBuffer();
+  delay(500);
+  exitClippingMode();
+  requestUpdate();
+}
+
+void EpubReaderActivity::exitClippingMode() {
+  clippingModeActive = false;
+  clippingStartWordIndex = -1;
+  clippingEndWordIndex = -1;
+  clippingStartRow = -1;
+  clippingEndRow = -1;
+  clippingStartMarkSet = false;
+}
+
+void EpubReaderActivity::exportClippingToTextFile(const ClippingStore::Clipping& clipping) {
+  if (!epub) return;
+
+  const std::string title = epub->getTitle();
+  const std::string author = epub->getAuthor();
+
+  char location[256];
+  int locLen = snprintf(location, sizeof(location), "- Your Highlight on Page %d%s%s",
+                        static_cast<int>(clipping.startPage) + 1,
+                        clipping.chapterTitle[0] != '\0' ? " | " : "",
+                        clipping.chapterTitle[0] != '\0' ? clipping.chapterTitle : "");
+  location[sizeof(location) - 1] = '\0';
+
+  // Pulisce il testo selezionato: rimuove spazi prima di punteggiatura
+  std::string cleanText;
+  cleanText.reserve(clipping.selectedText.size());
+  for (size_t i = 0; i < clipping.selectedText.size(); ++i) {
+    const char c = clipping.selectedText[i];
+    const bool isPunct = (c == ',' || c == '.' || c == ';' || c == ':' || c == '!' || c == '?' ||
+                          c == ')' || c == ']' || c == '}');
+    if (isPunct && !cleanText.empty() && cleanText.back() == ' ') {
+      cleanText.pop_back();
+    }
+    cleanText += c;
+  }
+
+  char entry[2048];
+  const int written = snprintf(entry, sizeof(entry),
+                               "%s (%s)\n%s\n\n%s\n\n==========\n\n",
+                               title.c_str(), author.c_str(), location, cleanText.c_str());
+
+  if (written <= 0 || written >= static_cast<int>(sizeof(entry))) {
+    return;
+  }
+
+  HalFile file = Storage.open("/My Clippings.txt", O_WRONLY | O_CREAT | O_APPEND);
+  if (!file) {
+    return;
+  }
+
+  file.write(reinterpret_cast<const uint8_t*>(entry), static_cast<size_t>(written));
+  file.close();
+}
+
 // Translate an absolute percent into a spine index plus a normalized position
 // within that spine so we can jump after the section is loaded.
 void EpubReaderActivity::jumpToPercent(int percent) {
@@ -915,7 +1336,40 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                    section.reset();
                                  }
                                }
-      });
+                             });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::CREATE_CLIPPING: {
+      READING_STATS.noteActivity();
+      enterClippingMode();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS: {
+      READING_STATS.noteActivity();
+      startActivityForResult(
+          std::make_unique<ClippingsActivity>(renderer, mappedInput, clippingStore.getAll(),
+                                              [this](size_t index) {
+                                                const bool removed = clippingStore.remove(index);
+                                                if (removed) {
+                                                  clippingStore.save();
+                                                }
+                                                return removed;
+                                              }),
+          [this](const ActivityResult& result) {
+            READING_STATS.resumeSession();
+            if (!result.isCancelled) {
+              if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
+                // Naviga al clipping usando il flusso standard (come pageTurn)
+                const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
+                currentSpineIndex = std::min(jump->spineIndex, maxSpine);
+                cachedSpineIndex = currentSpineIndex;
+                cachedChapterTotalPageCount = 0;
+                nextPageNumber = static_cast<int>(jump->page);
+                section.reset();
+              }
+            }
+            requestUpdate();
+          });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::SAVE_BOOKMARK: {
@@ -1506,6 +1960,8 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const bool hasConfiguredRefreshMode = ReaderUtils::getConfiguredReaderRefreshMode(configuredRefreshMode);
 
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+  renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
+  renderClippingSelectionOverlay();
   renderStatusBar();
   fcm->logStats("bw_render");
   const auto tBwRender = millis();
@@ -1529,6 +1985,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -1550,15 +2007,16 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const bool tiledGrayscale =
       needsGrayscale && ReaderUtils::renderTiledGrayscale(
                            renderer, "ERS",
-                           [&]() {
-                             if (enableImageGrayscaleOnly) {
-                               page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
-                             } else {
-                               page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
-                                            orientedMarginTop, SETTINGS.bionicReading);
-                             }
-                             renderStatusBar();
-                           },
+                            [&]() {
+                              if (enableImageGrayscaleOnly) {
+                                page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+                              } else {
+                                page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
+                                             orientedMarginTop, SETTINGS.bionicReading);
+                                renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
+                              }
+                              renderStatusBar();
+                            },
                            &tiledTimings);
 
   if (tiledGrayscale) {
@@ -1593,6 +2051,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
       page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
     renderer.copyGrayscaleLsbBuffers();
@@ -1605,6 +2064,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
       page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
     renderer.copyGrayscaleMsbBuffers();
