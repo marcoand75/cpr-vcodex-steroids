@@ -117,6 +117,7 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
       SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled),
       SettingInfo::Enum(StrId::STR_BIONIC_READING, &CrossPointSettings::bionicReading,
                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}),
+      SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled),
       SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
                         {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
       SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing),
@@ -129,6 +130,8 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
                          StrId::STR_REFRESH_MODE_FULL}),
       SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                         {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
+      SettingInfo::Enum(StrId::STR_EPUB_RENDER_MODE, &CrossPointSettings::epubRenderMode,
+                        {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}),
       SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar),
   };
   return settings;
