@@ -207,6 +207,37 @@ Several targeted optimizations to keep the library and UI responsive on the ESP3
 - **List-Activity helpers** — all list-based screens (Settings, App selectors, Network mode, etc.) now share `ListInputMapper`, `ListLayout`, and `ListRenderHelper`, eliminating ~1,350 lines of duplicated code and fixing double-advance on quick taps, inverted delta mapping, and missing continuous navigation
 - **Book-Store deduplication** — `FavoritesStore` and `RecentBooksStore` share `BookStoreUtils.h` template header, cutting ~162 lines of duplicated algorithms
 
+### ✂️ Clipping (Highlights) System
+
+A full highlight system, ported from the CrossInk fork, that lets you select and save text passages while reading.
+
+- **Create a clipping**: Open the reader menu and tap "Create Clipping". Navigate with arrow keys, press **Confirm** to mark the start of the selection, move the cursor, and press **Confirm** again to save.
+- **View & manage clippings**: The "View Clippings" menu entry shows a list of all saved clippings. Individual clippings can be deleted.
+- **Jump to a clipping**: Select a clipping from the list and the reader navigates directly to that page — the passage is highlighted on screen.
+- **Persistent across sessions**: Clippings are saved to `/.crosspoint/clippings/epub_<hash>.bin`. Close and reopen the book — your clippings are still there.
+- **Export to file**: Every clipping is automatically appended to `/My Clippings.txt` in Kindle-style format (book title, author, page number, chapter, and the selected text).
+- **Dedicated selection UI**: The cursor word appears **inverted** (black background, white text) — same style as dictionary word lookup. Selected words show a light gray background with fully readable text.
+- **Anti-aliasing compatible**: Highlights render correctly even with text anti-aliasing enabled, without display refresh conflicts or crashes.
+- **Paragraph-aware**: Selection cursor navigates correctly across paragraph gaps; descending letters (g, q, y, p, j) are fully covered by the highlight rectangle.
+
+### 🌐 Web Portal & OTA Improvements
+
+- **Unified web portal navigation** — Device and App settings split into separate pages; dynamic font loading; white logo for clean appearance; unified navigation bar across all portal pages.
+- **Steroids branding** — Web portal homepage updated with Steroids branding, boot logo, and author information.
+- **OTA fix** — Older dev builds (dev5) could not detect newer dev builds (dev6, dev7) as updates. Version comparison fixed; release manifest updated to point to fork release assets.
+
+### 🛡️ Screensaver Font Size Options
+
+- Two additional font sizes for the reading dashboard sleep overlay: **X-Small** and **X-Large**, rendered with the Bookerly font family.
+- Provides more flexibility for users who prefer compact or prominent stats overlays on their sleep screen.
+
+### 🎯 Reader Menu Icons Fix
+
+- All reader context menu icons that were displaying **corrupted or blank** have been corrected:
+  - Switched from 32×32 icon arrays (which were being read with the wrong stride, producing garbled output) to proper **24×24 native arrays**.
+  - Replaced 4 blank icons (QR Code, Go to %, Screenshot, Delete Cache) with proper SVG-sourced graphics.
+  - Added new dedicated icons for the two clipping menu entries: a paperclip for "Create Clipping" and a document-with-clip for "View Clippings".
+
 ---
 
 ## Feature Summary Table
@@ -239,6 +270,11 @@ Several targeted optimizations to keep the library and UI responsive on the ESP3
 | EPUB Cover Overhaul | ⚡ Performance | Relaxed heap guard, adaptive JPEG subsampling, metadata pre-extraction, empty cover detection |
 | Core Refactoring | 🔧 Code | List-activity helpers (~1350 fewer lines), book-store deduplication |
 | Lexend Optional | ⚡ Performance | Build flag to exclude Lexend font, reducing firmware size |
+| **Clipping (Highlights)** | ✂️ Reading | Select text passages, save as clippings, view list, jump to page, persisted between sessions, exported to `/My Clippings.txt` |
+| **Reader Menu Icons Fixed** | 🎯 UI | All 32×32 menu icons replaced with proper 24×24 versions; 4 blank icons regenerated from SVGs (QR, percent, screenshot, delete cache); 2 new clipping icons |
+| **Screensaver Font Sizes** | 🛡️ Screensaver | X-Small and X-Large font sizes added using Bookerly for the reading dashboard overlay |
+| **OTA Fix** | ⚙️ System | OTA update detection fixed for newer dev builds; manifest updated for fork release assets |
+| **Web Portal** | 🌐 Web | Unified navigation with split device/app settings, dynamic fonts, white logo, Steroids branding |
 
 All CPR-vCodex upstream features (reading stats, heatmaps, achievements, dictionaries, flashcards, bookmarks, SD fonts, KOReader Sync, Bionic Reading, dark mode, sync day, etc.) are **fully included**. This fork only adds the features listed above without removing or degrading any upstream functionality.
 
@@ -257,7 +293,7 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
 | Current upstream base | [`1.3.0.35-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.35-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.3.0.35` + Steroids features |
+| Current Steroids build | Synced with upstream `1.3.0.35` + Steroids features (clippings, library, carousel, web portal, screensaver, OTA fixes) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |
