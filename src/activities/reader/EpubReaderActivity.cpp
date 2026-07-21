@@ -1348,10 +1348,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             READING_STATS.resumeSession();
             if (!result.isCancelled) {
               if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
+                // Naviga al clipping usando il flusso standard (come pageTurn)
                 const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
                 currentSpineIndex = std::min(jump->spineIndex, maxSpine);
-                pendingPageJump = jump->page;
-                pendingParagraphIndex = UINT16_MAX;
+                cachedSpineIndex = currentSpineIndex;
+                cachedChapterTotalPageCount = 0;
+                nextPageNumber = static_cast<int>(jump->page);
+                section.reset();
               }
             }
             requestUpdate();
