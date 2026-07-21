@@ -369,6 +369,13 @@ class CrossPointSettings {
   uint8_t bionicReading = 0;
   char sdFontFamilyName[32] = "";
 
+  // EPUB Render Mode (Default / Balanced / Light)
+  static constexpr uint8_t EPUB_RENDER_DEFAULT = 0;
+  static constexpr uint8_t EPUB_RENDER_BALANCED = 1;
+  static constexpr uint8_t EPUB_RENDER_LIGHT = 2;
+  static constexpr uint8_t EPUB_RENDER_MODE_COUNT = 3;
+  uint8_t epubRenderMode = EPUB_RENDER_DEFAULT;
+
   // Reader screen margin settings
   uint8_t screenMargin = 5;
   // OPDS browser settings

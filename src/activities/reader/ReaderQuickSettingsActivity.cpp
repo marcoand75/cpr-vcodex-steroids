@@ -86,6 +86,10 @@ const std::vector<ReaderQuickSettingsActivity::QuickSetting>& ReaderQuickSetting
        QuickSettingType::Enum,
        &CrossPointSettings::imageRendering,
        {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}},
+      {StrId::STR_EPUB_RENDER_MODE,
+       QuickSettingType::Enum,
+       &CrossPointSettings::epubRenderMode,
+       {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}},
   };
   return quickSettings;
 }

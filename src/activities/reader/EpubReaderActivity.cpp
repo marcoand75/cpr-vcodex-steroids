@@ -10,6 +10,8 @@
 #include <Logging.h>
 #include <MemoryBudget.h>
 
+#include "Epub/EpubRenderMode.h"
+
 #include <algorithm>
 #include <iterator>
 #include <limits>
@@ -51,6 +53,54 @@ namespace {
 constexpr unsigned long bookmarkToggleMs = 700;
 // pages per minute, first item is 1 to prevent division by zero if accessed
 constexpr int PAGE_TURN_RATES[] = {1, 1, 3, 6, 12};
+
+// EPUB Render Mode section cache suffixes — each mode gets its own cache file
+// so caches don't invalidate each other when switching modes.
+constexpr char BALANCED_SECTION_CACHE_SUFFIX[] = "_balanced";
+constexpr char LIGHT_SECTION_CACHE_SUFFIX[] = "_light";
+
+constexpr const char* sectionCacheSuffixForRenderMode(const uint8_t renderMode) {
+  switch (renderMode) {
+    case CrossPointSettings::EPUB_RENDER_BALANCED:
+      return BALANCED_SECTION_CACHE_SUFFIX;
+    case CrossPointSettings::EPUB_RENDER_LIGHT:
+      return LIGHT_SECTION_CACHE_SUFFIX;
+    case CrossPointSettings::EPUB_RENDER_DEFAULT:
+    default:
+      return "";
+  }
+}
+
+// Build the fallback chain for a given selected render mode.
+// Returns an array of modes to try in priority order.
+constexpr uint8_t MAX_RENDER_FALLBACK_DEPTH = 3;
+struct RenderModeFallback {
+  uint8_t modes[MAX_RENDER_FALLBACK_DEPTH];
+  uint8_t count;
+};
+
+RenderModeFallback renderModeFallbackChain(const uint8_t selectedMode) {
+  RenderModeFallback chain{};
+  switch (selectedMode) {
+    case CrossPointSettings::EPUB_RENDER_BALANCED:
+      chain.count = 2;
+      chain.modes[0] = CrossPointSettings::EPUB_RENDER_BALANCED;
+      chain.modes[1] = CrossPointSettings::EPUB_RENDER_LIGHT;
+      break;
+    case CrossPointSettings::EPUB_RENDER_LIGHT:
+      chain.count = 1;
+      chain.modes[0] = CrossPointSettings::EPUB_RENDER_LIGHT;
+      break;
+    case CrossPointSettings::EPUB_RENDER_DEFAULT:
+    default:
+      chain.count = 3;
+      chain.modes[0] = CrossPointSettings::EPUB_RENDER_DEFAULT;
+      chain.modes[1] = CrossPointSettings::EPUB_RENDER_BALANCED;
+      chain.modes[2] = CrossPointSettings::EPUB_RENDER_LIGHT;
+      break;
+  }
+  return chain;
+}
 
 int clampPercent(int percent) {
   if (percent < 0) {
@@ -1707,36 +1757,71 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
-    section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
-    const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
 
-    if (!section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                   SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
-                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-                                   SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
-                                   SETTINGS.imageRendering,
-                                   SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                   false, 0)) {
-      LOG_DBG("ERS", "Cache not found, building...");
+    // EPUB Render Mode fallback chain
+    const uint8_t userRenderMode = SETTINGS.epubRenderMode;
+    const auto fallback = renderModeFallbackChain(userRenderMode);
+    uint8_t usedRenderMode = CrossPointSettings::EPUB_RENDER_DEFAULT;
+    bool sectionLoadSuccess = false;
 
+    for (uint8_t attemptIdx = 0; attemptIdx < fallback.count && !sectionLoadSuccess; ++attemptIdx) {
+      const uint8_t attemptMode = fallback.modes[attemptIdx];
+      const char* cacheSuffix = sectionCacheSuffixForRenderMode(attemptMode);
+
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, cacheSuffix));
+      const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
+
+      // Try load cache
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
+                                    SETTINGS.imageRendering,
+                                    SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                    false, attemptMode)) {
+        LOG_DBG("ERS", "Section cache found (renderMode=%u, suffix=%s)", attemptMode,
+                cacheSuffix ? cacheSuffix : "");
+        sectionLoadSuccess = true;
+        usedRenderMode = attemptMode;
+        break;
+      }
+
+      LOG_DBG("ERS", "Section cache not found for renderMode=%u, building...", attemptMode);
+
+      // Build section with this mode
       const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
 
-      if (!section->createSectionFile(
+      if (section->createSectionFile(
               SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
               SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
               SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
               popupFn,
               SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-              false, 0)) {
-        LOG_ERR("ERS", "Failed to persist page data to SD");
-        section.reset();
-        renderSectionLoadFailure();
-        automaticPageTurnActive = false;
-        return;
+              false, attemptMode)) {
+        releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section cache build");
+        sectionLoadSuccess = true;
+        usedRenderMode = attemptMode;
+        break;
       }
-      releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section cache build");
-    } else {
-      LOG_DBG("ERS", "Cache found, skipping build...");
+
+      // Build failed — fall through to next mode
+      LOG_DBG("ERS", "Section build failed for renderMode=%u, trying fallback %u/%u", attemptMode,
+              static_cast<unsigned>(attemptIdx) + 1, static_cast<unsigned>(fallback.count));
+      section.reset();
+    }
+
+    if (!sectionLoadSuccess) {
+      LOG_ERR("ERS", "Failed to build section with any render mode");
+      section.reset();
+      renderSectionLoadFailure();
+      automaticPageTurnActive = false;
+      return;
+    }
+
+    // Show toast if a fallback mode was used instead of the user's selection
+    if (usedRenderMode != userRenderMode) {
+      LOG_DBG("ERS", "Render mode fallback: user=%u actual=%u", userRenderMode, usedRenderMode);
+      // Lightweight indication: could show a popup here in the future
     }
 
     if (pendingPageJump.has_value()) {
@@ -1875,7 +1960,11 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
     return;
   }
 
-  Section nextSection(epub, nextSpineIndex, renderer);
+  // Use current render mode for silent indexing — the primary mode.
+  // Only the primary mode is indexed silently; fallback modes are built on-demand.
+  const uint8_t userRenderMode = SETTINGS.epubRenderMode;
+  const char* cacheSuffix = sectionCacheSuffixForRenderMode(userRenderMode);
+  Section nextSection(epub, nextSpineIndex, renderer, cacheSuffix);
   const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
   if (nextSection.loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
@@ -1883,7 +1972,7 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                    SETTINGS.imageRendering,
                                    SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                   false, 0)) {
+                                   false, userRenderMode)) {
     return;
   }
 
@@ -1899,7 +1988,7 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                      SETTINGS.imageRendering, nullptr,
                                      SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                     false, 0)) {
+                                     false, userRenderMode)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   } else {
     releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent section cache build");
