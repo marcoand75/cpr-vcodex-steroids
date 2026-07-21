@@ -20,6 +20,8 @@ class EpubReaderMenuActivity final : public Activity {
     DICTIONARY,
     VIEW_BOOKMARKS,
     SAVE_BOOKMARK,
+    CREATE_CLIPPING,
+    VIEW_CLIPPINGS,
     GO_TO_PERCENT,
     AUTO_PAGE_TURN,
     ROTATE_SCREEN,

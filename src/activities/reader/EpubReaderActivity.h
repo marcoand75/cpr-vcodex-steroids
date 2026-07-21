@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "BookmarkStore.h"
+#include "ClippingStore.h"
 #include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
 
@@ -34,6 +35,7 @@ class EpubReaderActivity final : public Activity {
   float pendingSpineProgress = 0.0f;
   std::string stableBookId;
   BookmarkStore bookmarkStore;
+  ClippingStore clippingStore;
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
@@ -41,6 +43,36 @@ class EpubReaderActivity final : public Activity {
   bool statusBarTemporarilyHidden = false;
   bool waitingForConfirmSecondClick = false;
   unsigned long firstConfirmClickMs = 0UL;
+  bool clippingModeActive = false;
+  int clippingStartWordIndex = -1;
+  int clippingEndWordIndex = -1;
+  int clippingStartRow = -1;
+  int clippingEndRow = -1;
+  bool clippingStartMarkSet = false;
+
+  struct ClippingWordInfo {
+    std::string text;
+    int16_t screenX = 0;
+    int16_t screenY = 0;
+    int16_t width = 0;
+    int row = 0;
+    int globalIndex = 0;
+  };
+  std::vector<ClippingWordInfo> clippingWords;
+  std::vector<int> clippingRowWordCounts;
+  int clippingCurrentRow = 0;
+  int clippingCurrentWordInRow = 0;
+  int16_t clippingMarginLeft = 0;
+  int16_t clippingMarginTop = 0;
+
+  void extractClippingWords(std::shared_ptr<Page> page, int marginLeft, int marginTop);
+  void enterClippingMode();
+  void exitClippingMode();
+  void moveClippingSelection(int deltaRow, int deltaWord);
+  void renderClippingSelectionOverlay();
+  void renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop);
+  void createClippingFromSelection();
+  void exportClippingToTextFile(const ClippingStore::Clipping& clipping);
   int sessionStartSpineIndex = 0;
   int sessionStartPage = 0;
   bool sessionProgressTouched = false;
