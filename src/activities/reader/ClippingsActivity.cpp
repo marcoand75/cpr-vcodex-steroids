@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "MappedInputManager.h"
+#include "activities/ActivityResult.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -91,10 +92,9 @@ void ClippingsActivity::loop() {
       return;
     }
 
-    if (!clippings.empty()) {
-      ActivityResult result;
-      result.isCancelled = false;
-      setResult(std::move(result));
+    if (!clippings.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(clippings.size())) {
+      const auto& selected = clippings[selectorIndex];
+      setResult(BookmarkResult{selected.spineIndex, selected.startPage});
       finish();
     }
     return;

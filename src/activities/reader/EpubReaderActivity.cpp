@@ -1007,7 +1007,6 @@ void EpubReaderActivity::exitClippingMode() {
   clippingStartRow = -1;
   clippingEndRow = -1;
   clippingStartMarkSet = false;
-  pendingForceFullRefresh = true;
 }
 
 void EpubReaderActivity::exportClippingToTextFile(const ClippingStore::Clipping& clipping) {
@@ -1347,6 +1346,14 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                               }),
           [this](const ActivityResult& result) {
             READING_STATS.resumeSession();
+            if (!result.isCancelled) {
+              if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
+                const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
+                currentSpineIndex = std::min(jump->spineIndex, maxSpine);
+                pendingPageJump = jump->page;
+                pendingParagraphIndex = UINT16_MAX;
+              }
+            }
             requestUpdate();
           });
       break;
