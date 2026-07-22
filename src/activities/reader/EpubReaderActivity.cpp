@@ -482,7 +482,8 @@ void EpubReaderActivity::loop() {
       const uint16_t pageNumber = static_cast<uint16_t>(section->currentPage);
       const bool wasBookmarked = bookmarkStore.has(spineIndex, pageNumber);
       const std::string snippet = wasBookmarked ? "" : extractBookmarkSnippet(*section);
-      const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet);
+      const uint32_t absIdx = wasBookmarked ? UINT32_MAX : section->getCumulativeWordOffset(pageNumber);
+      const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet, absIdx);
       bookmarkStore.save();
       if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
         ACHIEVEMENTS.recordBookmarkAdded();
@@ -742,7 +743,8 @@ void EpubReaderActivity::saveCurrentPageBookmark() {
   }
 
   const std::string snippet = extractBookmarkSnippet(*section);
-  const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet);
+  const uint32_t absWordStart = section->getCumulativeWordOffset(pageNumber);
+  const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet, absWordStart);
   bookmarkStore.save();
   if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
     ACHIEVEMENTS.recordBookmarkAdded();
@@ -912,6 +914,118 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
       renderer.fillRectDither(w.screenX - padX, w.screenY - padY, w.width + padX * 2, lineHeight + descenderPad, Color::LightGray);
       renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), true, EpdFontFamily::REGULAR);
     }
+  }
+}
+
+void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int marginLeft, int marginTop) {
+  if (bookmarkStore.isEmpty()) return;
+  if (!page || !section) return;
+
+  const uint16_t currentPageNum = static_cast<uint16_t>(section->currentPage);
+  const uint32_t pageStart = section->getCumulativeWordOffset(currentPageNum);
+  const int fontId = SETTINGS.getReaderFontId();
+  const int ascender = renderer.getFontAscenderSize(fontId);
+
+  // v4 bookmark: highlight the anchor word (absolute word index).
+  for (const auto& bm : bookmarkStore.getAll()) {
+    if (bm.spineIndex != static_cast<uint16_t>(currentSpineIndex)) continue;
+    if (bm.absoluteWordStart == UINT32_MAX) continue;
+    uint32_t globalIdx = 0;
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+      const auto& xPositions = block->getWordXpos();
+      const auto& words = block->getWords();
+      const size_t wc = std::min(words.size(), xPositions.size());
+      for (size_t wi = 0; wi < wc; ++wi) {
+        if (pageStart + globalIdx == bm.absoluteWordStart) {
+          const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+          const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
+          const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
+          renderer.fillRectDither(sx - 1, sy - 1, sw + 2, ascender + 6, Color::LightGray);
+          renderer.drawText(fontId, sx, sy, words[wi].c_str(), true, EpdFontFamily::REGULAR);
+          return;
+        }
+        ++globalIdx;
+      }
+    }
+    // v4 bookmark not on this page — continue to check v3 bookmarks below
+    break;  // only one v4 entry per page to check (first match wins)
+  }
+
+  // v3 (old) bookmark: text-match the snippet (3+ words, skip leading quotes).
+  for (const auto& bm : bookmarkStore.getAll()) {
+    if (bm.spineIndex != static_cast<uint16_t>(currentSpineIndex)) continue;
+
+    std::vector<std::string> tokens;
+    {
+      std::string tok;
+      for (char c : bm.snippet) {
+        if (c == ' ' || c == '\n' || c == '\r') { if (!tok.empty()) { tokens.push_back(tok); tok.clear(); } }
+        else { tok += c; }
+      }
+      if (!tok.empty()) tokens.push_back(tok);
+    }
+    size_t skip = 0;
+    while (skip < tokens.size() && tokens[skip].size() <= 1) ++skip;
+    if (tokens.size() < skip + 3) continue;
+    tokens.erase(tokens.begin(), tokens.begin() + skip);
+    const size_t minMatch = std::min(tokens.size(), size_t{3});
+
+    struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
+    std::vector<PW> pw;
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+      const auto& words = block->getWords();
+      const auto& xPositions = block->getWordXpos();
+      const size_t wc = std::min(words.size(), xPositions.size());
+      for (size_t wi = 0; wi < wc; ++wi) {
+        const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+        const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
+        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
+        pw.push_back({words[wi].c_str(), sx, sy, sw});
+      }
+    }
+    for (size_t start = 0; start + minMatch <= pw.size(); ++start) {
+      if (pw[start].t != tokens[0]) continue;
+      size_t m = 1;
+      for (size_t k = 1; k < minMatch && start + k < pw.size(); ++k) {
+        if (pw[start + k].t == tokens[k]) ++m; else break;
+      }
+      if (m < minMatch) continue;
+      int16_t hx = pw[start].x, hw = pw[start].w;
+      if (tokens[0].size() <= 2 && start + 1 < pw.size() && pw[start + 1].t == tokens[1])
+        hw = static_cast<int16_t>(pw[start + 1].x + pw[start + 1].w - hx);
+      renderer.fillRectDither(hx - 1, pw[start].y - 1, hw + 2, ascender + 6, Color::LightGray);
+      renderer.drawText(fontId, hx, pw[start].y, pw[start].t, true, EpdFontFamily::REGULAR);
+      return;
+    }
+  }
+
+  // v1/x fallback: bookmark with no snippet (or same pageNumber) — highlight first word
+  for (const auto& bm : bookmarkStore.getAll()) {
+    if (bm.spineIndex != static_cast<uint16_t>(currentSpineIndex)) continue;
+    if (bm.pageNumber != currentPageNum) continue;
+    if (!bm.snippet.empty()) continue;  // v3+ bookmarks already handled via text-match above
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block || block->wordCount() == 0) continue;
+      const auto& xPositions = block->getWordXpos();
+      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[0] + marginLeft);
+      const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, block->getWords()[0].c_str(), EpdFontFamily::REGULAR)));
+      renderer.fillRectDither(sx - 1, sy - 1, sw + 2, ascender + 6, Color::LightGray);
+      renderer.drawText(fontId, sx, sy, block->getWords()[0].c_str(), true, EpdFontFamily::REGULAR);
+      return;
+    }
+    return;
   }
 }
 
@@ -1497,14 +1611,29 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                              [this](const ActivityResult& result) {
                                READING_STATS.resumeSession();
                                if (!result.isCancelled) {
-                                 const auto& bookmark = std::get<BookmarkResult>(result.data);
-                                 if (currentSpineIndex != bookmark.spineIndex || !section ||
-                                     section->currentPage != static_cast<int>(bookmark.page)) {
+                                 const auto& bmResult = std::get<BookmarkResult>(result.data);
+                                 pendingBookmarkAbsoluteStart = UINT32_MAX;
+                                 pendingBookmarkSnippet.clear();
+                                 for (const auto& bm : bookmarkStore.getAll()) {
+                                   if (bm.spineIndex == bmResult.spineIndex && bm.pageNumber == bmResult.page) {
+                                     if (bm.absoluteWordStart != UINT32_MAX) {
+                                       pendingBookmarkAbsoluteStart = bm.absoluteWordStart;
+                                       break;
+                                     }
+                                     // v3 bookmark: use snippet for page resolution via text search
+                                     if (!bm.snippet.empty()) {
+                                       pendingBookmarkSnippet = bm.snippet;
+                                       break;
+                                     }
+                                   }
+                                 }
+                                   if (currentSpineIndex != bmResult.spineIndex || !section ||
+                                      section->currentPage != static_cast<int>(bmResult.page)) {
                                    RenderLock lock(*this);
-                                   currentSpineIndex = bookmark.spineIndex;
-                                   nextPageNumber = static_cast<int>(bookmark.page);
-                                   sessionProgressTouched = true;
-                                   section.reset();
+                                    currentSpineIndex = bmResult.spineIndex;
+                                    nextPageNumber = static_cast<int>(bmResult.page);
+                                    sessionProgressTouched = true;
+                                    section.reset();
                                  }
                                }
                              });
@@ -1982,6 +2111,80 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       pendingClippingAbsoluteStart = UINT32_MAX;
     }
 
+    // Resolve absolute bookmark word index to page number when jumping from View Bookmarks.
+    if (pendingBookmarkAbsoluteStart != UINT32_MAX && section->cumulativeWordCounts.size() > 1) {
+      const uint32_t targetWord = pendingBookmarkAbsoluteStart;
+      uint16_t resolvedPage = 0;
+      for (size_t p = 1; p < section->cumulativeWordCounts.size(); ++p) {
+        if (section->cumulativeWordCounts[p] > targetWord) {
+          resolvedPage = static_cast<uint16_t>(p - 1);
+          break;
+        }
+        resolvedPage = static_cast<uint16_t>(p - 1);
+      }
+      if (resolvedPage < section->pageCount) {
+        nextPageNumber = resolvedPage;
+        pendingPageJump.reset();
+      }
+      pendingBookmarkAbsoluteStart = UINT32_MAX;
+    }
+
+    // Resolve v3 bookmark snippet to page number via text search
+    if (!pendingBookmarkSnippet.empty() && section->cumulativeWordCounts.size() > 1) {
+      std::string firstWord;
+      std::string secondWord;
+      {
+        std::string tok;
+        bool gotFirst = false;
+        for (char c : pendingBookmarkSnippet) {
+          if (c == ' ' || c == '\n' || c == '\r') {
+            if (!tok.empty()) {
+              if (tok.size() > 1) {  // skip single-char tokens
+                if (!gotFirst) { firstWord = tok; gotFirst = true; }
+                else { secondWord = tok; break; }
+              }
+              tok.clear();
+            }
+          } else { tok += c; }
+        }
+        if (!gotFirst && tok.size() > 1) firstWord = tok;
+        else if (gotFirst && secondWord.empty() && tok.size() > 1) secondWord = tok;
+      }
+
+      if (!firstWord.empty()) {
+        // Search each page for the first word(s) of the snippet
+        bool found = false;
+        uint16_t resolvedPage = 0;
+        const int savedPage = section->currentPage;
+        for (uint16_t p = 0; p < section->pageCount && !found; ++p) {
+          section->currentPage = static_cast<int>(p);
+          auto pg = section->loadPageFromSectionFile();
+          if (!pg) continue;
+          bool pageMatch = false;
+          for (const auto& element : pg->elements) {
+            if (pageMatch) break;
+            if (!element || element->getTag() != TAG_PageLine) continue;
+            const auto& block = static_cast<const PageLine&>(*element).getBlock();
+            if (!block) continue;
+            const auto& words = block->getWords();
+            for (size_t wi = 0; wi < words.size(); ++wi) {
+              if (words[wi] != firstWord) continue;
+              if (secondWord.empty()) { pageMatch = true; break; }
+              if (wi + 1 < words.size() && words[wi + 1] == secondWord) { pageMatch = true; break; }
+            }
+          }
+          if (pageMatch) { resolvedPage = p; found = true; }
+        }
+        section->currentPage = savedPage;
+
+        if (found && resolvedPage < section->pageCount) {
+          nextPageNumber = resolvedPage;
+          pendingPageJump.reset();
+        }
+      }
+      pendingBookmarkSnippet.clear();
+    }
+
     if (pendingPageJump.has_value()) {
       if (*pendingPageJump >= section->pageCount && section->pageCount > 0) {
         section->currentPage = section->pageCount - 1;
@@ -2219,6 +2422,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
 
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
   renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
+  renderBookmarkHighlight(page, orientedMarginLeft, orientedMarginTop);
   renderClippingSelectionOverlay();
   renderStatusBar();
   fcm->logStats("bw_render");
