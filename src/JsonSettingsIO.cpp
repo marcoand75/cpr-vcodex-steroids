@@ -340,6 +340,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadToggle("embeddedStyle", s.embeddedStyle);
   loadToggle("hyphenationEnabled", s.hyphenationEnabled);
   loadEnum("bionicReading", s.bionicReading, CrossPointSettings::BIONIC_READING_MODE_COUNT);
+  loadToggle("guideReadingEnabled", s.guideReadingEnabled);
+  loadEnum("dotsSpacing", s.dotsSpacing, CrossPointSettings::DOTS_SPACING_COUNT);
+  loadEnum("epubRenderMode", s.epubRenderMode, CrossPointSettings::EPUB_RENDER_MODE_COUNT);
   loadEnum("orientation", s.orientation, CrossPointSettings::ORIENTATION_COUNT);
   loadToggle("extraParagraphSpacing", s.extraParagraphSpacing);
   loadToggle("forceParagraphIndents", s.forceParagraphIndents);
@@ -372,11 +375,11 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   if (!doc["longPressButtonBehavior"].isNull()) {
     loadEnum("longPressButtonBehavior", s.longPressButtonBehavior,
              CrossPointSettings::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
-  } else if (!doc["longPressChapterSkip"].isNull()) {
+  } else {
     s.longPressButtonBehavior = (doc["longPressChapterSkip"] | true) ? CrossPointSettings::LONG_PRESS_CHAPTER_SKIP
                                                                      : CrossPointSettings::LONG_PRESS_OFF;
-    if (needsResave) *needsResave = true;
   }
+  loadEnum("frontLongPressBehavior", s.frontLongPressBehavior, CrossPointSettings::FRONT_LONG_PRESS_BEHAVIOR_COUNT);
   {
     const uint8_t rawShortPwrBtn = doc["shortPwrBtn"] | s.shortPwrBtn;
     if (rawShortPwrBtn < static_cast<uint8_t>(CrossPointSettings::SHORT_PWRBTN_COUNT)) {
@@ -767,6 +770,9 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["embeddedStyle"] = s.embeddedStyle;
   doc["hyphenationEnabled"] = s.hyphenationEnabled;
   doc["bionicReading"] = s.bionicReading;
+  doc["guideReadingEnabled"] = s.guideReadingEnabled;
+  doc["dotsSpacing"] = s.dotsSpacing;
+  doc["epubRenderMode"] = s.epubRenderMode;
   doc["orientation"] = s.orientation;
   doc["extraParagraphSpacing"] = s.extraParagraphSpacing;
   doc["forceParagraphIndents"] = s.forceParagraphIndents;
@@ -780,6 +786,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["frontButtonFollowOrientation"] = s.frontButtonFollowOrientation;
   doc["longPressButtonBehavior"] = s.longPressButtonBehavior;
   doc["longPressChapterSkip"] = s.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP;
+  doc["frontLongPressBehavior"] = s.frontLongPressBehavior;
   doc["shortPwrBtn"] = s.shortPwrBtn;
   doc["tiltPageTurn"] = s.tiltPageTurn;
 

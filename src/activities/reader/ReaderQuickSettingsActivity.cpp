@@ -66,6 +66,11 @@ const std::vector<ReaderQuickSettingsActivity::QuickSetting>& ReaderQuickSetting
        QuickSettingType::Enum,
        &CrossPointSettings::bionicReading,
        {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}},
+       {StrId::STR_GUIDE_READING, QuickSettingType::Toggle, &CrossPointSettings::guideReadingEnabled},
+       {StrId::STR_DOTS_SPACING,
+        QuickSettingType::Enum,
+        &CrossPointSettings::dotsSpacing,
+        {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE}},
       {StrId::STR_ORIENTATION,
        QuickSettingType::Enum,
        &CrossPointSettings::orientation,
@@ -86,6 +91,10 @@ const std::vector<ReaderQuickSettingsActivity::QuickSetting>& ReaderQuickSetting
        QuickSettingType::Enum,
        &CrossPointSettings::imageRendering,
        {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}},
+      {StrId::STR_EPUB_RENDER_MODE,
+       QuickSettingType::Enum,
+       &CrossPointSettings::epubRenderMode,
+       {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}},
   };
   return quickSettings;
 }

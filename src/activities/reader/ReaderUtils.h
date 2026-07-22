@@ -48,6 +48,7 @@ struct PageTurnResult {
   bool prev;
   bool next;
   bool fromTilt;
+  bool fromFrontButton;  // true when triggered by Left/Right front buttons (not side buttons)
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
@@ -62,13 +63,15 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   const bool prev = usePress ? (input.wasPressed(MappedInputManager::Button::PageBack) || input.wasPressed(prevButton))
                              : (input.wasReleased(MappedInputManager::Button::PageBack) ||
                                 input.wasReleased(prevButton));
+  const bool frontPrev = !usePress && input.wasReleased(prevButton);
   const bool powerTurn = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
                          input.wasReleased(MappedInputManager::Button::Power);
   const bool next = usePress ? (input.wasPressed(MappedInputManager::Button::PageForward) || powerTurn ||
                                 input.wasPressed(nextButton))
                              : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
                                 input.wasReleased(nextButton));
-  return {tiltPrev || prev, tiltNext || next, tiltPrev || tiltNext};
+  const bool frontNext = !usePress && input.wasReleased(nextButton);
+  return {tiltPrev || prev, tiltNext || next, tiltPrev || tiltNext, frontPrev || frontNext};
 }
 
 inline bool hasNonConfirmNavigationInput(const MappedInputManager& input) {

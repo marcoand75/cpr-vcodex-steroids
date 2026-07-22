@@ -183,12 +183,22 @@ class CrossPointSettings {
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
-  // Page turn button long-press behavior
+  // Page turn button long-press behavior (side buttons)
   enum LONG_PRESS_BUTTON_BEHAVIOR {
     LONG_PRESS_OFF = 0,
     LONG_PRESS_CHAPTER_SKIP = 1,
     LONG_PRESS_ORIENTATION_CHANGE = 2,
+    LONG_PRESS_BOOKMARK = 3,
+    LONG_PRESS_CLIPPING = 4,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
+  };
+
+  // Front button long-press behavior (Left/Right front buttons)
+  enum FRONT_LONG_PRESS_BEHAVIOR {
+    FRONT_LONG_PRESS_OFF = 0,
+    FRONT_LONG_PRESS_BOOKMARK = 1,
+    FRONT_LONG_PRESS_CLIPPING = 2,
+    FRONT_LONG_PRESS_BEHAVIOR_COUNT
   };
 
   // UI Theme
@@ -367,7 +377,20 @@ class CrossPointSettings {
   uint8_t readerRefreshMode = READER_REFRESH_AUTO;
   uint8_t hyphenationEnabled = 0;
   uint8_t bionicReading = 0;
+  uint8_t guideReadingEnabled = 0;
+  // Dots Spacing: 0=Standard (16px), 1=Large (32px)
+  static constexpr uint8_t DOTS_SPACING_STANDARD = 0;
+  static constexpr uint8_t DOTS_SPACING_LARGE = 1;
+  static constexpr uint8_t DOTS_SPACING_COUNT = 2;
+  uint8_t dotsSpacing = DOTS_SPACING_STANDARD;
   char sdFontFamilyName[32] = "";
+
+  // EPUB Render Mode (Default / Balanced / Light)
+  static constexpr uint8_t EPUB_RENDER_DEFAULT = 0;
+  static constexpr uint8_t EPUB_RENDER_BALANCED = 1;
+  static constexpr uint8_t EPUB_RENDER_LIGHT = 2;
+  static constexpr uint8_t EPUB_RENDER_MODE_COUNT = 3;
+  uint8_t epubRenderMode = EPUB_RENDER_DEFAULT;
 
   // Reader screen margin settings
   uint8_t screenMargin = 5;
@@ -380,8 +403,10 @@ class CrossPointSettings {
   uint8_t koSyncAutoPushOnClose = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
-  // Page turn button long-press behavior
+  // Page turn button long-press behavior (side buttons)
   uint8_t longPressButtonBehavior = LONG_PRESS_CHAPTER_SKIP;
+  // Front button long-press behavior (Left/Right front buttons)
+  uint8_t frontLongPressBehavior = FRONT_LONG_PRESS_OFF;
   // UI Theme
   uint8_t uiTheme = LYRA_CUSTOM;
   // Experimental global dark mode for the device UI and supported readers.
@@ -447,6 +472,8 @@ class CrossPointSettings {
   uint8_t sleepShortcutOrder = 18;
   uint8_t opdsBrowserShortcut = SHORTCUT_HOME;
   uint8_t opdsBrowserShortcutOrder = 19;
+  uint8_t clippingsShortcut = SHORTCUT_APPS;
+  uint8_t clippingsShortcutOrder = 21;
   uint8_t browseFilesShortcutVisible = 1;
   // Legacy Stats shortcut visibility retained for settings.json migration to readingStatsShortcut.
   uint8_t statsShortcutVisible = 1;
@@ -468,6 +495,8 @@ class CrossPointSettings {
   uint8_t screenCleanShortcutVisible = 1;
   uint8_t sleepShortcutVisible = 1;
   uint8_t opdsBrowserShortcutVisible = 1;
+  uint8_t screenSaverShortcutVisible = 1;
+  uint8_t clippingsShortcutVisible = 1;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
@@ -489,7 +518,6 @@ class CrossPointSettings {
   uint8_t screenSaverWakeButton = SCREENSAVER_WAKE_ANY;
   uint8_t screenSaverShortcut = SHORTCUT_APPS;
   uint8_t screenSaverShortcutOrder = 20;
-  uint8_t screenSaverShortcutVisible = 1;
   // ScreenSaver text overlay
   char screenSaverText[128] = "";
   uint8_t screenSaverFontSize = SCREENSAVER_FONT_SMALL;

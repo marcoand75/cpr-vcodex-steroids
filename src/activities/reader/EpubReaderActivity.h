@@ -18,6 +18,9 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
+  uint32_t pendingClippingAbsoluteStart = UINT32_MAX;
+  uint32_t pendingBookmarkAbsoluteStart = UINT32_MAX;
+  std::string pendingBookmarkSnippet;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.
   std::string pendingAnchor;
@@ -70,6 +73,7 @@ class EpubReaderActivity final : public Activity {
   void exitClippingMode();
   void moveClippingSelection(int deltaRow, int deltaWord);
   void renderClippingSelectionOverlay();
+  void renderBookmarkHighlight(std::shared_ptr<Page> page, int marginLeft, int marginTop);
   void renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop);
   void createClippingFromSelection();
   void exportClippingToTextFile(const ClippingStore::Clipping& clipping);
@@ -94,6 +98,9 @@ class EpubReaderActivity final : public Activity {
     uint8_t embeddedStyle = 0;
     uint8_t hyphenationEnabled = 0;
     uint8_t bionicReading = 0;
+    uint8_t guideReadingEnabled = 0;
+    uint8_t dotsSpacing = 0;
+    uint8_t epubRenderMode = 0;
     uint8_t orientation = 0;
     uint8_t extraParagraphSpacing = 0;
     uint8_t forceParagraphIndents = 0;

@@ -16,6 +16,7 @@ class BookmarkStore {
     uint16_t spineIndex = 0;
     uint16_t pageNumber = 0;
     std::string snippet;
+    uint32_t absoluteWordStart = UINT32_MAX;  // v4: first word on the page, invariant across layout changes
   };
 
   void load(const std::string& cachePath, const std::string& bookId = "") {
@@ -96,6 +97,16 @@ class BookmarkStore {
         }
       }
 
+      // v4: absolute word index (first word on the bookmarked page)
+      if (version >= 4) {
+        if (file.read(reinterpret_cast<uint8_t*>(&bookmark.absoluteWordStart), sizeof(bookmark.absoluteWordStart)) !=
+            sizeof(bookmark.absoluteWordStart)) {
+          bookmarks.clear();
+          file.close();
+          return;
+        }
+      }
+
       bookmarks.push_back(bookmark);
     }
 
@@ -133,6 +144,7 @@ class BookmarkStore {
       if (snippetLen > 0) {
         ok = ok && file.write(reinterpret_cast<const uint8_t*>(bookmark.snippet.c_str()), snippetLen) == snippetLen;
       }
+      ok = ok && writePodChecked(bookmark.absoluteWordStart);
     }
 
     ok = ok && file.close();
@@ -144,7 +156,8 @@ class BookmarkStore {
     dirty = false;
   }
 
-  bool toggle(const uint16_t spineIndex, const uint16_t pageNumber, const std::string& snippet = "") {
+  bool toggle(const uint16_t spineIndex, const uint16_t pageNumber, const std::string& snippet = "",
+              const uint32_t absoluteWordStart = UINT32_MAX) {
     auto it = find(spineIndex, pageNumber);
     if (it != bookmarks.end()) {
       bookmarks.erase(it);
@@ -152,7 +165,7 @@ class BookmarkStore {
       return false;
     }
 
-    bookmarks.push_back({spineIndex, pageNumber, snippet.substr(0, MAX_SNIPPET_LEN)});
+    bookmarks.push_back({spineIndex, pageNumber, snippet.substr(0, MAX_SNIPPET_LEN), absoluteWordStart});
     dirty = true;
     return true;
   }
@@ -187,7 +200,7 @@ class BookmarkStore {
   void markDirty() { dirty = true; }
 
  private:
-  static constexpr uint8_t FILE_VERSION = 3;
+  static constexpr uint8_t FILE_VERSION = 4;
   static constexpr uint8_t MAX_SNIPPET_LEN = 80;
 
   std::vector<Bookmark> bookmarks;

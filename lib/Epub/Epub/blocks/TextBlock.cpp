@@ -226,28 +226,50 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
         drawDecorationLine(renderer, decoration.startX, underlineY, decoration.width);
       }
     }
+
+    // Guide Dot: stored as absolute X position within the line.
+    // x is the line's screen X, wordGuideDotXOffset[i] is the dot's absolute X
+    // within the line (centered between word i and word i+1).
+    if (i < wordGuideDotXOffset.size() && wordGuideDotXOffset[i] > 0) {
+      renderer.drawText(fontId, x + static_cast<int>(wordGuideDotXOffset[i]), wordY,
+                        "\xe2\x80\xa2", true, EpdFontFamily::REGULAR);
+    }
   }
 }
 
 bool TextBlock::serialize(FsFile& file) const {
   const bool hasFocusAnnotations = !wordFocusBoundary.empty() || !wordFocusSuffixX.empty();
+  const bool hasGuideDots = !wordGuideDotXOffset.empty();
+  const bool hasWordFlags = !wordFlags.empty();
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
-      (hasFocusAnnotations && (words.size() != wordFocusBoundary.size() || words.size() != wordFocusSuffixX.size()))) {
-    LOG_ERR("TXB", "Serialization failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u)\n",
+      (hasFocusAnnotations && (words.size() != wordFocusBoundary.size() || words.size() != wordFocusSuffixX.size())) ||
+      (hasGuideDots && words.size() != wordGuideDotXOffset.size()) ||
+      (hasWordFlags && words.size() != wordFlags.size())) {
+    LOG_ERR("TXB", "Serialization failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u, guides=%u, flags=%u)\n",
             (uint32_t)words.size(), (uint32_t)wordXpos.size(), (uint32_t)wordStyles.size(),
-            (uint32_t)wordFocusBoundary.size(), (uint32_t)wordFocusSuffixX.size());
+            (uint32_t)wordFocusBoundary.size(), (uint32_t)wordFocusSuffixX.size(),
+            (uint32_t)wordGuideDotXOffset.size(), (uint32_t)wordFlags.size());
     return false;
   }
+
+  // Serialization flags byte: bit0=focus, bit1=guideDots, bit2=wordFlags
+  uint8_t flags = (hasFocusAnnotations ? 0x01 : 0) | (hasGuideDots ? 0x02 : 0) | (hasWordFlags ? 0x04 : 0);
 
   // Word data
   serialization::writePod(file, static_cast<uint16_t>(words.size()));
   for (const auto& w : words) serialization::writeString(file, w);
   for (auto x : wordXpos) serialization::writePod(file, x);
   for (auto s : wordStyles) serialization::writePod(file, s);
-  serialization::writePod(file, static_cast<uint8_t>(hasFocusAnnotations ? 1 : 0));
+  serialization::writePod(file, flags);
   if (hasFocusAnnotations) {
     for (auto b : wordFocusBoundary) serialization::writePod(file, b);
     for (auto sx : wordFocusSuffixX) serialization::writePod(file, sx);
+  }
+  if (hasGuideDots) {
+    for (auto gx : wordGuideDotXOffset) serialization::writePod(file, gx);
+  }
+  if (hasWordFlags) {
+    for (auto f : wordFlags) serialization::writePod(file, f);
   }
 
   // Style (alignment + margins/padding/indent)
@@ -274,6 +296,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   std::vector<EpdFontFamily::Style> wordStyles;
   std::vector<uint8_t> wordFocusBoundary;
   std::vector<uint16_t> wordFocusSuffixX;
+  std::vector<uint16_t> wordGuideDotXOffset;
+  std::vector<uint8_t> wordFlags;
   BlockStyle blockStyle;
 
   // Word count
@@ -291,13 +315,21 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   for (auto& w : words) serialization::readString(file, w);
   for (auto& x : wordXpos) serialization::readPod(file, x);
   for (auto& s : wordStyles) serialization::readPod(file, s);
-  uint8_t hasFocusAnnotations = 0;
-  serialization::readPod(file, hasFocusAnnotations);
-  if (hasFocusAnnotations != 0) {
+  uint8_t flags = 0;
+  serialization::readPod(file, flags);
+  if (flags & 0x01) {
     wordFocusBoundary.resize(wc);
     wordFocusSuffixX.resize(wc);
     for (auto& b : wordFocusBoundary) serialization::readPod(file, b);
     for (auto& sx : wordFocusSuffixX) serialization::readPod(file, sx);
+  }
+  if (flags & 0x02) {
+    wordGuideDotXOffset.resize(wc);
+    for (auto& gx : wordGuideDotXOffset) serialization::readPod(file, gx);
+  }
+  if (flags & 0x04) {
+    wordFlags.resize(wc);
+    for (auto& f : wordFlags) serialization::readPod(file, f);
   }
 
   // Style (alignment + margins/padding/indent)
@@ -315,7 +347,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   serialization::readPod(file, blockStyle.textIndentDefined);
 
   auto* block = new (std::nothrow) TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles),
-                                             std::move(wordFocusBoundary), std::move(wordFocusSuffixX), blockStyle);
+                                             std::move(wordFocusBoundary), std::move(wordFocusSuffixX),
+                                             std::move(wordGuideDotXOffset), std::move(wordFlags), blockStyle);
   if (!block) {
     LOG_ERR("TXB", "Deserialization failed: could not allocate TextBlock");
     return nullptr;

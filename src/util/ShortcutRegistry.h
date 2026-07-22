@@ -29,6 +29,7 @@ enum class ShortcutId {
   Sleep,
   OpdsBrowser,
   ScreenSaver,
+  Clippings,
 };
 
 struct ShortcutDefinition {
@@ -41,8 +42,8 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 19>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 19> definitions = {
+inline const std::array<ShortcutDefinition, 20>& getShortcutDefinitions() {
+  static const std::array<ShortcutDefinition, 20> definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},
@@ -100,10 +101,13 @@ inline const std::array<ShortcutDefinition, 19>& getShortcutDefinitions() {
       ShortcutDefinition{ShortcutId::OpdsBrowser, StrId::STR_OPDS_BROWSER, StrId::STR_NONE_OPT, UIIcon::LibraryBook,
                          &CrossPointSettings::opdsBrowserShortcut, &CrossPointSettings::opdsBrowserShortcutOrder,
                          &CrossPointSettings::opdsBrowserShortcutVisible},
-      ShortcutDefinition{ShortcutId::ScreenSaver, StrId::STR_SCREENSAVER, StrId::STR_SCREENSAVER_APP_DESC,
-                         UIIcon::ScreenSaver, &CrossPointSettings::screenSaverShortcut,
-                         &CrossPointSettings::screenSaverShortcutOrder,
-                         &CrossPointSettings::screenSaverShortcutVisible},
+       ShortcutDefinition{ShortcutId::ScreenSaver, StrId::STR_SCREENSAVER, StrId::STR_SCREENSAVER_APP_DESC,
+                          UIIcon::ScreenSaver, &CrossPointSettings::screenSaverShortcut,
+                          &CrossPointSettings::screenSaverShortcutOrder,
+                          &CrossPointSettings::screenSaverShortcutVisible},
+       ShortcutDefinition{ShortcutId::Clippings, StrId::STR_CLIPPINGS, StrId::STR_CLIPPINGS_APP_DESC, UIIcon::File,
+                          &CrossPointSettings::clippingsShortcut, &CrossPointSettings::clippingsShortcutOrder,
+                          &CrossPointSettings::clippingsShortcutVisible},
   };
 
   return definitions;
