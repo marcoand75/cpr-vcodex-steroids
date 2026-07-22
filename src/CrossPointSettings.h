@@ -460,6 +460,8 @@ class CrossPointSettings {
   uint8_t sleepShortcutOrder = 18;
   uint8_t opdsBrowserShortcut = SHORTCUT_HOME;
   uint8_t opdsBrowserShortcutOrder = 19;
+  uint8_t clippingsShortcut = SHORTCUT_APPS;
+  uint8_t clippingsShortcutOrder = 21;
   uint8_t browseFilesShortcutVisible = 1;
   // Legacy Stats shortcut visibility retained for settings.json migration to readingStatsShortcut.
   uint8_t statsShortcutVisible = 1;
@@ -481,6 +483,8 @@ class CrossPointSettings {
   uint8_t screenCleanShortcutVisible = 1;
   uint8_t sleepShortcutVisible = 1;
   uint8_t opdsBrowserShortcutVisible = 1;
+  uint8_t screenSaverShortcutVisible = 1;
+  uint8_t clippingsShortcutVisible = 1;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
@@ -502,7 +506,6 @@ class CrossPointSettings {
   uint8_t screenSaverWakeButton = SCREENSAVER_WAKE_ANY;
   uint8_t screenSaverShortcut = SHORTCUT_APPS;
   uint8_t screenSaverShortcutOrder = 20;
-  uint8_t screenSaverShortcutVisible = 1;
   // ScreenSaver text overlay
   char screenSaverText[128] = "";
   uint8_t screenSaverFontSize = SCREENSAVER_FONT_SMALL;

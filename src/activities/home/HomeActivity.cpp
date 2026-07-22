@@ -43,6 +43,7 @@
 #include "activities/apps/ReadingStatsActivity.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/apps/ScreenSaverActivity.h"
+#include "activities/apps/ClippingsAppActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/home/BookContextMenuActivity.h"
@@ -1283,6 +1284,10 @@ void HomeActivity::loop() {
           break;
         case ShortcutId::ScreenSaver:
           startActivityForResult(std::make_unique<ScreenSaverActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Clippings:
+          startActivityForResult(std::make_unique<ClippingsAppActivity>(renderer, mappedInput),
                                  [this](const ActivityResult&) { requestFreshHomeRender(true); });
           break;
         case ShortcutId::OpdsBrowser:

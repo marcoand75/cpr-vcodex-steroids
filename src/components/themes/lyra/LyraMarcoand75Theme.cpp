@@ -21,6 +21,7 @@
 #include "components/icons/calendar_time.h"
 #include "components/icons/calibre.h"
 #include "components/icons/cleanmonitor.h"
+#include "components/icons/ClipIcon32.h"
 #include "components/icons/cover.h"
 #include "components/icons/delete_file.h"
 #include "components/icons/dictionary.h"
@@ -75,7 +76,7 @@ constexpr int kCenterOutlineW = 4;
 constexpr int kMenuIconSize = 32;
 constexpr int kMenuIconPad = 14;
 constexpr int kHighlightPad = 12;
-constexpr int kVisibleMenuSlots = 5;
+constexpr int kVisibleMenuSlots = 6;
 
 // Data panel layout
 constexpr int kDotsToPanelGap = 6;
@@ -137,6 +138,7 @@ const uint8_t* iconForName(UIIcon icon) {
     case UIIcon::NotificationUnread: return NotificationUnreadIcon;
     case UIIcon::FileTransfer: return FileTransferIcon;
     case UIIcon::Calibre: return CalibreIcon;
+    case UIIcon::File: return ClipIcon32;
     default: return nullptr;
   }
 }
