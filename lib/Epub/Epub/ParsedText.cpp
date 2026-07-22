@@ -271,16 +271,19 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   auto wordWidths = calculateWordWidths(renderer, fontId);
 
   std::vector<size_t> lineBreakIndices;
+  std::vector<int16_t> naturalGaps;
   if (hyphenationEnabled) {
     // Use greedy layout that can split words mid-loop when a hyphenated prefix fits.
+    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues);
     lineBreakIndices = computeHyphenatedLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues);
   } else {
-    lineBreakIndices = computeLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues);
+    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues);
+    lineBreakIndices = computeLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues, naturalGaps);
   }
   const size_t lineCount = includeLastLine ? lineBreakIndices.size() : lineBreakIndices.size() - 1;
 
   for (size_t i = 0; i < lineCount; ++i) {
-    extractLine(i, pageWidth, wordWidths, wordContinues, lineBreakIndices, processLine, renderer, fontId);
+    extractLine(i, pageWidth, wordWidths, wordContinues, lineBreakIndices, processLine, renderer, fontId, naturalGaps);
   }
 
   // Remove consumed words so size() reflects only remaining words
@@ -305,8 +308,28 @@ std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& rendere
   return wordWidths;
 }
 
+std::vector<int16_t> ParsedText::computeNaturalGaps(const GfxRenderer& renderer, const int fontId,
+                                                    const std::vector<uint16_t>& wordWidths,
+                                                    const std::vector<bool>& continuesVec) {
+  const size_t totalWordCount = words.size();
+  constexpr int GUIDE_DOT_MIN_GAP = 16;
+  std::vector<int16_t> naturalGaps(totalWordCount, 0);
+  for (size_t j = 1; j < totalWordCount; ++j) {
+    if (continuesVec[j]) {
+      naturalGaps[j] = static_cast<int16_t>(
+          renderer.getKerning(fontId, lastCodepoint(words[j - 1]), firstCodepoint(words[j]), wordStyles[j - 1]));
+    } else {
+      const int normalGap = static_cast<int>(renderer.getSpaceAdvance(fontId, lastCodepoint(words[j - 1]),
+                                                                       firstCodepoint(words[j]), wordStyles[j - 1]));
+      naturalGaps[j] = static_cast<int16_t>(guideReadingEnabled ? std::max(GUIDE_DOT_MIN_GAP, normalGap) : normalGap);
+    }
+  }
+  return naturalGaps;
+}
+
 std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, const int fontId, const int pageWidth,
-                                                  std::vector<uint16_t>& wordWidths, std::vector<bool>& continuesVec) {
+                                                  std::vector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
+                                                  const std::vector<int16_t>& naturalGaps) {
   if (words.empty()) {
     return {};
   }
@@ -352,14 +375,10 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
     const int effectivePageWidth = i == 0 ? pageWidth - firstLineIndent : pageWidth;
 
     for (size_t j = i; j < totalWordCount; ++j) {
-      // Add space before word j, unless it's the first word on the line or a continuation
+      // Add space before word j, unless it's the first word on the line
       int gap = 0;
-      if (j > static_cast<size_t>(i) && !continuesVec[j]) {
-        gap =
-            renderer.getSpaceAdvance(fontId, lastCodepoint(words[j - 1]), firstCodepoint(words[j]), wordStyles[j - 1]);
-      } else if (j > static_cast<size_t>(i) && continuesVec[j]) {
-        // Cross-boundary kerning for continuation words (e.g. nonbreaking spaces, attached punctuation)
-        gap = renderer.getKerning(fontId, lastCodepoint(words[j - 1]), firstCodepoint(words[j]), wordStyles[j - 1]);
+      if (j > static_cast<size_t>(i)) {
+        gap = static_cast<int>(naturalGaps[j]);
       }
       currlen += wordWidths[j] + gap;
 
@@ -480,8 +499,10 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
       const bool isFirstWord = currentIndex == lineStart;
       int spacing = 0;
       if (!isFirstWord && !continuesVec[currentIndex]) {
-        spacing = renderer.getSpaceAdvance(fontId, lastCodepoint(words[currentIndex - 1]),
-                                           firstCodepoint(words[currentIndex]), wordStyles[currentIndex - 1]);
+        const int normalGap = static_cast<int>(renderer.getSpaceAdvance(fontId, lastCodepoint(words[currentIndex - 1]),
+                                                                         firstCodepoint(words[currentIndex]),
+                                                                         wordStyles[currentIndex - 1]));
+        spacing = guideReadingEnabled ? std::max(16, normalGap) : normalGap;
       } else if (!isFirstWord && continuesVec[currentIndex]) {
         // Cross-boundary kerning for continuation words (e.g. nonbreaking spaces, attached punctuation)
         spacing = renderer.getKerning(fontId, lastCodepoint(words[currentIndex - 1]),
@@ -620,7 +641,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
 void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const std::vector<uint16_t>& wordWidths,
                              const std::vector<bool>& continuesVec, const std::vector<size_t>& lineBreakIndices,
                              const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
-                             const GfxRenderer& renderer, const int fontId) {
+                             const GfxRenderer& renderer, const int fontId, const std::vector<int16_t>& naturalGaps) {
   const size_t lineBreak = lineBreakIndices[breakIndex];
   const size_t lastBreakAt = breakIndex > 0 ? lineBreakIndices[breakIndex - 1] : 0;
   const size_t lineWordCount = lineBreak - lastBreakAt;
@@ -648,9 +669,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     // Count gaps: each word after the first creates a gap, unless it's a continuation
     if (wordIdx > 0 && !continuesVec[lastBreakAt + wordIdx]) {
       actualGapCount++;
-      totalNaturalGaps +=
-          renderer.getSpaceAdvance(fontId, lastCodepoint(words[lastBreakAt + wordIdx - 1]),
-                                   firstCodepoint(words[lastBreakAt + wordIdx]), wordStyles[lastBreakAt + wordIdx - 1]);
+      totalNaturalGaps += static_cast<int>(naturalGaps[lastBreakAt + wordIdx]);
     } else if (wordIdx > 0 && continuesVec[lastBreakAt + wordIdx]) {
       // Non-breaking space tokens (" " with continues=true) are visible, stretchable spaces —
       // count them as justifiable gaps so justifyExtra is distributed to them too.
@@ -707,9 +726,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     } else {
       int gap = 0;
       if (wordIdx + 1 < lineWordCount) {
-        gap = renderer.getSpaceAdvance(fontId, lastCodepoint(words[lastBreakAt + wordIdx]),
-                                       firstCodepoint(words[lastBreakAt + wordIdx + 1]),
-                                       wordStyles[lastBreakAt + wordIdx]);
+        gap = static_cast<int>(naturalGaps[lastBreakAt + wordIdx + 1]);
       }
       if (blockStyle.alignment == CssTextAlign::Justify && !isLastLine) {
         gap += justifyExtra;
@@ -729,33 +746,22 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
-  // Guide Dots: calculate X offset for middle dot after each word.
-  // Matches CrossInk's approach: dot is stored at index i-1 (the word it follows),
-  // offset relative to that word's X position (lineXPos[i-1]).
-  // The dot sits in the gap between word i-1 and word i, positioned using font metrics
-  // so the dot is centered with proper spacing on both sides.
+  // Guide Dots: store absolute X position of each dot within the line,
+  // centered exactly in the gap between word i-1 and word i.
   std::vector<uint16_t> lineGuideDotXOffset;
-  if (guideReadingEnabled && lineWords.size() > 1) {
+  if (guideReadingEnabled) {
     lineGuideDotXOffset.assign(lineWords.size(), 0);
-    // Cache font metrics for dots (constant for this render pass)
-    const int dotWidth = renderer.getTextAdvanceX(fontId, "\xc2\xb7", EpdFontFamily::REGULAR);
+    const int bulletAdvance = renderer.getTextAdvanceX(fontId, "\xe2\x80\xa2", EpdFontFamily::REGULAR);
     for (size_t i = 1; i < lineWords.size(); i++) {
-      const bool attachesToPrevious = (lastBreakAt + i < wordContinues.size()) && wordContinues[lastBreakAt + i];
-      if (attachesToPrevious) continue;
-
-      // CrossInk places the dot at: lineXPos[i] - guideDotSecondGap - dotWidth
-      // guideDotSecondGap = space between dot end and word start
-      // We approximate through the natural gap width:
-      const int wordStart = lineXPos[i];
       const int prevWordEnd = lineXPos[i - 1] + static_cast<int>(wordWidths[lastBreakAt + i - 1]);
-      const int gap = wordStart - prevWordEnd;
-      if (gap > dotWidth) {
-        // Center the dot in the gap: position = prevWordEnd + (gap - dotWidth) / 2
-        // Offset from word i-1's start: (gap - dotWidth) / 2 + wordWidths[i-1]
-        const int dotPixel = prevWordEnd + (gap - dotWidth) / 2;
-        const int dotOffset = dotPixel - lineXPos[i - 1];
-        lineGuideDotXOffset[i - 1] = static_cast<uint16_t>(std::clamp(dotOffset, 0, static_cast<int>(UINT16_MAX)));
-      }
+      const int actualGap = lineXPos[i] - prevWordEnd;
+      if (actualGap <= 0) continue;
+      // Center of the gap: prevWordEnd + actualGap/2.
+      // Then shift left by bulletAdvance/2 so the bullet's center, not its left edge,
+      // lands at the gap center.
+      const int gapCenter = prevWordEnd + actualGap / 2;
+      const int dotX = gapCenter - bulletAdvance / 2;
+      lineGuideDotXOffset[i - 1] = static_cast<uint16_t>(std::max(0, std::min(dotX, static_cast<int>(UINT16_MAX))));
     }
   }
 
@@ -797,6 +803,11 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     if (wordIsFocusSuffix[lastBreakAt + i] && !outWords.empty()) {
       // Focus suffix: merge string into the preceding bold-prefix entry.
       outWords.back() += lineWords[i];
+      // The dot for the merged word is the one AFTER the suffix (index i),
+      // replacing the dot that was between prefix and suffix (index i-1).
+      if (guideReadingEnabled && i < lineGuideDotXOffset.size() && !outGuideDotXOffset.empty()) {
+        outGuideDotXOffset.back() = lineGuideDotXOffset[i];
+      }
     } else {
       // Normal word: check for a following focus suffix to record the byte boundary.
       uint8_t boundary = 0;

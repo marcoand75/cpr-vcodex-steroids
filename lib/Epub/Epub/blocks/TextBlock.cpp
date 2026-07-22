@@ -227,12 +227,12 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       }
     }
 
-    // Guide Dot: draw a middle dot after the current word at the stored X offset.
-    // wordGuideDotXOffset[i] is the offset from word[i]'s start to the dot position.
-    // The dot sits in the gap between word i and word i+1.
+    // Guide Dot: stored as absolute X position within the line.
+    // x is the line's screen X, wordGuideDotXOffset[i] is the dot's absolute X
+    // within the line (centered between word i and word i+1).
     if (i < wordGuideDotXOffset.size() && wordGuideDotXOffset[i] > 0) {
-      const int dotX = wordX + static_cast<int>(wordGuideDotXOffset[i]);
-      renderer.drawText(fontId, dotX, wordY, "\xc2\xb7", true, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, x + static_cast<int>(wordGuideDotXOffset[i]), wordY,
+                        "\xe2\x80\xa2", true, EpdFontFamily::REGULAR);
     }
   }
 }
