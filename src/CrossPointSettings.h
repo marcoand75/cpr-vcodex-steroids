@@ -183,12 +183,22 @@ class CrossPointSettings {
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
-  // Page turn button long-press behavior
+  // Page turn button long-press behavior (side buttons)
   enum LONG_PRESS_BUTTON_BEHAVIOR {
     LONG_PRESS_OFF = 0,
     LONG_PRESS_CHAPTER_SKIP = 1,
     LONG_PRESS_ORIENTATION_CHANGE = 2,
+    LONG_PRESS_BOOKMARK = 3,
+    LONG_PRESS_CLIPPING = 4,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
+  };
+
+  // Front button long-press behavior (Left/Right front buttons)
+  enum FRONT_LONG_PRESS_BEHAVIOR {
+    FRONT_LONG_PRESS_OFF = 0,
+    FRONT_LONG_PRESS_BOOKMARK = 1,
+    FRONT_LONG_PRESS_CLIPPING = 2,
+    FRONT_LONG_PRESS_BEHAVIOR_COUNT
   };
 
   // UI Theme
@@ -393,8 +403,10 @@ class CrossPointSettings {
   uint8_t koSyncAutoPushOnClose = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
-  // Page turn button long-press behavior
+  // Page turn button long-press behavior (side buttons)
   uint8_t longPressButtonBehavior = LONG_PRESS_CHAPTER_SKIP;
+  // Front button long-press behavior (Left/Right front buttons)
+  uint8_t frontLongPressBehavior = FRONT_LONG_PRESS_OFF;
   // UI Theme
   uint8_t uiTheme = LYRA_CUSTOM;
   // Experimental global dark mode for the device UI and supported readers.

@@ -266,7 +266,12 @@ constexpr StrId OPT_EPUB_RENDER_MODE[] = {StrId::STR_STATE_DEFAULT, StrId::STR_B
 constexpr StrId OPT_DOTS_SPACING[] = {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE};
 constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV};
 constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                             StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION};
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING};
+constexpr StrId OPT_FRONT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING};
 constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
                                    StrId::STR_TOGGLE_STATUS_BAR};
 constexpr StrId OPT_TILT_PAGE_TURN[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED};
@@ -402,6 +407,8 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
                StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_LONG_PRESS_BEHAVIOR, longPressButtonBehavior, OPT_LONG_PRESS_BEHAVIOR,
              "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
+    WEB_ENUM(StrId::STR_FRONT_LONG_PRESS_BEHAVIOR, frontLongPressBehavior, OPT_FRONT_LONG_PRESS_BEHAVIOR,
+             "frontLongPressBehavior", StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_SHORT_PWR_BTN, shortPwrBtn, OPT_SHORT_PWR, "shortPwrBtn", StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_TILT_PAGE_TURN, tiltPageTurn, OPT_TILT_PAGE_TURN, "tiltPageTurn", StrId::STR_CAT_CONTROLS),
 

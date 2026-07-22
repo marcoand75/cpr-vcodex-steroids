@@ -565,7 +565,7 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton] = ReaderUtils::detectPageTurn(mappedInput);
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -592,6 +592,8 @@ void EpubReaderActivity::loop() {
   }
 
   const bool longPress = !fromTilt && mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+  // Front buttons use a separate behavior setting (Bookmarks/Clippings only, no Chapter Skip or Orientation)
+  const bool frontLongPress = !fromTilt && fromFrontButton && longPress;
 
   // Don't skip chapter after screenshot
   if (gpio.wasReleased(HalGPIO::BTN_POWER) && gpio.wasReleased(HalGPIO::BTN_DOWN)) {
@@ -638,6 +640,46 @@ void EpubReaderActivity::loop() {
     applyOrientation(newOrientation);
     requestUpdate();
     return;
+  }
+
+  // Side button long-press: Bookmarks
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_BOOKMARK) {
+    if (prevTriggered) {
+      saveCurrentPageBookmark();
+    } else {
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
+    }
+    return;
+  }
+
+  // Side button long-press: Clippings
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CLIPPING) {
+    if (prevTriggered) {
+      enterClippingMode();
+    } else {
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS);
+    }
+    return;
+  }
+
+  // Front button long-press
+  if (frontLongPress) {
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK) {
+      if (prevTriggered) {
+        saveCurrentPageBookmark();
+      } else {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
+      }
+      return;
+    }
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_CLIPPING) {
+      if (prevTriggered) {
+        enterClippingMode();
+      } else {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS);
+      }
+      return;
+    }
   }
 
   // No current section, attempt to rerender the book
