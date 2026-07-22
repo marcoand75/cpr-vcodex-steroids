@@ -118,6 +118,8 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
       SettingInfo::Enum(StrId::STR_BIONIC_READING, &CrossPointSettings::bionicReading,
                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}),
       SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled),
+      SettingInfo::Enum(StrId::STR_DOTS_SPACING, &CrossPointSettings::dotsSpacing,
+                        {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE}),
       SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
                         {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
       SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing),

@@ -1193,6 +1193,8 @@ EpubReaderActivity::ReaderSettingsSnapshot EpubReaderActivity::captureReaderSett
       SETTINGS.hyphenationEnabled,
       SETTINGS.bionicReading,
       SETTINGS.guideReadingEnabled,
+      SETTINGS.dotsSpacing,
+      SETTINGS.epubRenderMode,
       SETTINGS.orientation,
       SETTINGS.extraParagraphSpacing,
       SETTINGS.forceParagraphIndents,
@@ -1216,7 +1218,10 @@ void EpubReaderActivity::applyReaderSettingsChanges(const ReaderSettingsSnapshot
       before.hyphenationEnabled != SETTINGS.hyphenationEnabled ||
       before.extraParagraphSpacing != SETTINGS.extraParagraphSpacing ||
       before.forceParagraphIndents != SETTINGS.forceParagraphIndents || bionicNormalLayoutChanged ||
-      before.imageRendering != SETTINGS.imageRendering;
+      before.imageRendering != SETTINGS.imageRendering ||
+      before.guideReadingEnabled != SETTINGS.guideReadingEnabled ||
+      before.dotsSpacing != SETTINGS.dotsSpacing ||
+      before.epubRenderMode != SETTINGS.epubRenderMode;
   const bool orientationChanged = before.orientation != SETTINGS.orientation;
   const bool refreshPolicyChanged =
       before.refreshFrequency != SETTINGS.refreshFrequency || before.readerRefreshMode != SETTINGS.readerRefreshMode;
@@ -1759,6 +1764,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
 
+    // Compute Guide Dot minimum gap: 0=off, 16=standard, 32=large
+    const uint8_t guideDotMinGap = SETTINGS.guideReadingEnabled
+                                       ? (SETTINGS.dotsSpacing == CrossPointSettings::DOTS_SPACING_LARGE ? 32u : 16u)
+                                       : 0u;
+
     // EPUB Render Mode fallback chain
     const uint8_t userRenderMode = SETTINGS.epubRenderMode;
     const auto fallback = renderModeFallbackChain(userRenderMode);
@@ -1779,7 +1789,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                     SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                     SETTINGS.imageRendering,
                                     SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                    SETTINGS.guideReadingEnabled != 0, attemptMode)) {
+                                    guideDotMinGap, attemptMode)) {
         LOG_DBG("ERS", "Section cache found (renderMode=%u, suffix=%s)", attemptMode,
                 cacheSuffix ? cacheSuffix : "");
         sectionLoadSuccess = true;
@@ -1798,7 +1808,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
               SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
               popupFn,
               SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-              SETTINGS.guideReadingEnabled != 0, attemptMode)) {
+              guideDotMinGap, attemptMode)) {
         releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section cache build");
         sectionLoadSuccess = true;
         usedRenderMode = attemptMode;
@@ -1964,6 +1974,9 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   // Use current render mode for silent indexing — the primary mode.
   // Only the primary mode is indexed silently; fallback modes are built on-demand.
   const uint8_t userRenderMode = SETTINGS.epubRenderMode;
+  const uint8_t guideDotMinGap = SETTINGS.guideReadingEnabled
+                                     ? (SETTINGS.dotsSpacing == CrossPointSettings::DOTS_SPACING_LARGE ? 32u : 16u)
+                                     : 0u;
   const char* cacheSuffix = sectionCacheSuffixForRenderMode(userRenderMode);
   Section nextSection(epub, nextSpineIndex, renderer, cacheSuffix);
   const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
@@ -1973,7 +1986,7 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                     SETTINGS.imageRendering,
                                     SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                    SETTINGS.guideReadingEnabled != 0, userRenderMode)) {
+                                    guideDotMinGap, userRenderMode)) {
     return;
   }
 
@@ -1989,7 +2002,7 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                       SETTINGS.imageRendering, nullptr,
                                       SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                      SETTINGS.guideReadingEnabled != 0, userRenderMode)) {
+                                      guideDotMinGap, userRenderMode)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   } else {
     releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent section cache build");

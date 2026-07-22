@@ -341,6 +341,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadToggle("hyphenationEnabled", s.hyphenationEnabled);
   loadEnum("bionicReading", s.bionicReading, CrossPointSettings::BIONIC_READING_MODE_COUNT);
   loadToggle("guideReadingEnabled", s.guideReadingEnabled);
+  loadEnum("dotsSpacing", s.dotsSpacing, CrossPointSettings::DOTS_SPACING_COUNT);
   loadEnum("epubRenderMode", s.epubRenderMode, CrossPointSettings::EPUB_RENDER_MODE_COUNT);
   loadEnum("orientation", s.orientation, CrossPointSettings::ORIENTATION_COUNT);
   loadToggle("extraParagraphSpacing", s.extraParagraphSpacing);
@@ -770,6 +771,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["hyphenationEnabled"] = s.hyphenationEnabled;
   doc["bionicReading"] = s.bionicReading;
   doc["guideReadingEnabled"] = s.guideReadingEnabled;
+  doc["dotsSpacing"] = s.dotsSpacing;
   doc["epubRenderMode"] = s.epubRenderMode;
   doc["orientation"] = s.orientation;
   doc["extraParagraphSpacing"] = s.extraParagraphSpacing;

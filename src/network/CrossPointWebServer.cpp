@@ -263,6 +263,7 @@ constexpr StrId OPT_READER_REFRESH[] = {StrId::STR_REFRESH_MODE_AUTO, StrId::STR
                                         StrId::STR_REFRESH_MODE_HALF, StrId::STR_REFRESH_MODE_FULL};
 constexpr StrId OPT_IMAGES[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS};
 constexpr StrId OPT_EPUB_RENDER_MODE[] = {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT};
+constexpr StrId OPT_DOTS_SPACING[] = {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE};
 constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV};
 constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                              StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION};
@@ -383,6 +384,7 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_TOGGLE(StrId::STR_HYPHENATION, hyphenationEnabled, "hyphenationEnabled", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_BIONIC_READING, bionicReading, OPT_BIONIC, "bionicReading", StrId::STR_CAT_READER),
     WEB_TOGGLE(StrId::STR_GUIDE_READING, guideReadingEnabled, "guideReadingEnabled", StrId::STR_CAT_READER),
+    WEB_ENUM(StrId::STR_DOTS_SPACING, dotsSpacing, OPT_DOTS_SPACING, "dotsSpacing", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_ORIENTATION, orientation, OPT_ORIENTATION, "orientation", StrId::STR_CAT_READER),
     WEB_TOGGLE(StrId::STR_EXTRA_SPACING, extraParagraphSpacing, "extraParagraphSpacing", StrId::STR_CAT_READER),
     WEB_TOGGLE(StrId::STR_FORCE_PARAGRAPH_INDENTS, forceParagraphIndents, "forceParagraphIndents",

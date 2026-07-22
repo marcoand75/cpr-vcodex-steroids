@@ -368,6 +368,11 @@ class CrossPointSettings {
   uint8_t hyphenationEnabled = 0;
   uint8_t bionicReading = 0;
   uint8_t guideReadingEnabled = 0;
+  // Dots Spacing: 0=Standard (16px), 1=Large (32px)
+  static constexpr uint8_t DOTS_SPACING_STANDARD = 0;
+  static constexpr uint8_t DOTS_SPACING_LARGE = 1;
+  static constexpr uint8_t DOTS_SPACING_COUNT = 2;
+  uint8_t dotsSpacing = DOTS_SPACING_STANDARD;
   char sdFontFamilyName[32] = "";
 
   // EPUB Render Mode (Default / Balanced / Light)

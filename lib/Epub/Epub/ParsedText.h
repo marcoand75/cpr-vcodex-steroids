@@ -22,7 +22,7 @@ class ParsedText {
   bool forceParagraphIndents;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
-  bool guideReadingEnabled;
+  uint8_t guideDotMinGap = 0;  // 0=off, 16=standard, 32=large (pixels)
   bool firstLineIndentPending = true;
 
   void prepareParagraphIndent(const GfxRenderer& renderer, int fontId);
@@ -44,15 +44,15 @@ class ParsedText {
 
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
-                      const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
-                      const bool guideReadingEnabled = false,
-                      const BlockStyle& blockStyle = BlockStyle())
+                       const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                       const uint8_t guideDotMinGap = 0,
+                       const BlockStyle& blockStyle = BlockStyle())
       : blockStyle(blockStyle),
         extraParagraphSpacing(extraParagraphSpacing),
         forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled),
-        guideReadingEnabled(guideReadingEnabled) {}
+        guideDotMinGap(guideDotMinGap) {}
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false);

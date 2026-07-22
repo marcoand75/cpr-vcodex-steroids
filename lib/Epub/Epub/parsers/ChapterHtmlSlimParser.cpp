@@ -579,7 +579,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
     return;
   }
   currentTextBlock.reset(new (std::nothrow) ParsedText(extraParagraphSpacing, forceParagraphIndents, hyphenationEnabled,
-                                                       focusReadingEnabled, guideReadingEnabled, blockStyle));
+                                                       focusReadingEnabled, guideDotMinGap, blockStyle));
   if (!currentTextBlock) {
     const auto heap = MemoryBudget::snapshot();
     LOG_ERR("EHP", "Failed to create text block (%u free, %u max alloc)", heap.freeHeap, heap.maxAllocHeap);

@@ -95,6 +95,8 @@ class EpubReaderActivity final : public Activity {
     uint8_t hyphenationEnabled = 0;
     uint8_t bionicReading = 0;
     uint8_t guideReadingEnabled = 0;
+    uint8_t dotsSpacing = 0;
+    uint8_t epubRenderMode = 0;
     uint8_t orientation = 0;
     uint8_t extraParagraphSpacing = 0;
     uint8_t forceParagraphIndents = 0;
