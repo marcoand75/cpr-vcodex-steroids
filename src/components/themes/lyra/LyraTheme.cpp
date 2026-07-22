@@ -21,6 +21,8 @@
 #include "components/icons/cover.h"
 #include "components/icons/file.h"
 #include "components/icons/file24.h"
+#include "components/icons/ClipIcon.h"
+#include "components/icons/ClipIcon32.h"
 #include "components/icons/folder.h"
 #include "components/icons/folder24.h"
 #include "components/icons/heart.h"
@@ -212,7 +214,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::Book:
         return Book24Icon;
       case UIIcon::File:
-        return File24Icon;
+        return ClipIcon;
       case UIIcon::Trophy:
         return Trophy24Icon;
       case UIIcon::Heart:
@@ -261,7 +263,7 @@ const uint8_t* iconForName(UIIcon icon, int size) {
       case UIIcon::Book:
         return BookIcon;
       case UIIcon::File:
-        return FileIcon;
+        return ClipIcon32;
       case UIIcon::Recent:
         return RecentIcon;
       case UIIcon::Settings:

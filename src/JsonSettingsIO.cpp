@@ -588,6 +588,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   s.screenSaverShortcut = clamp(doc["screenSaverShortcut"] | s.screenSaverShortcut, shortcutLocationCount, s.screenSaverShortcut);
   s.screenSaverShortcutOrder = clamp(doc["screenSaverShortcutOrder"] | s.screenSaverShortcutOrder, shortcutOrderCount, s.screenSaverShortcutOrder);
   s.screenSaverShortcutVisible = clamp(doc["screenSaverShortcutVisible"] | s.screenSaverShortcutVisible, static_cast<uint8_t>(2), s.screenSaverShortcutVisible);
+  s.clippingsShortcut = clamp(doc["clippingsShortcut"] | s.clippingsShortcut, shortcutLocationCount, s.clippingsShortcut);
+  s.clippingsShortcutOrder = clamp(doc["clippingsShortcutOrder"] | s.clippingsShortcutOrder, shortcutOrderCount, s.clippingsShortcutOrder);
+  s.clippingsShortcutVisible = clamp(doc["clippingsShortcutVisible"] | s.clippingsShortcutVisible, static_cast<uint8_t>(2), s.clippingsShortcutVisible);
   s.achievementsShortcutVisible = clamp(doc["achievementsShortcutVisible"] | s.achievementsShortcutVisible,
                                         static_cast<uint8_t>(2), s.achievementsShortcutVisible);
   s.ifFoundShortcutVisible = clamp(doc["ifFoundShortcutVisible"] | s.ifFoundShortcutVisible, static_cast<uint8_t>(2),
@@ -930,6 +933,9 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["screenSaverShortcut"] = s.screenSaverShortcut;
   doc["screenSaverShortcutOrder"] = s.screenSaverShortcutOrder;
   doc["screenSaverShortcutVisible"] = s.screenSaverShortcutVisible;
+  doc["clippingsShortcut"] = s.clippingsShortcut;
+  doc["clippingsShortcutOrder"] = s.clippingsShortcutOrder;
+  doc["clippingsShortcutVisible"] = s.clippingsShortcutVisible;
   doc["achievementsShortcutVisible"] = s.achievementsShortcutVisible;
   doc["ifFoundShortcutVisible"] = s.ifFoundShortcutVisible;
   doc["readMeShortcutVisible"] = s.readMeShortcutVisible;
@@ -1183,6 +1189,9 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
       clamp(doc["sleepShortcutVisible"] | s.sleepShortcutVisible, static_cast<uint8_t>(2), s.sleepShortcutVisible);
   s.opdsBrowserShortcutVisible = clamp(doc["opdsBrowserShortcutVisible"] | s.opdsBrowserShortcutVisible,
                                        static_cast<uint8_t>(2), s.opdsBrowserShortcutVisible);
+  s.clippingsShortcut = clamp(doc["clippingsShortcut"] | s.clippingsShortcut, shortcutLocationCount, s.clippingsShortcut);
+  s.clippingsShortcutOrder = clamp(doc["clippingsShortcutOrder"] | s.clippingsShortcutOrder, shortcutOrderCount, s.clippingsShortcutOrder);
+  s.clippingsShortcutVisible = clamp(doc["clippingsShortcutVisible"] | s.clippingsShortcutVisible, static_cast<uint8_t>(2), s.clippingsShortcutVisible);
 
   normalizeShortcutOrderSettings(s);
   CrossPointSettings::validateFrontButtonMapping(s);

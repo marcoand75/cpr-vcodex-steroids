@@ -32,7 +32,7 @@ On top of that, Steroids adds a substantial set of original features developed a
 
 A complete library browser with grid-based navigation, replaceable covers, and smart content discovery — the biggest addition to this fork.
 
-- **Configurable grid layout** — 3×3, 4×3, 6×3, or 8×3 columns, adjustable from Settings
+- **Configurable grid layout** — 2×2, 3×3, 4×4 adjustable from Settings
 - **Per-page thumbnail generation** — covers are rendered at exact cell size in discrete pages, with compact `covers N/M` counter
 - **Binary metadata cache** (`LibraryCache`) — fast library re-open by caching parsed metadata on SD, with per-book invalidation on cover deletion
 - **Format support** — EPUB, XTC, TXT, and Markdown files
@@ -238,6 +238,64 @@ A full highlight system, ported from the CrossInk fork, that lets you select and
   - Replaced 4 blank icons (QR Code, Go to %, Screenshot, Delete Cache) with proper SVG-sourced graphics.
   - Added new dedicated icons for the two clipping menu entries: a paperclip for "Create Clipping" and a document-with-clip for "View Clippings".
 
+### 🔖 Bookmarks — Layout-Independent + Page Highlight
+
+Bookmarks now survive font, size, alignment, and Guide Dot spacing changes, and display a visible highlight on the bookmarked page.
+
+- **Absolute word index (v4)**: each bookmark saves the first word's position from chapter start, invariant to any layout change. New bookmarks automatically store this index.
+- **Page highlight**: bookmarked pages show the anchor word highlighted with a light-gray dither background — no icon clutter. New v4 bookmarks highlight the exact anchor word; old v3 bookmarks text-match the saved snippet on the current page (requiring ≥3 consecutive token matches, skipping leading quotes/punctuation).
+- **Jump resolution**: selecting a bookmark from the list resolves to the correct page even after layout changes, using the absolute index or snippet text-matching across the section.
+- **Backward compatible**: existing v1-v3 bookmarks continue to work via snippet-based text matching; the stored page number is used only as a fallback.
+
+### 🟢 Guide Dots
+
+A reading mode that inserts a visible bullet (`•`) between words, with configurable minimum spacing.
+
+- **Toggle**: Quick Settings, Settings → Reading, and Web portal — "Guide Dots" on/off.
+- **Dots Spacing**: Standard (16px minimum gap) and Large (32px). Changing the spacing triggers automatic section cache invalidation and rebuild with new line breaks.
+- **Layout-integrated**: expanded gaps are precomputed and used consistently by the DP line-breaker, X-position loop, and justification — no text overflow.
+- **Rendering**: bullet `•` (U+2022) drawn centered in every gap between non-attached words, using absolute X positions. Works correctly with all alignment modes (left, center, right, justify, book-style).
+
+### 📐 EPUB Render Modes (Default / Balanced / Light)
+
+- Global setting with 3 modes: **Default**, **Balanced**, **Light**.
+- Quick Settings, Settings → Reading, and Web portal expose the toggle.
+- **Isolated caches**: each mode uses a separate section cache file (e.g. `sections/1_balanced.bin`), so switching modes never invalidates another mode's cache.
+- **Fallback chain**: if building a section fails for the chosen mode, the reader falls back: Default → Balanced → Light; Balanced → Light; Light → only Light.
+- Silent next-chapter indexing respects the current render mode.
+
+### 🌐 Section Cache v44 — EPUB Format Bump
+
+- Bumped `SECTION_FILE_VERSION` from 35 to 44. Added `SECTION_CACHE_MAGIC` (0x535843FF) for unambiguous format detection.
+- New cache-busting header fields: `bionicReadingEnabled`, `guideReadingEnabled`, `renderMode`.
+- Added `liLutOffset` for future KOReader list-item navigation.
+- All accessor functions share a single `HEADER_FIELDS_SIZE` constant (27 bytes), eliminating duplicated offset calculations — fixes the infinite rebuild loop caused by mismatched `pageCount` stride.
+- All existing v35 EPUB caches invalidate automatically on first boot (magic mismatch → clearCache → rebuild).
+
+### 📱 Clippings App (Standalone)
+
+A dedicated app for browsing saved clippings across all books, accessible from the Home page and Apps Hub.
+
+- **Book list**: scans Reading Stats, Recent Books, and Favorites for books with saved clippings. Displays clipping count per book.
+- **Open**: confirm opens the in-reader clippings list; individual clippings can be deleted or jumped to.
+- **Delete all**: long-hold Confirm triggers a delete-all-clippings confirmation dialog.
+- **Configurable**: registered in `ShortcutRegistry` with location, order, and visibility settable via Settings → Shortcuts.
+- **Icon**: 32×32 paperclip icon (`ClipIcon32`) rendered in the LyraMarcoand75 home theme and Apps Hub.
+
+### 🕹️ Configurable Long-Press (Side + Front Buttons)
+
+Long-press on both side and front buttons can now be configured for quick bookmark/clipping access.
+
+- **Side buttons** (renamed "Long-press side buttons"): two new options added: **Bookmarks** (long-press UP=toggle bookmark, DOWN=View Bookmarks) and **Clippings** (UP=enter clipping mode, DOWN=View Clippings). Existing Chapter Skip and Orientation Change options unchanged.
+- **Front buttons** (new setting "Long-press front buttons"): controls long-press of Left/Right front buttons while reading. Options: Off, Bookmarks, Clippings. Left=toggle/enter, Right=open list.
+- `ReaderUtils::PageTurnResult` now carries a `fromFrontButton` flag so the reader can distinguish front-button holds from side-button holds.
+
+### 🇮🇹 Italian Translation Overhaul
+
+- 924 keys fully aligned with English: 84 new translations, 14 corrections, 15 long strings shortened for on-screen fit.
+- New sections covered: clippings, guide dots, EPUB render modes, dots spacing, long-press options, screen saver (80 keys), library app descriptions.
+- Corrections: "> 30 metri" → "> 30 min", "Invisibile" → "Non visto", "Disattivato" → "OFF", "Manual" → "Manuale", "Crisp" → "Nitido", "Add" → "Aggiungi".
+
 ---
 
 ## Feature Summary Table
@@ -270,7 +328,14 @@ A full highlight system, ported from the CrossInk fork, that lets you select and
 | EPUB Cover Overhaul | ⚡ Performance | Relaxed heap guard, adaptive JPEG subsampling, metadata pre-extraction, empty cover detection |
 | Core Refactoring | 🔧 Code | List-activity helpers (~1350 fewer lines), book-store deduplication |
 | Lexend Optional | ⚡ Performance | Build flag to exclude Lexend font, reducing firmware size |
-| **Clipping (Highlights)** | ✂️ Reading | Select text passages, save as clippings, view list, jump to page, persisted between sessions, exported to `/My Clippings.txt` |
+| **Clipping (Highlights)** | ✂️ Reading | Select text passages, save as clippings, view list, jump to page, persisted between sessions, exported to `/My Clippings.txt`, layout-independent via absolute word indices |
+| **Bookmarks v4** | 🔖 Reading | Absolute word index for layout-independent bookmarks; page-level highlight rendering; v3 text-match fallback; jump resolution |
+| **Guide Dots** | 🟢 Reading | Bullet markers between words with configurable spacing (Standard 16px / Large 32px); layout-integrated gap expansion |
+| **EPUB Render Modes** | 📐 Reading | Default / Balanced / Light modes with isolated caches per mode; automatic fallback chain |
+| **Section Cache v44** | 🌐 System | EPUB format bump with magic header, new cache-busting fields, offset calculation fix |
+| **Clippings App** | 📱 Apps | Standalone app for browsing clippings per book; configurable Home/Apps Hub shortcut |
+| **Configurable Long-Press** | 🕹️ Controls | Side and front button long-press for bookmarks/clippings toggle and navigation |
+| **Italian Translations** | 🇮🇹 i18n | 924 keys aligned with English; 84 new + 14 corrected translations; long strings shortened |
 | **Reader Menu Icons Fixed** | 🎯 UI | All 32×32 menu icons replaced with proper 24×24 versions; 4 blank icons regenerated from SVGs (QR, percent, screenshot, delete cache); 2 new clipping icons |
 | **Screensaver Font Sizes** | 🛡️ Screensaver | X-Small and X-Large font sizes added using Bookerly for the reading dashboard overlay |
 | **OTA Fix** | ⚙️ System | OTA update detection fixed for newer dev builds; manifest updated for fork release assets |
@@ -293,7 +358,7 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
 | Current upstream base | [`1.3.0.35-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.35-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.3.0.35` + Steroids features (clippings, library, carousel, web portal, screensaver, OTA fixes) |
+| Current Steroids build | Synced with upstream `1.3.0.35` + Steroids features (clippings, guide dots, library, carousel, web portal, screensaver, configurable long-press, EPUB render modes, OTA fixes) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |
