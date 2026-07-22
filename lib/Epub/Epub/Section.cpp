@@ -629,3 +629,38 @@ std::optional<uint32_t> Section::getXhtmlByteOffsetForPage(const uint16_t page) 
   }
   return xhtmlByteOffset;
 }
+
+void Section::buildCumulativeWordCounts() {
+  cumulativeWordCounts.clear();
+  if (pageCount == 0) return;
+
+  cumulativeWordCounts.reserve(pageCount + 1);
+  cumulativeWordCounts.push_back(0);
+  uint32_t total = 0;
+  const int savedPage = currentPage;
+
+  for (uint16_t p = 0; p < pageCount; ++p) {
+    currentPage = static_cast<int>(p);
+    auto pg = loadPageFromSectionFile();
+    if (!pg) {
+      cumulativeWordCounts.push_back(total);
+      continue;
+    }
+    uint16_t pageWords = 0;
+    for (const auto& element : pg->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (block) pageWords += static_cast<uint16_t>(block->wordCount());
+    }
+    total += pageWords;
+    cumulativeWordCounts.push_back(total);
+  }
+
+  currentPage = savedPage;
+}
+
+uint32_t Section::getCumulativeWordOffset(const uint16_t page) const {
+  if (page >= cumulativeWordCounts.size()) return 0;
+  return cumulativeWordCounts[page];
+}

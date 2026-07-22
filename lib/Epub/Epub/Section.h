@@ -28,6 +28,11 @@ class Section {
   uint16_t pageCount = 0;
   int currentPage = 0;
 
+  // Cumulative per-page word counts for absolute clipping word indices.
+  // cumulativeWordCounts[p] = total word count on pages 0..p-1.
+  // Built once after section load; size = pageCount + 1.
+  std::vector<uint32_t> cumulativeWordCounts;
+
   explicit Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRenderer& renderer,
                    const char* cacheSuffix = "")
       : epub(epub),
@@ -63,4 +68,11 @@ class Section {
 
   // Look up the XHTML byte offset recorded at the page boundary for the given page.
   std::optional<uint32_t> getXhtmlByteOffsetForPage(uint16_t page) const;
+
+  // Build cumulative word counts array (pageCount + 1 entries).
+  // Called once after section load. Must load every page once (I/O cost).
+  void buildCumulativeWordCounts();
+
+  // Return the total word count on pages 0..(page-1). Returns 0 if counts not built.
+  uint32_t getCumulativeWordOffset(uint16_t page) const;
 };

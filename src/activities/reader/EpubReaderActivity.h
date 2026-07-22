@@ -18,6 +18,7 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
+  uint32_t pendingClippingAbsoluteStart = UINT32_MAX;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.
   std::string pendingAnchor;

@@ -920,10 +920,127 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
   if (!page) return;
 
   const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
-  const uint16_t currentPage = static_cast<uint16_t>(section ? section->currentPage : -1);
+  const uint16_t currentPageNum = static_cast<uint16_t>(section ? section->currentPage : -1);
+  const uint16_t currentPageCount = section ? section->pageCount : 0;
   const int fontId = SETTINGS.getReaderFontId();
 
+  struct ClipRange { uint16_t startWord; uint16_t endWord; };
+  std::vector<ClipRange> resolvedRanges;
+
+  // Count total words on current page once (used for absolute-index clippings below).
+  int currentPageWordCount = 0;
+  {
+    for (const auto& el : page->elements) {
+      if (el && el->getTag() == TAG_PageLine) {
+        const auto& ln = static_cast<const PageLine&>(*el);
+        if (ln.getBlock()) currentPageWordCount += static_cast<int>(ln.getBlock()->wordCount());
+      }
+    }
+  }
+
+  // Resolve highlight ranges for each clipping on this spine.
+  // v2 absolute index: always correct regardless of layout changes.
+  // v1 stored indices: valid only when layout hasn't changed.
+  // Text-matching fallback: for v1 clippings whose layout changed.
+  for (const auto& clipping : clippingStore.getAll()) {
+    if (clipping.spineIndex != currentSpine) continue;
+
+    // v2 absolute word index: invariant across layout changes.
+    if (clipping.absoluteWordStart != UINT32_MAX) {
+      const uint32_t pageStart = section->getCumulativeWordOffset(currentPageNum);
+      const uint32_t pageEnd = pageStart + static_cast<uint32_t>(std::max(0, currentPageWordCount));
+      const uint32_t clipEnd = clipping.absoluteWordStart + clipping.wordCount;
+      if (clipEnd > pageStart && clipping.absoluteWordStart < pageEnd) {
+        const uint32_t overlapStart = (clipping.absoluteWordStart > pageStart) ? (clipping.absoluteWordStart - pageStart) : 0u;
+        const uint32_t overlapEnd = (clipEnd < pageEnd) ? (clipEnd - pageStart - 1u) : static_cast<uint32_t>(std::max(0, currentPageWordCount - 1));
+        resolvedRanges.push_back({static_cast<uint16_t>(overlapStart), static_cast<uint16_t>(overlapEnd)});
+      }
+      continue;
+    }
+
+    // v1 stored indices: valid only when layout hasn't changed.
+    if (clipping.pageCount == currentPageCount && clipping.startPage == currentPageNum) {
+      resolvedRanges.push_back({clipping.startWordIndex, clipping.endWordIndex});
+      continue;
+    }
+
+    // Slow path: layout changed — search for clipping text on the current page.
+    const auto& text = clipping.selectedText;
+    if (text.empty()) continue;
+
+    // Tokenize the clipping text into individual words.
+    std::vector<std::string> tokens;
+    {
+      std::string token;
+      for (char c : text) {
+        if (c == ' ' || c == '\n' || c == '\r') {
+          if (!token.empty()) { tokens.push_back(token); token.clear(); }
+        } else {
+          token += c;
+        }
+      }
+      if (!token.empty()) tokens.push_back(token);
+    }
+    if (tokens.empty()) continue;
+    const uint16_t minMatches = std::min(static_cast<uint16_t>(tokens.size()), static_cast<uint16_t>(3));
+
+    // Iterate page words looking for a match of tokens[0] as the clipping start anchor.
+    uint16_t wordIdx = 0;
+    bool found = false;
+    for (const auto& element : page->elements) {
+      if (found) break;
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+      const auto& words = block->getWords();
+      for (size_t i = 0; i < words.size(); ++i) {
+        if (words[i] != tokens[0]) { ++wordIdx; continue; }
+
+        // Potential match start. Try to match consecutive tokens.
+        uint16_t matchCount = 0;
+        uint16_t searchIdx = wordIdx;
+        for (const auto& el2 : page->elements) {
+          if (!el2 || el2->getTag() != TAG_PageLine) continue;
+          const auto& ln2 = static_cast<const PageLine&>(*el2);
+          const auto& blk2 = ln2.getBlock();
+          if (!blk2) continue;
+          const auto& wds2 = blk2->getWords();
+          for (size_t j = 0; j < wds2.size(); ++j) {
+            if (searchIdx < wordIdx) { ++searchIdx; continue; }
+            if (matchCount < tokens.size() && wds2[j] == tokens[matchCount]) {
+              ++matchCount;
+            } else {
+              goto tokenLoopDone;
+            }
+            ++searchIdx;
+            if (matchCount >= minMatches) goto foundMatch;
+          }
+        }
+        tokenLoopDone:
+        ++wordIdx;
+        continue;
+
+        foundMatch:
+        if (matchCount >= minMatches) {
+          resolvedRanges.push_back({wordIdx, static_cast<uint16_t>(searchIdx - 1)});
+          found = true;
+          break;
+        }
+        ++wordIdx;
+      }
+    }
+  }
+
+  if (resolvedRanges.empty()) return;
+
+  // Sort ranges by startWord for efficient overlap checking in the render loop.
+  std::sort(resolvedRanges.begin(), resolvedRanges.end(),
+            [](const ClipRange& a, const ClipRange& b) { return a.startWord < b.startWord; });
+
+  // Render: iterate all page words, highlight those in any resolved range.
   int globalWordIndex = 0;
+  size_t rangeCursor = 0;
   for (const auto& element : page->elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
     const auto& line = static_cast<const PageLine&>(*element);
@@ -935,14 +1052,14 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     const size_t count = std::min(words.size(), xPositions.size());
 
     for (size_t i = 0; i < count; ++i) {
-      bool highlighted = false;
-      for (const auto& clipping : clippingStore.getAll()) {
-        if (clipping.spineIndex != currentSpine || clipping.startPage != currentPage) continue;
-        if (globalWordIndex >= clipping.startWordIndex && globalWordIndex <= clipping.endWordIndex) {
-          highlighted = true;
-          break;
-        }
+      // Advance rangeCursor past ranges that end before the current word.
+      while (rangeCursor < resolvedRanges.size() && resolvedRanges[rangeCursor].endWord < static_cast<uint16_t>(globalWordIndex)) {
+        ++rangeCursor;
       }
+      const bool highlighted = (rangeCursor < resolvedRanges.size() &&
+                                 static_cast<uint16_t>(globalWordIndex) >= resolvedRanges[rangeCursor].startWord &&
+                                 static_cast<uint16_t>(globalWordIndex) <= resolvedRanges[rangeCursor].endWord);
+
       if (!highlighted) {
         ++globalWordIndex;
         continue;
@@ -950,10 +1067,7 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
 
       const int16_t screenX = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
       const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t width = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
-                                                               fontId,
-                                                               words[i].c_str(),
-                                                               EpdFontFamily::REGULAR)));
+      const int16_t width = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[i].c_str(), EpdFontFamily::REGULAR)));
       const int ascender = renderer.getFontAscenderSize(fontId);
       const int descenderPad = 6;
       renderer.fillRect(screenX - 1, screenY - 1, width + 2, ascender + descenderPad, true);
@@ -992,6 +1106,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.endWordIndex = static_cast<uint16_t>(endWord);
   clipping.wordCount = static_cast<uint16_t>(std::max(0, endWord - startWord) + 1);
   clipping.paragraphIndex = UINT16_MAX;
+  clipping.absoluteWordStart = section->getCumulativeWordOffset(static_cast<uint16_t>(section->currentPage)) + static_cast<uint32_t>(startWord);
   clipping.timestamp = static_cast<uint32_t>(millis() / 1000);
 
   const std::string chapterTitle = getStatsChapterTitle(*epub, currentSpineIndex);
@@ -1414,14 +1529,23 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           [this](const ActivityResult& result) {
             READING_STATS.resumeSession();
             if (!result.isCancelled) {
-              if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
-                // Naviga al clipping usando il flusso standard (come pageTurn)
-                const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
-                currentSpineIndex = std::min(jump->spineIndex, maxSpine);
-                cachedSpineIndex = currentSpineIndex;
-                cachedChapterTotalPageCount = 0;
-                nextPageNumber = static_cast<int>(jump->page);
-                section.reset();
+               if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
+                 // Find the selected clipping to get its absolute word index
+                 pendingClippingAbsoluteStart = UINT32_MAX;
+                 for (const auto& c : clippingStore.getAll()) {
+                   if (c.spineIndex == jump->spineIndex && c.startPage == jump->page &&
+                       c.absoluteWordStart != UINT32_MAX) {
+                     pendingClippingAbsoluteStart = c.absoluteWordStart;
+                     break;
+                   }
+                 }
+                 // Naviga al clipping usando il flusso standard (come pageTurn)
+                 const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
+                 currentSpineIndex = std::min(jump->spineIndex, maxSpine);
+                 cachedSpineIndex = currentSpineIndex;
+                 cachedChapterTotalPageCount = 0;
+                 nextPageNumber = static_cast<int>(jump->page);
+                 section.reset();
               }
             }
             requestUpdate();
@@ -1833,6 +1957,29 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     if (usedRenderMode != userRenderMode) {
       LOG_DBG("ERS", "Render mode fallback: user=%u actual=%u", userRenderMode, usedRenderMode);
       // Lightweight indication: could show a popup here in the future
+    }
+
+    // Build cumulative word counts for absolute clipping word indices.
+    // Costs ~N page-loads × 0.1ms but runs once per section open.
+    section->buildCumulativeWordCounts();
+
+    // Resolve absolute clipping word index to page number when jumping from View Clippings.
+    // The saved page number may be wrong after layout changes (font, dots, alignment).
+    if (pendingClippingAbsoluteStart != UINT32_MAX && section->cumulativeWordCounts.size() > 1) {
+      const uint32_t targetWord = pendingClippingAbsoluteStart;
+      uint16_t resolvedPage = 0;
+      for (size_t p = 1; p < section->cumulativeWordCounts.size(); ++p) {
+        if (section->cumulativeWordCounts[p] > targetWord) {
+          resolvedPage = static_cast<uint16_t>(p - 1);
+          break;
+        }
+        resolvedPage = static_cast<uint16_t>(p - 1);
+      }
+      if (resolvedPage < section->pageCount) {
+        nextPageNumber = resolvedPage;
+        pendingPageJump.reset();
+      }
+      pendingClippingAbsoluteStart = UINT32_MAX;
     }
 
     if (pendingPageJump.has_value()) {

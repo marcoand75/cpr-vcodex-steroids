@@ -23,6 +23,7 @@ class ClippingStore {
     uint16_t endWordIndex = 0;
     uint16_t wordCount = 0;
     uint16_t paragraphIndex = UINT16_MAX;
+    uint32_t absoluteWordStart = UINT32_MAX;  // v2: invariant word index from chapter start
     uint32_t timestamp = 0;
     char chapterTitle[48] = "";
     std::string selectedText;
@@ -47,10 +48,11 @@ class ClippingStore {
     }
 
     uint8_t version = 0;
-    if (file.read(reinterpret_cast<uint8_t*>(&version), sizeof(version)) != sizeof(version) || version != FILE_VERSION) {
+    if (file.read(reinterpret_cast<uint8_t*>(&version), sizeof(version)) != sizeof(version) || version < 1 || version > FILE_VERSION) {
       file.close();
       return;
     }
+    const bool isV2 = (version >= 2);
 
     uint16_t count = 0;
     if (file.read(reinterpret_cast<uint8_t*>(&count), sizeof(count)) != sizeof(count)) {
@@ -85,8 +87,20 @@ class ClippingStore {
           file.read(reinterpret_cast<uint8_t*>(&clipping.wordCount), sizeof(clipping.wordCount)) !=
               sizeof(clipping.wordCount) ||
           file.read(reinterpret_cast<uint8_t*>(&clipping.paragraphIndex), sizeof(clipping.paragraphIndex)) !=
-              sizeof(clipping.paragraphIndex) ||
-          file.read(reinterpret_cast<uint8_t*>(&clipping.timestamp), sizeof(clipping.timestamp)) !=
+              sizeof(clipping.paragraphIndex)) {
+        clippings.clear();
+        file.close();
+        return;
+      }
+      // v2: absolute word index from chapter start (invariant across layout changes)
+      if (isV2 &&
+          file.read(reinterpret_cast<uint8_t*>(&clipping.absoluteWordStart), sizeof(clipping.absoluteWordStart)) !=
+              sizeof(clipping.absoluteWordStart)) {
+        clippings.clear();
+        file.close();
+        return;
+      }
+      if (file.read(reinterpret_cast<uint8_t*>(&clipping.timestamp), sizeof(clipping.timestamp)) !=
               sizeof(clipping.timestamp)) {
         clippings.clear();
         file.close();
@@ -138,7 +152,8 @@ class ClippingStore {
       const auto& c = clippings[i];
       ok = ok && writePod(file, c.spineIndex) && writePod(file, c.startPage) && writePod(file, c.endPage) &&
            writePod(file, c.pageCount) && writePod(file, c.startWordIndex) && writePod(file, c.endWordIndex) &&
-           writePod(file, c.wordCount) && writePod(file, c.paragraphIndex) && writePod(file, c.timestamp);
+           writePod(file, c.wordCount) && writePod(file, c.paragraphIndex) && writePod(file, c.absoluteWordStart) &&
+           writePod(file, c.timestamp);
       ok = ok && file.write(reinterpret_cast<const uint8_t*>(c.chapterTitle), sizeof(c.chapterTitle)) ==
                      sizeof(c.chapterTitle);
       ok = ok && writeString(file, truncateText(c.selectedText, MAX_TEXT_BYTES));
@@ -196,7 +211,7 @@ class ClippingStore {
   }
 
  private:
-  static constexpr uint8_t FILE_VERSION = 1;
+  static constexpr uint8_t FILE_VERSION = 2;
   static constexpr uint16_t MAX_CLIPPINGS = 64;
   static constexpr size_t MAX_TEXT_BYTES = 512;
 
