@@ -1,5 +1,6 @@
 #include "LibraryCache.h"
 
+#include <Arena.h>
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -26,6 +27,8 @@ namespace {
 constexpr const char* kCacheFile = "/.crosspoint/library.bin";
 constexpr uint8_t kVersion = 2;
 constexpr int kProgressUpdateInterval = 2;
+
+static mem::Arena libraryScanArena;
 
 struct ScanRecord {
   std::string path;
@@ -380,6 +383,18 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;
 
+  if (!libraryScanArena.valid()) {
+    libraryScanArena.init(std::min<size_t>(16384, ESP.getMaxAllocHeap() / 4));
+    LOG_DBG("LIB", "libraryScanArena init size=%u", libraryScanArena.capacity());
+  } else {
+    LOG_DBG("LIB", "libraryScanArena reset: peak=%u capacity=%u", libraryScanArena.peakUsed(), libraryScanArena.capacity());
+    if (libraryScanArena.peakUsed() > libraryScanArena.capacity() * 3 / 4) {
+      LOG_DBG("LIB", "libraryScanArena peak=%u exceeds 75%% capacity=%u", libraryScanArena.peakUsed(),
+              libraryScanArena.capacity());
+    }
+    libraryScanArena.reset();
+  }
+
   std::string root = rootDir ? rootDir : "";
   if (root.empty()) root = "/";
   if (root[0] != '/') root.insert(0, "/");
@@ -504,6 +519,18 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
 bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   out.clear();
   if (maxBooks <= 0) return true;
+
+  if (!libraryScanArena.valid()) {
+    libraryScanArena.init(std::min<size_t>(16384, ESP.getMaxAllocHeap() / 4));
+    LOG_DBG("LIB", "libraryScanArena init size=%u", libraryScanArena.capacity());
+  } else {
+    LOG_DBG("LIB", "libraryScanArena reset: peak=%u capacity=%u", libraryScanArena.peakUsed(), libraryScanArena.capacity());
+    if (libraryScanArena.peakUsed() > libraryScanArena.capacity() * 3 / 4) {
+      LOG_DBG("LIB", "libraryScanArena peak=%u exceeds 75%% capacity=%u", libraryScanArena.peakUsed(),
+              libraryScanArena.capacity());
+    }
+    libraryScanArena.reset();
+  }
 
   std::vector<std::string> paths;
   paths.reserve(128);

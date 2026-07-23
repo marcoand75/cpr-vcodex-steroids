@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arena.h>
 #include <expat.h>
 
 #include <climits>
@@ -43,7 +44,7 @@ class ChapterHtmlSlimParser {
   std::shared_ptr<Epub> epub;
   const std::string& filepath;
   GfxRenderer& renderer;
-  std::function<void(std::unique_ptr<Page>, ParagraphLutEntry)> completePageFn;
+  std::function<void(Page*, const ParagraphLutEntry&)> completePageFn;
   std::function<void()> popupFn;      // Popup callback
   XML_Parser activeParser = nullptr;  // Expat parser used to capture byte offsets for sync LUT hints
   int depth = 0;
@@ -57,8 +58,16 @@ class ChapterHtmlSlimParser {
   char partWordBuffer[MAX_WORD_SIZE + 1] = {};
   int partWordBufferIndex = 0;
   bool nextWordContinues = false;  // true when next flushed word attaches to previous (inline element boundary)
-  std::unique_ptr<ParsedText> currentTextBlock = nullptr;
-  std::unique_ptr<Page> currentPage = nullptr;
+
+  struct NoOpDeleter {
+    template <typename T>
+    void operator()(T* p) const noexcept {
+      if (p) p->~T();
+    }
+  };
+
+  std::unique_ptr<ParsedText, NoOpDeleter> currentTextBlock = nullptr;
+  std::unique_ptr<Page, NoOpDeleter> currentPage = nullptr;
   int16_t currentPageNextY = 0;
   int fontId;
   float lineCompression;
@@ -80,6 +89,40 @@ class ChapterHtmlSlimParser {
   bool lowMemoryAbort = false;
   bool attemptedTextLayoutFontCacheRelease = false;
   bool loggedSoftLowMemoryContinuation = false;
+  mem::Arena* arena_ = nullptr;
+  mutable uint32_t arenaFallbackCount = 0;
+
+ public:
+  void setArena(mem::Arena* arena) { arena_ = arena; }
+  mem::Arena* arena() const { return arena_; }
+
+  template <typename T, typename... Args>
+  std::unique_ptr<T, NoOpDeleter> arenaUnique(Args&&... args) const {
+    if (!arena_ || !arena_->valid()) {
+      ++arenaFallbackCount;
+      return nullptr;
+    }
+    void* mem = arena_->alloc(sizeof(T), alignof(T));
+    if (!mem) {
+      ++arenaFallbackCount;
+      return nullptr;
+    }
+    return std::unique_ptr<T, NoOpDeleter>(new (mem) T(std::forward<Args>(args)...), NoOpDeleter());
+  }
+
+  template <typename T, typename... Args>
+  std::shared_ptr<T> arenaShared(Args&&... args) const {
+    if (!arena_ || !arena_->valid()) {
+      ++arenaFallbackCount;
+      return nullptr;
+    }
+    void* mem = arena_->alloc(sizeof(T), alignof(T));
+    if (!mem) {
+      ++arenaFallbackCount;
+      return nullptr;
+    }
+    return std::shared_ptr<T>(new (mem) T(std::forward<Args>(args)...), NoOpDeleter());
+  }
 
   std::string lastImageDimensionsPath;
   ImageDimensions lastImageDimensions = {0, 0};
@@ -109,7 +152,7 @@ class ChapterHtmlSlimParser {
   bool effectiveSub = false;
 
   struct BufferedTableCell {
-    std::unique_ptr<ParsedText> text;
+    std::unique_ptr<ParsedText, NoOpDeleter> text;
     std::vector<std::pair<int, FootnoteEntry>> footnotes;
     bool isHeader = false;
     uint8_t colSpan = 1;
@@ -191,10 +234,10 @@ class ChapterHtmlSlimParser {
                                  const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                  const bool forceParagraphIndents, const uint8_t paragraphAlignment,
                                  const uint16_t viewportWidth, const uint16_t viewportHeight,
-                                  const bool hyphenationEnabled, const bool focusReadingEnabled,
-                                  const uint8_t guideDotMinGap,
-                                 const std::function<void(std::unique_ptr<Page>, ParagraphLutEntry)>& completePageFn,
-                                 const bool embeddedStyle, const std::string& contentBase,
+   const bool hyphenationEnabled, const bool focusReadingEnabled,
+                                   const uint8_t guideDotMinGap,
+                                  const std::function<void(Page*, const ParagraphLutEntry&)>& completePageFn,
+                                  const bool embeddedStyle, const std::string& contentBase,
                                  const std::string& imageBasePath, const uint8_t imageRendering = 0,
                                  std::vector<std::string> tocAnchors = {},
                                  const std::function<void()>& popupFn = nullptr, CssParser* cssParser = nullptr)

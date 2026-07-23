@@ -530,17 +530,21 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine>& o
 
   // Read a chunk from file
   size_t chunkSize = std::min(CHUNK_SIZE, fileSize - offset);
-  auto* buffer = static_cast<uint8_t*>(malloc(chunkSize + 1));
+  if (chunkSize + 1 > readBuffer_.capacity()) {
+    readBuffer_.reserve(chunkSize + 1);
+  }
+  readBuffer_.resize(chunkSize + 1);
+  uint8_t* buffer = readBuffer_.data();
+
   if (!buffer) {
     LOG_ERR("TRS", "Failed to allocate %zu bytes", chunkSize);
     return false;
   }
 
   if (!txt->readContent(buffer, offset, chunkSize)) {
-    free(buffer);
     return false;
   }
-  buffer[chunkSize] = '\0';
+  readBuffer_[chunkSize] = '\0';
 
   // SD-card fonts need advance metrics before wrapping text. Prime them once
   // per chunk so TXT/Markdown readers do not thrash the small overflow glyph cache.
@@ -664,8 +668,6 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine>& o
   if (nextOffset > fileSize) {
     nextOffset = fileSize;
   }
-
-  free(buffer);
 
   return !outLines.empty();
 }
