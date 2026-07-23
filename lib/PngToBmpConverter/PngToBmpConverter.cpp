@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "BitmapHelpers.h"
+#include "ArenaManager.h"
 
 // ============================================================================
 // IMAGE PROCESSING OPTIONS - Same as JpegToBmpConverter for consistency
@@ -619,13 +620,23 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
     bytesPerRow = (outWidth * 2 + 31) / 32 * 4;
   }
 
+  bool arenaReady = ArenaManager::instance().valid();
+
   // Allocate BMP row buffer
-  auto* rowBuffer = static_cast<uint8_t*>(malloc(bytesPerRow));
+  uint8_t* rowBuffer = nullptr;
+  bool rowBufferFromArena = false;
+  if (arenaReady) {
+    rowBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(bytesPerRow, alignof(uint8_t)));
+    if (rowBuffer) rowBufferFromArena = true;
+  }
   if (!rowBuffer) {
-    LOG_ERR("PNG", "Failed to allocate row buffer");
-    free(ctx.currentRow);
-    free(ctx.previousRow);
-    return false;
+    rowBuffer = static_cast<uint8_t*>(malloc(bytesPerRow));
+    if (!rowBuffer) {
+      LOG_ERR("PNG", "Failed to allocate row buffer");
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
   }
 
   // Create ditherers (same as JpegToBmpConverter)
@@ -645,30 +656,54 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
 
   // Scaling accumulators
   uint32_t* rowAccum = nullptr;
+  bool rowAccumFromArena = false;
+  if (arenaReady) {
+    rowAccum = static_cast<uint32_t*>(ArenaManager::instance().allocate(outWidth * sizeof(uint32_t), alignof(uint32_t)));
+    if (rowAccum) rowAccumFromArena = true;
+  }
+  if (!rowAccum) {
+    rowAccum = new uint32_t[outWidth]();
+  }
+
   uint16_t* rowCount = nullptr;
+  bool rowCountFromArena = false;
+  if (arenaReady) {
+    rowCount = static_cast<uint16_t*>(ArenaManager::instance().allocate(outWidth * sizeof(uint16_t), alignof(uint16_t)));
+    if (rowCount) rowCountFromArena = true;
+  }
+  if (!rowCount) {
+    rowCount = new uint16_t[outWidth]();
+  }
+
   int currentOutY = 0;
   uint32_t nextOutY_srcStart = 0;
 
   if (needsScaling) {
-    rowAccum = new uint32_t[outWidth]();
-    rowCount = new uint16_t[outWidth]();
     nextOutY_srcStart = scaleY_fp;
   }
 
   // Allocate grayscale row buffer - batch-convert each scanline to avoid
   // per-pixel getPixelGray() switch overhead in the hot loops
-  auto* grayRow = static_cast<uint8_t*>(malloc(width));
+  uint8_t* grayRow = nullptr;
+  bool grayRowFromArena = false;
+  if (arenaReady) {
+    grayRow = static_cast<uint8_t*>(ArenaManager::instance().allocate(width, alignof(uint8_t)));
+    if (grayRow) grayRowFromArena = true;
+  }
   if (!grayRow) {
-    LOG_ERR("PNG", "Failed to allocate grayscale row buffer");
-    delete[] rowAccum;
-    delete[] rowCount;
-    delete atkinsonDitherer;
-    delete fsDitherer;
-    delete atkinson1BitDitherer;
-    free(rowBuffer);
-    free(ctx.currentRow);
-    free(ctx.previousRow);
-    return false;
+    grayRow = static_cast<uint8_t*>(malloc(width));
+    if (!grayRow) {
+      LOG_ERR("PNG", "Failed to allocate grayscale row buffer");
+      if (!rowAccumFromArena) delete[] rowAccum;
+      if (!rowCountFromArena) delete[] rowCount;
+      delete atkinsonDitherer;
+      delete fsDitherer;
+      delete atkinson1BitDitherer;
+      if (!rowBufferFromArena) free(rowBuffer);
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
   }
 
   bool success = true;
@@ -813,13 +848,21 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   }
 
   // Clean up
-  free(grayRow);
-  delete[] rowAccum;
-  delete[] rowCount;
+  if (!grayRowFromArena && grayRow) {
+    free(grayRow);
+  }
+  if (!rowAccumFromArena && rowAccum) {
+    delete[] rowAccum;
+  }
+  if (!rowCountFromArena && rowCount) {
+    delete[] rowCount;
+  }
   delete atkinsonDitherer;
   delete fsDitherer;
   delete atkinson1BitDitherer;
-  free(rowBuffer);
+  if (!rowBufferFromArena && rowBuffer) {
+    free(rowBuffer);
+  }
   free(ctx.currentRow);
   free(ctx.previousRow);
 
