@@ -11,6 +11,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "activities/Activity.h"
 
@@ -39,6 +40,9 @@ class XtcReaderActivity final : public Activity {
   void requestCurrentPageFullRefresh();
   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
+
+  // Reusable page buffer to avoid malloc/free per page turn.
+  std::vector<uint8_t> pageBuf_;
 
  public:
   explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc)
