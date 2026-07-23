@@ -403,13 +403,13 @@ static void writeOutputRow(BmpConvertCtx* ctx, const uint8_t* srcRow, int outY) 
 
   if (USE_8BIT_OUTPUT && !ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
-      ctx->bmpRow[x] = adjustPixel(srcRow[x]);
+      ctx->bmpRow.get()[x] = adjustPixel(srcRow[x]);
     }
   } else if (ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
       const uint8_t bit = ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(srcRow[x], x)
                                                     : quantize1bit(srcRow[x], x, outY);
-      ctx->bmpRow[x / 8] |= (bit << (7 - (x % 8)));
+      ctx->bmpRow.get()[x / 8] |= (bit << (7 - (x % 8)));
     }
     if (ctx->atkinson1BitDitherer) ctx->atkinson1BitDitherer->nextRow();
   } else {
@@ -423,7 +423,7 @@ static void writeOutputRow(BmpConvertCtx* ctx, const uint8_t* srcRow, int outY) 
       } else {
         twoBit = quantize(gray, x, outY);
       }
-      ctx->bmpRow[(x * 2) / 8] |= (twoBit << (6 - ((x * 2) % 8)));
+      ctx->bmpRow.get()[(x * 2) / 8] |= (twoBit << (6 - ((x * 2) % 8)));
     }
     if (ctx->atkinsonDitherer)
       ctx->atkinsonDitherer->nextRow();
@@ -440,20 +440,20 @@ static void flushScaledRow(BmpConvertCtx* ctx) {
 
   if (USE_8BIT_OUTPUT && !ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
-      const uint8_t gray = (ctx->rowCount[x] > 0) ? (ctx->rowAccum[x] / ctx->rowCount[x]) : 0;
-      ctx->bmpRow[x] = adjustPixel(gray);
+      const uint8_t gray = (ctx->rowCount.get()[x] > 0) ? (ctx->rowAccum.get()[x] / ctx->rowCount.get()[x]) : 0;
+      ctx->bmpRow.get()[x] = adjustPixel(gray);
     }
   } else if (ctx->oneBit) {
     for (int x = 0; x < ctx->outWidth; x++) {
-      const uint8_t gray = (ctx->rowCount[x] > 0) ? (ctx->rowAccum[x] / ctx->rowCount[x]) : 0;
-      const uint8_t bit = ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(gray, x)
-                                                    : quantize1bit(gray, x, ctx->currentOutY);
-      ctx->bmpRow[x / 8] |= (bit << (7 - (x % 8)));
+      const uint8_t gray = (ctx->rowCount.get()[x] > 0) ? (ctx->rowAccum.get()[x] / ctx->rowCount.get()[x]) : 0;
+      const uint8_t bit =
+          ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(gray, x) : quantize1bit(gray, x, ctx->currentOutY);
+      ctx->bmpRow.get()[x / 8] |= (bit << (7 - (x % 8)));
     }
     if (ctx->atkinson1BitDitherer) ctx->atkinson1BitDitherer->nextRow();
   } else {
     for (int x = 0; x < ctx->outWidth; x++) {
-      const uint8_t gray = adjustPixel((ctx->rowCount[x] > 0) ? (ctx->rowAccum[x] / ctx->rowCount[x]) : 0);
+      const uint8_t gray = adjustPixel((ctx->rowCount.get()[x] > 0) ? (ctx->rowAccum.get()[x] / ctx->rowCount.get()[x]) : 0);
       uint8_t twoBit;
       if (ctx->atkinsonDitherer) {
         twoBit = ctx->atkinsonDitherer->processPixel(gray, x);
@@ -462,7 +462,7 @@ static void flushScaledRow(BmpConvertCtx* ctx) {
       } else {
         twoBit = quantize(gray, x, ctx->currentOutY);
       }
-      ctx->bmpRow[(x * 2) / 8] |= (twoBit << (6 - ((x * 2) % 8)));
+      ctx->bmpRow.get()[(x * 2) / 8] |= (twoBit << (6 - ((x * 2) % 8)));
     }
     if (ctx->atkinsonDitherer)
       ctx->atkinsonDitherer->nextRow();
@@ -519,8 +519,8 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
     } else {
       // Fixed-point area averaging on X axis using pre-calculated ranges
       for (int outX = 0; outX < ctx->outWidth; outX++) {
-        const int srcXStart = ctx->xScaleStarts[outX];
-        const int srcXEnd = ctx->xScaleEnds[outX];
+        const int srcXStart = ctx->xScaleStarts.get()[outX];
+        const int srcXEnd = ctx->xScaleEnds.get()[outX];
         int sum = 0;
         int count = 0;
         for (int srcX = srcXStart; srcX < srcXEnd && srcX < ctx->srcWidth; srcX++) {
@@ -531,8 +531,8 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
           sum = srcRow[srcXStart];
           count = 1;
         }
-        ctx->rowAccum[outX] += sum;
-        ctx->rowCount[outX] += count;
+        ctx->rowAccum.get()[outX] += sum;
+        ctx->rowCount.get()[outX] += count;
       }
 
       // Flush output row(s) whose Y boundary we've crossed
@@ -752,12 +752,12 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
       setPermanent(false);  // transient: OOM
       return false;
     }
-    for (int outX = 0; outX < outWidth; outX++) {
-      const int start = (static_cast<uint32_t>(outX) * scaleX_fp) >> 16;
-      const int end = (static_cast<uint32_t>(outX + 1) * scaleX_fp) >> 16;
-      ctx.xScaleStarts[outX] = start;
-      ctx.xScaleEnds[outX] = (end < ctx.srcWidth) ? end : ctx.srcWidth;
-    }
+  for (int outX = 0; outX < outWidth; outX++) {
+    const int start = (static_cast<uint32_t>(outX) * scaleX_fp) >> 16;
+    const int end = (static_cast<uint32_t>(outX + 1) * scaleX_fp) >> 16;
+    ctx.xScaleStarts.get()[outX] = start;
+    ctx.xScaleEnds.get()[outX] = (end < ctx.srcWidth) ? end : ctx.srcWidth;
+  }
   }
 
   // BMP output write buffer: batch rows to reduce SD write calls.
