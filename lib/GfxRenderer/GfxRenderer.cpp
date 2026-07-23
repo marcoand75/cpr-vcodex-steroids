@@ -10,6 +10,8 @@
 #include <cassert>
 #include <climits>
 
+#include <esp_heap_caps.h>
+
 #include "FontCacheManager.h"
 
 namespace {
@@ -37,6 +39,29 @@ bool invertMonochromeBitmap(const uint8_t* bitmap, size_t size,
  */
 uint8_t resolveSdCardStyle(const SdCardFont& font, const EpdFontFamily::Style style) {
   return font.resolveStyle(static_cast<uint8_t>(style));
+}
+
+/**
+ * Safe vector resize that checks available heap capacity before growing.
+ * On ESP32 with -fno-exceptions, std::vector::resize() calls std::terminate()
+ * on OOM instead of throwing std::bad_alloc. This helper prevents abrupt
+ * CPU resets by falling back gracefully when memory is insufficient.
+ */
+template <typename T>
+bool safeVectorResize(std::vector<T>& vec, size_t newSize) {
+    if (vec.capacity() >= newSize) {
+        vec.resize(newSize);
+        return true;
+    }
+    size_t bytesNeeded = (newSize - vec.capacity()) * sizeof(T);
+    size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (largestBlock < bytesNeeded) {
+        ESP_LOGE("GfxRenderer", "safeVectorResize failed: need %u B, max block %u B",
+                 static_cast<unsigned>(bytesNeeded), static_cast<unsigned>(largestBlock));
+        return false;
+    }
+    vec.resize(newSize);
+    return true;
 }
 
 }  // namespace
@@ -1199,7 +1224,11 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   // Calculate output row size (2 bits per pixel, packed into bytes)
   // IMPORTANT: Use int, not uint8_t, to avoid overflow for images > 1020 pixels wide
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  rowBuf_.resize(outputRowSize + bitmap.getRowBytes());
+  if (!safeVectorResize(rowBuf_, static_cast<size_t>(outputRowSize + bitmap.getRowBytes()))) {
+    LOG_ERR("GFX", "OOM in drawBitmap: cannot allocate row buffer (%d B)",
+            outputRowSize + bitmap.getRowBytes());
+    return;
+  }
   auto* outputRow = rowBuf_.data();
   auto* rowBytes = outputRow + outputRowSize;
 
@@ -1274,7 +1303,11 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
 
   // For 1-bit BMP, output is still 2-bit packed (for consistency with readNextRow)
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  rowBuf_.resize(outputRowSize + bitmap.getRowBytes());
+  if (!safeVectorResize(rowBuf_, static_cast<size_t>(outputRowSize + bitmap.getRowBytes()))) {
+    LOG_ERR("GFX", "OOM in drawBitmap1Bit: cannot allocate row buffer (%d B)",
+            outputRowSize + bitmap.getRowBytes());
+    return;
+  }
   auto* outputRow = rowBuf_.data();
   auto* rowBytes = outputRow + outputRowSize;
 
@@ -1332,7 +1365,10 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
   if (maxY >= getScreenHeight()) maxY = getScreenHeight() - 1;
 
   // Reuse scratch buffer for nodeX
-  polyBuf_.resize(numPoints);
+  if (!safeVectorResize(polyBuf_, static_cast<size_t>(numPoints))) {
+    LOG_ERR("GFX", "OOM in fillPolygon: cannot allocate nodeX buffer (%d points)", numPoints);
+    return;
+  }
   auto* nodeX = polyBuf_.data();
 
   // Scanline fill algorithm

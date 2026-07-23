@@ -1,5 +1,6 @@
 #include "HomeActivity.h"
 
+#include <ArenaManager.h>
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -666,6 +667,14 @@ void HomeActivity::scheduleCarouselCoverLoadIfNeeded() {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
+  // The arena was reset by switch_context(HOME) above, so any previous
+  // coverBuffer pointer into it is now invalid.  Force a fresh allocation on
+  // next storeCoverBuffer() instead of dereferencing stale memory.
+  coverBuffer = nullptr;
+  coverBufferSize = 0;
+  coverBufferFromArena = false;
+  coverBufferStored = false;
+
   HOMEPAGE_LOG("HOME", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   hasOpdsServers = OPDS_STORE.hasServers();
@@ -704,12 +713,12 @@ void HomeActivity::onEnter() {
 void HomeActivity::onExit() {
   Activity::onExit();
   coverBufferStored = false;  // invalidate before free
-  free(coverBuffer);
+  if (!coverBufferFromArena) {
+    free(coverBuffer);
+  }
   coverBuffer = nullptr;
   coverBufferSize = 0;
-  // Log heap state after freeing the 63 KB cover buffer. The next activity
-  // (typically Library) can use this to schedule its scan with awareness of
-  // fragmentation.
+  coverBufferFromArena = false;
   HOMEPAGE_LOG("HOME", "onExit: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
@@ -719,20 +728,33 @@ bool HomeActivity::storeCoverBuffer() {
   const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
   if (needed == 0) return false;
 
-  // Reuse an already-allocated buffer if it is large enough.  This avoids
-  // freeing a ~40 KB block on every store/restore cycle, which would leave
-  // a hole in the heap that later activities (Library cover generation) need.
-  if (needed > coverBufferSize) {
-    free(coverBuffer);
-    coverBuffer = static_cast<uint8_t*>(malloc(needed));
+  // Reuse an already-allocated buffer if it is large enough.  When the arena
+  // is active we still only allocate once per activity to avoid consuming the
+  // bump allocator on every store/restore cycle; arena-backed memory is
+  // reclaimed on the next activity switch via switch_context().
+  if (coverBuffer && needed > coverBufferSize) {
+    if (!coverBufferFromArena) {
+      free(coverBuffer);
+    }
+    coverBuffer = nullptr;
+    coverBufferSize = 0;
+    coverBufferFromArena = false;
+  }
+
+  if (!coverBuffer) {
+    if (ArenaManager::instance().valid()) {
+      coverBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(needed, alignof(uint8_t)));
+      if (coverBuffer) coverBufferFromArena = true;
+    }
     if (!coverBuffer) {
-      coverBufferSize = 0;
+      coverBuffer = static_cast<uint8_t*>(malloc(needed));
+    }
+    if (!coverBuffer) {
       LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
       return false;
     }
     coverBufferSize = needed;
   }
-  // coverBufferSize >= needed: we can reuse.
 
   if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, needed)) {
     // Keep the buffer allocated — a transient copy failure is not a reason
@@ -753,7 +775,8 @@ bool HomeActivity::restoreCoverBuffer() {
 }
 
 /// Mark the cover buffer as stale so the next render re-stores it.
-/// Does NOT free the underlying allocation — only onExit() does that.
+/// Does NOT free the underlying allocation when it is arena-backed; arena
+/// memory is reclaimed on the next activity switch via switch_context().
 void HomeActivity::freeCoverBuffer() {
   coverBufferStored = false;
 }

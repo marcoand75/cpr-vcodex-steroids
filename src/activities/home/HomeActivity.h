@@ -24,6 +24,7 @@ class HomeActivity final : public Activity {
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;
+  bool coverBufferFromArena = false;  // true when coverBuffer came from ArenaManager
   int coverRectX = 0;
   int coverRectY = 0;
   int coverRectW = 0;

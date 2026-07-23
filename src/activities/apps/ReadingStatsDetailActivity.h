@@ -21,6 +21,7 @@ class ReadingStatsDetailActivity final : public Activity {
   bool waitForBackRelease = false;
   bool baseScreenBufferStored = false;
   uint8_t* baseScreenBuffer = nullptr;
+  bool baseScreenBufferFromArena = false;
   std::string baseScreenBookPath;
   std::string baseScreenCoverPath;
   int baseScreenScrollOffset = -1;
@@ -46,4 +47,5 @@ class ReadingStatsDetailActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
+  ActivityContext arenaContext() const override { return ActivityContext::STATS; }
 };

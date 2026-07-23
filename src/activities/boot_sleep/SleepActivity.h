@@ -36,4 +36,6 @@ class SleepActivity final : public Activity {
   bool renderPngSleepScreen(const std::string& sourcePath) const;
   void renderBlankSleepScreen() const;
   bool resolveLastBookCoverPath(std::string& coverBmpPath) const;
+
+  ActivityContext arenaContext() const override { return ActivityContext::SLEEP; }
 };

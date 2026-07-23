@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cstring>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
 struct ZipInflateCtx {
   InflateReader reader;  // Must be first — callback casts uzlib_uncomp* to ZipInflateCtx*
   FsFile* file = nullptr;
@@ -21,8 +24,18 @@ constexpr uint16_t ZIP_METHOD_DEFLATED = 8;
 
 // Static 32 KB inflate ring buffer shared by all streaming decompression
 // operations in this translation unit. Placed in .bss so it never contributes
-// to heap fragmentation.
+// to heap fragmentation. Protected by sInflateMutex against concurrent access
+// from different FreeRTOS tasks (ESP32-C3 is single-core but tasks can be
+// preempted by higher-priority tasks).
 alignas(4) static uint8_t sInflateRingBuf[32768];
+static SemaphoreHandle_t sInflateMutex = nullptr;
+
+/// Ensures the inflate mutex is created once. Safe to call multiple times.
+static void ensureInflateMutex() {
+    if (!sInflateMutex) {
+        sInflateMutex = xSemaphoreCreateMutex();
+    }
+}
 
 // RAII zip: opens the zip if not already open, closes on destruction only if
 // it performed the open.  Removes the wasOpen/close boilerplate from every method.
@@ -510,10 +523,19 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
+    ensureInflateMutex();
+    if (xSemaphoreTake(sInflateMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+      LOG_ERR("ZIP", "Timeout acquiring sInflateMutex for readFileToStream");
+      free(outputBuffer);
+      free(fileReadBuffer);
+      return false;
+    }
+
     if (!ctx.reader.init(true, sInflateRingBuf, sizeof(sInflateRingBuf))) {
       LOG_ERR("ZIP", "Failed to init inflate reader");
       free(outputBuffer);
       free(fileReadBuffer);
+      xSemaphoreGive(sInflateMutex);
       return false;
     }
     ctx.reader.setReadCallback(zipReadCallback);
@@ -572,9 +594,11 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
       // InflateStatus::Ok: output buffer full, continue
     }
 
+    xSemaphoreGive(sInflateMutex);
+
     free(outputBuffer);
     free(fileReadBuffer);
-    return success;  // ctx.reader destructor frees the ring buffer
+    return success;
   }
 
   LOG_ERR("ZIP", "Unsupported compression method");
@@ -636,10 +660,19 @@ bool ZipFile::readFilePrefixToBuffer(const char* filename, uint8_t* out, const s
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
+    ensureInflateMutex();
+    if (xSemaphoreTake(sInflateMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+      LOG_ERR("ZIP", "Timeout acquiring sInflateMutex for readFilePrefixToBuffer");
+      free(outputBuffer);
+      free(fileReadBuffer);
+      return false;
+    }
+
     if (!ctx.reader.init(true, sInflateRingBuf, sizeof(sInflateRingBuf))) {
       LOG_ERR("ZIP", "Failed to init inflate reader for prefix");
       free(outputBuffer);
       free(fileReadBuffer);
+      xSemaphoreGive(sInflateMutex);
       return false;
     }
     ctx.reader.setReadCallback(zipReadCallback);
@@ -693,6 +726,8 @@ bool ZipFile::readFilePrefixToBuffer(const char* filename, uint8_t* out, const s
         break;
       }
     }
+
+    xSemaphoreGive(sInflateMutex);
 
     free(outputBuffer);
     free(fileReadBuffer);

@@ -1,5 +1,6 @@
 #include "ReadingStatsDetailActivity.h"
 
+#include <ArenaManager.h>
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -422,7 +423,13 @@ bool ReadingStatsDetailActivity::storeBaseScreenBuffer() {
   freeBaseScreenBuffer();
 
   const size_t bufferSize = renderer.getBufferSize();
-  baseScreenBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+  if (ArenaManager::instance().valid()) {
+    baseScreenBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(bufferSize, alignof(uint8_t)));
+    baseScreenBufferFromArena = baseScreenBuffer != nullptr;
+  }
+  if (!baseScreenBufferFromArena) {
+    baseScreenBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+  }
   if (!baseScreenBuffer) {
     return false;
   }
@@ -458,10 +465,11 @@ void ReadingStatsDetailActivity::invalidateBaseScreenBuffer() {
 }
 
 void ReadingStatsDetailActivity::freeBaseScreenBuffer() {
-  if (baseScreenBuffer) {
+  if (baseScreenBuffer && !baseScreenBufferFromArena) {
     free(baseScreenBuffer);
-    baseScreenBuffer = nullptr;
   }
+  baseScreenBuffer = nullptr;
+  baseScreenBufferFromArena = false;
   invalidateBaseScreenBuffer();
 }
 

@@ -7,6 +7,7 @@
 
 #include "Xtc.h"
 
+#include <ArenaManager.h>
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -157,11 +158,16 @@ bool Xtc::generateCoverBmp() const {
 
   if (bitDepth == 2) {
     // XTH 2-bit: must convert from column-major two-plane to row-major 1-bit BMP.
-    // Fall back to a single heap allocation for the full page; this is the
-    // only path that needs a large contiguous buffer. If it fails, close and
-    // remove the partial file so the next attempt does not see a corrupt BMP.
+    // Use the global arena for the full-page temporary buffer to avoid heap
+    // fragmentation. If the arena is unavailable or the allocation fails, fall
+    // back to heap so cover generation still works.
     size_t bitmapSize = ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) * 2;
-    uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(bitmapSize));
+    ArenaManager::LockGuard arenaLock;
+    uint8_t* pageBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(bitmapSize, alignof(uint8_t)));
+    bool pageBufferFromArena = pageBuffer != nullptr;
+    if (!pageBufferFromArena) {
+      pageBuffer = static_cast<uint8_t*>(malloc(bitmapSize));
+    }
     if (!pageBuffer) {
       coverBmp.close();
       Storage.remove(getCoverBmpPath().c_str());
@@ -169,7 +175,7 @@ bool Xtc::generateCoverBmp() const {
     }
     size_t bytesRead = const_cast<xtc::XtcParser*>(parser.get())->loadPage(0, pageBuffer, bitmapSize);
     if (bytesRead == 0) {
-      free(pageBuffer);
+      if (!pageBufferFromArena) free(pageBuffer);
       coverBmp.close();
       Storage.remove(getCoverBmpPath().c_str());
       return false;
@@ -182,10 +188,15 @@ bool Xtc::generateCoverBmp() const {
     const size_t dstRowSize = (pageInfo.width + 7) / 8;
 
     uint8_t* rowBuffer = static_cast<uint8_t*>(malloc(dstRowSize));
+    bool rowBufferFromHeap = true;
+    if (ArenaManager::instance().valid()) {
+      rowBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(dstRowSize, alignof(uint8_t)));
+      rowBufferFromHeap = false;
+    }
     if (!rowBuffer) {
+      if (!pageBufferFromArena) free(pageBuffer);
       coverBmp.close();
       Storage.remove(getCoverBmpPath().c_str());
-      free(pageBuffer);
       return false;
     }
 
@@ -211,8 +222,12 @@ bool Xtc::generateCoverBmp() const {
       if (padSize > 0) coverBmp.write(padding, padSize);
     }
 
-    free(rowBuffer);
-    free(pageBuffer);
+    if (rowBufferFromHeap) {
+      free(rowBuffer);
+    }
+    if (!pageBufferFromArena) {
+      free(pageBuffer);
+    }
   } else {
     // 1-bit XTG: data is row-major, compatible with 1-bit BMP row order.
     // Use streaming to avoid a 48 KB contiguous heap allocation.
@@ -394,6 +409,11 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
   const uint32_t rowSize   = (thumbWidth + 31) / 32 * 4;
 
   uint8_t* rowBuffer = static_cast<uint8_t*>(malloc(rowSize));
+  bool rowBufferFromHeap = true;
+  if (ArenaManager::instance().valid()) {
+    rowBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(rowSize, alignof(uint8_t)));
+    rowBufferFromHeap = false;
+  }
   if (!rowBuffer) {
     thumbBmp.close();
     Storage.remove(thumbPath.c_str());
@@ -409,8 +429,13 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
   const size_t maxSrcRowsPerDstRow = 4;
   const size_t srcLinesBufSize = maxSrcRowsPerDstRow * srcRowBytes;
   uint8_t* srcLinesBuf = static_cast<uint8_t*>(malloc(srcLinesBufSize));
+  bool srcLinesBufFromHeap = true;
+  if (ArenaManager::instance().valid()) {
+    srcLinesBuf = static_cast<uint8_t*>(ArenaManager::instance().allocate(srcLinesBufSize, alignof(uint8_t)));
+    srcLinesBufFromHeap = false;
+  }
   if (!srcLinesBuf) {
-    free(rowBuffer);
+    if (rowBufferFromHeap) free(rowBuffer);
     thumbBmp.close();
     Storage.remove(thumbPath.c_str());
     coverFile.close();
@@ -428,15 +453,15 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
     if (srcYEnd   >  static_cast<uint32_t>(srcH)) srcYEnd   = srcH;
 
     const uint32_t numSrcRows = srcYEnd - srcYStart;
-    if (numSrcRows > maxSrcRowsPerDstRow) {
-      // Should not happen for 230x360 thumb from 480x800 source, but be safe.
-      free(srcLinesBuf);
-      free(rowBuffer);
-      thumbBmp.close();
-      Storage.remove(thumbPath.c_str());
-      coverFile.close();
-      return false;
-    }
+      if (numSrcRows > maxSrcRowsPerDstRow) {
+        // Should not happen for 230x360 thumb from 480x800 source, but be safe.
+        if (srcLinesBufFromHeap) free(srcLinesBuf);
+        if (rowBufferFromHeap) free(rowBuffer);
+        thumbBmp.close();
+        Storage.remove(thumbPath.c_str());
+        coverFile.close();
+        return false;
+      }
 
     // Pre-load all source rows for this destination row with one seek+read each.
     for (uint32_t r = 0; r < numSrcRows; r++) {
@@ -480,8 +505,12 @@ bool Xtc::generateThumbBmpToPath(int width, int height, const std::string& thumb
     thumbBmp.write(rowBuffer, rowSize);
   }
 
-  free(srcLinesBuf);
-  free(rowBuffer);
+  if (srcLinesBufFromHeap) {
+    free(srcLinesBuf);
+  }
+  if (rowBufferFromHeap) {
+    free(rowBuffer);
+  }
   thumbBmp.close();
   coverFile.close();
 

@@ -555,6 +555,10 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
 // Internal implementation with configurable target size and bit depth
 bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bmpOut, int targetWidth, int targetHeight,
                                                      bool oneBit, bool crop, bool* permanentFailure) {
+  // Lock the arena while this decoder holds pointers into the arena pool,
+  // preventing unsafe switch_context() from resetting the pool mid-decode.
+  ArenaManager::LockGuard arenaLock;
+
   // Helper: mark a failure as permanent (bad JPEG data) or transient (OOM).
   // Permanent = the same JPEG bytes will always fail; writing a sentinel stops endless retries.
   // Transient = might succeed later if memory frees up; no sentinel should be written.

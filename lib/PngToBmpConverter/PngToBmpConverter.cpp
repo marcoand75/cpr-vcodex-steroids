@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 #include "BitmapHelpers.h"
 #include "ArenaManager.h"
@@ -398,6 +399,9 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
 
 bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
                                                    bool oneBit, bool crop) {
+  // Lock the arena while this decoder holds pointers into the arena pool,
+  // preventing unsafe switch_context() from resetting the pool mid-decode.
+  ArenaManager::LockGuard arenaLock;
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   // PNG decoding needs a 32 KB inflate window plus scanline and output buffers.
@@ -620,26 +624,7 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
     bytesPerRow = (outWidth * 2 + 31) / 32 * 4;
   }
 
-  bool arenaReady = ArenaManager::instance().valid();
-
-  // Allocate BMP row buffer
-  uint8_t* rowBuffer = nullptr;
-  bool rowBufferFromArena = false;
-  if (arenaReady) {
-    rowBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(bytesPerRow, alignof(uint8_t)));
-    if (rowBuffer) rowBufferFromArena = true;
-  }
-  if (!rowBuffer) {
-    rowBuffer = static_cast<uint8_t*>(malloc(bytesPerRow));
-    if (!rowBuffer) {
-      LOG_ERR("PNG", "Failed to allocate row buffer");
-      free(ctx.currentRow);
-      free(ctx.previousRow);
-      return false;
-    }
-  }
-
-  // Create ditherers (same as JpegToBmpConverter)
+  // ── Create ditherers (before arena/heap alloc so pointers are in scope for cleanup) ──
   AtkinsonDitherer* atkinsonDitherer = nullptr;
   FloydSteinbergDitherer* fsDitherer = nullptr;
   Atkinson1BitDitherer* atkinson1BitDitherer = nullptr;
@@ -654,25 +639,57 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
     }
   }
 
-  // Scaling accumulators
+  // ── All-or-Nothing Arena Allocation ─────────────────────────────────────
+  // Try to allocate ALL temporary buffers from the arena pool at once.
+  // If any allocation fails, discard the partial arena allocations and use
+  // heap for all buffers instead.  This avoids mixing arena and heap pointers,
+  // which would complicate cleanup and risk dangling pointers on context switch.
+  uint8_t* rowBuffer = nullptr;
   uint32_t* rowAccum = nullptr;
-  bool rowAccumFromArena = false;
-  if (arenaReady) {
+  uint16_t* rowCount = nullptr;
+  uint8_t* grayRow = nullptr;
+  bool usingArena = false;
+
+  if (ArenaManager::instance().valid()) {
+    rowBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(bytesPerRow, alignof(uint8_t)));
     rowAccum = static_cast<uint32_t*>(ArenaManager::instance().allocate(outWidth * sizeof(uint32_t), alignof(uint32_t)));
-    if (rowAccum) rowAccumFromArena = true;
-  }
-  if (!rowAccum) {
-    rowAccum = new uint32_t[outWidth]();
+    rowCount = static_cast<uint16_t*>(ArenaManager::instance().allocate(outWidth * sizeof(uint16_t), alignof(uint16_t)));
+    grayRow = static_cast<uint8_t*>(ArenaManager::instance().allocate(width, alignof(uint8_t)));
+
+    if (rowBuffer && rowAccum && rowCount && grayRow) {
+      usingArena = true;
+      // Zero-initialise the scaling accumulators (arena bump-alloc doesn't zero)
+      std::memset(rowAccum, 0, outWidth * sizeof(uint32_t));
+      std::memset(rowCount, 0, outWidth * sizeof(uint16_t));
+    } else {
+      // All-or-nothing failed — discard partial arena allocations by falling
+      // through to the heap path below.
+      rowBuffer = nullptr;
+      rowAccum = nullptr;
+      rowCount = nullptr;
+      grayRow = nullptr;
+    }
   }
 
-  uint16_t* rowCount = nullptr;
-  bool rowCountFromArena = false;
-  if (arenaReady) {
-    rowCount = static_cast<uint16_t*>(ArenaManager::instance().allocate(outWidth * sizeof(uint16_t), alignof(uint16_t)));
-    if (rowCount) rowCountFromArena = true;
-  }
-  if (!rowCount) {
-    rowCount = new uint16_t[outWidth]();
+  if (!usingArena) {
+    // Heap fallback: allocate each buffer individually.
+    rowBuffer = static_cast<uint8_t*>(malloc(bytesPerRow));
+    rowAccum = new (std::nothrow) uint32_t[outWidth]();
+    rowCount = new (std::nothrow) uint16_t[outWidth]();
+    grayRow = static_cast<uint8_t*>(malloc(width));
+    if (!rowBuffer || !rowAccum || !rowCount || !grayRow) {
+      LOG_ERR("PNG", "Failed to allocate temporary buffers (heap fallback)");
+      free(rowBuffer);
+      delete[] rowAccum;
+      delete[] rowCount;
+      free(grayRow);
+      delete atkinsonDitherer;
+      delete fsDitherer;
+      delete atkinson1BitDitherer;
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
   }
 
   int currentOutY = 0;
@@ -680,30 +697,6 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
 
   if (needsScaling) {
     nextOutY_srcStart = scaleY_fp;
-  }
-
-  // Allocate grayscale row buffer - batch-convert each scanline to avoid
-  // per-pixel getPixelGray() switch overhead in the hot loops
-  uint8_t* grayRow = nullptr;
-  bool grayRowFromArena = false;
-  if (arenaReady) {
-    grayRow = static_cast<uint8_t*>(ArenaManager::instance().allocate(width, alignof(uint8_t)));
-    if (grayRow) grayRowFromArena = true;
-  }
-  if (!grayRow) {
-    grayRow = static_cast<uint8_t*>(malloc(width));
-    if (!grayRow) {
-      LOG_ERR("PNG", "Failed to allocate grayscale row buffer");
-      if (!rowAccumFromArena) delete[] rowAccum;
-      if (!rowCountFromArena) delete[] rowCount;
-      delete atkinsonDitherer;
-      delete fsDitherer;
-      delete atkinson1BitDitherer;
-      if (!rowBufferFromArena) free(rowBuffer);
-      free(ctx.currentRow);
-      free(ctx.previousRow);
-      return false;
-    }
   }
 
   bool success = true;
@@ -847,22 +840,17 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
     ctx.currentRow = temp;
   }
 
-  // Clean up
-  if (!grayRowFromArena && grayRow) {
+  // Clean up — arena-backed allocations are released on context switch,
+  // heap-backed allocations must be freed explicitly.
+  if (!usingArena) {
     free(grayRow);
-  }
-  if (!rowAccumFromArena && rowAccum) {
     delete[] rowAccum;
-  }
-  if (!rowCountFromArena && rowCount) {
     delete[] rowCount;
+    free(rowBuffer);
   }
   delete atkinsonDitherer;
   delete fsDitherer;
   delete atkinson1BitDitherer;
-  if (!rowBufferFromArena && rowBuffer) {
-    free(rowBuffer);
-  }
   free(ctx.currentRow);
   free(ctx.previousRow);
 

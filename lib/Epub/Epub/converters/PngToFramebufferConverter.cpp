@@ -1,5 +1,6 @@
 #include "PngToFramebufferConverter.h"
 
+#include <ArenaManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -347,11 +348,17 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
 
   // Allocate grayscale line buffer on demand (~3.2 KB) - freed after decode
   const size_t grayBufSize = PNG_MAX_BUFFERED_PIXELS / 2;
-  ctx.grayLineBuffer = static_cast<uint8_t*>(malloc(grayBufSize));
-  if (!ctx.grayLineBuffer) {
+  ArenaManager::LockGuard arenaLock;
+  uint8_t* grayLineBuffer = static_cast<uint8_t*>(ArenaManager::instance().allocate(grayBufSize, alignof(uint8_t)));
+  bool grayLineBufferFromArena = grayLineBuffer != nullptr;
+  if (!grayLineBufferFromArena) {
+    grayLineBuffer = static_cast<uint8_t*>(malloc(grayBufSize));
+  }
+  if (!grayLineBuffer) {
     LOG_ERR("PNG", "Failed to allocate gray line buffer");
     return false;
   }
+  ctx.grayLineBuffer = grayLineBuffer;
 
   // Stream the pixel cache to disk. PNGdec delivers source scanlines top to
   // bottom and we emit at most one (downscaled) output row per callback, so the
@@ -371,8 +378,12 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   rc = png->decode(&ctx, 0);
   unsigned long decodeTime = millis() - decodeStart;
 
-  free(ctx.grayLineBuffer);
-  ctx.grayLineBuffer = nullptr;
+  if (grayLineBufferFromArena) {
+    ctx.grayLineBuffer = nullptr;
+  } else {
+    free(ctx.grayLineBuffer);
+    ctx.grayLineBuffer = nullptr;
+  }
 
   if (rc != PNG_SUCCESS) {
     LOG_ERR("PNG", "Decode failed: %d", rc);

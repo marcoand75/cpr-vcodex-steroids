@@ -722,11 +722,38 @@ void setup() {
   const auto bootHeap = MemoryBudget::snapshot();
   LOG_INF("MAIN", "Boot complete: free=%u maxAlloc=%u", bootHeap.freeHeap, bootHeap.maxAllocHeap);
 
-  const size_t kGlobalArenaPoolSize = std::min<size_t>(65536, bootHeap.freeHeap / 3);
-  if (!ArenaManager::instance().init(kGlobalArenaPoolSize)) {
-    LOG_ERR("MAIN", "ArenaManager init failed");
-  } else {
-    LOG_INF("MAIN", "ArenaManager initialized: %u bytes", kGlobalArenaPoolSize);
+  // Calculate optimal arena pool size based on largest contiguous free block.
+  // The previous formula (min(65536, freeHeap/3)) often produced a pool too
+  // small (~50 KB) for PNG decoders needing ~58 KB, forcing fallback to heap.
+  // Instead, take the largest contiguous block minus a 40 KB safety margin
+  // reserved for FreeRTOS task stacks and internal OS management.
+  {
+    const size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    constexpr size_t kSystemSafetyMargin = 40 * 1024;  // 40 KB for system
+
+    size_t optimalPoolSize = 0;
+    if (largestBlock > kSystemSafetyMargin) {
+      optimalPoolSize = largestBlock - kSystemSafetyMargin;
+    } else {
+      optimalPoolSize = largestBlock / 2;
+    }
+
+    // Also cap at 128 KB to avoid starving other allocations — the arena
+    // primarily serves per-activity scratch (decoding, rendering) and larger
+    // pools waste memory that stays idle during menu navigation.
+    constexpr size_t kMaxPoolSize = 128 * 1024;
+    if (optimalPoolSize > kMaxPoolSize) {
+      optimalPoolSize = kMaxPoolSize;
+    }
+
+    LOG_INF("MAIN", "Heap max contiguo: %u B. Allocazione Arena Pool: %u B",
+            static_cast<unsigned>(largestBlock), static_cast<unsigned>(optimalPoolSize));
+
+    if (!ArenaManager::instance().init(optimalPoolSize)) {
+      LOG_ERR("MAIN", "ArenaManager init failed");
+    } else {
+      LOG_INF("MAIN", "ArenaManager initialized: %u bytes", static_cast<unsigned>(optimalPoolSize));
+    }
   }
 
   if (isSilentReboot) {
