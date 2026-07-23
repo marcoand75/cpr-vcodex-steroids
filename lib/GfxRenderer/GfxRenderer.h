@@ -65,6 +65,11 @@ class GfxRenderer {
   mutable int _stripRows = 0;
   mutable bool _stripActive = false;
 
+  // Reusable scratch buffers so repeated drawBitmap / fillPolygon calls avoid
+  // per-call heap allocation of the row and node temporaries.
+  mutable std::vector<uint8_t> rowBuf_;
+  mutable std::vector<int> polyBuf_;
+
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
