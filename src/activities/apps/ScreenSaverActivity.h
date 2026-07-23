@@ -31,6 +31,6 @@ class ScreenSaverActivity final : public Activity {
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
   bool preventAutoSleep() override { return true; }
-   bool isScreenSaverActivity() const override { return true; }
-   ActivityContext arenaContext() const override { return ActivityContext::SCREENSAVER; }
- };
+  bool isScreenSaverActivity() const override { return true; }
+  ActivityContext arenaContext() const override { return ActivityContext::NONE; }
+};

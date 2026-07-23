@@ -292,7 +292,14 @@ void ActivityManager::goHome() { replaceActivity(std::make_unique<HomeActivity>(
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   if (pendingActivity) {
-    // Should never happen in practice
+    // If the same activity is already pending, ignore the duplicate push
+    // to avoid spamming the log and corrupting the activity state. This can
+    // happen when the power button is pressed multiple times in quick succession,
+    // or when an activity requests a push while another push is already pending.
+    if (pendingActivity->name == activity->name) {
+      LOG_INF("ACT", "Duplicate push of pending activity '%s', ignoring", activity->name.c_str());
+      return;
+    }
     LOG_ERR("ACT", "pendingActivity while pushActivity is not expected");
     pendingActivity.reset();
   }
