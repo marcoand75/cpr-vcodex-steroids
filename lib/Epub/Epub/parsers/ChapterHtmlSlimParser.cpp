@@ -593,6 +593,9 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
     lowMemoryAbort = true;
     return;
   }
+  if (!currentTextBlock->initLayoutArena(16384)) {
+    LOG_DBG("EHP", "ParsedText layout arena init failed; falling back to heap temps");
+  }
   wordsExtractedInBlock = 0;
 }
 
@@ -607,7 +610,10 @@ void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
 
   if (!currentTableBuffer) {
     makePages();
-    currentTextBlock.reset();
+    if (currentTextBlock) {
+      currentTextBlock->~ParsedText();
+      currentTextBlock.reset();
+    }
     pendingFootnotes.clear();
     currentTableCellIsHeader = false;
     currentTableCellColSpan = 1;
@@ -684,7 +690,10 @@ void ChapterHtmlSlimParser::emitBufferedTableAsParagraphs(BufferedTable& table) 
       currentTextBlock = std::move(cell.text);
       wordsExtractedInBlock = 0;
       makePages();
-      currentTextBlock.reset();
+      if (currentTextBlock) {
+        currentTextBlock->~ParsedText();
+        currentTextBlock.reset();
+      }
       pendingFootnotes.clear();
       if (lowMemoryAbort) {
         break;
@@ -2125,6 +2134,16 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   blockStyleStack.reserve(8);
   blockStyleStack.push_back(rootBlockStyle);
 
+  inlineStyleStack.clear();
+  inlineStyleStack.reserve(16);
+  anchorData.clear();
+  anchorData.reserve(64);
+  referencedAnchors.clear();
+  referencedAnchors.reserve(64);
+  pendingFootnotes.clear();
+  pendingFootnotes.reserve(16);
+  arenaFallbackCount = 0;
+
   auto paragraphAlignmentBlockStyle = BlockStyle();
   paragraphAlignmentBlockStyle.textAlignDefined = true;
   const auto align = rootBlockStyle.alignment;
@@ -2219,7 +2238,10 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
     makePages();
     if (lowMemoryAbort) {
       currentPage.reset();
-      currentTextBlock.reset();
+      if (currentTextBlock) {
+        currentTextBlock->~ParsedText();
+        currentTextBlock.reset();
+      }
       return false;
     }
     if (!pendingAnchorId.empty()) {
@@ -2228,7 +2250,10 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
     }
     emitPage(0u);
     currentPage.reset();
-    currentTextBlock.reset();
+    if (currentTextBlock) {
+      currentTextBlock->~ParsedText();
+      currentTextBlock.reset();
+    }
   }
 
   if (arenaFallbackCount > 0) {

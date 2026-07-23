@@ -280,10 +280,12 @@ namespace {
 // 200 ms keeps genuine deliberate taps snappy while the 200-400 ms dead zone
 // (200 ms – getPowerButtonDuration()) falls through to the normal wake path.
 constexpr unsigned long SCREENSAVER_TAP_MAX_MS = 200;
-
-// How long we keep the chip awake after drawing the sleep screen so that taps
-// arriving during the e-ink settle window are caught before deep sleep re-arms.
 constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
+
+constexpr uint32_t kMemWatchdogIntervalMs = 1000;
+constexpr uint32_t kMemWatchdogLowFreeHeap = 32U * 1024U;
+constexpr uint32_t kMemWatchdogLowMaxAlloc = 24U * 1024U;
+
 }  // namespace
 
 // Returns true if the wake press was a brief tap (released within SCREENSAVER_TAP_MAX_MS).
@@ -776,12 +778,12 @@ void loop() {
   // on the happy path.
   {
     static unsigned long lastMemWatchdog = 0;
-    if (millis() - lastMemWatchdog >= 1000) {
+    if (millis() - lastMemWatchdog >= kMemWatchdogIntervalMs) {
       lastMemWatchdog = millis();
       const auto heap = MemoryBudget::snapshot();
-      if (heap.freeHeap < 32 * 1024) {
+      if (heap.freeHeap < kMemWatchdogLowFreeHeap) {
         LOG_ERR("MEM", "Low free heap: %u bytes (maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
-      } else if (heap.maxAllocHeap < 24 * 1024) {
+      } else if (heap.maxAllocHeap < kMemWatchdogLowMaxAlloc) {
         LOG_ERR("MEM", "Low maxAlloc: %u bytes (free=%u)", heap.maxAllocHeap, heap.freeHeap);
       }
     }

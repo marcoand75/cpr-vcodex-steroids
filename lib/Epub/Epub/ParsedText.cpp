@@ -247,6 +247,10 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     return;
   }
 
+  if (hasLayoutArena()) {
+    resetLayoutArena();
+  }
+
   // Apply fixed transforms before any per-line layout work.
   prepareParagraphIndent(renderer, fontId);
 
@@ -268,22 +272,23 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   }
 
   const int pageWidth = viewportWidth;
-  auto wordWidths = calculateWordWidths(renderer, fontId);
+  auto wordWidths = calculateWordWidths(renderer, fontId, layoutArena_);
 
-  std::vector<size_t> lineBreakIndices;
-  std::vector<int16_t> naturalGaps;
+  std::vector<size_t, mem::ArenaAllocator<size_t>> lineBreakIndices;
+  std::vector<int16_t, mem::ArenaAllocator<int16_t>> naturalGaps;
   if (hyphenationEnabled) {
     // Use greedy layout that can split words mid-loop when a hyphenated prefix fits.
-    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues);
-    lineBreakIndices = computeHyphenatedLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues);
+    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues, layoutArena_);
+    lineBreakIndices = computeHyphenatedLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues, layoutArena_);
   } else {
-    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues);
-    lineBreakIndices = computeLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues, naturalGaps);
+    naturalGaps = computeNaturalGaps(renderer, fontId, wordWidths, wordContinues, layoutArena_);
+    lineBreakIndices = computeLineBreaks(renderer, fontId, pageWidth, wordWidths, wordContinues, naturalGaps, layoutArena_);
   }
   const size_t lineCount = includeLastLine ? lineBreakIndices.size() : lineBreakIndices.size() - 1;
 
   for (size_t i = 0; i < lineCount; ++i) {
-    extractLine(i, pageWidth, wordWidths, wordContinues, lineBreakIndices, processLine, renderer, fontId, naturalGaps);
+    extractLine(i, pageWidth, wordWidths, wordContinues, lineBreakIndices, processLine, renderer, fontId, naturalGaps,
+                layoutArena_);
   }
 
   // Remove consumed words so size() reflects only remaining words
@@ -297,8 +302,8 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   }
 }
 
-std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& renderer, const int fontId) {
-  std::vector<uint16_t> wordWidths;
+std::vector<uint16_t, mem::ArenaAllocator<uint16_t>> ParsedText::calculateWordWidths(const GfxRenderer& renderer, const int fontId, mem::Arena& layoutArena) {
+  std::vector<uint16_t, mem::ArenaAllocator<uint16_t>> wordWidths{mem::ArenaAllocator<uint16_t>(layoutArena)};
   wordWidths.reserve(words.size());
 
   for (size_t i = 0; i < words.size(); ++i) {
@@ -308,12 +313,13 @@ std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& rendere
   return wordWidths;
 }
 
-std::vector<int16_t> ParsedText::computeNaturalGaps(const GfxRenderer& renderer, const int fontId,
-                                                    const std::vector<uint16_t>& wordWidths,
-                                                    const std::vector<bool>& continuesVec) {
+std::vector<int16_t, mem::ArenaAllocator<int16_t>> ParsedText::computeNaturalGaps(const GfxRenderer& renderer, const int fontId,
+                                                     const std::vector<uint16_t, mem::ArenaAllocator<uint16_t>>& wordWidths,
+                                                     const std::vector<bool>& continuesVec,
+                                                     mem::Arena& layoutArena) {
   const size_t totalWordCount = words.size();
   const int minGap = static_cast<int>(guideDotMinGap);
-  std::vector<int16_t> naturalGaps(totalWordCount, 0);
+  std::vector<int16_t, mem::ArenaAllocator<int16_t>> naturalGaps(totalWordCount, 0, mem::ArenaAllocator<int16_t>(layoutArena));
   for (size_t j = 1; j < totalWordCount; ++j) {
     if (continuesVec[j]) {
       naturalGaps[j] = static_cast<int16_t>(
@@ -327,9 +333,9 @@ std::vector<int16_t> ParsedText::computeNaturalGaps(const GfxRenderer& renderer,
   return naturalGaps;
 }
 
-std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, const int fontId, const int pageWidth,
-                                                  std::vector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
-                                                  const std::vector<int16_t>& naturalGaps) {
+std::vector<size_t, mem::ArenaAllocator<size_t>> ParsedText::computeLineBreaks(const GfxRenderer& renderer, const int fontId, const int pageWidth,
+                                                  std::vector<uint16_t, mem::ArenaAllocator<uint16_t>>& wordWidths, std::vector<bool>& continuesVec,
+                                                  const std::vector<int16_t, mem::ArenaAllocator<int16_t>>& naturalGaps, mem::Arena& layoutArena) {
   if (words.empty()) {
     return {};
   }
@@ -359,9 +365,9 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
   const size_t totalWordCount = words.size();
 
   // DP table to store the minimum badness (cost) of lines starting at index i
-  std::vector<int> dp(totalWordCount);
+  std::vector<int, mem::ArenaAllocator<int>> dp{mem::ArenaAllocator<int>(layoutArena)};
   // 'ans[i]' stores the index 'j' of the *last word* in the optimal line starting at 'i'
-  std::vector<size_t> ans(totalWordCount);
+  std::vector<size_t, mem::ArenaAllocator<size_t>> ans{mem::ArenaAllocator<size_t>(layoutArena)};
 
   // Base Case
   dp[totalWordCount - 1] = 0;
@@ -426,7 +432,7 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
   }
 
   // Stores the index of the word that starts the next line (last_word_index + 1)
-  std::vector<size_t> lineBreakIndices;
+  std::vector<size_t, mem::ArenaAllocator<size_t>> lineBreakIndices{mem::ArenaAllocator<size_t>(layoutArena)};
   size_t currentWordIndex = 0;
 
   while (currentWordIndex < totalWordCount) {
@@ -469,9 +475,9 @@ void ParsedText::prepareParagraphIndent(const GfxRenderer& renderer, const int f
 }
 
 // Builds break indices while opportunistically splitting the word that would overflow the current line.
-std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& renderer, const int fontId,
-                                                            const int pageWidth, std::vector<uint16_t>& wordWidths,
-                                                            std::vector<bool>& continuesVec) {
+std::vector<size_t, mem::ArenaAllocator<size_t>> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& renderer, const int fontId,
+                                                             const int pageWidth, std::vector<uint16_t, mem::ArenaAllocator<uint16_t>>& wordWidths,
+                                                             std::vector<bool>& continuesVec, mem::Arena& layoutArena) {
   // Calculate first line indent (only for left/justified text).
   // Positive text-indent (paragraph indent) is suppressed when extraParagraphSpacing is on.
   // Negative text-indent (hanging indent, e.g. margin-left:3em; text-indent:-1em) always applies —
@@ -483,7 +489,7 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
           ? blockStyle.textIndent
           : 0;
 
-  std::vector<size_t> lineBreakIndices;
+  std::vector<size_t, mem::ArenaAllocator<size_t>> lineBreakIndices{mem::ArenaAllocator<size_t>(layoutArena)};
   size_t currentIndex = 0;
   bool isFirstLine = true;
 
@@ -553,8 +559,8 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
 // Splits words[wordIndex] into prefix (adding a hyphen only when needed) and remainder when a legal breakpoint fits the
 // available width.
 bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availableWidth, const GfxRenderer& renderer,
-                                      const int fontId, std::vector<uint16_t>& wordWidths,
-                                      const bool allowFallbackBreaks) {
+                                       const int fontId, std::vector<uint16_t, mem::ArenaAllocator<uint16_t>>& wordWidths,
+                                       const bool allowFallbackBreaks) {
   // Guard against invalid indices or zero available width before attempting to split.
   if (availableWidth <= 0 || wordIndex >= words.size()) {
     return false;
@@ -638,10 +644,14 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   return true;
 }
 
-void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const std::vector<uint16_t>& wordWidths,
-                             const std::vector<bool>& continuesVec, const std::vector<size_t>& lineBreakIndices,
-                             const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
-                             const GfxRenderer& renderer, const int fontId, const std::vector<int16_t>& naturalGaps) {
+void ParsedText::extractLine(const size_t breakIndex, const int pageWidth,
+                              const std::vector<uint16_t, mem::ArenaAllocator<uint16_t>>& wordWidths,
+                              const std::vector<bool>& continuesVec,
+                              const std::vector<size_t, mem::ArenaAllocator<size_t>>& lineBreakIndices,
+                              const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
+                              const GfxRenderer& renderer, const int fontId,
+                              const std::vector<int16_t, mem::ArenaAllocator<int16_t>>& naturalGaps,
+                              mem::Arena& layoutArena) {
   const size_t lineBreak = lineBreakIndices[breakIndex];
   const size_t lastBreakAt = breakIndex > 0 ? lineBreakIndices[breakIndex - 1] : 0;
   const size_t lineWordCount = lineBreak - lastBreakAt;

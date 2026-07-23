@@ -38,6 +38,13 @@ struct ScanRecord {
   std::string normAuthor;
 };
 
+// Reused scan/sync temporary buffers to avoid repeated heap allocation
+// and deallocation on every library scan/sync cycle.
+static std::vector<std::string> reusablePaths;
+static std::vector<ScanRecord> reusableRecords;
+static std::vector<std::string> reusableWorklist;
+static std::vector<uint8_t> reusableDepth;
+
 static void normalizeInPlace(std::string& s) {
   if (s.empty()) return;
   size_t w = 0;
@@ -405,15 +412,18 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
 
   std::sort(cached.begin(), cached.end(), [](const Entry& a, const Entry& b) { return a.path < b.path; });
 
-  std::vector<std::string> worklist;
+  std::vector<std::string>& worklist = reusableWorklist;
+  worklist.clear();
   worklist.reserve(16);
   worklist.emplace_back(root);
 
   constexpr int kMaxDepth = 8;
-  std::vector<uint8_t> depth;
+  std::vector<uint8_t>& depth = reusableDepth;
+  depth.clear();
   depth.push_back(0);
 
-  std::vector<ScanRecord> records;
+  std::vector<ScanRecord>& records = reusableRecords;
+  records.clear();
   records.reserve(std::min<int>(static_cast<int>(cached.size()) + 16, maxBooks));
 
   int removed = 0, added = 0, kept = 0, sdFileCount = 0, dirCount = 0;
@@ -511,7 +521,7 @@ bool sync(std::vector<Entry>& out, const char* rootDir, int maxBooks) {
   }
 
   cached.clear(); cached.shrink_to_fit();
-  records.clear(); records.shrink_to_fit();
+  records.clear();
 
   return save(out);
 }
@@ -532,14 +542,16 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
     libraryScanArena.reset();
   }
 
-  std::vector<std::string> paths;
+  std::vector<std::string>& paths = reusablePaths;
+  paths.clear();
   paths.reserve(128);
   enumerateBooks(paths, rootDir, maxBooks);
   const int totalCandidates = static_cast<int>(paths.size());
 
   emitProgress(renderer, popupRect, 0, totalCandidates);
 
-  std::vector<ScanRecord> records;
+  std::vector<ScanRecord>& records = reusableRecords;
+  records.clear();
   records.reserve(std::min<int>(totalCandidates, maxBooks));
 
   int processed = 0, skipped = 0;
@@ -570,7 +582,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, std::vector<Entry>& out,
   }
   emitProgress(renderer, popupRect, totalCandidates, totalCandidates);
 
-  paths.clear(); paths.shrink_to_fit();
+  paths.clear();
   std::sort(records.begin(), records.end(), compareRecords);
 
   out.reserve(records.size());

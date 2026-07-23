@@ -252,6 +252,7 @@ void LibraryActivity::onExit() {
   unfilteredEntries_.clear();
   pageTitleCache_.clear();
   pageTitleCacheKey_ = -1;
+  reordered_.clear();
 }
 
 
@@ -402,11 +403,11 @@ void LibraryActivity::applyFilterAndSort() {
       return a < b;
     });
 
-    std::vector<LibraryCache::Entry> reordered;
-    reordered.reserve(n);
+    reordered_.clear();
+    reordered_.reserve(n);
     for (int i : idx)
-      reordered.push_back(std::move(entries_[i]));
-    entries_.swap(reordered);
+      reordered_.push_back(std::move(entries_[i]));
+    entries_.swap(reordered_);
   }
 
   selectorIndex_ = 0;
