@@ -1,5 +1,7 @@
 #include "ActivityManager.h"
 
+#include <MemoryBudget.h>
+
 #include <HalPowerManager.h>
 
 #include <algorithm>
@@ -177,7 +179,11 @@ void ActivityManager::loop() {
       requestUiTransitionRefresh(previousWeight, nextWeight);
 
       lock.unlock();  // onEnter may acquire its own lock
+      const auto beforeEnter = MemoryBudget::snapshot();
       currentActivity->onEnter();
+      const auto afterEnter = MemoryBudget::snapshot();
+      LOG_DBG("ACT", "Activity enter: free=%u->%u maxAlloc=%u->%u", beforeEnter.freeHeap, afterEnter.freeHeap,
+              beforeEnter.maxAllocHeap, afterEnter.maxAllocHeap);
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -197,8 +203,12 @@ void ActivityManager::loop() {
 void ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
   if (currentActivity) {
+    const auto before = MemoryBudget::snapshot();
     currentActivity->onExit();
     currentActivity.reset();
+    const auto after = MemoryBudget::snapshot();
+    LOG_DBG("ACT", "Activity exit: free=%u->%u maxAlloc=%u->%u", before.freeHeap, after.freeHeap,
+            before.maxAllocHeap, after.maxAllocHeap);
   }
 }
 
