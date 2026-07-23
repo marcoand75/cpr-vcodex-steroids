@@ -347,67 +347,67 @@ void LibraryActivity::applyFilterAndSort() {
   const int n = static_cast<int>(entries_.size());
   HOMEPAGE_LOG("LIB", "filter+sort: n=%d heap=%u maxA=%u", n, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-  if (n > 1) {
-    // Compact per-entry sort metadata — avoids heap allocations during sort.
-    struct SortMeta {
-      uint32_t lastReadAt = 0;
-      uint8_t progress = 0;
-      bool completed = false;
-    };
-    std::vector<SortMeta> meta(n);
-    for (int i = 0; i < n; ++i) {
-      const auto* s = READING_STATS.findBook(entries_[i].path);
-      if (s) {
-        meta[i].lastReadAt = s->lastReadAt;
-        meta[i].progress = s->lastProgressPercent;
-        meta[i].completed = s->completed;
+    if (n > 1) {
+      // Compact per-entry sort metadata — avoids heap allocations during sort.
+      struct SortMeta {
+        uint32_t lastReadAt = 0;
+        uint8_t progress = 0;
+        bool completed = false;
+      };
+      std::vector<SortMeta> meta(n);
+      for (int i = 0; i < n; ++i) {
+        const auto* s = READING_STATS.findBook(entries_[i].path);
+        if (s) {
+          meta[i].lastReadAt = s->lastReadAt;
+          meta[i].progress = s->lastProgressPercent;
+          meta[i].completed = s->completed;
+        }
       }
+
+      reusedSortIdx_.resize(n);
+      std::iota(reusedSortIdx_.begin(), reusedSortIdx_.end(), 0);
+      yield();
+      esp_task_wdt_reset();
+
+      std::sort(reusedSortIdx_.begin(), reusedSortIdx_.end(), [&](int a, int b) -> bool {
+        const auto& ea = entries_[a];
+        const auto& eb = entries_[b];
+        const auto& ma = meta[a];
+        const auto& mb = meta[b];
+        switch (currentSort_) {
+          case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:
+            return compareNormalized(ea.title, eb.title) < 0;
+          case CrossPointSettings::LIBRARY_SORT_TITLE_DESC:
+            return compareNormalized(ea.title, eb.title) > 0;
+          case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: {
+            const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
+                                              eb.author.empty() ? "zzz" : eb.author);
+            if (cmp != 0) return cmp < 0;
+            return compareNormalized(ea.title, eb.title) < 0;
+          }
+          case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: {
+            const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
+                                              eb.author.empty() ? "zzz" : eb.author);
+            if (cmp != 0) return cmp > 0;
+            return compareNormalized(ea.title, eb.title) > 0;
+          }
+          case CrossPointSettings::LIBRARY_SORT_RECENT:
+            if (ma.lastReadAt != mb.lastReadAt) return ma.lastReadAt > mb.lastReadAt;
+            return compareNormalized(ea.title, eb.title) < 0;
+          case CrossPointSettings::LIBRARY_SORT_PROGRESS:
+            if (ma.completed != mb.completed) return ma.completed;
+            if (ma.progress != mb.progress) return ma.progress > mb.progress;
+            return compareNormalized(ea.title, eb.title) < 0;
+        }
+        return a < b;
+      });
+
+      reusedReordered_.clear();
+      reusedReordered_.reserve(n);
+      for (int i : reusedSortIdx_)
+        reusedReordered_.push_back(std::move(entries_[i]));
+      entries_.swap(reusedReordered_);
     }
-
-    std::vector<int> idx(n);
-    std::iota(idx.begin(), idx.end(), 0);
-    yield();
-    esp_task_wdt_reset();
-
-    std::sort(idx.begin(), idx.end(), [&](int a, int b) -> bool {
-      const auto& ea = entries_[a];
-      const auto& eb = entries_[b];
-      const auto& ma = meta[a];
-      const auto& mb = meta[b];
-      switch (currentSort_) {
-        case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:
-          return compareNormalized(ea.title, eb.title) < 0;
-        case CrossPointSettings::LIBRARY_SORT_TITLE_DESC:
-          return compareNormalized(ea.title, eb.title) > 0;
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: {
-          const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
-                                            eb.author.empty() ? "zzz" : eb.author);
-          if (cmp != 0) return cmp < 0;
-          return compareNormalized(ea.title, eb.title) < 0;
-        }
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: {
-          const int cmp = compareNormalized(ea.author.empty() ? "zzz" : ea.author,
-                                            eb.author.empty() ? "zzz" : eb.author);
-          if (cmp != 0) return cmp > 0;
-          return compareNormalized(ea.title, eb.title) > 0;
-        }
-        case CrossPointSettings::LIBRARY_SORT_RECENT:
-          if (ma.lastReadAt != mb.lastReadAt) return ma.lastReadAt > mb.lastReadAt;
-          return compareNormalized(ea.title, eb.title) < 0;
-        case CrossPointSettings::LIBRARY_SORT_PROGRESS:
-          if (ma.completed != mb.completed) return ma.completed;
-          if (ma.progress != mb.progress) return ma.progress > mb.progress;
-          return compareNormalized(ea.title, eb.title) < 0;
-      }
-      return a < b;
-    });
-
-    std::vector<LibraryCache::Entry> reordered;
-    reordered.reserve(n);
-    for (int i : idx)
-      reordered.push_back(std::move(entries_[i]));
-    entries_.swap(reordered);
-  }
 
   selectorIndex_ = 0;
   coversComplete_ = false;

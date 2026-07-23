@@ -58,10 +58,15 @@ class LibraryActivity final : public Activity {
   std::string currentSearchText_;
   uint8_t lastLayoutSetting_ = CrossPointSettings::LIBRARY_LAYOUT_4X4;
 
-  // Popup state
+   // Popup state
   enum class PopupMode { None, Sort, Filter };
   PopupMode popupMode_ = PopupMode::None;
   LibraryPopupOverlay popupOverlay_;
+
+  // Reused sort scratch buffers so repeated filter/sort changes avoid extra
+  // heap allocations for the intermediate reordered entry list.
+  std::vector<LibraryCache::Entry> reusedReordered_;
+  std::vector<int> reusedSortIdx_;
 
   // Long-press tracking for Up/Down
   bool upHeld_ = false;
