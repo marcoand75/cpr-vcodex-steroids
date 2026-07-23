@@ -235,7 +235,7 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
 }
 
 bool ChapterHtmlSlimParser::startNewPage(const char* reason) {
-  currentPage.reset(new (std::nothrow) Page());
+  currentPage = arenaUnique<Page>();
   if (!currentPage) {
     const auto heap = MemoryBudget::snapshot();
     LOG_ERR("EHP", "Failed to create page during %s (%u free, %u max alloc)", reason, heap.freeHeap, heap.maxAllocHeap);
@@ -379,13 +379,20 @@ bool ChapterHtmlSlimParser::readImageDimensions(const std::string& resolvedPath,
     return true;
   }
 
-  auto* imagePrefix = static_cast<uint8_t*>(malloc(IMAGE_DIMENSION_PREFIX_BYTES));
+  bool imagePrefixFromArena = false;
+  auto* imagePrefix = arena_ ? static_cast<uint8_t*>(arena_->alloc(IMAGE_DIMENSION_PREFIX_BYTES)) : nullptr;
+  if (imagePrefix) imagePrefixFromArena = true;
+  if (!imagePrefix) {
+    imagePrefix = static_cast<uint8_t*>(malloc(IMAGE_DIMENSION_PREFIX_BYTES));
+  }
   size_t imagePrefixSize = 0;
   bool dimensionsRead = imagePrefix &&
                         epub->readItemPrefixToBuffer(resolvedPath, imagePrefix, IMAGE_DIMENSION_PREFIX_BYTES,
                                                      &imagePrefixSize, IMAGE_DIMENSION_PREFIX_CHUNK) &&
                         parseImageDimensionsFromPrefix(imagePrefix, imagePrefixSize, dims);
-  free(imagePrefix);
+  if (!imagePrefixFromArena) {
+    free(imagePrefix);
+  }
 
   // Some otherwise-decodable EPUB images have metadata/layout that the small
   // prefix probe cannot recognize. Fall back to the older streaming extraction
@@ -578,8 +585,8 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   if (lowMemoryAbort) {
     return;
   }
-  currentTextBlock.reset(new (std::nothrow) ParsedText(extraParagraphSpacing, forceParagraphIndents, hyphenationEnabled,
-                                                       focusReadingEnabled, guideDotMinGap, blockStyle));
+  currentTextBlock = arenaUnique<ParsedText>(extraParagraphSpacing, forceParagraphIndents, hyphenationEnabled,
+                                              focusReadingEnabled, guideDotMinGap, blockStyle);
   if (!currentTextBlock) {
     const auto heap = MemoryBudget::snapshot();
     LOG_ERR("EHP", "Failed to create text block (%u free, %u max alloc)", heap.freeHeap, heap.maxAllocHeap);
@@ -648,7 +655,7 @@ void ChapterHtmlSlimParser::emitPage(const uint32_t xhtmlByteOffset) {
   if (!currentPage) {
     return;
   }
-  completePageFn(std::move(currentPage), {xhtmlByteOffset, xpathParagraphIndex, xpathListItemIndex});
+  completePageFn(currentPage.release(), {xhtmlByteOffset, xpathParagraphIndex, xpathListItemIndex});
   completedPageCount++;
   serviceLongParse("page emit");
 }
@@ -875,9 +882,9 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
         nextRowIndex++;
       }
 
-      auto tableFragment = std::shared_ptr<PageTableFragment>(new (std::nothrow) PageTableFragment(
+      auto tableFragment = arenaShared<PageTableFragment>(
           tableWidth, segment.columnCount, TABLE_CELL_PADDING, lineHeight, std::move(fragmentRows),
-          table.blockStyle.leftInset(), currentPageNextY));
+          table.blockStyle.leftInset(), currentPageNextY);
       if (!tableFragment) {
         const auto heap = MemoryBudget::snapshot();
         LOG_ERR("EHP", "Failed to create PageTableFragment (%u free, %u max alloc)", heap.freeHeap, heap.maxAllocHeap);
@@ -1018,8 +1025,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
 
   currentPageNextY += topSpacing;
 
-  auto pageRule = std::shared_ptr<PageHorizontalRule>(
-      new (std::nothrow) PageHorizontalRule(width, ruleThickness, xPos, currentPageNextY));
+  auto pageRule = arenaShared<PageHorizontalRule>(width, ruleThickness, xPos, currentPageNextY);
   if (!pageRule) {
     LOG_ERR("EHP", "Failed to create PageHorizontalRule");
     return;
@@ -1418,8 +1424,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 self->currentPageNextY += imageMarginTop;
 
                 // Create ImageBlock and add to page
-                auto imageBlock = std::shared_ptr<ImageBlock>(new (std::nothrow) ImageBlock(
-                    cachedImagePath, displayWidth, displayHeight, self->epub->getPath(), resolvedPath));
+                auto imageBlock = self->arenaShared<ImageBlock>(
+                    cachedImagePath, displayWidth, displayHeight, self->epub->getPath(), resolvedPath);
                 if (!imageBlock) {
                   const auto heap = MemoryBudget::snapshot();
                   LOG_ERR("EHP", "Failed to create ImageBlock (%u free, %u max alloc)", heap.freeHeap,
@@ -1428,8 +1434,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   return;
                 }
                 int xPos = (self->viewportWidth - displayWidth) / 2;
-                auto pageImage =
-                    std::shared_ptr<PageImage>(new (std::nothrow) PageImage(imageBlock, xPos, self->currentPageNextY));
+                auto pageImage = self->arenaShared<PageImage>(imageBlock, xPos, self->currentPageNextY);
                 if (!pageImage) {
                   const auto heap = MemoryBudget::snapshot();
                   LOG_ERR("EHP", "Failed to create PageImage (%u free, %u max alloc)", heap.freeHeap,
@@ -2226,6 +2231,9 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
     currentTextBlock.reset();
   }
 
+  if (arenaFallbackCount > 0) {
+    LOG_DBG("EHP", "Parser arena fallbacks=%u", arenaFallbackCount);
+  }
   return !lowMemoryAbort;
 }
 
@@ -2262,7 +2270,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
 
   // Apply horizontal left inset (margin + padding) as x position offset
   const int16_t xOffset = line->getBlockStyle().leftInset();
-  auto pageLine = std::shared_ptr<PageLine>(new (std::nothrow) PageLine(line, xOffset, currentPageNextY));
+  auto pageLine = arenaShared<PageLine>(line, xOffset, currentPageNextY);
   if (!pageLine) {
     const auto heap = MemoryBudget::snapshot();
     LOG_ERR("EHP", "Failed to create PageLine (%u free, %u max alloc)", heap.freeHeap, heap.maxAllocHeap);

@@ -109,6 +109,11 @@ void GfxRenderer::begin() {
   panelWidthBytes = display.getDisplayWidthBytes();
   frameBufferSize = display.getBufferSize();
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
+
+  // Frame scratch arena: sized for a few drawBitmap/polygon scratch buffers.
+  if (!frameArena_.valid()) {
+    frameArena_.init(std::min<size_t>(8192, ESP.getMaxAllocHeap() / 4));
+  }
 }
 
 bool GfxRenderer::isFontCacheScanning() const { return fontCacheManager_ && fontCacheManager_->isScanning(); }
@@ -1199,14 +1204,24 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   // Calculate output row size (2 bits per pixel, packed into bytes)
   // IMPORTANT: Use int, not uint8_t, to avoid overflow for images > 1020 pixels wide
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+  bool outputRowFromArena = false;
+  bool rowBytesFromArena = false;
+  auto* outputRow = static_cast<uint8_t*>(frameArena_.alloc(outputRowSize));
+  auto* rowBytes = static_cast<uint8_t*>(frameArena_.alloc(bitmap.getRowBytes()));
+  if (outputRow) outputRowFromArena = true;
+  if (rowBytes) rowBytesFromArena = true;
 
   if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
-    return;
+    outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
+    rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+    if (!outputRow || !rowBytes) {
+      LOG_ERR("GFX", "!! Failed to allocate BMP row buffers");
+      free(outputRow);
+      free(rowBytes);
+      return;
+    }
+    outputRowFromArena = false;
+    rowBytesFromArena = false;
   }
 
   for (int bmpY = 0; bmpY < (bitmap.getHeight() - cropPixY); bmpY++) {
@@ -1223,8 +1238,8 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
 
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
+      if (!outputRowFromArena) free(outputRow);
+      if (!rowBytesFromArena) free(rowBytes);
       return;
     }
 
@@ -1266,8 +1281,8 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
     }
   }
 
-  free(outputRow);
-  free(rowBytes);
+  if (!outputRowFromArena) free(outputRow);
+  if (!rowBytesFromArena) free(rowBytes);
 }
 
 void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
@@ -1285,22 +1300,32 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
 
   // For 1-bit BMP, output is still 2-bit packed (for consistency with readNextRow)
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+  bool outputRowFromArena = false;
+  bool rowBytesFromArena = false;
+  auto* outputRow = static_cast<uint8_t*>(frameArena_.alloc(outputRowSize));
+  auto* rowBytes = static_cast<uint8_t*>(frameArena_.alloc(bitmap.getRowBytes()));
+  if (outputRow) outputRowFromArena = true;
+  if (rowBytes) rowBytesFromArena = true;
 
   if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate 1-bit BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
-    return;
+    outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
+    rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+    if (!outputRow || !rowBytes) {
+      LOG_ERR("GFX", "!! Failed to allocate 1-bit BMP row buffers");
+      free(outputRow);
+      free(rowBytes);
+      return;
+    }
+    outputRowFromArena = false;
+    rowBytesFromArena = false;
   }
 
   for (int bmpY = 0; bmpY < bitmap.getHeight(); bmpY++) {
     // Read rows sequentially using readNextRow
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from 1-bit bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
+      if (!outputRowFromArena) free(outputRow);
+      if (!rowBytesFromArena) free(rowBytes);
       return;
     }
 
@@ -1335,8 +1360,8 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     }
   }
 
-  free(outputRow);
-  free(rowBytes);
+  if (!outputRowFromArena) free(outputRow);
+  if (!rowBytesFromArena) free(rowBytes);
 }
 
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {
@@ -1354,7 +1379,12 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
   if (maxY >= getScreenHeight()) maxY = getScreenHeight() - 1;
 
   // Allocate node buffer for scanline algorithm
-  auto* nodeX = static_cast<int*>(malloc(numPoints * sizeof(int)));
+  bool nodeXFromArena = false;
+  auto* nodeX = static_cast<int*>(frameArena_.alloc(static_cast<size_t>(numPoints) * sizeof(int)));
+  if (nodeX) nodeXFromArena = true;
+  if (!nodeX) {
+    nodeX = static_cast<int*>(malloc(static_cast<size_t>(numPoints) * sizeof(int)));
+  }
   if (!nodeX) {
     LOG_ERR("GFX", "!! Failed to allocate polygon node buffer");
     return;
@@ -1396,7 +1426,7 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
     }
   }
 
-  free(nodeX);
+  if (!nodeXFromArena) free(nodeX);
 }
 
 // For performance measurement (using static to allow "const" methods)
@@ -1449,6 +1479,26 @@ void GfxRenderer::invertScreen() const {
   }
 }
 
+uint8_t* GfxRenderer::allocateFrameScratch(size_t size, bool* fromArena) const {
+  bool localFromArena = false;
+  uint8_t* mem = nullptr;
+  if (frameArena_.valid()) {
+    mem = static_cast<uint8_t*>(frameArena_.alloc(size));
+    if (mem) {
+      localFromArena = true;
+    } else {
+      LOG_DBG("GFX", "FrameArena fallback to heap for scratch size=%u", size);
+    }
+  }
+  if (!mem) {
+    mem = static_cast<uint8_t*>(malloc(size));
+  }
+  if (fromArena) {
+    *fromArena = localFromArena;
+  }
+  return mem;
+}
+
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
@@ -1458,6 +1508,15 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const
     nextRefreshOverridePending = false;
   }
   display.displayBuffer(effectiveRefreshMode, fadingFix);
+
+  if (frameArena_.valid()) {
+    LOG_DBG("GFX", "FrameArena reset: used=%u peak=%u capacity=%u", frameArena_.used(), frameArena_.peakUsed(),
+            frameArena_.capacity());
+    if (frameArena_.peakUsed() > frameArena_.capacity() * 3 / 4) {
+      LOG_DBG("GFX", "FrameArena peak=%u exceeds 75%% capacity=%u", frameArena_.peakUsed(), frameArena_.capacity());
+    }
+  }
+  frameArena_.reset();
 }
 
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,

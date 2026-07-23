@@ -164,8 +164,8 @@ bool renderTiledGrayscale(GfxRenderer& renderer, const char* tag, RenderFn&& ren
   const int displayHeight = renderer.getDisplayHeight();
   const int displayWidthBytes = renderer.getDisplayWidthBytes();
   const auto heapBefore = MemoryBudget::snapshot();
-  auto scratch =
-      std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[static_cast<size_t>(displayWidthBytes) * STRIP_ROWS]);
+  bool scratchFromArena = false;
+  auto* scratch = renderer.allocateFrameScratch(static_cast<size_t>(displayWidthBytes) * STRIP_ROWS, &scratchFromArena);
   const auto heapAfterAlloc = MemoryBudget::snapshot();
   if (!scratch) {
     LOG_ERR(tag, "OOM: grayscale strip scratch (%d bytes); falling back to BW snapshot",
@@ -178,11 +178,11 @@ bool renderTiledGrayscale(GfxRenderer& renderer, const char* tag, RenderFn&& ren
     for (int y = 0; y < displayHeight; y += STRIP_ROWS) {
       const int rows = std::min(STRIP_ROWS, displayHeight - y);
       {
-        GfxStripTargetScope strip(renderer, scratch.get(), y, rows);
+        GfxStripTargetScope strip(renderer, scratch, y, rows);
         renderer.clearScreen(0x00);
         renderFn();
       }
-      renderer.writeGrayscalePlaneStrip(lsbPlane, scratch.get(), y, rows);
+      renderer.writeGrayscalePlaneStrip(lsbPlane, scratch, y, rows);
     }
   };
 
@@ -209,6 +209,9 @@ bool renderTiledGrayscale(GfxRenderer& renderer, const char* tag, RenderFn&& ren
   LOG_DBG(tag, "Tiled grayscale RAM: scratch=%d free=%u->%u->%u maxAlloc=%u->%u->%u",
           displayWidthBytes * STRIP_ROWS, heapBefore.freeHeap, heapAfterAlloc.freeHeap, heapAfter.freeHeap,
           heapBefore.maxAllocHeap, heapAfterAlloc.maxAllocHeap, heapAfter.maxAllocHeap);
+  if (!scratchFromArena) {
+    free(scratch);
+  }
   return true;
 }
 

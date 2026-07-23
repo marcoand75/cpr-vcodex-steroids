@@ -272,19 +272,10 @@ bool DictionaryWordSelectActivity::storeSelectionBaseRegions() {
     }
 
     SelectionRegionCache& region = selectionRegions[i];
-    if (region.capacity < required) {
-      uint8_t* replacement = static_cast<uint8_t*>(malloc(required));
-      if (!replacement) {
-        invalidateSelectionRegionCache();
-        return false;
-      }
-      free(region.buffer);
-      region.buffer = replacement;
-      region.capacity = required;
-    }
+    region.buffer.resize(required);
 
-    if (!renderer.copyRegionToBuffer(rects[i].x, rects[i].y, rects[i].width, rects[i].height, region.buffer,
-                                     region.capacity)) {
+    if (!renderer.copyRegionToBuffer(rects[i].x, rects[i].y, rects[i].width, rects[i].height, region.buffer.data(),
+                                     region.buffer.size())) {
       invalidateSelectionRegionCache();
       return false;
     }
@@ -303,9 +294,9 @@ bool DictionaryWordSelectActivity::restoreSelectionBaseRegions() const {
 
   for (size_t i = 0; i < selectionRegionCount; ++i) {
     const SelectionRegionCache& region = selectionRegions[i];
-    if (!region.stored || !region.buffer || region.size == 0) return false;
+    if (!region.stored || region.buffer.empty() || region.size == 0) return false;
     if (!renderer.copyBufferToRegion(region.rect.x, region.rect.y, region.rect.width, region.rect.height,
-                                     region.buffer, region.size)) {
+                                     region.buffer.data(), region.size)) {
       return false;
     }
   }
@@ -317,14 +308,14 @@ void DictionaryWordSelectActivity::invalidateSelectionRegionCache() {
   for (auto& region : selectionRegions) {
     region.stored = false;
     region.size = 0;
+    region.buffer.clear();
   }
 }
 
 void DictionaryWordSelectActivity::freeSelectionRegionCache() {
   for (auto& region : selectionRegions) {
-    free(region.buffer);
-    region.buffer = nullptr;
-    region.capacity = 0;
+    region.buffer.clear();
+    region.buffer.shrink_to_fit();
     region.size = 0;
     region.stored = false;
   }

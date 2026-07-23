@@ -41,6 +41,7 @@ class TxtReaderActivity final : public Activity {
   bool pendingForceFullRefresh = false;
   bool waitingForConfirmSecondClick = false;
   unsigned long firstConfirmClickMs = 0UL;
+  std::vector<uint8_t> readBuffer_;
 
   // Cached settings for cache validation (different fonts/margins require re-indexing)
   int cachedFontId = 0;

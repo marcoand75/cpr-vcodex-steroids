@@ -1,5 +1,6 @@
 #include "Section.h"
 
+#include <Arena.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
@@ -41,7 +42,7 @@ struct PageLutEntry {
 constexpr uint32_t PARAGRAPH_LUT_ENTRY_SIZE = sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t);
 }  // namespace
 
-uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
+uint32_t Section::onPageCompleteRaw(Page* page) {
   if (!file) {
     LOG_ERR("SCT", "File not open for writing page %d", pageCount);
     return 0;
@@ -291,18 +292,34 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     }
   }
 
-  ChapterHtmlSlimParser visitor(
-      epub, tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
-      paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, focusReadingEnabled, guideDotMinGap,
-      [this, &lut](std::unique_ptr<Page> page, const ChapterHtmlSlimParser::ParagraphLutEntry syncEntry) {
-        lut.push_back({this->onPageComplete(std::move(page)), syncEntry.xhtmlByteOffset, syncEntry.paragraphIndex,
+   ChapterHtmlSlimParser visitor(
+       epub, tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
+       paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, focusReadingEnabled, guideDotMinGap,
+      [this, &lut](Page* page, const ChapterHtmlSlimParser::ParagraphLutEntry& syncEntry) {
+        lut.push_back({this->onPageCompleteRaw(page), syncEntry.xhtmlByteOffset, syncEntry.paragraphIndex,
                        syncEntry.listItemIndex});
+        if (page) page->~Page();
       },
-      embeddedStyle, contentBase, imageBasePath, imageRendering, std::move(tocAnchors), popupFn, cssParser);
+       embeddedStyle, contentBase, imageBasePath, imageRendering, std::move(tocAnchors), popupFn, cssParser);
+
+  // Optional parser arena: one contiguous block for same-lifetime temporaries.
+  mem::Arena sectionArena;
+  if (sectionArena.init(std::min<size_t>(32768, ESP.getMaxAllocHeap() / 4))) {
+   visitor.setArena(&sectionArena);
+  }
+  LOG_DBG("SCT", "SectionArena init capacity=%u", sectionArena.capacity());
+
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   success = visitor.parseAndBuildPages();
 
-  Storage.remove(tmpHtmlPath.c_str());
+  if (sectionArena.valid()) {
+    LOG_DBG("SCT", "SectionArena stats after parse: used=%u peak=%u capacity=%u remaining=%u", sectionArena.used(),
+            sectionArena.peakUsed(), sectionArena.capacity(), sectionArena.remaining());
+    if (sectionArena.peakUsed() > sectionArena.capacity() * 3 / 4) {
+      LOG_DBG("SCT", "SectionArena peak=%u exceeds 75%% capacity=%u", sectionArena.peakUsed(),
+              sectionArena.capacity());
+    }
+  }
   if (!success) {
     const auto heap = MemoryBudget::snapshot();
     LOG_ERR("SCT", "Failed to parse XML and build pages (lowMemoryAbort=%u imageFallback=%u free=%u maxAlloc=%u)",
@@ -321,6 +338,8 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     LOG_DBG("SCT", "Section built with low-memory image fallback (free=%u maxAlloc=%u)", heap.freeHeap,
             heap.maxAllocHeap);
   }
+
+  Storage.remove(tmpHtmlPath.c_str());
 
   const uint32_t lutOffset = file.position();
   bool hasFailedLutRecords = false;

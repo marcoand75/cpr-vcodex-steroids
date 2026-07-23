@@ -52,8 +52,7 @@ class DictionaryWordSelectActivity final : public Activity {
 
   struct SelectionRegionCache {
     SelectionRect rect;
-    uint8_t* buffer = nullptr;
-    size_t capacity = 0;
+    std::vector<uint8_t> buffer;
     size_t size = 0;
     bool stored = false;
   };

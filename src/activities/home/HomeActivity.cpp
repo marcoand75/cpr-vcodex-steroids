@@ -668,6 +668,20 @@ void HomeActivity::onEnter() {
 
   HOMEPAGE_LOG("HOME", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
+  if (!homeCoverArena_.valid()) {
+    const size_t arenaSize = std::min<size_t>(16384, ESP.getMaxAllocHeap() / 4);
+    homeCoverArena_.init(arenaSize);
+    HOMEPAGE_LOG("HOME", "homeCoverArena init size=%u", arenaSize);
+  } else {
+    HOMEPAGE_LOG("HOME", "homeCoverArena reset: peak=%u capacity=%u", homeCoverArena_.peakUsed(),
+                 homeCoverArena_.capacity());
+    if (homeCoverArena_.peakUsed() > homeCoverArena_.capacity() * 3 / 4) {
+      HOMEPAGE_LOG("HOME", "homeCoverArena peak=%u exceeds 75%% capacity=%u", homeCoverArena_.peakUsed(),
+                   homeCoverArena_.capacity());
+    }
+    homeCoverArena_.reset();
+  }
+
   hasOpdsServers = OPDS_STORE.hasServers();
 
   selectorIndex = 0;
@@ -707,6 +721,11 @@ void HomeActivity::onExit() {
   free(coverBuffer);
   coverBuffer = nullptr;
   coverBufferSize = 0;
+  if (homeCoverArena_.valid()) {
+    HOMEPAGE_LOG("HOME", "homeCoverArena onExit: peak=%u capacity=%u", homeCoverArena_.peakUsed(),
+                 homeCoverArena_.capacity());
+  }
+  homeCoverArena_.reset();
   // Log heap state after freeing the 63 KB cover buffer. The next activity
   // (typically Library) can use this to schedule its scan with awareness of
   // fragmentation.
@@ -742,6 +761,10 @@ bool HomeActivity::storeCoverBuffer() {
   }
 
   coverBufferStored = true;
+  if (homeCoverArena_.valid()) {
+    HOMEPAGE_LOG("HOME", "homeCoverArena after storeCoverBuffer: used=%u capacity=%u", homeCoverArena_.used(),
+                 homeCoverArena_.capacity());
+  }
   return true;
 }
 

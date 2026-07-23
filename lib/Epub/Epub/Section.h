@@ -22,7 +22,7 @@ class Section {
                               uint16_t viewportHeight, bool hyphenationEnabled, bool focusReadingEnabled,
                               bool embeddedStyle, uint8_t imageRendering, bool bionicReadingEnabled,
                               uint8_t guideDotMinGap, uint8_t renderMode);
-  uint32_t onPageComplete(std::unique_ptr<Page> page);
+  uint32_t onPageCompleteRaw(Page* page);
 
  public:
   uint16_t pageCount = 0;

@@ -12,6 +12,7 @@ class SdCardFont;
 #include <vector>
 
 #include "Bitmap.h"
+#include "Arena.h"
 
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
@@ -64,6 +65,8 @@ class GfxRenderer {
   mutable int _stripY0 = 0;
   mutable int _stripRows = 0;
   mutable bool _stripActive = false;
+
+  mutable mem::Arena frameArena_;
 
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
@@ -133,6 +136,7 @@ class GfxRenderer {
   int getScreenWidth() const;
   int getScreenHeight() const;
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  uint8_t* allocateFrameScratch(size_t size, bool* fromArena = nullptr) const;
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;

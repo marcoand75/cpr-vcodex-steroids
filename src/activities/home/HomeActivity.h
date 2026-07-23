@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arena.h>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -24,6 +25,7 @@ class HomeActivity final : public Activity {
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;
+  mem::Arena homeCoverArena_;
   int coverRectX = 0;
   int coverRectY = 0;
   int coverRectW = 0;
