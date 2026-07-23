@@ -1,20 +1,28 @@
 #include "PngSleepRenderer.h"
 
-#include <Arduino.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
-#include <MemoryBudget.h>
 #include <PNGdec.h>
 
+#include <cassert>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 
 namespace {
 
-constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
-
 const char* g_pngStoragePrefix = "SLP";
+
+// Lazily-allocated PNG decoder and FsFile handle, kept alive for the entire
+// screensaver session so we never pay the ~38 KB heap allocate / free overhead
+// on every image change.  Both are reset via open()/close() between images
+// without freeing the object memory.
+static std::unique_ptr<PNG, void(*)(PNG*)> s_png(nullptr, [](PNG* p) {
+  if (p) { p->~PNG(); free(p); }
+});
+static std::unique_ptr<FsFile> s_fsFile;
 
 struct PngOverlayCtx {
   const GfxRenderer* renderer;
@@ -31,20 +39,27 @@ struct PngOverlayCtx {
 };
 
 void* pngSleepOpen(const char* filename, int32_t* size) {
-  FsFile* f = new FsFile();
+  if (s_fsFile) {
+    s_fsFile->close();
+    s_fsFile.reset();
+  }
+  auto f = std::make_unique<FsFile>();
+  if (!f) {
+    LOG_ERR("SLP", "OOM opening PNG file '%s'", filename);
+    return nullptr;
+  }
   if (!Storage.openFileForRead(g_pngStoragePrefix, std::string(filename), *f)) {
-    delete f;
     return nullptr;
   }
   *size = f->size();
-  return f;
+  s_fsFile = std::move(f);
+  return s_fsFile.get();
 }
 
 void pngSleepClose(void* handle) {
-  auto* f = reinterpret_cast<FsFile*>(handle);
-  if (f) {
-    f->close();
-    delete f;
+  if (s_fsFile) {
+    s_fsFile->close();
+    s_fsFile.reset();
   }
 }
 
@@ -152,25 +167,20 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
     return false;
   }
 
-  // Use a lazily-allocated PNG decoder instead of a static instance.
-  //
-  // PNGdec keeps its entire ~58 KB working set (32 KB zlib window + ~20 KB inflate
-  // state + row/palette/file buffers) inline in the PNG object. A true heap
-  // allocation (new PNG()) was unreliable on the ESP32-C3 due to heap fragmentation,
-  // which is why the original code used a static instance in .bss.
-  //
-  // This lazy pattern keeps the 59 KB out of .bss while still performing only a
-  // single allocation (the first call ever) — subsequent calls reuse the pointer
-  // and never fragment the heap further. PNG::open() memset()s the struct on every
-  // call, so reusing one instance is safe; drawTransparentPng is only ever invoked
-  // synchronously from a single activity at a time.
-  static std::unique_ptr<PNG> s_png;
+  // Lazily allocate the PNG decoder on first call and keep it alive for the
+  // entire screensaver session.  sizeof(PNG) ~38 KB; allocating / freeing it
+  // on every image change would fragment the heap.  Instead we reuse the
+  // same PNG object across images — open() and close() only reset internal
+  // state without freeing the object memory.
   if (!s_png) {
-    s_png = std::make_unique<PNG>();
-    if (!s_png) {
-      LOG_ERR("SLP", "Failed to allocate PNG decoder (59 KB)");
+    void* mem = malloc(sizeof(PNG));
+    if (!mem) {
+      LOG_ERR("SLP", "Failed to allocate PNG decoder (free=%d, maxAlloc=%d)",
+              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
       return false;
     }
+    s_png.reset(new (mem) PNG());
+    std::memset(s_png.get(), 0, sizeof(PNG));
   }
   PNG* png = s_png.get();
 
@@ -180,6 +190,7 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   g_pngStoragePrefix = previousPrefix;
   if (rc != PNG_SUCCESS) {
     LOG_ERR("SLP", "PNG open failed: %s (%d)", path.c_str(), rc);
+    s_png.reset();
     return false;
   }
 
@@ -205,4 +216,9 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   rc = png->decode(&ctx, 0);
   png->close();
   return rc == PNG_SUCCESS;
+}
+
+void PngSleepRenderer::releaseDecoder() {
+  s_png.reset();
+  s_fsFile.reset();
 }

@@ -385,6 +385,13 @@ static bool canStartReplacementScreenSaver() {
 static bool startReplacementScreenSaver() {
   if (activityManager.isScreenSaverActive()) return false;
   if (!activityManager.isReaderActivity()) return false;
+
+  // Free font caches to maximize contiguous heap for the PNG decoder (~38 KB).
+  // These caches will be rebuilt by the reader's normal prewarm flow on the
+  // next chapter/page render.
+  fontCacheManager.clearCache();
+  fontDecompressor.clearCache();
+
   activityManager.pushActivity(std::make_unique<ScreenSaverActivity>(renderer, mappedInputManager, true));
   return true;
 }

@@ -199,6 +199,11 @@ void ScreenSaverActivity::onExit() {
     READING_STATS.resumeSession();
   }
 
+  // Release the lazily-allocated PNG decoder (sizeof(PNG) ~38 KB) so the heap
+  // returns to its pre-screensaver state.  This must happen before the reader
+  // renders its next page, otherwise MaxAlloc stays too low for grayscale.
+  PngSleepRenderer::releaseDecoder();
+
   Activity::onExit();
   powerManager.setPowerSaving(false);
   images_.clear();
