@@ -44,10 +44,12 @@ class InflateReader {
   InflateReader(const InflateReader&) = delete;
   InflateReader& operator=(const InflateReader&) = delete;
 
-  // Initialise decompressor. streaming=true allocates a 32KB ring buffer needed
-  // when read() or readAtMost() will be called multiple times.
-  // Returns false only in streaming mode if the ring buffer allocation fails.
-  bool init(bool streaming = false);
+  // Initialise decompressor. streaming=true normally allocates a 32KB ring buffer
+  // needed when read() or readAtMost() will be called multiple times.
+  // When externalBuf is non-null, the caller provides the ring buffer (e.g. from
+  // static .bss) so no heap allocation is performed.
+  // Returns false only in streaming mode (and no external buffer) if malloc fails.
+  bool init(bool streaming = false, uint8_t* externalBuf = nullptr, size_t externalBufSize = 0);
 
   // Release the ring buffer and reset internal state.
   void deinit();
@@ -82,4 +84,5 @@ class InflateReader {
  private:
   uzlib_uncomp decomp = {};
   uint8_t* ringBuffer = nullptr;
+  bool externalBuf_ = false;
 };

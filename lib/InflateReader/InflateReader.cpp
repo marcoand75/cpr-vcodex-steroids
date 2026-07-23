@@ -13,13 +13,19 @@ static_assert(std::is_standard_layout<InflateReader>::value,
 
 InflateReader::~InflateReader() { deinit(); }
 
-bool InflateReader::init(const bool streaming) {
+bool InflateReader::init(const bool streaming, uint8_t* externalBuf, const size_t externalBufSize) {
   deinit();  // free any previously allocated ring buffer and reset state
 
   if (streaming) {
-    ringBuffer = static_cast<uint8_t*>(malloc(INFLATE_DICT_SIZE));
-    if (!ringBuffer) return false;
-    memset(ringBuffer, 0, INFLATE_DICT_SIZE);
+    if (externalBuf && externalBufSize >= INFLATE_DICT_SIZE) {
+      ringBuffer = externalBuf;
+      externalBuf_ = true;
+      memset(ringBuffer, 0, INFLATE_DICT_SIZE);
+    } else {
+      ringBuffer = static_cast<uint8_t*>(malloc(INFLATE_DICT_SIZE));
+      if (!ringBuffer) return false;
+      memset(ringBuffer, 0, INFLATE_DICT_SIZE);
+    }
   }
 
   uzlib_uncompress_init(&decomp, ringBuffer, ringBuffer ? INFLATE_DICT_SIZE : 0);
@@ -27,10 +33,11 @@ bool InflateReader::init(const bool streaming) {
 }
 
 void InflateReader::deinit() {
-  if (ringBuffer) {
+  if (ringBuffer && !externalBuf_) {
     free(ringBuffer);
-    ringBuffer = nullptr;
   }
+  ringBuffer = nullptr;
+  externalBuf_ = false;
   memset(&decomp, 0, sizeof(decomp));
 }
 

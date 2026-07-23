@@ -19,6 +19,11 @@ namespace {
 constexpr uint16_t ZIP_METHOD_STORED = 0;
 constexpr uint16_t ZIP_METHOD_DEFLATED = 8;
 
+// Static 32 KB inflate ring buffer shared by all streaming decompression
+// operations in this translation unit. Placed in .bss so it never contributes
+// to heap fragmentation.
+alignas(4) static uint8_t sInflateRingBuf[32768];
+
 // RAII zip: opens the zip if not already open, closes on destruction only if
 // it performed the open.  Removes the wasOpen/close boilerplate from every method.
 class ScopedOpenClose final {
@@ -505,7 +510,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
-    if (!ctx.reader.init(true)) {
+    if (!ctx.reader.init(true, sInflateRingBuf, sizeof(sInflateRingBuf))) {
       LOG_ERR("ZIP", "Failed to init inflate reader");
       free(outputBuffer);
       free(fileReadBuffer);
@@ -631,7 +636,7 @@ bool ZipFile::readFilePrefixToBuffer(const char* filename, uint8_t* out, const s
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
-    if (!ctx.reader.init(true)) {
+    if (!ctx.reader.init(true, sInflateRingBuf, sizeof(sInflateRingBuf))) {
       LOG_ERR("ZIP", "Failed to init inflate reader for prefix");
       free(outputBuffer);
       free(fileReadBuffer);
