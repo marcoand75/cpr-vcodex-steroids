@@ -669,7 +669,9 @@ void HomeActivity::onEnter() {
   HOMEPAGE_LOG("HOME", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (!homeCoverArena_.valid()) {
-    const size_t arenaSize = std::min<size_t>(16384, ESP.getMaxAllocHeap() / 4);
+    const size_t minArenaSize = renderer.getBufferSize();
+    size_t arenaSize = std::max<size_t>(minArenaSize, ESP.getMaxAllocHeap() / 4);
+    arenaSize = std::min<size_t>(minArenaSize + 16384, arenaSize);
     homeCoverArena_.init(arenaSize);
     HOMEPAGE_LOG("HOME", "homeCoverArena init size=%u", arenaSize);
   } else {
@@ -680,6 +682,31 @@ void HomeActivity::onEnter() {
                    homeCoverArena_.capacity());
     }
     homeCoverArena_.reset();
+  }
+
+  if (!coverBufferFromArena_) {
+    free(coverBuffer);
+  }
+  coverBuffer = nullptr;
+  coverBufferSize = 0;
+  coverBufferFromArena_ = false;
+  coverBufferStored = false;
+
+  const size_t maxCoverBytes = renderer.getBufferSize();
+  if (homeCoverArena_.valid() && homeCoverArena_.remaining() >= maxCoverBytes) {
+    coverBuffer = static_cast<uint8_t*>(homeCoverArena_.alloc(maxCoverBytes, alignof(uint8_t)));
+    if (coverBuffer) {
+      coverBufferSize = maxCoverBytes;
+      coverBufferFromArena_ = true;
+    }
+  }
+  if (!coverBuffer) {
+    coverBuffer = static_cast<uint8_t*>(malloc(maxCoverBytes));
+    if (coverBuffer) {
+      coverBufferSize = maxCoverBytes;
+    } else {
+      LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(maxCoverBytes));
+    }
   }
 
   hasOpdsServers = OPDS_STORE.hasServers();
@@ -718,9 +745,12 @@ void HomeActivity::onEnter() {
 void HomeActivity::onExit() {
   Activity::onExit();
   coverBufferStored = false;  // invalidate before free
-  free(coverBuffer);
+  if (!coverBufferFromArena_) {
+    free(coverBuffer);
+  }
   coverBuffer = nullptr;
   coverBufferSize = 0;
+  coverBufferFromArena_ = false;
   if (homeCoverArena_.valid()) {
     HOMEPAGE_LOG("HOME", "homeCoverArena onExit: peak=%u capacity=%u", homeCoverArena_.peakUsed(),
                  homeCoverArena_.capacity());
@@ -742,14 +772,26 @@ bool HomeActivity::storeCoverBuffer() {
   // freeing a ~40 KB block on every store/restore cycle, which would leave
   // a hole in the heap that later activities (Library cover generation) need.
   if (needed > coverBufferSize) {
-    free(coverBuffer);
-    coverBuffer = static_cast<uint8_t*>(malloc(needed));
-    if (!coverBuffer) {
-      coverBufferSize = 0;
+    uint8_t* newBuffer = nullptr;
+    bool newFromArena = false;
+    if (homeCoverArena_.valid() && homeCoverArena_.remaining() >= needed) {
+      newBuffer = static_cast<uint8_t*>(homeCoverArena_.alloc(needed, alignof(uint8_t)));
+      newFromArena = true;
+    }
+    if (!newBuffer) {
+      newBuffer = static_cast<uint8_t*>(malloc(needed));
+      newFromArena = false;
+    }
+    if (!newBuffer) {
       LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
       return false;
     }
+    if (!coverBufferFromArena_) {
+      free(coverBuffer);
+    }
+    coverBuffer = newBuffer;
     coverBufferSize = needed;
+    coverBufferFromArena_ = newFromArena;
   }
   // coverBufferSize >= needed: we can reuse.
 
