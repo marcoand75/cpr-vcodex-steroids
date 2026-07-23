@@ -39,6 +39,7 @@
 #include "fontIds.h"
 #include "util/BootRecovery.h"
 #include "util/ButtonNavigator.h"
+#include <MemoryBudget.h>
 #include "util/CprVcodexLogs.h"
 #include "util/ScreenshotUtil.h"
 
@@ -717,6 +718,9 @@ void setup() {
 
   BootRecovery::markBootCompleted();
 
+  const auto bootHeap = MemoryBudget::snapshot();
+  LOG_INF("MAIN", "Boot complete: free=%u maxAlloc=%u", bootHeap.freeHeap, bootHeap.maxAllocHeap);
+
   if (isSilentReboot) {
     activityManager.requestUpdateAndWait();
     gpio.update();
@@ -766,6 +770,22 @@ void loop() {
     }
   }
 #endif
+
+  // Lightweight memory pressure watchdog. Runs on every loop iteration
+  // but only logs when a threshold is crossed, so it is effectively free
+  // on the happy path.
+  {
+    static unsigned long lastMemWatchdog = 0;
+    if (millis() - lastMemWatchdog >= 1000) {
+      lastMemWatchdog = millis();
+      const auto heap = MemoryBudget::snapshot();
+      if (heap.freeHeap < 32 * 1024) {
+        LOG_ERR("MEM", "Low free heap: %u bytes (maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
+      } else if (heap.maxAllocHeap < 24 * 1024) {
+        LOG_ERR("MEM", "Low maxAlloc: %u bytes (free=%u)", heap.maxAllocHeap, heap.freeHeap);
+      }
+    }
+  }
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
