@@ -13,6 +13,7 @@
 #include "MappedInputManager.h"
 #include "RenderLock.h"
 #include "util/ScreenshotInfo.h"
+#include "ArenaManager.h"
 
 class Activity {
   friend class ActivityManager;
@@ -51,6 +52,7 @@ class Activity {
   virtual bool isScreenSaverActivity() const { return false; }
   virtual uint8_t getUiTransitionRefreshWeight() const { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
+  virtual ActivityContext arenaContext() const { return ActivityContext::NONE; }
 
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes

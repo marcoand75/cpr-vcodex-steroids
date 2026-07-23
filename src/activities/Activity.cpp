@@ -1,8 +1,12 @@
 #include "Activity.h"
 
 #include "ActivityManager.h"
+#include "ArenaManager.h"
 
-void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
+void Activity::onEnter() {
+  LOG_DBG("ACT", "Entering activity: %s", name.c_str());
+  ArenaManager::instance().switch_context(arenaContext());
+}
 
 void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }
 

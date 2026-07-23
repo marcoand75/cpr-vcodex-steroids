@@ -47,4 +47,5 @@ class ReaderActivity final : public Activity {
         initialBookmark(initialBookmark) {}
   void onEnter() override;
   bool isReaderActivity() const override { return true; }
+  ActivityContext arenaContext() const override { return ActivityContext::READER; }
 };

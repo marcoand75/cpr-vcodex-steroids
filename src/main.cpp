@@ -39,8 +39,10 @@
 #include "fontIds.h"
 #include "util/BootRecovery.h"
 #include "util/ButtonNavigator.h"
+#include <MemoryBudget.h>
 #include "util/CprVcodexLogs.h"
 #include "util/ScreenshotUtil.h"
+#include "ArenaManager.h"
 
 MappedInputManager mappedInputManager(gpio);
 GfxRenderer renderer(display);
@@ -716,6 +718,16 @@ void setup() {
   }
 
   BootRecovery::markBootCompleted();
+
+  const auto bootHeap = MemoryBudget::snapshot();
+  LOG_INF("MAIN", "Boot complete: free=%u maxAlloc=%u", bootHeap.freeHeap, bootHeap.maxAllocHeap);
+
+  const size_t kGlobalArenaPoolSize = std::min<size_t>(65536, bootHeap.freeHeap / 3);
+  if (!ArenaManager::instance().init(kGlobalArenaPoolSize)) {
+    LOG_ERR("MAIN", "ArenaManager init failed");
+  } else {
+    LOG_INF("MAIN", "ArenaManager initialized: %u bytes", kGlobalArenaPoolSize);
+  }
 
   if (isSilentReboot) {
     activityManager.requestUpdateAndWait();
