@@ -76,6 +76,13 @@ void ArenaManager::switch_context(const ActivityContext ctx) {
           static_cast<unsigned>(prev), static_cast<unsigned>(ctx),
           static_cast<unsigned>(offset_), static_cast<unsigned>(peakUsed_),
           static_cast<unsigned>(poolCapacity_));
+
+  if (ArenaManager::instance().valid()) {
+    LOG_INF(kTag, "Activity context=%u pool used=%u/%u peak=%u", static_cast<unsigned>(ctx),
+            static_cast<unsigned>(ArenaManager::instance().used()),
+            static_cast<unsigned>(ArenaManager::instance().capacity()),
+            static_cast<unsigned>(ArenaManager::instance().peakUsed()));
+  }
 }
 
 void* ArenaManager::allocate(const size_t bytes, const size_t alignment) {
