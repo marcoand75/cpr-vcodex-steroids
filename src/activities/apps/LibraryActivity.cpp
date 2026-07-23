@@ -420,6 +420,9 @@ void LibraryActivity::applyFilterAndSort() {
   cachedInfoSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(-1);
   cachedInfoSearch_.clear();
   forceRender_ = true;
+
+  // WDT reset before a full-grid redraw (may decode up to 16 cover BMPs).
+  esp_task_wdt_reset();
 }
 
 
