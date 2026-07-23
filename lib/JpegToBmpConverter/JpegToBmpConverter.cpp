@@ -13,6 +13,41 @@
 
 #include "BitmapHelpers.h"
 #include <CoverDebugLog.h>
+#include "ArenaManager.h"
+
+// ---------------------------------------------------------------------------
+// Helper: allocate an array from ArenaManager when possible, otherwise heap.
+// The deleter becomes a no-op for arena-backed memory because reset() is
+// handled by Activity context switches.
+// ---------------------------------------------------------------------------
+namespace {
+
+template <typename T>
+struct ArenaOrHeapArrayDeleter {
+  bool arenaOwned = false;
+  void operator()(T* ptr) const noexcept {
+    if (!arenaOwned && ptr) {
+      delete[] ptr;
+    }
+  }
+};
+
+template <typename T>
+std::unique_ptr<T, ArenaOrHeapArrayDeleter<T>> makeArenaOrHeapArray(size_t count) {
+  std::unique_ptr<T, ArenaOrHeapArrayDeleter<T>> result;
+  if (ArenaManager::instance().valid()) {
+    if (void* p = ArenaManager::instance().allocate(count * sizeof(T), alignof(T))) {
+      result.reset(static_cast<T*>(p));
+      result.get_deleter().arenaOwned = true;
+      return result;
+    }
+  }
+  result.reset(new (std::nothrow) T[count]());
+  result.get_deleter().arenaOwned = false;
+  return result;
+}
+
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exif thumbnail helpers
@@ -317,24 +352,24 @@ struct BmpConvertCtx {
   uint32_t scaleY_fp;
 
   // Pre-calculated X-axis scaling ranges (avoid per-row recalculation)
-  std::unique_ptr<int[]> xScaleStarts;
-  std::unique_ptr<int[]> xScaleEnds;
+  std::unique_ptr<int, ArenaOrHeapArrayDeleter<int>> xScaleStarts;
+  std::unique_ptr<int, ArenaOrHeapArrayDeleter<int>> xScaleEnds;
 
   // Accumulates one MCU row (up to MAX_MCU_HEIGHT source rows × srcWidth columns)
   // Filled column-by-column as JPEGDEC callbacks arrive for the same MCU row
-  std::unique_ptr<uint8_t[]> mcuBuf;
+  std::unique_ptr<uint8_t, ArenaOrHeapArrayDeleter<uint8_t>> mcuBuf;
 
   // Y-axis area averaging accumulators (needsScaling only)
   int currentOutY;
   uint32_t nextOutY_srcStart;  // 16.16 fixed-point boundary for the next output row
-  std::unique_ptr<uint32_t[]> rowAccum;
-  std::unique_ptr<uint32_t[]> rowCount;
+  std::unique_ptr<uint32_t, ArenaOrHeapArrayDeleter<uint32_t>> rowAccum;
+  std::unique_ptr<uint32_t, ArenaOrHeapArrayDeleter<uint32_t>> rowCount;
 
-  std::unique_ptr<uint8_t[]> bmpRow;
+  std::unique_ptr<uint8_t, ArenaOrHeapArrayDeleter<uint8_t>> bmpRow;
 
   // Write buffer for batching BMP row writes
   static constexpr int WRITE_BUF_MAX_ROWS = 16;
-  std::unique_ptr<uint8_t[]> writeBuf;
+  std::unique_ptr<uint8_t, ArenaOrHeapArrayDeleter<uint8_t>> writeBuf;
   int writeBufMaxRows;   // actual capacity (≤ WRITE_BUF_MAX_ROWS, dynamic based on MaxAlloc)
   int writeBufUsedRows;
 
@@ -683,7 +718,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   ctx.error = false;
 
   // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
-  ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
+  ctx.mcuBuf = makeArenaOrHeapArray<uint8_t>(MAX_MCU_HEIGHT * ctx.srcWidth);
   if (!ctx.mcuBuf) {
     COVER_LOG("JPG", "SKIP: MCU alloc fail (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
     LOG_ERR("JPG", "OOM: MCU buffer (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
@@ -692,7 +727,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   }
   memset(ctx.mcuBuf.get(), 0, MAX_MCU_HEIGHT * ctx.srcWidth);
 
-  ctx.bmpRow = makeUniqueNoThrow<uint8_t[]>(bytesPerRow);
+  ctx.bmpRow = makeArenaOrHeapArray<uint8_t>(bytesPerRow);
   if (!ctx.bmpRow) {
     LOG_ERR("JPG", "OOM: BMP row buffer");
     setPermanent(false);  // transient: OOM
@@ -700,8 +735,8 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   }
 
   if (needsScaling) {
-    ctx.rowAccum = makeUniqueNoThrow<uint32_t[]>(outWidth);
-    ctx.rowCount = makeUniqueNoThrow<uint32_t[]>(outWidth);
+    ctx.rowAccum = makeArenaOrHeapArray<uint32_t>(outWidth);
+    ctx.rowCount = makeArenaOrHeapArray<uint32_t>(outWidth);
     if (!ctx.rowAccum || !ctx.rowCount) {
       LOG_ERR("JPG", "OOM: scaling buffers");
       setPermanent(false);  // transient: OOM
@@ -710,8 +745,8 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
     ctx.nextOutY_srcStart = scaleY_fp;
 
     // Pre-calculate X-axis scaling ranges to avoid repeated fixed-point math per row
-    ctx.xScaleStarts = makeUniqueNoThrow<int[]>(outWidth);
-    ctx.xScaleEnds = makeUniqueNoThrow<int[]>(outWidth);
+    ctx.xScaleStarts = makeArenaOrHeapArray<int>(outWidth);
+    ctx.xScaleEnds = makeArenaOrHeapArray<int>(outWidth);
     if (!ctx.xScaleStarts || !ctx.xScaleEnds) {
       LOG_ERR("JPG", "OOM: X-scale range buffers");
       setPermanent(false);  // transient: OOM
@@ -735,7 +770,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   if (writeBufRows < 2) writeBufRows = 2;                           // floor: at least 2 rows
   if (writeBufRows > BmpConvertCtx::WRITE_BUF_MAX_ROWS) writeBufRows = BmpConvertCtx::WRITE_BUF_MAX_ROWS;  // cap: 16 rows
 
-  ctx.writeBuf = makeUniqueNoThrow<uint8_t[]>(writeBufRows * bytesPerRow);
+  ctx.writeBuf = makeArenaOrHeapArray<uint8_t>(writeBufRows * bytesPerRow);
   if (!ctx.writeBuf) {
     LOG_ERR("JPG", "OOM: BMP write buffer");
     setPermanent(false);  // transient: OOM
