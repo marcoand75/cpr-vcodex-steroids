@@ -405,6 +405,8 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
              StrId::STR_CAT_CONTROLS),
     WEB_TOGGLE(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, frontButtonFollowOrientation, "frontButtonFollowOrientation",
                StrId::STR_CAT_CONTROLS),
+    WEB_TOGGLE(StrId::STR_SIDE_BTN_FOLLOW_ORIENTATION, sideButtonFollowOrientation, "sideButtonFollowOrientation",
+               StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_LONG_PRESS_BEHAVIOR, longPressButtonBehavior, OPT_LONG_PRESS_BEHAVIOR,
              "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_FRONT_LONG_PRESS_BEHAVIOR, frontLongPressBehavior, OPT_FRONT_LONG_PRESS_BEHAVIOR,

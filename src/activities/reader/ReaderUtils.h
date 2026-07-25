@@ -58,17 +58,22 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   const bool swapFront =
       SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
                                                 SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
+  const bool swapSide =
+      SETTINGS.sideButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
+                                                SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
   const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
   const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
-  const bool prev = usePress ? (input.wasPressed(MappedInputManager::Button::PageBack) || input.wasPressed(prevButton))
-                             : (input.wasReleased(MappedInputManager::Button::PageBack) ||
+  const auto pageBackBtn = swapSide ? MappedInputManager::Button::PageForward : MappedInputManager::Button::PageBack;
+  const auto pageForwardBtn = swapSide ? MappedInputManager::Button::PageBack : MappedInputManager::Button::PageForward;
+  const bool prev = usePress ? (input.wasPressed(pageBackBtn) || input.wasPressed(prevButton))
+                             : (input.wasReleased(pageBackBtn) ||
                                 input.wasReleased(prevButton));
   const bool frontPrev = !usePress && input.wasReleased(prevButton);
   const bool powerTurn = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
                          input.wasReleased(MappedInputManager::Button::Power);
-  const bool next = usePress ? (input.wasPressed(MappedInputManager::Button::PageForward) || powerTurn ||
+  const bool next = usePress ? (input.wasPressed(pageForwardBtn) || powerTurn ||
                                 input.wasPressed(nextButton))
-                             : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
+                              : (input.wasReleased(pageForwardBtn) || powerTurn ||
                                 input.wasReleased(nextButton));
   const bool frontNext = !usePress && input.wasReleased(nextButton);
   return {tiltPrev || prev, tiltNext || next, tiltPrev || tiltNext, frontPrev || frontNext};

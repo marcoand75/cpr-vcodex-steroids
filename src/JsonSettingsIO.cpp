@@ -386,6 +386,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
 
   loadEnum("sideButtonLayout", s.sideButtonLayout, CrossPointSettings::SIDE_BUTTON_LAYOUT_COUNT);
   loadToggle("frontButtonFollowOrientation", s.frontButtonFollowOrientation);
+  loadToggle("sideButtonFollowOrientation", s.sideButtonFollowOrientation);
   if (!doc["longPressButtonBehavior"].isNull()) {
     loadEnum("longPressButtonBehavior", s.longPressButtonBehavior,
              CrossPointSettings::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
@@ -802,6 +803,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 
   doc["sideButtonLayout"] = s.sideButtonLayout;
   doc["frontButtonFollowOrientation"] = s.frontButtonFollowOrientation;
+  doc["sideButtonFollowOrientation"] = s.sideButtonFollowOrientation;
   doc["longPressButtonBehavior"] = s.longPressButtonBehavior;
   doc["longPressChapterSkip"] = s.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP;
   doc["frontLongPressBehavior"] = s.frontLongPressBehavior;
