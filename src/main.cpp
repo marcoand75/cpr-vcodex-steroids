@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
+#include <HalClock.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <HalSystem.h>
@@ -533,6 +534,9 @@ void setup() {
 #endif
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
+
+  // Initialise RTC (DS3231 on X3, no-op on X4)
+  halClock.begin();
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter

@@ -418,6 +418,10 @@ class CrossPointSettings {
   uint8_t koSyncAutoPushOnClose = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
+  // Clock UTC offset in quarter-hours (48 = UTC+0, range 0-104 for UTC-12 to UTC+14)
+  uint8_t clockUtcOffsetQ = 48;
+  // 12-hour clock format (0=24h, 1=12h AM/PM)
+  uint8_t use12HourClock = 0;
   // Page turn button long-press behavior (side buttons)
   uint8_t longPressButtonBehavior = LONG_PRESS_CHAPTER_SKIP;
   // Front button long-press behavior (Left/Right front buttons)

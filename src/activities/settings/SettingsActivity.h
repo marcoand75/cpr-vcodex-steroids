@@ -51,6 +51,8 @@ enum class SettingAction {
   RebuildLibrary,
   ClearCorruptCovers,
   ScreenSaverReaderDir,
+  ClockSync,
+  ClockOffset,
 };
 
 struct SettingInfo {

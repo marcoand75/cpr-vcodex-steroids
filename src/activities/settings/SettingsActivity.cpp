@@ -44,6 +44,8 @@
 #include "activities/apps/ReadingStatsActivity.h"
 #include "activities/apps/ScreenCleanActivity.h"
 #include "activities/apps/ScreenSaverDirActivity.h"
+#include "ClockOffsetActivity.h"
+#include "ClockSyncActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -251,6 +253,8 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
                          StrId::STR_SCREENSAVER_WAKE_PAGE_BACK, StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD}),
       SettingInfo::Section(StrId::STR_SCREENSAVER_READER_SECTION),
       SettingInfo::Action(StrId::STR_SCREENSAVER_READER_DIR, SettingAction::ScreenSaverReaderDir),
+      SettingInfo::Action(StrId::STR_CLOCK_UTC_OFFSET, SettingAction::ClockOffset),
+      SettingInfo::Action(StrId::STR_CLOCK_SYNC_NOW, SettingAction::ClockSync),
       SettingInfo::Toggle(StrId::STR_SCREENSAVER_REPLACE_SLEEP, &CrossPointSettings::screenSaverReplaceSleep),
       SettingInfo::Section(StrId::STR_SCREENSAVER_TEXT_SECTION),
       SettingInfo::String(StrId::STR_SCREENSAVER_TEXT, SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText)),
@@ -441,10 +445,15 @@ std::string getSettingValueText(const SettingInfo& setting) {
                                            ? tr(STR_SHUFFLE)
                                            : tr(STR_SEQUENTIAL);
         if (SETTINGS.screenSaverReaderDir[0] == '\0') {
-          return orderLabel;
-        }
-        return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverReaderDir) + " - " + orderLabel;
+        return orderLabel;
       }
+      return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverReaderDir) + " - " + orderLabel;
+    }
+    case SettingAction::ClockOffset:
+      return tr(STR_CLOCK_UTC_OFFSET) + std::string(": UTC") + (static_cast<int>(SETTINGS.clockUtcOffsetQ) > 48 ? "+" : "") +
+             std::to_string((static_cast<int>(SETTINGS.clockUtcOffsetQ) - 48) / 4) + "h";
+    case SettingAction::ClockSync:
+      return tr(STR_CLOCK_SYNC_NOW);
       case SettingAction::ShortcutLocation:
         return getShortcutLocationSettingValueText();
       case SettingAction::ShortcutVisibility:
@@ -838,6 +847,12 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::ScreenSaverReaderDir:
         startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, true), resultHandler);
+        break;
+      case SettingAction::ClockOffset:
+        startActivityForResult(std::make_unique<ClockOffsetActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ClockSync:
+        startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::IfFound:
         startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);

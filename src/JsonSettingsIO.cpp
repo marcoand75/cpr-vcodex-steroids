@@ -407,6 +407,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadEnum("tiltPageTurn", s.tiltPageTurn, CrossPointSettings::TILT_PAGE_TURN_COUNT);
   loadEnum("sleepTimeout", s.sleepTimeout, CrossPointSettings::SLEEP_TIMEOUT_COUNT);
   loadToggle("showHiddenFiles", s.showHiddenFiles);
+  s.clockUtcOffsetQ = doc["clockUtcOffsetQ"] | static_cast<uint8_t>(48);
+  s.use12HourClock = doc["use12HourClock"] | static_cast<uint8_t>(0);
   loadEnum("libraryLayout", s.libraryLayout, CrossPointSettings::LIBRARY_LAYOUT_COUNT);
   loadEnum("libraryFilter", s.libraryFilter, CrossPointSettings::LIBRARY_FILTER_COUNT);
   loadString("libraryRootDir", s.libraryRootDir, sizeof(s.libraryRootDir));
@@ -812,6 +814,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 
   doc["sleepTimeout"] = s.sleepTimeout;
   doc["showHiddenFiles"] = s.showHiddenFiles;
+  doc["clockUtcOffsetQ"] = s.clockUtcOffsetQ;
+  doc["use12HourClock"] = s.use12HourClock;
   doc["libraryLayout"] = s.libraryLayout;
   doc["libraryFilter"] = s.libraryFilter;
   {
