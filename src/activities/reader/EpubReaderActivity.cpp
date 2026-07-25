@@ -662,6 +662,36 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+  // Side button long-press: Toggle Dark Mode
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_TOGGLE_DARK_MODE) {
+    SETTINGS.darkMode = !SETTINGS.darkMode;
+    requestUpdate();
+    return;
+  }
+
+  // Side button long-press: Force Refresh (resets page turn counter)
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_FORCE_REFRESH) {
+    pagesUntilFullRefresh = 0;
+    requestUpdate();
+    return;
+  }
+
+  // Side button long-press: Toggle Bookmark (save only, prev button)
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_TOGGLE_BOOKMARK) {
+    if (prevTriggered) {
+      saveCurrentPageBookmark();
+    } else {
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
+    }
+    return;
+  }
+
+  // Side button long-press: File Transfer
+  if (longPress && !fromFrontButton && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_FILE_TRANSFER) {
+    activityManager.goToFileTransfer();
+    return;
+  }
+
   // Front button long-press
   if (frontLongPress) {
     if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK) {

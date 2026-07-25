@@ -268,7 +268,12 @@ constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV
 constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                              StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
                                              StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
-                                             StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING};
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_TOGGLE_DARK_MODE,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_FORCE_REFRESH,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_READING_STATS,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_TOGGLE_BOOKMARK,
+                                             StrId::STR_LONG_PRESS_BEHAVIOR_FILE_TRANSFER};
 constexpr StrId OPT_FRONT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING};
