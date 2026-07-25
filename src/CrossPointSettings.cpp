@@ -183,6 +183,12 @@ bool CrossPointSettings::loadFromBinaryFile() {
     }
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, lineSpacing, LINE_COMPRESSION_COUNT);
+    // Migrate legacy lineSpacing to lineHeightPercent
+    switch (lineSpacing) {
+      case TIGHT: lineHeightPercent = 85; break;
+      case WIDE: lineHeightPercent = 120; break;
+      default: lineHeightPercent = LINE_HEIGHT_PERCENT_DEFAULT; break;
+    }
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, paragraphAlignment, PARAGRAPH_ALIGNMENT_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
@@ -263,41 +269,27 @@ bool CrossPointSettings::loadFromBinaryFile() {
 }
 
 float CrossPointSettings::getReaderLineCompression() const {
+  // Map lineHeightPercent (75-150) to a compression factor.  100% = no change,
+  // 75% = -25% compression, 150% = +50% compression.
+  // Each font family has a baseline; the percent adjusts relative to that.
+  float base = 1.0f;
   switch (fontFamily) {
     case BOOKERLY:
     default:
-      switch (lineSpacing) {
-        case TIGHT:
-          return 0.95f;
-        case NORMAL:
-        default:
-          return 1.0f;
-        case WIDE:
-          return 1.1f;
-      }
+      base = 1.0f;
+      break;
     case NOTOSANS:
-      switch (lineSpacing) {
-        case TIGHT:
-          return 0.90f;
-        case NORMAL:
-        default:
-          return 0.95f;
-        case WIDE:
-          return 1.0f;
-      }
+      base = 0.95f;
+      break;
 #ifndef OMIT_LEXEND
     case LEXEND:
-      switch (lineSpacing) {
-        case TIGHT:
-          return 0.90f;
-        case NORMAL:
-        default:
-          return 0.95f;
-        case WIDE:
-          return 1.0f;
-      }
+      base = 0.95f;
+      break;
 #endif
   }
+  // At 100% → no extra adjustment; at 75% → base * 0.88; at 150% → base * 1.25
+  const float factor = 0.5f + static_cast<float>(lineHeightPercent) * 0.005f;
+  return base * factor;
 }
 
 unsigned long CrossPointSettings::getSleepTimeoutMs() const {

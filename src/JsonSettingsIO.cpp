@@ -335,6 +335,20 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   }
 
   loadEnum("lineSpacing", s.lineSpacing, CrossPointSettings::LINE_COMPRESSION_COUNT);
+  // Migrate legacy lineSpacing (3 presets) to continuous lineHeightPercent
+  // Migrate legacy lineSpacing to continuous lineHeightPercent on first load
+  if (doc["lineHeightPercent"].isNull()) {
+    // Map old 3-value spacing to percent: TIGHT=85, NORMAL=100, WIDE=120
+    switch (s.lineSpacing) {
+      case CrossPointSettings::LINE_COMPRESSION::TIGHT: s.lineHeightPercent = 85; break;
+      case CrossPointSettings::LINE_COMPRESSION::WIDE: s.lineHeightPercent = 120; break;
+      default: s.lineHeightPercent = CrossPointSettings::LINE_HEIGHT_PERCENT_DEFAULT; break;
+    }
+  } else {
+    s.lineHeightPercent = doc["lineHeightPercent"] | static_cast<uint8_t>(CrossPointSettings::LINE_HEIGHT_PERCENT_DEFAULT);
+    if (s.lineHeightPercent < CrossPointSettings::LINE_HEIGHT_PERCENT_MIN) s.lineHeightPercent = CrossPointSettings::LINE_HEIGHT_PERCENT_MIN;
+    if (s.lineHeightPercent > CrossPointSettings::LINE_HEIGHT_PERCENT_MAX) s.lineHeightPercent = CrossPointSettings::LINE_HEIGHT_PERCENT_MAX;
+  }
   loadValue("screenMargin", s.screenMargin, 5, 40);
   loadEnum("paragraphAlignment", s.paragraphAlignment, CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT);
   loadToggle("embeddedStyle", s.embeddedStyle);
@@ -767,7 +781,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   }
   doc["fontSize"] = s.fontSize;
   doc["fontSizeSchemaVersion"] = FONT_SIZE_SCHEMA_VERSION;
-  doc["lineSpacing"] = s.lineSpacing;
+  doc["lineSpacing"] = static_cast<uint8_t>(CrossPointSettings::LINE_COMPRESSION::NORMAL);
+  doc["lineHeightPercent"] = s.lineHeightPercent;
   doc["screenMargin"] = s.screenMargin;
   doc["paragraphAlignment"] = s.paragraphAlignment;
   doc["embeddedStyle"] = s.embeddedStyle;

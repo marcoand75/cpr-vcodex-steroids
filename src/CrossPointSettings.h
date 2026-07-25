@@ -131,6 +131,7 @@ class CrossPointSettings {
     BIONIC_READING_SUBTLE = 2,
     BIONIC_READING_MODE_COUNT
   };
+  // Kept for JSON migration of legacy lineSpacing (TIGHT/NORMAL/WIDE) to lineHeightPercent.
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
     JUSTIFIED = 0,
@@ -367,6 +368,14 @@ class CrossPointSettings {
   // Reader font settings
   uint8_t fontFamily = BOOKERLY;
   uint8_t fontSize = MEDIUM;
+  // Line height: maintain legacy compatibility via getReaderLineCompression()
+  // which maps lineHeightPercent to float.  Range: 75-150, default 100.
+  static constexpr uint8_t LINE_HEIGHT_PERCENT_MIN = 75;
+  static constexpr uint8_t LINE_HEIGHT_PERCENT_MAX = 150;
+  static constexpr uint8_t LINE_HEIGHT_PERCENT_DEFAULT = 100;
+  static constexpr uint8_t LINE_HEIGHT_PERCENT_STEP = 5;
+  uint8_t lineHeightPercent = LINE_HEIGHT_PERCENT_DEFAULT;
+  // Legacy: kept for JSON migration of old lineSpacing setting. Not used at runtime.
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes)

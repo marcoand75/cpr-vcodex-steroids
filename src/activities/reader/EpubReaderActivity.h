@@ -92,7 +92,7 @@ class EpubReaderActivity final : public Activity {
     uint8_t refreshFrequency = 0;
     uint8_t fontFamily = 0;
     uint8_t fontSize = 0;
-    uint8_t lineSpacing = 0;
+    uint8_t lineHeightPercent = 0;
     uint8_t screenMargin = 0;
     uint8_t paragraphAlignment = 0;
     uint8_t embeddedStyle = 0;

@@ -252,7 +252,7 @@ constexpr StrId OPT_UI_THEME[] = {StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_C
                                    StrId::STR_THEME_LYRA_MARCOAND75};
 constexpr StrId OPT_FONT_SIZE[] = {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE,
                                    StrId::STR_X_LARGE};
-constexpr StrId OPT_LINE_SPACING[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE};
+constexpr StrId OPT_LINE_SPACING[] = {StrId::STR_VALUE};
 constexpr StrId OPT_ALIGNMENT[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                    StrId::STR_BOOK_S_STYLE};
 constexpr StrId OPT_BIONIC[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE};
@@ -382,7 +382,7 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
 
     WEB_DYNAMIC_STRING(StrId::STR_FONT_INSTALLED, WebDynamicSetting::SdFontFamily, "sdFontFamily", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_FONT_SIZE, fontSize, OPT_FONT_SIZE, "fontSize", StrId::STR_CAT_READER),
-    WEB_ENUM(StrId::STR_LINE_SPACING, lineSpacing, OPT_LINE_SPACING, "lineSpacing", StrId::STR_CAT_READER),
+    WEB_ENUM(StrId::STR_LINE_SPACING, lineHeightPercent, OPT_LINE_SPACING, "lineHeightPercent", StrId::STR_CAT_READER),
     WEB_VALUE(StrId::STR_SCREEN_MARGIN, screenMargin, 5, 40, 5, "screenMargin", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_PARA_ALIGNMENT, paragraphAlignment, OPT_ALIGNMENT, "paragraphAlignment", StrId::STR_CAT_READER),
     WEB_TOGGLE(StrId::STR_EMBEDDED_STYLE, embeddedStyle, "embeddedStyle", StrId::STR_CAT_READER),

@@ -12,7 +12,7 @@ namespace {
 constexpr uint8_t BIONIC_READING_OFF = 0;
 constexpr uint8_t BIONIC_READING_NORMAL = 1;
 constexpr uint8_t BIONIC_READING_SUBTLE = 2;
-constexpr int DECORATION_LINE_THICKNESS = 4;
+constexpr int DECORATION_LINE_THICKNESS = 6;
 constexpr int STRIKETHROUGH_ASCENDER_PERCENT = 66;
 constexpr int UNDERLINE_BASELINE_OFFSET_PX = 6;
 constexpr uint16_t MAX_SERIALIZED_LINE_WORDS = 512;
