@@ -68,6 +68,7 @@ constexpr size_t SETTINGS_TAB_MAX_CHARS = 10;
 
 const std::vector<SettingInfo>& getDeviceDisplaySettings() {
   static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_SLEEP_SCREEN),
       SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                         {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER, StrId::STR_NONE_OPT,
                          StrId::STR_COVER_CUSTOM, StrId::STR_READING_DASHBOARD, StrId::STR_COVER_STATS,
@@ -78,6 +79,8 @@ const std::vector<SettingInfo>& getDeviceDisplaySettings() {
                         {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED}),
       SettingInfo::Toggle(StrId::STR_CLEAN_SLEEP_REFRESH, &CrossPointSettings::cleanSleepRefresh),
       SettingInfo::Toggle(StrId::STR_CYCLE_SCREENSAVER_ON_TAP, &CrossPointSettings::cycleScreensaverOnTap),
+
+      SettingInfo::Section(StrId::STR_SECTION_APPEARANCE),
       SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                         {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}),
       SettingInfo::Enum(
@@ -91,7 +94,8 @@ const std::vector<SettingInfo>& getDeviceDisplaySettings() {
       SettingInfo::Toggle(StrId::STR_ANTI_GHOSTING_EXPERIMENTAL, &CrossPointSettings::antiGhostingExperimental),
       SettingInfo::Toggle(StrId::STR_DARK_MODE, &CrossPointSettings::darkMode),
       SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix),
-      // Image rendering tuning (steroids)
+
+      SettingInfo::Section(StrId::STR_SECTION_IMAGE_TUNING),
       SettingInfo::Toggle(StrId::STR_IMAGE_DITHERING, &CrossPointSettings::imageDitheringEnabled),
       SettingInfo::Toggle(StrId::STR_IMAGE_LUT, &CrossPointSettings::imageLutEnabled),
       SettingInfo::Enum(StrId::STR_IMAGE_DITHER_ALGORITHM, &CrossPointSettings::imageDitheringAlgorithm,
@@ -106,6 +110,7 @@ const std::vector<SettingInfo>& getDeviceDisplaySettings() {
 
 const std::vector<SettingInfo>& getDeviceReaderSettings() {
   static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_FONT_TEXT),
 #ifdef OMIT_LEXEND
       SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
                         {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS}),
@@ -125,15 +130,19 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
                          StrId::STR_BOOK_S_STYLE}),
       SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle),
       SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled),
+
+      SettingInfo::Section(StrId::STR_SECTION_READING_ENHANCEMENTS),
       SettingInfo::Enum(StrId::STR_BIONIC_READING, &CrossPointSettings::bionicReading,
                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}),
       SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled),
       SettingInfo::Enum(StrId::STR_DOTS_SPACING, &CrossPointSettings::dotsSpacing,
                         {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE}),
-      SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
-                        {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
       SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing),
       SettingInfo::Toggle(StrId::STR_FORCE_PARAGRAPH_INDENTS, &CrossPointSettings::forceParagraphIndents),
+
+      SettingInfo::Section(StrId::STR_SECTION_DISPLAY_QUALITY),
+      SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
+                        {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
       SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing),
       SettingInfo::Enum(StrId::STR_TEXT_DARKNESS, &CrossPointSettings::textDarkness,
                         {StrId::STR_NORMAL, StrId::STR_LEGACY_BW, StrId::STR_DARK, StrId::STR_EXTRA_DARK}),
@@ -144,6 +153,8 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
                         {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
       SettingInfo::Enum(StrId::STR_EPUB_RENDER_MODE, &CrossPointSettings::epubRenderMode,
                         {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}),
+
+      SettingInfo::Section(StrId::STR_CUSTOMISE_STATUS_BAR),
       SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar),
   };
   return settings;
@@ -152,6 +163,7 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
 const std::vector<SettingInfo>& getDeviceControlsSettings() {
   static const std::vector<SettingInfo> settings = [] {
     std::vector<SettingInfo> result = {
+        SettingInfo::Section(StrId::STR_SECTION_BUTTONS),
         SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons),
         SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV}),
@@ -173,6 +185,7 @@ const std::vector<SettingInfo>& getDeviceControlsSettings() {
                            StrId::STR_TOGGLE_STATUS_BAR}),
     };
     if (halTiltSensor.isAvailable()) {
+      result.push_back(SettingInfo::Section(StrId::STR_SECTION_SENSORS));
       result.push_back(SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
                                          {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}));
     }
@@ -183,18 +196,23 @@ const std::vector<SettingInfo>& getDeviceControlsSettings() {
 
 const std::vector<SettingInfo>& getDeviceSystemSettings() {
   static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_DEVICE),
       SettingInfo::Enum(StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeout,
                         {StrId::STR_MIN_1, StrId::STR_MIN_5, StrId::STR_MIN_10, StrId::STR_MIN_15, StrId::STR_MIN_30}),
       SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles),
+      SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language),
+
+      SettingInfo::Section(StrId::STR_SECTION_NETWORK_SYNC),
       SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network),
       SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync),
       SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
                         {StrId::STR_AUTHOR_TITLE, StrId::STR_TITLE_AUTHOR}),
       SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser),
+
+      SettingInfo::Section(StrId::STR_SECTION_MAINTENANCE),
       SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache),
       SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates),
       SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate),
-      SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language),
   };
   return settings;
 }
@@ -1242,14 +1260,7 @@ void SettingsActivity::render(RenderLock&&) {
                       pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
                                     metrics.buttonHintsHeight + metrics.verticalSpacing * 2 + listBottomGap)};
   const auto& settings = *currentSettings;
-  if (selectedCategoryIndex == 4) {
-    renderAppSettingsList(listRect);
-  } else {
-    GUI.drawList(
-        renderer, listRect, settingsCount, selectedSettingIndex - 1,
-        [&settings](int index) { return std::string(getSettingNameText(*settings[index])); }, nullptr, nullptr,
-        [&settings](int i) { return getSettingValueText(*settings[i]); }, true);
-  }
+  renderAppSettingsList(listRect);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
