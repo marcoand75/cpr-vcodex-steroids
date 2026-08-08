@@ -29,11 +29,34 @@ void ClearCacheActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CLEAR_READING_CACHE));
 
   if (state == WARNING) {
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 60, tr(STR_CLEAR_CACHE_WARNING_1), true);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 30, tr(STR_CLEAR_CACHE_WARNING_2), true,
-                              EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, tr(STR_CLEAR_CACHE_WARNING_3), true);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 30, tr(STR_CLEAR_CACHE_WARNING_4), true);
+    // Build the full warning message and wrap it for the display width.
+    // We combine the four i18n keys into one paragraph so the renderer can
+    // flow long translations (e.g. "Your reading position and stats will be
+    // preserved.") onto multiple lines instead of clipping past the margin.
+    const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const auto sideMargin = 20;
+    const auto maxWidth = pageWidth - sideMargin * 2;
+    constexpr int maxLines = 6;
+
+    std::string fullWarning;
+    fullWarning.reserve(256);
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_1);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_2);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_3);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_4);
+
+    const auto lines = renderer.wrappedText(UI_10_FONT_ID, fullWarning.c_str(), maxWidth, maxLines);
+
+    const int totalHeight = static_cast<int>(lines.size()) * lineHeight;
+    const int startY = (pageHeight - totalHeight) / 2;
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+      const int y = startY + static_cast<int>(i) * lineHeight;
+      renderer.drawCenteredText(UI_10_FONT_ID, y, lines[i].c_str(), true);
+    }
 
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_CLEAR_BUTTON), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
