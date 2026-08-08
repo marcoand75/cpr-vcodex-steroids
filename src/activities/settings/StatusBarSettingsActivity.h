@@ -3,8 +3,11 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include <vector>
+
 #include "activities/Activity.h"
 #include "../util/ListInputMapper.h"
+#include "I18nKeys.h"
 
 // Reader status bar configuration activity
 class StatusBarSettingsActivity final : public Activity {
@@ -18,6 +21,10 @@ class StatusBarSettingsActivity final : public Activity {
   void render(RenderLock&&) override;
 
   int selectedIndex = 0;
+
+  // Filtered menu: excludes clock items (indices 7-9) on X4 devices without RTC.
+  std::vector<StrId> menuNames;
+  int menuItemCount() const { return static_cast<int>(menuNames.size()); }
 
   void handleSelection();
 
