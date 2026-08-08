@@ -151,6 +151,15 @@ void XtcReaderActivity::loop() {
     firstConfirmClickMs = 0UL;
   }
 
+  // Long press Select (700ms+) — bookmark/timer toggle or off
+  constexpr unsigned long selectLongPressMs = 700;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= selectLongPressMs) {
+    waitingForConfirmSecondClick = false;
+    firstConfirmClickMs = 0UL;
+    handleSelectLongPress();
+    return;
+  }
+
   // Enter chapter selection activity
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (ReaderUtils::registerConfirmDoubleClick(waitingForConfirmSecondClick, firstConfirmClickMs, nowMs)) {
@@ -607,4 +616,16 @@ ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
     info.currentPage = currentPage + 1;
   }
   return info;
+}
+
+void XtcReaderActivity::handleSelectLongPress() {
+  if (SETTINGS.selectLongPress != CrossPointSettings::SELECT_LONG_PRESS_READING_TIME) {
+    return;  // BOOKMARK and OFF are no-ops on XTC (no bookmark support)
+  }
+  const bool nowPaused = !READING_STATS.isReadingPaused();
+  READING_STATS.setReadingPaused(nowPaused);
+  GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
+  renderer.displayBuffer();
+  delay(500);
+  requestUpdate();
 }

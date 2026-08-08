@@ -63,6 +63,7 @@ class TxtReaderActivity final : public Activity {
   void loadProgress();
   void requestCurrentPageFullRefresh();
   void toggleTemporaryStatusBar();
+  void handleSelectLongPress();
   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
 

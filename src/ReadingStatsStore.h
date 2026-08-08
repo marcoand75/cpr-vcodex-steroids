@@ -105,6 +105,7 @@ class ReadingStatsStore {
   mutable bool persistenceSuspended = false;
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
+  bool _readingPaused = false;
 
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
@@ -161,6 +162,13 @@ class ReadingStatsStore {
   void noteActivity();
   void tickActiveSession();
   void resumeSession();
+
+  // Reading timer pause — freezes duration accumulation until resumed.
+  // When paused, noteActivity() and tickActiveSession() are no-ops.
+  // lastInteractionMs is reset on resume so paused time is not counted.
+  bool isReadingPaused() const { return _readingPaused; }
+  void setReadingPaused(bool paused);
+
   void updateProgress(uint8_t progressPercent, bool completed = false, const std::string& chapterTitle = "",
                       uint8_t chapterProgressPercent = 0);
   void endSession();

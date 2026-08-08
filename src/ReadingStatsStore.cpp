@@ -1259,8 +1259,20 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
   markDirty();
 }
 
+void ReadingStatsStore::setReadingPaused(const bool paused) {
+  if (_readingPaused == paused) return;
+  _readingPaused = paused;
+  if (!paused) {
+    // Reset the interaction timestamp so the time spent in pause is not
+    // credited as reading time on the next noteActivity call.
+    if (activeSession.active && activeSession.bookIndex < books.size()) {
+      activeSession.lastInteractionMs = millis();
+    }
+  }
+}
+
 void ReadingStatsStore::noteActivity() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size()) {
+  if (_readingPaused || !activeSession.active || activeSession.bookIndex >= books.size()) {
     return;
   }
 
@@ -1285,7 +1297,7 @@ void ReadingStatsStore::noteActivity() {
 }
 
 void ReadingStatsStore::tickActiveSession() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size()) {
+  if (_readingPaused || !activeSession.active || activeSession.bookIndex >= books.size()) {
     return;
   }
 

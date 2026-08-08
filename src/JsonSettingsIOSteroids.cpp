@@ -27,6 +27,7 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   doc["epubRenderMode"] = s.epubRenderMode;
 
   doc["frontLongPressBehavior"] = s.frontLongPressBehavior;
+  doc["selectLongPress"] = s.selectLongPress;
 
   doc["uiTheme"] = s.uiTheme;
   doc["uiThemeSchemaVersion"] = UI_THEME_SCHEMA_VERSION;
@@ -135,6 +136,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   loadEnum("epubRenderMode", s.epubRenderMode, S::EPUB_RENDER_MODE_COUNT);
 
   loadEnum("frontLongPressBehavior", s.frontLongPressBehavior, S::FRONT_LONG_PRESS_BEHAVIOR_COUNT);
+  loadEnum("selectLongPress", s.selectLongPress, S::SELECT_LONG_PRESS_COUNT);
 
   {
     const uint8_t rawUiTheme = doc["uiTheme"] | s.uiTheme;

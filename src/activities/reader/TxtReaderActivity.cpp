@@ -340,6 +340,15 @@ void TxtReaderActivity::loop() {
     firstConfirmClickMs = 0UL;
   }
 
+  // Long press Select (700ms+) — bookmark/timer toggle or off
+  constexpr unsigned long selectLongPressMs = 700;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= selectLongPressMs) {
+    waitingForConfirmSecondClick = false;
+    firstConfirmClickMs = 0UL;
+    handleSelectLongPress();
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) &&
       ReaderUtils::registerConfirmDoubleClick(waitingForConfirmSecondClick, firstConfirmClickMs, nowMs)) {
     requestCurrentPageFullRefresh();
@@ -993,4 +1002,16 @@ ScreenshotInfo TxtReaderActivity::getScreenshotInfo() const {
   info.progressPercent = totalPages > 0 ? static_cast<int>((currentPage + 1) * 100.0f / totalPages + 0.5f) : 0;
   if (info.progressPercent > 100) info.progressPercent = 100;
   return info;
+}
+
+void TxtReaderActivity::handleSelectLongPress() {
+  if (SETTINGS.selectLongPress != CrossPointSettings::SELECT_LONG_PRESS_READING_TIME) {
+    return;  // BOOKMARK and OFF are no-ops on TXT (no bookmark support)
+  }
+  const bool nowPaused = !READING_STATS.isReadingPaused();
+  READING_STATS.setReadingPaused(nowPaused);
+  GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
+  renderer.displayBuffer();
+  delay(500);
+  requestUpdate();
 }

@@ -183,6 +183,9 @@ const std::vector<SettingInfo>& getDeviceControlsSettings() {
         SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
                            StrId::STR_TOGGLE_STATUS_BAR}),
+        SettingInfo::Enum(StrId::STR_SELECT_LONG_PRESS, &CrossPointSettings::selectLongPress,
+                          {StrId::STR_SELECT_LONG_PRESS_BOOKMARK, StrId::STR_SELECT_LONG_PRESS_READING_TIME,
+                           StrId::STR_LONG_PRESS_BEHAVIOR_OFF}),
     };
     if (halTiltSensor.isAvailable()) {
       result.push_back(SettingInfo::Section(StrId::STR_SECTION_SENSORS));

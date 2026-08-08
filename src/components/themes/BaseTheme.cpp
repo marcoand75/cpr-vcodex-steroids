@@ -14,6 +14,7 @@
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/TimeUtils.h"
@@ -892,6 +893,14 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       }
       leftContentEndX += 5;  // spacing between battery and next element
     }
+  }
+
+  // Draw "⏸ PAUSED" indicator when reading timer is paused
+  if (READING_STATS.isReadingPaused()) {
+    const char* pausedLabel = tr(STR_READING_PAUSED_INDICATOR);
+    const int pausedWidth = renderer.getTextWidth(SMALL_FONT_ID, pausedLabel);
+    renderer.drawText(SMALL_FONT_ID, leftContentEndX + 2, textY, pausedLabel);
+    leftContentEndX += pausedWidth + 8;
   }
 
   // Draw Time Left label (left of title, CrossInk-style)

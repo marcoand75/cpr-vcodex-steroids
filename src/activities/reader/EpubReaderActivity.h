@@ -142,6 +142,7 @@ class EpubReaderActivity final : public Activity {
   void requestCurrentPageFullRefresh();
   void toggleTemporaryStatusBar();
   void cacheCurrentPageForOverlay(const std::shared_ptr<Page>& page, int marginLeft, int marginTop);
+  void handleSelectLongPress();
   void invalidateCurrentOverlayPageCache();
   std::shared_ptr<Page> loadCurrentPageForOverlay(int& outMarginLeft, int& outMarginTop);
 

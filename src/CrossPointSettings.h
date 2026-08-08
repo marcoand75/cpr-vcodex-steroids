@@ -433,6 +433,14 @@ class CrossPointSettings {
   uint8_t longPressButtonBehavior = LONG_PRESS_CHAPTER_SKIP;
   // Front button long-press behavior (Left/Right front buttons)
   uint8_t frontLongPressBehavior = FRONT_LONG_PRESS_OFF;
+  // Select button long-press behavior during reading
+  enum SELECT_LONG_PRESS {
+    SELECT_LONG_PRESS_BOOKMARK = 0,
+    SELECT_LONG_PRESS_READING_TIME = 1,
+    SELECT_LONG_PRESS_OFF = 2,
+    SELECT_LONG_PRESS_COUNT
+  };
+  uint8_t selectLongPress = SELECT_LONG_PRESS_BOOKMARK;
   // UI Theme
   uint8_t uiTheme = LYRA_CUSTOM;
   // Experimental global dark mode for the device UI and supported readers.

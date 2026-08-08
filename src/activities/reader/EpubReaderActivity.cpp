@@ -476,26 +476,7 @@ void EpubReaderActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= bookmarkToggleMs) {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
-    if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
-      READING_STATS.noteActivity();
-      const uint16_t spineIndex = static_cast<uint16_t>(currentSpineIndex);
-      const uint16_t pageNumber = static_cast<uint16_t>(section->currentPage);
-      const bool wasBookmarked = bookmarkStore.has(spineIndex, pageNumber);
-      const std::string snippet = wasBookmarked ? "" : extractBookmarkSnippet(*section);
-      const uint32_t absIdx = wasBookmarked ? UINT32_MAX : section->getCumulativeWordOffset(pageNumber);
-      const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet, absIdx);
-      bookmarkStore.save();
-      if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
-        ACHIEVEMENTS.recordBookmarkAdded();
-      }
-      const bool showedAchievement = showPendingAchievementPopups(renderer);
-      if (!showedAchievement) {
-        GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
-        renderer.displayBuffer();
-        delay(500);
-      }
-      requestUpdate();
-    }
+    handleSelectLongPress();
     return;
   }
 
@@ -775,6 +756,49 @@ void EpubReaderActivity::toggleTemporaryStatusBar() {
   section.reset();
   pendingForceFullRefresh = true;
   requestUpdate();
+}
+
+void EpubReaderActivity::handleSelectLongPress() {
+  switch (SETTINGS.selectLongPress) {
+    case CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK: {
+      if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
+        return;
+      }
+      READING_STATS.noteActivity();
+      const uint16_t spineIndex = static_cast<uint16_t>(currentSpineIndex);
+      const uint16_t pageNumber = static_cast<uint16_t>(section->currentPage);
+      const bool wasBookmarked = bookmarkStore.has(spineIndex, pageNumber);
+      const std::string snippet = wasBookmarked ? "" : extractBookmarkSnippet(*section);
+      const uint32_t absIdx = wasBookmarked ? UINT32_MAX : section->getCumulativeWordOffset(pageNumber);
+      const bool addedBookmark = bookmarkStore.toggle(spineIndex, pageNumber, snippet, absIdx);
+      bookmarkStore.save();
+      if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
+        ACHIEVEMENTS.recordBookmarkAdded();
+      }
+      const bool showedAchievement = showPendingAchievementPopups(renderer);
+      if (!showedAchievement) {
+        GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
+        renderer.displayBuffer();
+        delay(500);
+      }
+      requestUpdate();
+      return;
+    }
+
+    case CrossPointSettings::SELECT_LONG_PRESS_READING_TIME: {
+      const bool nowPaused = !READING_STATS.isReadingPaused();
+      READING_STATS.setReadingPaused(nowPaused);
+      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
+      renderer.displayBuffer();
+      delay(500);
+      requestUpdate();
+      return;
+    }
+
+    case CrossPointSettings::SELECT_LONG_PRESS_OFF:
+    default:
+      return;
+  }
 }
 
 void EpubReaderActivity::cacheCurrentPageForOverlay(const std::shared_ptr<Page>& page, const int marginLeft,

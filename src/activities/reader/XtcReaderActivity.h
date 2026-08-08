@@ -37,6 +37,7 @@ class XtcReaderActivity final : public Activity {
   void saveProgress() const;
   void loadProgress();
   void requestCurrentPageFullRefresh();
+  void handleSelectLongPress();
   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
 
