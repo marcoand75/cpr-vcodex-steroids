@@ -65,6 +65,10 @@
 #include "components/icons/trophy.h"
 #include "components/icons/trophy24.h"
 #include "components/icons/wifi.h"
+#include "components/icons/wikipediaicon.h"
+#include "components/icons/wikipediaicon24.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/quickcards24.h"
 #include "components/icons/apps_hub.h"
 #include "fontIds.h"
 
@@ -132,6 +136,10 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return ReadingStatsIcon32;
       case UIIcon::RecentBooks:
         return RecentBooksIcon32;
+      case UIIcon::Wikipedia:
+        return Wikipedia24Icon;
+      case UIIcon::QuickCards:
+        return QuickCards24Icon;  // 24px
       default:
         return nullptr;
     }
@@ -233,6 +241,10 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return CalibreIcon;
       case UIIcon::File:
         return ClipIcon32;
+      case UIIcon::Wikipedia:
+        return WikipediaIcon;
+      case UIIcon::QuickCards:
+        return QuickCardsIcon;  // 32px
       default:
         return nullptr;
     }

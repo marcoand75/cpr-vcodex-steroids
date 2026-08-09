@@ -78,6 +78,8 @@
 #include "components/icons/calibre.h"
 #include "components/icons/wikipediaicon.h"
 #include "components/icons/wikipediaicon24.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/quickcards24.h"
 #include "fontIds.h"
 #include "util/ReadingStatsAnalytics.h"
 
@@ -257,6 +259,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Pageview24Icon;
       case UIIcon::Wikipedia:
         return Wikipedia24Icon;
+      case UIIcon::QuickCards:
+        return QuickCards24Icon;
       default:
         return nullptr;
     }
@@ -360,6 +364,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return CalibreIcon;
       case UIIcon::Wikipedia:
         return WikipediaIcon;
+      case UIIcon::QuickCards:
+        return QuickCardsIcon;
       default:
         return nullptr;
     }

@@ -26,6 +26,7 @@
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutUiMetadata.h"
 #include "WikipediaActivity.h"
+#include "QuickCardsActivity.h"
 
 namespace {
 std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItems, const int itemsPerPage) {
@@ -222,6 +223,9 @@ void AppsActivity::openSelectedApp() {
       return;
     case ShortcutId::Wikipedia:
       activity = std::make_unique<WikipediaActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::QuickCards:
+      activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
       break;
   }
 

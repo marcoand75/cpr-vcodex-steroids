@@ -121,7 +121,8 @@ enum UIIcon {
   NotificationUnread,
   FileTransfer,
   Calibre,
-  Wikipedia
+  Wikipedia,
+  QuickCards
 };
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
 

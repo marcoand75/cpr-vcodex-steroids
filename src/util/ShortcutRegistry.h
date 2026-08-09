@@ -29,8 +29,9 @@ enum class ShortcutId {
   Sleep,
   OpdsBrowser,
    ScreenSaver,
-   Clippings,
-   Wikipedia,
+    Clippings,
+  Wikipedia,
+  QuickCards,
  };
 
 struct ShortcutDefinition {
@@ -43,8 +44,8 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 21>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 21> definitions = {
+inline const std::array<ShortcutDefinition, 22>& getShortcutDefinitions() {
+  static const std::array<ShortcutDefinition, 22> definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},
@@ -112,6 +113,9 @@ inline const std::array<ShortcutDefinition, 21>& getShortcutDefinitions() {
         ShortcutDefinition{ShortcutId::Wikipedia, StrId::STR_WIKIPEDIA, StrId::STR_WIKIPEDIA_APP_DESC, UIIcon::Wikipedia,
                            &CrossPointSettings::wikipediaShortcut, &CrossPointSettings::wikipediaShortcutOrder,
                            &CrossPointSettings::wikipediaShortcutVisible},
+        ShortcutDefinition{ShortcutId::QuickCards, StrId::STR_QUICK_CARDS, StrId::STR_QUICK_CARDS_DESC, UIIcon::QuickCards,
+                           &CrossPointSettings::quickCardsShortcut, &CrossPointSettings::quickCardsShortcutOrder,
+                           &CrossPointSettings::quickCardsShortcutVisible},
    };
 
   return definitions;

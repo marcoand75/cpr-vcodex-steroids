@@ -46,6 +46,7 @@
 #include "activities/apps/ClippingsAppActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/WikipediaActivity.h"
+#include "activities/apps/QuickCardsActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/home/BookContextMenuActivity.h"
 #include "activities/home/BookMetadataActivity.h"
@@ -1384,10 +1385,14 @@ void HomeActivity::loop() {
            startActivityForResult(std::make_unique<ClippingsAppActivity>(renderer, mappedInput),
                                   [this](const ActivityResult&) { requestFreshHomeRender(true); });
            break;
-         case ShortcutId::Wikipedia:
-           onWikipediaOpen();
-           break;
-         case ShortcutId::OpdsBrowser:
+          case ShortcutId::Wikipedia:
+            onWikipediaOpen();
+            break;
+          case ShortcutId::QuickCards:
+            startActivityForResult(std::make_unique<QuickCardsActivity>(renderer, mappedInput),
+                                   [this](const ActivityResult&) { requestFreshHomeRender(true); });
+            break;
+          case ShortcutId::OpdsBrowser:
            onOpdsBrowserOpen();
           break;
       }
