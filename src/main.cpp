@@ -10,6 +10,7 @@
 #include <HalClock.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#include <HalSpiBus.h>
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
@@ -367,6 +368,7 @@ static bool consumeCompletedSleepEntryTap() {
   // display.begin(true) skips the full-panel white-reset so the screen doesn't flash
   // white before the new wallpaper is drawn — identical to the silent-reboot path.
   display.begin(true);
+  HalSpiBus::begin();
   renderer.begin();
 
   armSleepEntryTapIsr();
@@ -502,6 +504,7 @@ void restoreFontMemory() {
 
 void setupDisplayAndFonts(bool seamless = false) {
   display.begin(seamless);
+  HalSpiBus::begin();
   renderer.begin();
   renderer.setDarkMode(SETTINGS.darkMode);
   activityManager.begin();
