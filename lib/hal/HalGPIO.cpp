@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <esp_sleep.h>
+#include <BoardConfig.h>
 
 // Global HalGPIO instance
 HalGPIO gpio;
@@ -195,6 +196,10 @@ void HalGPIO::begin() {
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 
   _deviceType = detectDeviceTypeWithFingerprint();
+
+  // Register the detected board with freeink-sdk's BoardConfig so that
+  // BoardConfig::ACTIVE reflects the runtime-selected profile.
+  BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
 
   if (deviceIsX4()) {
     pinMode(BAT_GPIO0, INPUT);

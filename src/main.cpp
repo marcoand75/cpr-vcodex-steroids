@@ -12,6 +12,7 @@
 #include <HalPowerManager.h>
 #include <HalSpiBus.h>
 #include <HalStorage.h>
+#include <BoardConfig.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
@@ -367,6 +368,7 @@ static bool consumeCompletedSleepEntryTap() {
   // Seamless init: the panel already holds the sleep image from before deep sleep.
   // display.begin(true) skips the full-panel white-reset so the screen doesn't flash
   // white before the new wallpaper is drawn — identical to the silent-reboot path.
+  BoardConfig::holdPowerRails();
   display.begin(true);
   HalSpiBus::begin();
   renderer.begin();
@@ -503,6 +505,7 @@ void restoreFontMemory() {
 }
 
 void setupDisplayAndFonts(bool seamless = false) {
+  BoardConfig::holdPowerRails();
   display.begin(seamless);
   HalSpiBus::begin();
   renderer.begin();
@@ -557,6 +560,7 @@ void setup() {
   t1 = millis();
 
   HalSystem::begin();
+  BoardConfig::holdPowerRails();
 
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
