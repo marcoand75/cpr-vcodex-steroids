@@ -5,7 +5,7 @@
 #include <Wire.h>
 #include <esp_sleep.h>
 #include <BoardConfig.h>
-
+#include "XteinkDetectExt.h"
 // Global HalGPIO instance
 HalGPIO gpio;
 
@@ -192,19 +192,91 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
 }  // namespace
 
 void HalGPIO::begin() {
-  inputMgr.begin();
-  SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
-
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  // Device fingerprint (I2C probe — safe to run before SPI claims pins)
   _deviceType = detectDeviceTypeWithFingerprint();
 
-  // Register the detected board with freeink-sdk's BoardConfig so that
-  // BoardConfig::ACTIVE reflects the runtime-selected profile.
-  BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
+  // X3 panel-controller fingerprint: bit-bangs EPD pins to distinguish
+  // UC8253 from UC8279d. MUST run BEFORE SPI.begin() claims those pins.
+  const bool x3IsUc8279 = deviceIsX3() && detectX3DisplayIsUc8279();
+
+  // Register the detected board with freeink-sdk's BoardConfig.
+  // This SDK version has Board::XteinkX3 / XteinkX4 only, but the
+  // uc8279 flag is stored for use by setDisplayX3() downstream.
+  BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3
+                                         : BoardConfig::Board::XteinkX4);
+
+  // X4 factory-aware controller selection (UC8179 replacement panel detect).
+  if (deviceIsX4()) {
+    freeink::applyXteinkDisplayController();
+  }
+
+  // Store the uc8279 verdict where the display driver can see it.
+  // On X3 we set uc8279Panel before SPI.begin(), so the EInkDisplay
+  // constructor already has the pins in their pre-SPI state.
+  x3IsUc8279Panel = x3IsUc8279;
+
+  SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 
   if (deviceIsX4()) {
     pinMode(BAT_GPIO0, INPUT);
     pinMode(UART0_RXD, INPUT);
   }
+#endif
+  inputMgr.begin();
+}
+
+// ── X3 panel-controller fingerprint (UC8253 vs UC8279d) ──────────────────
+
+bool HalGPIO::detectX3DisplayIsUc8279() {
+  // NVS override/cache layer — same pattern as device fingerprint.
+  constexpr char NVS_KEY_EPD_OVERRIDE[] = "epd_ovr";
+
+  {
+    Preferences prefs;
+    if (prefs.begin(HW_NAMESPACE, true)) {
+      const uint8_t raw = prefs.getUChar(NVS_KEY_EPD_OVERRIDE, 0);
+      prefs.end();
+      if (raw == 2) { LOG_INF("HW", "EPD override: UC8279"); return true; }
+      if (raw == 1) { LOG_INF("HW", "EPD override: UC8253"); return false; }
+    }
+  }
+
+  // Check NVS cache
+  constexpr char NVS_KEY_EPD_CACHED[] = "epd_det";
+  {
+    Preferences prefs;
+    if (prefs.begin(HW_NAMESPACE, true)) {
+      const uint8_t raw = prefs.getUChar(NVS_KEY_EPD_CACHED, 0);
+      prefs.end();
+      if (raw == 2) { LOG_INF("HW", "Cached EPD: UC8279"); return true; }
+      if (raw == 1) { LOG_INF("HW", "Cached EPD: UC8253"); return false; }
+    }
+  }
+
+  // Run the probe
+  uint8_t ver[5] = {0};
+  uint8_t flg = 0;
+  const auto verdict = freeink::detectX3DisplayController(ver, &flg);
+  LOG_INF("HW", "EPD probe: ver=%02X%02X%02X%02X%02X flg=%02X verdict=%u",
+          ver[0], ver[1], ver[2], ver[3], ver[4], flg, static_cast<unsigned>(verdict));
+
+  // Persist and return
+  {
+    Preferences prefs;
+    if (prefs.begin(HW_NAMESPACE, false)) {
+      if (verdict == freeink::X3DisplayVerdict::Uc8279Confirmed) {
+        prefs.putUChar(NVS_KEY_EPD_CACHED, 2);
+        prefs.end();
+        return true;
+      }
+      if (verdict == freeink::X3DisplayVerdict::Uc8253Assumed) {
+        prefs.putUChar(NVS_KEY_EPD_CACHED, 1);
+      }
+      prefs.end();
+    }
+  }
+  return false;
 }
 
 void HalGPIO::update() {

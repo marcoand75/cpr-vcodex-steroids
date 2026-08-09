@@ -15,6 +15,7 @@
 #include <BoardConfig.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
+#include <XteinkDetectExt.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <SPI.h>
@@ -506,6 +507,12 @@ void restoreFontMemory() {
 
 void setupDisplayAndFonts(bool seamless = false) {
   BoardConfig::holdPowerRails();
+
+  // CrossInk v1.5.0: resolve X4 UC8179 factory-replacement panel before
+  // display.begin() selects the driver. C3 X3/X4 detection already runs in
+  // HalGPIO::begin(); this is a no-op on C3 but kept for SDK alignment.
+  freeink::applyXteinkDisplayController();
+
   display.begin(seamless);
   HalSpiBus::begin();
   renderer.begin();

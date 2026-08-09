@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <InputManager.h>
+#include <BoardConfig.h>
 
 // Display SPI pins (custom pins for XteinkX4, not hardware SPI defaults)
 #define EPD_SCLK 8   // SPI Clock
@@ -52,7 +53,14 @@ class HalGPIO {
  private:
   DeviceType _deviceType = DeviceType::X4;
 
+  // UC8279d panel controller detection (newer X3 production runs).
+  // Probed BEFORE SPI.begin(); result available after begin() returns.
+  bool detectX3DisplayIsUc8279();
+
  public:
+  // True when the X3 panel controller was identified as UC8279d (new variant).
+  // Set during begin() — read after begin() to decide driver behaviour.
+  bool x3IsUc8279Panel = false;
   HalGPIO() = default;
 
   // Inline device type helpers for cleaner downstream checks
@@ -89,6 +97,18 @@ class HalGPIO {
   enum class WakeupReason { PowerButton, AfterFlash, AfterUSBPower, Other };
 
   WakeupReason getWakeupReason() const;
+
+  // Device identification helpers
+  bool isXteinkDevice() const {
+    return BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
+           BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4;
+  }
+  bool hasEdgeSideButtons() const {
+    return BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3;
+  }
+
+  // Touch/gesture stubs (no touch hardware on X3/X4; always return false)
+  constexpr bool hasTouch() const { return false; }
 
   // Button indices
   static constexpr uint8_t BTN_BACK = 0;
