@@ -1,0 +1,7 @@
+BEGIN:VEVENT
+SUMMARY:Review Progetto Steroids
+DTSTART:20260810T100000Z
+DTEND:20260810T110000Z
+LOCATION:Milano, Italia
+DESCRIPTION:Revisione codice cpr-vcodex-steroids
+END:VEVENT

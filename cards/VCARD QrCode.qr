@@ -1,0 +1,8 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Andreacchio;Marco;;;
+FN:Marco Andreacchio
+URL;TYPE=Profilo GitHub:https://github.com/marcoand75
+URL;TYPE=Progetto Steroids:https://github.com/marcoand75/cpr-vcodex-steroids
+ADR;TYPE=WORK:;;Milano;;;Italia
+END:VCARD
