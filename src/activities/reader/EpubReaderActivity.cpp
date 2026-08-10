@@ -1118,7 +1118,10 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
     while (skip < tokens.size() && tokens[skip].size() <= 1) ++skip;
     if (tokens.size() < skip + 3) continue;
     tokens.erase(tokens.begin(), tokens.begin() + skip);
-    const size_t minMatch = std::min(tokens.size(), size_t{3});
+    // Require at least 3 tokens OR 50% of the clipping text, whichever is higher.
+    // This prevents matching short random word sequences that happen to share
+    // the first token.
+    const size_t minMatch = std::max(tokens.size() / 2 + tokens.size() % 2, size_t{3});
 
     struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
     std::vector<PW> pw;
@@ -1199,52 +1202,29 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
   }
 
   // Resolve highlight ranges for each clipping on this spine.
-  // v2 absolute index: always correct regardless of layout changes.
-  // v1 stored indices: valid only when layout hasn't changed.
-  // Text-matching fallback: for v1 clippings whose layout changed.
+  // TEXT-SEARCH ONLY — numeric offsets (v1 v2) are unreliable after any
+  // layout change. If the text is not found on the current page, the
+  // clipping is simply not highlighted.
   for (const auto& clipping : clippingStore.getAll()) {
     if (clipping.spineIndex != currentSpine) continue;
 
-    // v2 absolute word index: invariant across layout changes.
-    if (clipping.absoluteWordStart != UINT32_MAX) {
-      const uint32_t pageStart = section->getCumulativeWordOffset(currentPageNum);
-      const uint32_t pageEnd = pageStart + static_cast<uint32_t>(std::max(0, currentPageWordCount));
-      const uint32_t clipEnd = clipping.absoluteWordStart + clipping.wordCount;
-      if (clipEnd > pageStart && clipping.absoluteWordStart < pageEnd) {
-        const uint32_t overlapStart = (clipping.absoluteWordStart > pageStart) ? (clipping.absoluteWordStart - pageStart) : 0u;
-        const uint32_t overlapEnd = (clipEnd < pageEnd) ? (clipEnd - pageStart - 1u) : static_cast<uint32_t>(std::max(0, currentPageWordCount - 1));
-        resolvedRanges.push_back({static_cast<uint16_t>(overlapStart), static_cast<uint16_t>(overlapEnd)});
-      }
-      continue;
-    }
-
-    // v1 stored indices: valid only when layout hasn't changed.
-    if (clipping.pageCount == currentPageCount && clipping.startPage == currentPageNum) {
-      resolvedRanges.push_back({clipping.startWordIndex, clipping.endWordIndex});
-      continue;
-    }
-
-    // Slow path: layout changed — search for clipping text on the current page.
     const auto& text = clipping.selectedText;
     if (text.empty()) continue;
 
-    // Tokenize the clipping text into individual words.
+    // Tokenize
     std::vector<std::string> tokens;
     {
       std::string token;
       for (char c : text) {
         if (c == ' ' || c == '\n' || c == '\r') {
           if (!token.empty()) { tokens.push_back(token); token.clear(); }
-        } else {
-          token += c;
-        }
+        } else { token += c; }
       }
       if (!token.empty()) tokens.push_back(token);
     }
     if (tokens.empty()) continue;
-    const uint16_t minMatches = std::min(static_cast<uint16_t>(tokens.size()), static_cast<uint16_t>(3));
+    const uint16_t minMatches = static_cast<uint16_t>(tokens.size());  // ALL tokens must match
 
-    // Iterate page words looking for a match of tokens[0] as the clipping start anchor.
     uint16_t wordIdx = 0;
     bool found = false;
     for (const auto& element : page->elements) {
@@ -1257,7 +1237,6 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
       for (size_t i = 0; i < words.size(); ++i) {
         if (!wordMatches(words[i], tokens[0])) { ++wordIdx; continue; }
 
-        // token[0] matched. Try to match consecutive tokens.
         uint16_t matchCount = 1;
         uint16_t searchIdx = wordIdx + 1;
         size_t tokenIdx = 1;
@@ -1270,7 +1249,6 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
           const auto& wds2 = blk2->getWords();
           for (size_t j = 0; j < wds2.size(); ++j) {
             if (static_cast<uint16_t>(searchIdx) <= wordIdx) { ++searchIdx; continue; }
-            // Skip pure-punctuation tokens (page has "," as separate word)
             bool isPunctOnly = true;
             for (char pc : wds2[j]) {
               if ((pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z') || (pc >= '0' && pc <= '9')) {
@@ -1281,23 +1259,20 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
             if (tokenIdx < tokens.size() && wordMatches(wds2[j], tokens[tokenIdx])) {
               ++matchCount; ++tokenIdx;
             } else if (matchCount > 0) {
-              goto tokenLoopDone;
+              goto doneToken;
             }
             ++searchIdx;
             if (matchCount >= minMatches) goto foundMatch;
           }
         }
-        tokenLoopDone:
+        doneToken:
         ++wordIdx;
         continue;
 
         foundMatch:
-        if (matchCount >= minMatches) {
-          resolvedRanges.push_back({wordIdx, static_cast<uint16_t>(searchIdx - 1)});
-          found = true;
-          break;
-        }
-        ++wordIdx;
+        resolvedRanges.push_back({wordIdx, static_cast<uint16_t>(searchIdx - 1)});
+        found = true;
+        break;
       }
     }
   }
@@ -1854,22 +1829,26 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             READING_STATS.resumeSession();
             if (!result.isCancelled) {
                if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
-                 // Find the selected clipping and store both its absolute word
-                 // offset AND its selectedText (used as text-search fallback when
-                 // the numeric offset resolves to the wrong page after layout changes).
+                 // Find the selected clipping and extract its text for the
+                 // text-search fallback (used when absolute offset is stale).
                  pendingClippingAbsoluteStart = UINT32_MAX;
                  pendingClippingText.clear();
                  for (const auto& c : clippingStore.getAll()) {
-                   if (c.spineIndex == jump->spineIndex && c.absoluteWordStart != UINT32_MAX) {
-                     if (c.startPage == jump->page) {
-                       pendingClippingAbsoluteStart = c.absoluteWordStart;
-                       pendingClippingText = c.selectedText;
-                       break;
-                     }
-                     if (pendingClippingAbsoluteStart == UINT32_MAX) {
-                       pendingClippingAbsoluteStart = c.absoluteWordStart;
-                       pendingClippingText = c.selectedText;
-                     }
+                   if (c.spineIndex != jump->spineIndex) continue;
+                   if (c.startPage == jump->page && !c.selectedText.empty()) {
+                     pendingClippingText = c.selectedText;
+                     break;  // text found — good enough for text-search
+                   }
+                 }
+                 // Also try to get a v2 absolute offset for the primary path
+                 for (const auto& c : clippingStore.getAll()) {
+                   if (c.spineIndex != jump->spineIndex) continue;
+                   if (c.startPage == jump->page && c.absoluteWordStart != UINT32_MAX) {
+                     pendingClippingAbsoluteStart = c.absoluteWordStart;
+                     break;
+                   }
+                   if (pendingClippingAbsoluteStart == UINT32_MAX && c.absoluteWordStart != UINT32_MAX) {
+                     pendingClippingAbsoluteStart = c.absoluteWordStart;
                    }
                  }
                  // Navigate to clipping using standard flow
@@ -2325,6 +2304,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // margins) can make the offset point to the wrong page. Text is layout-invariant.
     if (!pendingClippingText.empty()) {
       const auto& searchText = pendingClippingText;
+      LOG_DBG("CLP", "text-search: scanning chapter for '%.40s...'", searchText.c_str());
       std::vector<std::string> tokens;
       {
         std::string token;
@@ -2336,7 +2316,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         if (!token.empty()) tokens.push_back(token);
       }
       if (!tokens.empty()) {
-        const uint16_t minMatch = std::min(static_cast<uint16_t>(tokens.size()), static_cast<uint16_t>(3));
+        const uint16_t minMatch = static_cast<uint16_t>(tokens.size());  // ALL tokens must match
         const int savedPage = section->currentPage;
         bool textFound = false;
         uint16_t foundPage = 0;
@@ -2397,10 +2377,13 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         }
 
         section->currentPage = savedPage;
+        LOG_DBG("CLP", "text-search result: found=%d page=%u nextPage=%d",
+                textFound, foundPage, nextPageNumber);
         if (textFound && foundPage < section->pageCount && foundPage != nextPageNumber) {
           nextPageNumber = foundPage;
           pendingPageJump.reset();
           exactPageJumpOccurred = true;
+          LOG_DBG("CLP", "text-search moved to page %u", foundPage);
         }
       }
       pendingClippingText.clear();
