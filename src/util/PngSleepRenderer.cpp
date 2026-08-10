@@ -184,7 +184,9 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
       return false;
     }
     s_png.reset(new (mem) PNG());
-    std::memset(s_png.get(), 0, kPngHeapSize);
+    // Only zero the PNG struct itself; the extra bytes in kPngHeapSize are
+    // for the internal PNGIMAGE buffers which are initialized by open().
+    std::memset(s_png.get(), 0, sizeof(PNG));
   }
   PNG* png = s_png.get();
 
