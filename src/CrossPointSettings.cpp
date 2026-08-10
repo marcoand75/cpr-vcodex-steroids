@@ -136,6 +136,7 @@ bool CrossPointSettings::loadFromFile() {
     if (!stzJson.isEmpty()) {
       bool stzResave = false;
       steroidsLoaded = JsonSettingsIO::loadSettingsSteroids(*this, stzJson.c_str(), &stzResave);
+      LOG_DBG("CPS", "Loaded steroids settings: %s (resave=%d)", steroidsLoaded ? "OK" : "FAIL", stzResave);
       if (steroidsLoaded && stzResave) {
         JsonSettingsIO::saveSettingsSteroids(*this, SETTINGS_STEROIDS_FILE_JSON);
         LOG_DBG("CPS", "Resaved steroids settings to update format");
