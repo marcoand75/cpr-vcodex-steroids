@@ -1183,35 +1183,34 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
   if (!page) return;
 
   const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
-  const uint16_t currentPageNum = static_cast<uint16_t>(section ? section->currentPage : -1);
-  const uint16_t currentPageCount = section ? section->pageCount : 0;
   const int fontId = SETTINGS.getReaderFontId();
 
-  struct ClipRange { uint16_t startWord; uint16_t endWord; };
-  std::vector<ClipRange> resolvedRanges;
-
-  // Count total words on current page once (used for absolute-index clippings below).
-  int currentPageWordCount = 0;
-  {
-    for (const auto& el : page->elements) {
-      if (el && el->getTag() == TAG_PageLine) {
-        const auto& ln = static_cast<const PageLine&>(*el);
-        if (ln.getBlock()) currentPageWordCount += static_cast<int>(ln.getBlock()->wordCount());
-      }
+  // Build a flat word array (same pattern as renderBookmarkHighlight v3).
+  struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
+  std::vector<PW> pw;
+  for (const auto& element : page->elements) {
+    if (!element || element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = line.getBlock();
+    if (!block) continue;
+    const auto& words = block->getWords();
+    const auto& xPositions = block->getWordXpos();
+    const size_t wc = std::min(words.size(), xPositions.size());
+    for (size_t wi = 0; wi < wc; ++wi) {
+      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+      const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
+      pw.push_back({words[wi].c_str(), sx, sy, sw});
     }
   }
 
-  // Resolve highlight ranges for each clipping on this spine.
-  // TEXT-SEARCH ONLY — numeric offsets (v1 v2) are unreliable after any
-  // layout change. If the text is not found on the current page, the
-  // clipping is simply not highlighted.
+  // Text-search only: consecutive word match (same proven algorithm as bookmarks).
+  // Numeric offsets are unreliable after layout changes.
   for (const auto& clipping : clippingStore.getAll()) {
     if (clipping.spineIndex != currentSpine) continue;
-
     const auto& text = clipping.selectedText;
     if (text.empty()) continue;
 
-    // Tokenize
     std::vector<std::string> tokens;
     {
       std::string token;
@@ -1222,139 +1221,39 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
       }
       if (!token.empty()) tokens.push_back(token);
     }
-    if (tokens.empty()) continue;
-    const uint16_t minMatches = static_cast<uint16_t>(tokens.size());  // ALL tokens must match
+    if (tokens.size() < 3) continue;
+    const size_t minMatch = std::max(tokens.size() / 2, size_t{3});
 
-    uint16_t wordIdx = 0;
-    bool found = false;
-    for (const auto& element : page->elements) {
-      if (found) break;
-      if (!element || element->getTag() != TAG_PageLine) continue;
-      const auto& line = static_cast<const PageLine&>(*element);
-      const auto& block = line.getBlock();
-      if (!block) continue;
-      const auto& words = block->getWords();
-      for (size_t i = 0; i < words.size(); ++i) {
-        if (!wordMatches(words[i], tokens[0])) { ++wordIdx; continue; }
+    for (size_t startIdx = 0; startIdx + minMatch <= pw.size(); ++startIdx) {
+      if (strcmp(pw[startIdx].t, tokens[0].c_str()) != 0) continue;
+      size_t m = 1;
+      for (size_t k = 1; k < tokens.size() && startIdx + k < pw.size(); ++k) {
+        if (strcmp(pw[startIdx + k].t, tokens[k].c_str()) == 0) ++m; else break;
+      }
+      if (m < minMatch) continue;
 
-        uint16_t matchCount = 1;
-        uint16_t searchIdx = wordIdx + 1;
-        size_t tokenIdx = 1;
-        for (const auto& el2 : page->elements) {
-          if (tokenIdx >= tokens.size()) break;
-          if (!el2 || el2->getTag() != TAG_PageLine) continue;
-          const auto& ln2 = static_cast<const PageLine&>(*el2);
-          const auto& blk2 = ln2.getBlock();
-          if (!blk2) continue;
-          const auto& wds2 = blk2->getWords();
-          for (size_t j = 0; j < wds2.size(); ++j) {
-            if (static_cast<uint16_t>(searchIdx) <= wordIdx) { ++searchIdx; continue; }
-            bool isPunctOnly = true;
-            for (char pc : wds2[j]) {
-              if ((pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z') || (pc >= '0' && pc <= '9')) {
-                isPunctOnly = false; break;
-              }
-            }
-            if (isPunctOnly) { ++searchIdx; continue; }
-            if (tokenIdx < tokens.size() && wordMatches(wds2[j], tokens[tokenIdx])) {
-              ++matchCount; ++tokenIdx;
-            } else if (matchCount > 0) {
-              goto doneToken;
-            }
-            ++searchIdx;
-            if (matchCount >= minMatches) goto foundMatch;
-          }
+      // Group consecutive matched words on the same line into single rects.
+      int16_t asc = static_cast<int16_t>(renderer.getFontAscenderSize(fontId));
+      for (size_t k = 0; k < m; ) {
+        int16_t lineY = pw[startIdx + k].y;
+        int16_t runX = pw[startIdx + k].x;
+        int16_t runEnd = runX + pw[startIdx + k].w;
+        size_t kEnd = k + 1;
+        while (kEnd < m && pw[startIdx + kEnd].y == lineY) {
+          runEnd = pw[startIdx + kEnd].x + pw[startIdx + kEnd].w;
+          ++kEnd;
         }
-        doneToken:
-        ++wordIdx;
-        continue;
-
-        foundMatch:
-        resolvedRanges.push_back({wordIdx, static_cast<uint16_t>(searchIdx - 1)});
-        found = true;
-        break;
-      }
-    }
-  }
-
-  if (resolvedRanges.empty()) return;
-
-  // Sort ranges by startWord for efficient overlap checking in the render loop.
-  std::sort(resolvedRanges.begin(), resolvedRanges.end(),
-            [](const ClipRange& a, const ClipRange& b) { return a.startWord < b.startWord; });
-
-  // Render: highlight entire ranges as continuous blocks instead of
-  // word-by-word rectangles, so spaces between words are also highlighted.
-  int globalWordIndex = 0;
-  size_t rangeCursor = 0;
-  for (const auto& element : page->elements) {
-    if (!element || element->getTag() != TAG_PageLine) continue;
-    const auto& line = static_cast<const PageLine&>(*element);
-    const auto& block = line.getBlock();
-    if (!block) continue;
-
-    const auto& words = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t count = std::min(words.size(), xPositions.size());
-
-    // Collect highlighted words on this line that belong to the current range.
-    struct HighRun { int16_t xMin, xMax; };
-    std::vector<HighRun> runs;
-    // Also store which words are highlighted for text rendering.
-    std::vector<int> highlightedIndices;
-
-    for (size_t i = 0; i < count; ++i) {
-      while (rangeCursor < resolvedRanges.size() && resolvedRanges[rangeCursor].endWord < static_cast<uint16_t>(globalWordIndex)) {
-        ++rangeCursor;
-      }
-      const bool highlighted = (rangeCursor < resolvedRanges.size() &&
-                                 static_cast<uint16_t>(globalWordIndex) >= resolvedRanges[rangeCursor].startWord &&
-                                 static_cast<uint16_t>(globalWordIndex) <= resolvedRanges[rangeCursor].endWord);
-
-      if (highlighted) {
-        highlightedIndices.push_back(static_cast<int>(i));
-        const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
-        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[i].c_str(), EpdFontFamily::REGULAR)));
-        const int16_t endX = sx + sw;
-        if (!runs.empty() && endX >= runs.back().xMax) {
-          // Extend run if words are adjacent or overlapping
-          runs.back().xMax = endX;
-        } else {
-          runs.push_back({sx, endX});
+        renderer.fillRectDither(runX - 1, lineY - 1, runEnd - runX + 2, asc + 6, Color::LightGray);
+        for (size_t j = k; j < kEnd; ++j) {
+          renderer.drawText(fontId, pw[startIdx + j].x, pw[startIdx + j].y, pw[startIdx + j].t, true, EpdFontFamily::BOLD);
         }
+        k = kEnd;
       }
-      ++globalWordIndex;
-    }
-
-    // Draw highlight background — single continuous rectangle per run.
-    // Saltato durante i pass LSB/MSB dell'antialiasing grayscale:
-    // il fill rect sbiadisce il testo, quindi lo disegniamo solo in modalità BW.
-    const bool isGrayPass = (renderer.getRenderMode() != GfxRenderer::BW);
-    const int ascender = renderer.getFontAscenderSize(fontId);
-    const int descenderPad = 8;
-    if (!isGrayPass) {
-      for (const auto& run : runs) {
-        const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
-        renderer.fillRectDither(run.xMin - 2, screenY, run.xMax - run.xMin + 6, ascender + descenderPad, Color::LightGray);
-      }
-    }
-
-    // Draw text for each highlighted word — sempre, anche in grayscale.
-    // Usa TextBlock::renderWord per applicare bionic reading se attivo.
-    const auto& wordStyles = block->getWordStyles();
-    // La mappa tra indice parola in block->getWords() e indice in xPositions/words non è 1:1
-    // perché xPositions è la lista completa delle parole renderizzate mentre block->getWords()
-    // può essere più piccolo (parole della linea). Usiamo un offset per sincronizzare.
-    // highlightedIndices contiene indici relativi a words[] (la lista per-riga).
-    for (int idx : highlightedIndices) {
-      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[idx] + marginLeft);
-      const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const EpdFontFamily::Style ws = (idx < static_cast<int>(wordStyles.size()))
-                                          ? wordStyles[idx] : EpdFontFamily::REGULAR;
-      TextBlock::renderWord(renderer, fontId, sx, sy, words[idx], ws, SETTINGS.bionicReading);
+      return;
     }
   }
 }
+
 
 void EpubReaderActivity::createClippingFromSelection() {
   if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
@@ -2316,7 +2215,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         if (!token.empty()) tokens.push_back(token);
       }
       if (!tokens.empty()) {
-        const uint16_t minMatch = static_cast<uint16_t>(tokens.size());  // ALL tokens must match
+        const uint16_t minMatch = static_cast<uint16_t>(std::max(tokens.size() / 2, size_t{3}));
         const int savedPage = section->currentPage;
         bool textFound = false;
         uint16_t foundPage = 0;
@@ -2326,54 +2225,29 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           auto pg = section->loadPageFromSectionFile();
           if (!pg) continue;
 
-          uint16_t wordIdx = 0;
+          // Build flat word array (same pattern as renderBookmarkHighlight v3)
+          struct PW { const char* t; };
+          std::vector<PW> pww;
           for (const auto& element : pg->elements) {
-            if (textFound) break;
             if (!element || element->getTag() != TAG_PageLine) continue;
             const auto& line = static_cast<const PageLine&>(*element);
             const auto& block = line.getBlock();
             if (!block) continue;
             const auto& words = block->getWords();
-            for (size_t i = 0; i < words.size(); ++i) {
-              if (!wordMatches(words[i], tokens[0])) { ++wordIdx; continue; }
-              // Try to match consecutive tokens
-              uint16_t matchCount = 1;
-              uint16_t searchIdx = wordIdx + 1;
-              size_t tokenIdx = 1;
-              for (const auto& el2 : pg->elements) {
-                if (tokenIdx >= tokens.size()) break;
-                if (!el2 || el2->getTag() != TAG_PageLine) continue;
-                const auto& ln2 = static_cast<const PageLine&>(*el2);
-                const auto& blk2 = ln2.getBlock();
-                if (!blk2) continue;
-                const auto& wds2 = blk2->getWords();
-                for (size_t j = 0; j < wds2.size(); ++j) {
-                  if (static_cast<uint16_t>(searchIdx) <= wordIdx) { ++searchIdx; continue; }
-                  bool isPunctOnly = true;
-                  for (char pc : wds2[j]) {
-                    if ((pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z') || (pc >= '0' && pc <= '9')) {
-                      isPunctOnly = false; break;
-                    }
-                  }
-                  if (isPunctOnly) { ++searchIdx; continue; }
-                  if (tokenIdx < tokens.size() && wordMatches(wds2[j], tokens[tokenIdx])) {
-                    ++matchCount; ++tokenIdx;
-                  } else if (matchCount > 0) {
-                    goto tsDone;
-                  }
-                  ++searchIdx;
-                  if (matchCount >= minMatch) {
-                textFound = true;
-                foundPage = p;
-                goto tsDone;
-              }
-                }
-              }
-              ++wordIdx;
+            for (size_t wi = 0; wi < words.size(); ++wi) {
+              pww.push_back({words[wi].c_str()});
             }
           }
-          tsDone:;
-          if (textFound) break;
+
+          // Consecutive match on flat word array
+          for (size_t start = 0; start + minMatch <= pww.size(); ++start) {
+            if (strcmp(pww[start].t, tokens[0].c_str()) != 0) continue;
+            size_t m = 1;
+            for (size_t k = 1; k < tokens.size() && start + k < pww.size(); ++k) {
+              if (strcmp(pww[start + k].t, tokens[k].c_str()) == 0) ++m; else break;
+            }
+            if (m >= minMatch) { textFound = true; foundPage = p; break; }
+          }
         }
 
         section->currentPage = savedPage;
