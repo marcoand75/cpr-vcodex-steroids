@@ -567,7 +567,6 @@ void setup() {
   t1 = millis();
 
   HalSystem::begin();
-  BoardConfig::holdPowerRails();
 
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
@@ -575,7 +574,8 @@ void setup() {
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
-  gpio.begin();
+  gpio.begin();          // must be first: sets BoardConfig::ACTIVE via selectDevice()
+  BoardConfig::holdPowerRails();  // now safe: ACTIVE profile is set
   powerManager.begin();
   halClock.begin();
   halTiltSensor.begin();

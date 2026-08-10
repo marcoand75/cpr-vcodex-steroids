@@ -206,11 +206,6 @@ void HalGPIO::begin() {
   BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3
                                          : BoardConfig::Board::XteinkX4);
 
-  // X4 factory-aware controller selection (UC8179 replacement panel detect).
-  if (deviceIsX4()) {
-    freeink::applyXteinkDisplayController();
-  }
-
   // Store the uc8279 verdict where the display driver can see it.
   // On X3 we set uc8279Panel before SPI.begin(), so the EInkDisplay
   // constructor already has the pins in their pre-SPI state.

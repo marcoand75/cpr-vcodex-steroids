@@ -21,3 +21,4 @@ build
 *.log
 /.codex-build/
 /tmp
+open-x4-sdk/
