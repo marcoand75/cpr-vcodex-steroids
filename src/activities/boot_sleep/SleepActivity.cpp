@@ -811,17 +811,16 @@ void SleepActivity::renderCustomSleepScreen() const {
   if (selectConfiguredCustomSleepImage(selected)) {
     if (selected.isPng) {
       if (renderPngSleepScreen(selected.path)) {
+        commitCustomSleepImage(selected);
         return;
       }
-      // PNG decode failed — the framebuffer still holds the saved snapshot,
-      // just display it as-is instead of falling through to the default logo.
       displaySleepBuffer(renderer);
       return;
     } else {
-      GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
       FsFile file;
       if (SleepScreenCache::load(renderer, selected.path)) {
         displaySleepBuffer(renderer);
+        commitCustomSleepImage(selected);
         return;
       }
       if (Storage.openFileForRead("SLP", selected.path, file)) {
@@ -831,6 +830,7 @@ void SleepActivity::renderCustomSleepScreen() const {
         if (bitmap.parseHeaders() == BmpReaderError::Ok) {
           renderBitmapSleepScreen(bitmap, selected.path);
           file.close();
+          commitCustomSleepImage(selected);
           return;
         }
         file.close();
@@ -955,12 +955,10 @@ bool SleepActivity::renderPngSleepScreen(const std::string& sourcePath) const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  // Release font caches to maximise contiguous free space for the ~44 KB
-  // PNG decoder.  Without this the allocation can fail from Library where
-  // the heap is more fragmented than from Home or Reader.
-  if (auto* fcm = renderer.getFontCacheManager()) {
-    fcm->clearCache();
-  }
+  // Release SD fonts + reading stats before allocating the PNG decoder (~38 KB
+  // contiguous). Without this, the allocation fails when coming from Library
+  // where the heap is fragmented.
+  releasePngSleepMemory(renderer, true);
 
   // The framebuffer already holds the snapshot saved at the top of onEnter()
   // — no need to restore from cache file (which would consume extra heap for
@@ -1167,12 +1165,15 @@ void SleepActivity::renderCustomStatsSleepScreen(bool footerOnly) const {
   if (selectConfiguredCustomSleepImage(selected)) {
     if (selected.isPng) {
       renderer.clearScreen();
+      releasePngSleepMemory(renderer, false);
       if (drawPngSleepBackground(renderer, selected.path)) {
         drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
         displaySleepBuffer(renderer);
+        commitCustomSleepImage(selected);
         return;
       }
     } else if (renderBitmapStatsSleepScreen(renderer, selected.path, statsPanel, book, footerOnly)) {
+      commitCustomSleepImage(selected);
       return;
     }
   }
@@ -1181,6 +1182,7 @@ void SleepActivity::renderCustomStatsSleepScreen(bool footerOnly) const {
     return;
   }
   renderer.clearScreen();
+  releasePngSleepMemory(renderer, false);
   if (drawPngSleepBackground(renderer, "/sleep.png")) {
     drawCoverStatsPanel(renderer, statsPanel, book, footerOnly);
     displaySleepBuffer(renderer);
