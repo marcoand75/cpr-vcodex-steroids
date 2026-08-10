@@ -64,6 +64,19 @@ On top of that, Steroids adds a substantial set of original features developed a
 >   to ~105 KB. Boot skips 4 stages (~1088ms saved) on silent reboot.
 > - **💾 Pre-migration backup** — original unified `settings.json` backed up
 >   to `/.crosspoint/settings-steroids.json.bak` before one-shot migration.
+> - **🃏 Quick Cards** — image, QR code, and barcode viewer for quick-reference
+>   cards stored in `/cards/` on SD. BMP/JPEG/PNG images with auto-scaling and
+>   caching, structured QR field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone,
+>   SMS, OTP, calendar, URL), and Code‑128 barcodes. Cyberpunk panel UI.
+> - **🕹️ Select Long Press** — configurable Select button long-press during reading:
+>   Bookmark (default), Reading Timer (pause/resume tracking), Off. Status bar
+>   `|| PAUSED` indicator.
+> - **📐 Settings dividers** — thin separators group related settings within each
+>   tab (Display, Reader, Controls, System).
+> - **🖥️ Multi-device (X3/X4)** — freeink-sdk replacing open-x4-sdk; runtime
+>   X3/X4 board detection with SPI mutex; UC8279/UC8179 panel controller
+>   fingerprinting; Build flags `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1`.
+> - **🕐 X4 clock cleanup** — clock settings hidden on X4 hardware (no DS3231 RTC).
 
 ---
 

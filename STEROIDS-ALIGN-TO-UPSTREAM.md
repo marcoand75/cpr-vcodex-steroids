@@ -10,7 +10,6 @@ and OTA configuration. It is based on the 1.3.0 → 1.4.5 merge performed on
 ## Quick Reference: Files You MUST NOT Overwrite
 
 These files contain Steroids-only features. **Never `git checkout --theirs`**
-these files during a merge — always keep the local Steroids version:
 
 | File | Steroids Feature |
 |---|---|
@@ -408,7 +407,23 @@ git checkout upstream/master -- src/network/html/FilesPage.html src/network/html
 
 ## Files to NEVER Merge as Upstream
 
-These EPUB parser / renderer files have local Steroids changes (Bionic Reading,
+### New Additions (2026-08-10)
+
+These files were added in the 2026-08-10 Steroids development round and must never be overwritten:
+
+| File | Steroids Feature |
+|---|---|
+| `src/activities/apps/QuickCardsActivity.cpp/h` | Quick Cards image/QR/barcode viewer app |
+| `src/util/QrCardParser.h` | Structured QR field extraction (10 formats) |
+| `src/components/icons/quickcards.h` / `quickcards24.h` | Quick Cards app icon bitmaps |
+| `lib/hal/HalSpiBus.h/cpp` | SPI recursive mutex |
+| `lib/hal/XteinkDetectExt.h/cpp` | UC8279/UC8179 panel controller detection |
+| `freeink-sdk/` | Replaces `open-x4-sdk` — multi-device SDK |
+| `platformio.ini` | Added `BoardConfig`, `XteinkDetect`, `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1` |
+
+### Existing Protected Files — DO NOT overwrite
+
+These files contain Steroids-only features. **Never `git checkout --theirs`**
 Guide Dots, EPUB render modes). **Always keep local:**
 
 - `lib/Epub/Epub.cpp/h`
@@ -967,4 +982,4 @@ section in `STEROIDS-ADDICTIONS.md` §8A for the full design rationale.
 
 ---
 
-*Last updated: 2026-08-05 — based on 1.5.0.3 → 1.5.0.5 merge, plus power button fix, grayscale pipeline divergence, ReadingStatsStore full alignment audit, Steroids settings JSON split (v2 with C++ file separation), web UI steroids page, shortcut order persistence fix, silent restart mechanism, and pre-migration backup at /.crosspoint/settings-steroids.json.bak*
+*Last updated: 2026-08-10 — added multi-device X3/X4 integration (freeink-sdk, BoardConfig, HalSpiBus, XteinkDetectExt, UC8279/UC8179 detection), Quick Cards app, Select Long Press, Settings dividers, X4 clock hide, clear cache fix, QR field parser, new protected files list.*

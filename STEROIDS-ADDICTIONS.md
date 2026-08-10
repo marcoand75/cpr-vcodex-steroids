@@ -50,6 +50,7 @@ icon/theme checklist at the end of this file).
 |---|---|---|
 | **Library** | `LibraryActivity` | Grid-based e-book library (EPUB/XTC/TXT/MD), sort/filter/search, cover generation, collections/series. Full technical detail in [§6](#6-library-module-detail). |
 | **Wikipedia** | `WikipediaActivity` + `WikiTxtReaderActivity` | Download/read Wikipedia articles. Search, save as markdown `.wiki` in cache, summary preview (in-app), full-article reading via a dedicated reader. Detail in [§5](#5-wikipedia-app). |
+| **Quick Cards** | `QuickCardsActivity` | Image, QR code, and barcode viewer. Browses `/cards/` on SD. Renders BMP/JPEG/PNG images with auto-scaling, QR codes with structured field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone, SMS, OTP, calendar event, URL), and Code‑128 barcodes. Cyberpunk panel file list. Fullscreen mode. Detail in [§19](#19-quick-cards-app). |
 | **Screensaver** | `ScreenSaverActivity`, `ScreenSaverDirActivity`, `ScreenSaverPreviewActivity` | Dual-mode e-ink screensaver (general + in-book), PNG compositing, folder picker. Detail in [§4](#4-screensaver--sleep--deepsleep). |
 | **Sleep** | `SleepAppActivity`, `SleepPreviewActivity` | Sleep screen, image rotation on short power press, deep-sleep handling. Detail in [§4](#4-screensaver--sleep--deepsleep). |
 | **Screen Clean** | `ScreenCleanActivity` | Anti-burn-in screen clean helper. |
@@ -483,6 +484,26 @@ words from chapter start to the beginning of `page`. Bookmarks store
   library background memory release, lower cover-gen heap guards, full CPU during cover gen.
 - **Power button / deep-sleep state machine** (see §4.3).
 
+- **Select Long Press configuration** (`CrossPointSettings::selectLongPress`) — 3 modes:
+  Bookmark (default, toggle bookmark on current page), Reading Timer (toggle reading
+  time tracking pause/resume), Off. Popup feedback and `|| PAUSED` status bar indicator.
+- **Status bar clock hidden on X4** (device without DS3231 RTC) — Status Bar
+  customization menu filters out Clock/Clock Format/Sync Clock Now on X4 hardware.
+- **Settings dividers** — thin horizontal separator lines group related settings within
+  each tab (Display, Reader, Controls, System, Apps), matching the pattern used by the
+  Apps tab.
+- **Clear reading cache confirmation fix** — multi-line wrapped text using
+  `GfxRenderer::wrappedText()` instead of fixed single-line layout, preventing text
+  overflow past screen margins.
+- **Multi-device (X3/X4) support** — CrossInk v1.5.0-rc-3 screen/model integration:
+  - `freeink-sdk` replacing `open-x4-sdk` with `BoardConfig`, UC8279 panel detection,
+    SPI mutex (`HalSpiBus`), touch/gesture stubs, X3/X4 runtime device selection.
+  - Build flags `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1` on all environments.
+- **QR field parser** (`QrCardParser.h`) — structured extraction for 10 formats:
+  Wi‑Fi (SSID/Password/Security), vCard/MeCard (name/phone/email/URL/address),
+  Geo (lat/lon), Email (mailto), Phone (tel), SMS (smsto), OTP (otpauth://),
+  Calendar (BEGIN:VEVENT), URL (http/https). Sanitized to printable ASCII for e-ink fonts.
+
 ## 8A. Grayscale Image Rendering (BMP, covers, screensaver/sleep)
 
 Steroids-specific rework of the image → 2-bit (4-level grayscale) pipeline. This
@@ -897,8 +918,96 @@ Side button hint boxes in Lyra themes:
 
 ---
 
-*Last updated: 2026-08-07 — CPR-vCodex Steroids. Added §14 Library Shelf Enhancements
-(hide/unhide, permanent deletion, cover generation progress, side button page navigation,
-header text truncation, re-generate covers), §15 Dashboard restructure, §16 Image Rendering
-Tuning, §17 Confirmation Dialog multi-line body, §18 Other fixes. Two Steroids definition
-files: STEROIDS-ADDICTIONS.md (enhancements) and STEROIDS-ALIGN-TO-UPSTREAM.md (upstream merge).*
+*Last updated: 2026-08-10 — CPR-vCodex Steroids. Added §19 Quick Cards app, Select Long Press,
+Settings dividers, X4 clock hide, clear cache fix, multi-device X3/X4 integration,
+QR field parser.*
+---
+
+## 19. Quick Cards App
+
+Image, QR code, and barcode viewer for quick-reference cards stored on the SD card.
+
+### 19.1 Storage
+
+```
+/cards/
+├── tessera.barcode     (Code-128 barcode, digits only, max 40 chars)
+├── wifi_hotel.qr       (QR code: WIFI:T:WPA;S:Hotel;P:pass;;
+│                         Second line = optional description)
+├── photo.jpg           (JPEG — auto-converted to BMP, cached as .cache)
+├── logo.bmp            (BMP — displayed directly)
+└── icon.png            (PNG — conversion stable via PNGdec/openRAM)
+```
+
+`/cards/` is auto-created on first app launch.
+
+### 19.2 File List
+
+Cyberpunk panel style matching WikipediaActivity. Header shows QuickCards icon (32×32)
+and title. Cards shown with type badge (`[IMG]`, `[QR]`, `[BAR]`) and filename without
+extension. Long names truncated with `...`. Up/Down navigates, Confirm opens, Left
+deletes (cache for images, file for QR/barcode), Back exits.
+
+### 19.3 Image Cards (BMP/JPEG/PNG)
+
+- BMP: direct rendering via `Bitmap` class with auto‑scaling (fit to screen, aspect
+  ratio preserved).
+- JPEG: auto-converted to 1-bit BMP via `JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize`
+  and cached as `<filename>.cache` on SD. Subsequent opens use the cache.
+- PNG: converted via `PNGdec` (openRAM, two-pass decode to 1-bit buffer), cached as
+  `<filename>.cache`. Proven code path from `PngSleepRenderer`.
+- Left button deletes only the cached BMP (not the source file). Cache files hidden
+  from the card list (extension `.cache`, not scanned).
+
+### 19.4 QR Cards (.qr files)
+
+- First line: QR code payload (parsed by `QrCardParser`).
+- Remaining lines: optional free-text description, displayed below parsed fields.
+- `QrCardParser` extracts structured fields for 10 formats:
+
+| Format | Prefix | Extracted fields |
+|--------|--------|-----------------|
+| Wi‑Fi | `WIFI:...;;` | SSID, Password, Security, Hidden |
+| vCard | `BEGIN:VCARD` | Name, Full Name, Organization, Phone, Email, URL, Address |
+| MeCard | `MECARD:` | Name, Phone, Email, Note, URL, Address |
+| Geo | `geo:lat,lon` | Latitude, Longitude, Altitude |
+| Email | `mailto:` | Email, Subject |
+| Phone | `tel:` | Phone |
+| SMS | `sms:`/`smsto:` | Number, Message |
+| OTP | `otpauth://` | Account, Issuer |
+| Event | `BEGIN:VEVENT` | Summary, Start, End, Location, Description |
+| URL | `http(s)://` | URL, Domain |
+
+- All values sanitized to printable ASCII (`0x20`–`0x7E`) for e-ink font compatibility.
+- QR code rendered at 45% of available height, parsed fields below with `UI_12_FONT_ID`.
+- Filename shown as title (without extension, bold).
+
+### 19.5 Barcode Cards (.barcode / .bc files)
+
+- First line: numeric digits (Code-128, max 40 chars).
+- Remaining lines: optional free-text description.
+- Barcode height: 1/3 of screen, centered vertically. Fullscreen: centered on screen.
+- Digits rendered below the bars. Description wrapped in `UI_12_FONT_ID` below.
+
+### 19.6 Fullscreen Mode
+
+Confirm toggles fullscreen: only the image/QR/barcode is visible — no header,
+footer, button hints, or count indicator. Filename shown centered at bottom
+(UI_12, bold). Any button press exits fullscreen.
+
+### 19.7 Registration
+
+- App icon: 32×32 + 24×24 1-bit bitmaps (ID badge design).
+- All Lyra theme variants updated: `LyraTheme`, `LyraCarousel`, `LyraMarcoand75`.
+- `ShortcutRegistry`, `CrossPointSettings`, `JsonSettingsIOSteroids` — visibility,
+  ordering, and persistence.
+- Wired in both `AppsActivity` and `HomeActivity`.
+
+### 19.8 Files
+
+| Path | Purpose |
+|------|---------|
+| `src/activities/apps/QuickCardsActivity.h/.cpp` | Main activity |
+| `src/util/QrCardParser.h` | Structured QR field extraction |
+| `src/components/icons/quickcards.h` / `quickcards24.h` | App icon bitmaps |
+| `src/images/icons/identity-svgrepo-com.svg` | Source SVG icon |
