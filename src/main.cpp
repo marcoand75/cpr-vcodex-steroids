@@ -415,7 +415,6 @@ static bool startReplacementScreenSaver() {
 void enterDeepSleep() {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
-  APP_STATE.saveToFile();
 
   deepSleepInProgress = true;
 
@@ -457,6 +456,8 @@ void enterDeepSleep() {
     activityManager.goToSleep();
     delay(POST_SLEEP_SCREEN_SETTLE_MS);
   }
+
+  APP_STATE.saveToFile();  // deferred: serialized after the sleep screen rendered
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(true);

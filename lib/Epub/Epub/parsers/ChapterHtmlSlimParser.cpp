@@ -35,7 +35,7 @@ constexpr uint32_t HARD_MIN_FREE_HEAP_FOR_TEXT_LAYOUT = 30 * 1024;
 constexpr uint32_t HARD_MIN_MAX_ALLOC_FOR_TEXT_LAYOUT = 20 * 1024;
 constexpr uint32_t MIN_FREE_HEAP_FOR_TABLE_BUFFERING = 64 * 1024;
 constexpr uint32_t MIN_MAX_ALLOC_FOR_TABLE_BUFFERING = 40 * 1024;
-constexpr uint16_t TEXT_BLOCK_SPLIT_WORD_LIMIT = 350;
+constexpr uint16_t TEXT_BLOCK_SPLIT_WORD_LIMIT = 300;
 constexpr uint8_t INITIAL_PAGE_ELEMENT_RESERVE = 8;
 constexpr uint8_t INITIAL_TABLE_FRAGMENT_ROW_RESERVE = 8;
 constexpr uint32_t PAGE_ELEMENT_RESERVE_MIN_MAX_ALLOC = 1024;
@@ -512,6 +512,11 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     return;
   }
 
+  // Flush before addWord() can force the word vector to grow from one large
+  // contiguous allocation to the next — keeps long HTML text nodes within
+  // the ESP32-C3's largest allocatable heap block.
+  flushLongTextBlockIfNeeded();
+
   // Determine font style from depth-based tracking and CSS effective style
   const bool isBold = boldUntilDepth < depth || effectiveBold;
   const bool isItalic = italicUntilDepth < depth || effectiveItalic;
@@ -543,6 +548,20 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
   currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues);
   partWordBufferIndex = 0;
   nextWordContinues = false;
+}
+
+void ChapterHtmlSlimParser::flushLongTextBlockIfNeeded() {
+  if (!currentTextBlock || currentTextBlock->size() <= TEXT_BLOCK_SPLIT_WORD_LIMIT) {
+    return;
+  }
+
+  LOG_DBG("EHP", "Text block too long, splitting before vector growth");
+  const int horizontalInset = currentTextBlock->getBlockStyle().totalHorizontalInset();
+  const uint16_t effectiveWidth =
+      (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  currentTextBlock->layoutAndExtractLines(
+      renderer, fontId, effectiveWidth,
+      [this](const std::shared_ptr<TextBlock>& textBlock) { this->addLineToPage(textBlock); }, false);
 }
 
 // start a new text block if needed

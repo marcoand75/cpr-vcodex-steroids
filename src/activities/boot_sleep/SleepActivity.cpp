@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,7 @@
 #include "CrossPointState.h"
 #include "FontCacheManager.h"
 #include "ReadingStatsStore.h"
+#include "SdCardFontGlobals.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -453,7 +455,57 @@ struct BitmapPlacement {
 struct CustomSleepImage {
   std::string path;
   bool isPng = false;
+  uint16_t index = UINT16_MAX;
 };
+
+void commitCustomSleepImage(const CustomSleepImage& selected) {
+  if (selected.index == UINT16_MAX) {
+    return;
+  }
+  APP_STATE.pushRecentSleep(selected.index);
+  APP_STATE.saveToFile();
+}
+
+void releasePngSleepMemory(GfxRenderer& renderer, const bool releaseReadingStats) {
+  if (Storage.ready()) {
+    sdFontSystem.releaseForNetwork(renderer);
+  }
+  if (releaseReadingStats && !READING_STATS.releaseMemoryForNetwork()) {
+    LOG_ERR("SLP", "Failed to release reading stats before PNG sleep image");
+  }
+}
+
+void showRestorableSleepPopup(GfxRenderer& renderer) {
+  constexpr int marginX = 16;
+  constexpr int marginY = 12;
+  constexpr int outline = 2;
+  const char* message = tr(STR_ENTERING_SLEEP);
+  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, EpdFontFamily::REGULAR);
+  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int width = textWidth + marginX * 2;
+  const int height = textHeight + marginY * 2;
+  const Rect popup{(renderer.getScreenWidth() - width) / 2, static_cast<int>(renderer.getScreenHeight() * 0.165f),
+                   width, height};
+  const Rect saved{popup.x - outline, popup.y - outline, popup.width + outline * 2, popup.height + outline * 2};
+  const size_t savedSize = renderer.getRegionByteSize(saved.x, saved.y, saved.width, saved.height);
+  if (savedSize == 0) return;
+  uint8_t* savedPixels = static_cast<uint8_t*>(malloc(savedSize));
+  if (!savedPixels) {
+    LOG_ERR("SLP", "Skipping sleep popup: could not allocate background");
+    return;
+  }
+  if (!renderer.copyRegionToBuffer(saved.x, saved.y, saved.width, saved.height, savedPixels, savedSize)) {
+    LOG_ERR("SLP", "Skipping sleep popup: could not save background");
+    free(savedPixels);
+    return;
+  }
+  GUI.drawPopup(renderer, message);
+  delay(100);
+  if (!renderer.copyBufferToRegion(saved.x, saved.y, saved.width, saved.height, savedPixels, savedSize)) {
+    LOG_ERR("SLP", "Could not restore background after sleep popup");
+  }
+  free(savedPixels);
+}
 
 BitmapPlacement getBitmapPlacement(const Bitmap& bitmap, const Rect& target, const bool crop) {
   BitmapPlacement placement;
@@ -550,6 +602,7 @@ bool selectConfiguredCustomSleepImage(CustomSleepImage& selected) {
   }
 
   std::vector<std::string> files;
+  files.reserve(64);
   char name[500];
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     if (file.isDirectory()) {
@@ -608,9 +661,9 @@ bool selectConfiguredCustomSleepImage(CustomSleepImage& selected) {
     }
   }
 
-  APP_STATE.pushRecentSleep(fileIndex);
-  APP_STATE.saveToFile();
   selected.path = sleepDir + "/" + files[static_cast<size_t>(fileIndex)];
+  selected.isPng = FsHelpers::hasPngExtension(files[static_cast<size_t>(fileIndex)]);
+  selected.index = fileIndex;
   selected.isPng = FsHelpers::hasPngExtension(files[static_cast<size_t>(fileIndex)]);
   return !selected.path.empty();
 }

@@ -322,13 +322,13 @@ void TxtReaderActivity::onExit() {
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
-  pageOffsets.clear();
-  currentPageLines.clear();
+  decltype(pageOffsets)().swap(pageOffsets);
+  decltype(currentPageLines)().swap(currentPageLines);
   APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
   READING_STATS.endSession();
   ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
   txt.reset();
+  APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
 void TxtReaderActivity::loop() {

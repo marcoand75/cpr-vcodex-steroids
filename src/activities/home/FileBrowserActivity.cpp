@@ -425,31 +425,33 @@ void FileBrowserActivity::render(RenderLock&&) {
         });
   }
 
-  // Full path display
+  // Show the selected entry in full when it fits. When it does not, preserve
+  // the suffix here because the list row already shows the beginning; this is
+  // especially useful for books whose distinguishing text is near the end.
   {
     const int pathY = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - pathLineHeight;
     const int separatorY = pathY - metrics.verticalSpacing / 2;
     renderer.drawLine(0, separatorY, pageWidth - 1, separatorY, 3, true);
-    const int pathMaxWidth = pageWidth - metrics.contentSidePadding * 2;
-    // Left-truncate so the deepest directory is always visible
-    const char* pathStr = basepath.c_str();
-    const char* pathDisplay = pathStr;
+    const int infoMaxWidth = pageWidth - metrics.contentSidePadding * 2;
+    const bool hasSelection = !files.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(files.size());
+    const char* infoStr = hasSelection ? files[selectorIndex].c_str() : basepath.c_str();
+    const char* infoDisplay = infoStr;
     char leftTruncBuf[256];
-    if (renderer.getTextWidth(SMALL_FONT_ID, pathStr) > pathMaxWidth) {
+    if (renderer.getTextWidth(SMALL_FONT_ID, infoStr) > infoMaxWidth) {
       const char ellipsis[] = "\xe2\x80\xa6";  // UTF-8 ellipsis (…)
       const int ellipsisWidth = renderer.getTextWidth(SMALL_FONT_ID, ellipsis);
-      const int available = pathMaxWidth - ellipsisWidth;
+      const int available = infoMaxWidth - ellipsisWidth;
       // Walk forward from the start until the suffix fits, skipping UTF-8 continuation bytes
-      const char* p = pathStr;
+      const char* p = infoStr;
       while (*p) {
         if (renderer.getTextWidth(SMALL_FONT_ID, p) <= available) break;
         ++p;
         while (*p && (static_cast<unsigned char>(*p) & 0xC0) == 0x80) ++p;
       }
       snprintf(leftTruncBuf, sizeof(leftTruncBuf), "%s%s", ellipsis, p);
-      pathDisplay = leftTruncBuf;
+      infoDisplay = leftTruncBuf;
     }
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, pathY, pathDisplay);
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, pathY, infoDisplay);
   }
 
   // Help text

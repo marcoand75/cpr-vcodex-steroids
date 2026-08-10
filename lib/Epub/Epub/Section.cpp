@@ -13,8 +13,9 @@
 namespace {
 // v44: magic bytes + version bump with cache-busting fields for Bionic Reading,
 // Guide Dots, and EPUB Render Mode. Flat TextBlock word arena deferred to B2.
+// v45: fixed embedded <br> style re-application (paragraph spacing)
 constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
-constexpr uint8_t SECTION_FILE_VERSION = 44;
+constexpr uint8_t SECTION_FILE_VERSION = 45;
 // Size of all fields in the section file header BEFORE the patch area (pageCount + offsets).
 // Matches the write order in writeSectionFileHeader up to (but not including) pageCount.
 constexpr uint32_t HEADER_FIELDS_SIZE = sizeof(SECTION_CACHE_MAGIC) + sizeof(SECTION_FILE_VERSION) + sizeof(int) +

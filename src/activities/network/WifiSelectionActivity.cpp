@@ -56,6 +56,7 @@ void WifiSelectionActivity::onEnter() {
   savePromptSelection = 0;
   forgetPromptSelection = 0;
   autoConnecting = false;
+  autoConnectAttempted = false;
 
   // Cache the MAC address for display.
   // On ESP32, read the base MAC directly to avoid placeholder values when the
@@ -118,6 +119,31 @@ void WifiSelectionActivity::startWifiScan() {
 
   // Start async scan
   WiFi.scanNetworks(true);  // true = async scan
+}
+
+void WifiSelectionActivity::returnToNetworkList() {
+  // Back out of a prompt or a failure screen without rescanning. The cached
+  // scan results are still valid, so reusing them keeps the user's place
+  // instead of dropping them into another multi-second scan.
+  autoConnecting = false;
+  state = WifiSelectionState::NETWORK_LIST;
+
+  // Keep the network we were acting on under the cursor. A hidden network the
+  // user typed by hand is not in the scan list, so the cursor simply stays on
+  // the placeholder row it was launched from.
+  if (!selectedSSID.empty()) {
+    const auto selected = std::find_if(networks.begin(), networks.end(), [this](const WifiNetworkInfo& network) {
+      return !network.isHiddenPlaceholder && network.ssid == selectedSSID;
+    });
+    if (selected != networks.end()) {
+      selectedNetworkIndex = static_cast<size_t>(std::distance(networks.begin(), selected));
+    }
+  }
+  if (selectedNetworkIndex >= networks.size()) {
+    selectedNetworkIndex = 0;
+  }
+
+  requestUpdate();
 }
 
 void WifiSelectionActivity::processWifiScanResults() {
@@ -194,7 +220,8 @@ void WifiSelectionActivity::processWifiScanResults() {
   // connected SSID when it is present in scan results; otherwise fall back to
   // the strongest saved network because the list is already sorted with saved
   // networks first and RSSI descending inside each group.
-  if (allowAutoConnect && realNetworkCount > 0) {
+  if (allowAutoConnect && !autoConnectAttempted && realNetworkCount > 0) {
+    autoConnectAttempted = true;
     const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
     if (!lastSsid.empty()) {
       const auto remembered = std::find_if(networks.begin(), networks.end(), [&lastSsid](const WifiNetworkInfo& network) {
@@ -418,6 +445,9 @@ void WifiSelectionActivity::checkConnectionStatus() {
     if (status == WL_NO_SSID_AVAIL) {
       connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
     }
+    // Stop the SDK from retrying in the background while the user is back in
+    // the list; the timeout path below does the same.
+    WiFi.disconnect();
     state = WifiSelectionState::CONNECTION_FAILED;
     requestUpdate();
     return;
@@ -522,10 +552,10 @@ void WifiSelectionActivity::loop() {
         }
       }
       // Go back to network list (whether Cancel or Forget network was selected)
-      startWifiScan();
+      returnToNetworkList();
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
       // Skip forgetting, go back to network list
-      startWifiScan();
+      returnToNetworkList();
     }
     return;
   }
@@ -540,19 +570,21 @@ void WifiSelectionActivity::loop() {
 
   // Handle connection failed state
   if (state == WifiSelectionState::CONNECTION_FAILED) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-        mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // If we were auto-connecting or using a saved credential, offer to forget
-      // the network
-      if (autoConnecting || usedSavedPassword) {
+    // Back always dismisses straight to the network list. Only Confirm opts in
+    // to the forget prompt, and only when a saved credential is what failed.
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      returnToNetworkList();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      if (usedSavedPassword) {
         autoConnecting = false;
         state = WifiSelectionState::FORGET_PROMPT;
         forgetPromptSelection = 0;  // Default to "Cancel"
+        requestUpdate();
       } else {
-        // Go back to network list on failure for non-saved credentials
-        state = WifiSelectionState::NETWORK_LIST;
+        returnToNetworkList();
       }
-      requestUpdate();
       return;
     }
   }
@@ -806,8 +838,10 @@ void WifiSelectionActivity::renderConnectionFailed() const {
   renderer.drawCenteredText(UI_12_FONT_ID, top - 20, tr(STR_CONNECTION_FAILED), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(UI_10_FONT_ID, top + 20, connectionError.c_str());
 
-  // Use centralized button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), "", "");
+  // Confirm only leads to the forget prompt when a saved credential failed;
+  // otherwise it just dismisses like Back does.
+  const char* confirmLabel = usedSavedPassword ? tr(STR_FORGET_BUTTON) : tr(STR_DONE);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 

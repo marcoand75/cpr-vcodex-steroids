@@ -132,10 +132,10 @@ void XtcReaderActivity::onExit() {
   ReaderUtils::requestReaderUiTransitionRefresh(renderer);
 
   APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
   READING_STATS.endSession();
   ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
   xtc.reset();
+  APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
 void XtcReaderActivity::loop() {

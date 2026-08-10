@@ -84,6 +84,11 @@ class WifiSelectionActivity final : public Activity {
   // Whether we are attempting to auto-connect
   bool autoConnecting = false;
 
+  // Whether auto-connect already ran for this activity entry. Auto-connect is a
+  // one-shot on entry; without this a rescan after a failed auto-connect would
+  // immediately retry the same network and trap the user in a loop.
+  bool autoConnectAttempted = false;
+
   // Save/forget prompt selection (0 = Yes, 1 = No)
   int savePromptSelection = 0;
   int forgetPromptSelection = 0;
@@ -101,6 +106,7 @@ class WifiSelectionActivity final : public Activity {
   void renderForgetPrompt() const;
 
   void startWifiScan();
+  void returnToNetworkList();
   void processWifiScanResults();
   void appendHiddenNetworkEntry();
   void selectNetwork(int index);
