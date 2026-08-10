@@ -411,6 +411,11 @@ void ReadingStatsDetailActivity::onEnter() {
 void ReadingStatsDetailActivity::onExit() {
   Activity::onExit();
   freeBaseScreenBuffer();
+  // If this stats screen was shown after reader exit (post-reading stats),
+  // fast-restart to defragment the heap before returning to Home.
+  if (context.fromReaderExit) {
+    ESP.restart();
+  }
 }
 
 bool ReadingStatsDetailActivity::storeBaseScreenBuffer() {

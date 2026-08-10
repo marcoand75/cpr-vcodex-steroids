@@ -245,7 +245,10 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
   } else {
-    activityManager.goHome();
+    // Fast reset: reading fragments the heap (parsing, rendering, section cache).
+    // A soft restart defragments it completely, freeing large contiguous blocks
+    // needed by the screensaver's PNG decoder (~44 KB).
+    ESP.restart();
   }
 }
 

@@ -8,6 +8,7 @@
 
 struct ReadingStatsDetailContext {
   bool showSessionSummary = false;
+  bool fromReaderExit = false;
 };
 
 class ReadingStatsDetailActivity final : public Activity {
