@@ -168,24 +168,18 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   }
 
   // Lazily allocate the PNG decoder on first call and keep it alive for the
-  // entire screensaver session.  patch_pngdec.py removes the scanline buffer
-  // from the PNG struct so sizeof(PNG) is only ~2 KB; the scanline buffer
-  // (PNG_MAX_BUFFERED_PIXELS) is now allocated inside decode() instead.
-  // For the heap allocation we need the FULL object size including the
-  // internal PNGIMAGE (zlib + inflate) structures — sizeof(PNG) +
-  // PNG_MAX_BUFFERED_PIXELS restores the pre-patch ~59 KB allocation.
+  // entire screensaver session.  sizeof(PNG) ~38 KB; allocating / freeing it
+  // on every image change would fragment the heap.  Instead we reuse the
+  // same PNG object across images — open() and close() only reset internal
+  // state without freeing the object memory.
   if (!s_png) {
-    constexpr size_t kPngHeapSize = sizeof(PNG) + PNG_MAX_BUFFERED_PIXELS;
-    void* mem = malloc(kPngHeapSize);
+    void* mem = malloc(sizeof(PNG));
     if (!mem) {
-      LOG_ERR("SLP", "Failed to allocate PNG decoder (free=%d, maxAlloc=%d, need=%d)",
-              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
-              static_cast<int>(kPngHeapSize));
+      LOG_ERR("SLP", "Failed to allocate PNG decoder (free=%d, maxAlloc=%d)",
+              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
       return false;
     }
     s_png.reset(new (mem) PNG());
-    // Only zero the PNG struct itself; the extra bytes in kPngHeapSize are
-    // for the internal PNGIMAGE buffers which are initialized by open().
     std::memset(s_png.get(), 0, sizeof(PNG));
   }
   PNG* png = s_png.get();
