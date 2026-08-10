@@ -568,14 +568,19 @@ void setup() {
 
   HalSystem::begin();
 
+  // Select default board (X4) and latch power rails BEFORE any detection
+  // probes touch I2C or SPI pins. HalGPIO::begin() will re-select X3 if
+  // the fingerprint probe confirms it.
+  BoardConfig::selectDevice(BoardConfig::Board::XteinkX4);
+  BoardConfig::holdPowerRails();
+
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
       (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
-  gpio.begin();          // must be first: sets BoardConfig::ACTIVE via selectDevice()
-  BoardConfig::holdPowerRails();  // now safe: ACTIVE profile is set
+  gpio.begin();
   powerManager.begin();
   halClock.begin();
   halTiltSensor.begin();
