@@ -19,6 +19,7 @@ class EpubReaderActivity final : public Activity {
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
   uint32_t pendingClippingAbsoluteStart = UINT32_MAX;
+  std::string pendingClippingText;       // text content for text-search fallback
   uint32_t pendingBookmarkAbsoluteStart = UINT32_MAX;
   std::string pendingBookmarkSnippet;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).

@@ -51,6 +51,26 @@
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long bookmarkToggleMs = 700;
+
+// Case-insensitive word match, ignoring trailing punctuation.
+// "Mercer" matches "Mercer," or "Mercer." — critical for EPUB tokenization
+// where punctuation is attached to the preceding word.
+static bool wordMatches(const std::string& pageWord, const std::string& token) {
+  if (pageWord.size() < token.size()) return false;
+  for (size_t k = 0; k < token.size(); ++k) {
+    if (tolower(static_cast<unsigned char>(pageWord[k])) !=
+        tolower(static_cast<unsigned char>(token[k]))) return false;
+  }
+  for (size_t k = token.size(); k < pageWord.size(); ++k) {
+    char c = pageWord[k];
+    if (c != ',' && c != '.' && c != ';' && c != ':' && c != '!' && c != '?' &&
+        c != '"' && c != '\'' && c != ')' && c != ']' && c != '}' &&
+        c != static_cast<char>(0x2019) && c != static_cast<char>(0x201C) && c != static_cast<char>(0x201D))
+      return false;
+  }
+  return true;
+}
+
 // pages per minute, first item is 1 to prevent division by zero if accessed
 constexpr int PAGE_TURN_RATES[] = {1, 1, 3, 6, 12};
 
@@ -1235,22 +1255,32 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
       if (!block) continue;
       const auto& words = block->getWords();
       for (size_t i = 0; i < words.size(); ++i) {
-        if (words[i] != tokens[0]) { ++wordIdx; continue; }
+        if (!wordMatches(words[i], tokens[0])) { ++wordIdx; continue; }
 
-        // Potential match start. Try to match consecutive tokens.
-        uint16_t matchCount = 0;
-        uint16_t searchIdx = wordIdx;
+        // token[0] matched. Try to match consecutive tokens.
+        uint16_t matchCount = 1;
+        uint16_t searchIdx = wordIdx + 1;
+        size_t tokenIdx = 1;
         for (const auto& el2 : page->elements) {
+          if (tokenIdx >= tokens.size()) break;
           if (!el2 || el2->getTag() != TAG_PageLine) continue;
           const auto& ln2 = static_cast<const PageLine&>(*el2);
           const auto& blk2 = ln2.getBlock();
           if (!blk2) continue;
           const auto& wds2 = blk2->getWords();
           for (size_t j = 0; j < wds2.size(); ++j) {
-            if (searchIdx < wordIdx) { ++searchIdx; continue; }
-            if (matchCount < tokens.size() && wds2[j] == tokens[matchCount]) {
-              ++matchCount;
-            } else {
+            if (static_cast<uint16_t>(searchIdx) <= wordIdx) { ++searchIdx; continue; }
+            // Skip pure-punctuation tokens (page has "," as separate word)
+            bool isPunctOnly = true;
+            for (char pc : wds2[j]) {
+              if ((pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z') || (pc >= '0' && pc <= '9')) {
+                isPunctOnly = false; break;
+              }
+            }
+            if (isPunctOnly) { ++searchIdx; continue; }
+            if (tokenIdx < tokens.size() && wordMatches(wds2[j], tokens[tokenIdx])) {
+              ++matchCount; ++tokenIdx;
+            } else if (matchCount > 0) {
               goto tokenLoopDone;
             }
             ++searchIdx;
@@ -1824,16 +1854,25 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             READING_STATS.resumeSession();
             if (!result.isCancelled) {
                if (const auto* jump = std::get_if<BookmarkResult>(&result.data)) {
-                 // Find the selected clipping to get its absolute word index
+                 // Find the selected clipping and store both its absolute word
+                 // offset AND its selectedText (used as text-search fallback when
+                 // the numeric offset resolves to the wrong page after layout changes).
                  pendingClippingAbsoluteStart = UINT32_MAX;
+                 pendingClippingText.clear();
                  for (const auto& c : clippingStore.getAll()) {
-                   if (c.spineIndex == jump->spineIndex && c.startPage == jump->page &&
-                       c.absoluteWordStart != UINT32_MAX) {
-                     pendingClippingAbsoluteStart = c.absoluteWordStart;
-                     break;
+                   if (c.spineIndex == jump->spineIndex && c.absoluteWordStart != UINT32_MAX) {
+                     if (c.startPage == jump->page) {
+                       pendingClippingAbsoluteStart = c.absoluteWordStart;
+                       pendingClippingText = c.selectedText;
+                       break;
+                     }
+                     if (pendingClippingAbsoluteStart == UINT32_MAX) {
+                       pendingClippingAbsoluteStart = c.absoluteWordStart;
+                       pendingClippingText = c.selectedText;
+                     }
                    }
                  }
-                 // Naviga al clipping usando il flusso standard (come pageTurn)
+                 // Navigate to clipping using standard flow
                  const int maxSpine = epub ? std::max(0, epub->getSpineItemsCount() - 1) : 0;
                  currentSpineIndex = std::min(jump->spineIndex, maxSpine);
                  cachedSpineIndex = currentSpineIndex;
@@ -2279,6 +2318,92 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         exactPageJumpOccurred = true;
       }
       pendingClippingAbsoluteStart = UINT32_MAX;
+    }
+
+    // Text-search verification: scan the chapter for the clipping's text content.
+    // Even if the absolute word offset resolved a page, layout changes (font, size,
+    // margins) can make the offset point to the wrong page. Text is layout-invariant.
+    if (!pendingClippingText.empty()) {
+      const auto& searchText = pendingClippingText;
+      std::vector<std::string> tokens;
+      {
+        std::string token;
+        for (char c : searchText) {
+          if (c == ' ' || c == '\n' || c == '\r') {
+            if (!token.empty()) { tokens.push_back(token); token.clear(); }
+          } else { token += c; }
+        }
+        if (!token.empty()) tokens.push_back(token);
+      }
+      if (!tokens.empty()) {
+        const uint16_t minMatch = std::min(static_cast<uint16_t>(tokens.size()), static_cast<uint16_t>(3));
+        const int savedPage = section->currentPage;
+        bool textFound = false;
+        uint16_t foundPage = 0;
+
+        for (uint16_t p = 0; p < section->pageCount && !textFound; ++p) {
+          section->currentPage = static_cast<int>(p);
+          auto pg = section->loadPageFromSectionFile();
+          if (!pg) continue;
+
+          uint16_t wordIdx = 0;
+          for (const auto& element : pg->elements) {
+            if (textFound) break;
+            if (!element || element->getTag() != TAG_PageLine) continue;
+            const auto& line = static_cast<const PageLine&>(*element);
+            const auto& block = line.getBlock();
+            if (!block) continue;
+            const auto& words = block->getWords();
+            for (size_t i = 0; i < words.size(); ++i) {
+              if (!wordMatches(words[i], tokens[0])) { ++wordIdx; continue; }
+              // Try to match consecutive tokens
+              uint16_t matchCount = 1;
+              uint16_t searchIdx = wordIdx + 1;
+              size_t tokenIdx = 1;
+              for (const auto& el2 : pg->elements) {
+                if (tokenIdx >= tokens.size()) break;
+                if (!el2 || el2->getTag() != TAG_PageLine) continue;
+                const auto& ln2 = static_cast<const PageLine&>(*el2);
+                const auto& blk2 = ln2.getBlock();
+                if (!blk2) continue;
+                const auto& wds2 = blk2->getWords();
+                for (size_t j = 0; j < wds2.size(); ++j) {
+                  if (static_cast<uint16_t>(searchIdx) <= wordIdx) { ++searchIdx; continue; }
+                  bool isPunctOnly = true;
+                  for (char pc : wds2[j]) {
+                    if ((pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z') || (pc >= '0' && pc <= '9')) {
+                      isPunctOnly = false; break;
+                    }
+                  }
+                  if (isPunctOnly) { ++searchIdx; continue; }
+                  if (tokenIdx < tokens.size() && wordMatches(wds2[j], tokens[tokenIdx])) {
+                    ++matchCount; ++tokenIdx;
+                  } else if (matchCount > 0) {
+                    goto tsDone;
+                  }
+                  ++searchIdx;
+                  if (matchCount >= minMatch) {
+                textFound = true;
+                foundPage = p;
+                goto tsDone;
+              }
+                }
+              }
+              ++wordIdx;
+            }
+          }
+          tsDone:;
+          if (textFound) break;
+        }
+
+        section->currentPage = savedPage;
+        if (textFound && foundPage < section->pageCount && foundPage != nextPageNumber) {
+          nextPageNumber = foundPage;
+          pendingPageJump.reset();
+          exactPageJumpOccurred = true;
+        }
+      }
+      pendingClippingText.clear();
     }
 
     // Resolve absolute bookmark word index to page number when jumping from View Bookmarks.
