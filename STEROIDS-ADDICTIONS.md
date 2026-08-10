@@ -1011,3 +1011,60 @@ footer, button hints, or count indicator. Filename shown centered at bottom
 | `src/util/QrCardParser.h` | Structured QR field extraction |
 | `src/components/icons/quickcards.h` / `quickcards24.h` | App icon bitmaps |
 | `src/images/icons/identity-svgrepo-com.svg` | Source SVG icon |
+
+---
+
+## 20. Clipping Navigation and Highlighting Fix
+
+### 20.1 Problem
+
+Clippings created under one layout (font, size, margins, alignment) would
+open on the wrong page and highlight completely unrelated text after the
+user changed any of those settings. The v1/v2 numeric offset system
+(`absoluteWordStart`, `startWordIndex`) was reliable only within the same
+layout and became stale after any pagination-affecting change.
+
+### 20.2 Solution
+
+Both **page positioning** and **highlight rendering** now use exclusively
+text-search with the same consecutive-word matching algorithm proven in
+`renderBookmarkHighlight` v3:
+
+1. **Flat word array** — all words on the page are collected into a single
+   `std::vector<PW>` with pointers to the original word strings
+2. **Consecutive `strcmp` match** — starting from each word, the code checks
+   if the next `minMatch` words match the clipping's tokens consecutively
+3. **`minMatch = max(tokens.size() / 2, 3)`** — at least 3 tokens and at
+   least 50% of the clipping text must match
+4. **No fallback to numeric offsets** — if the text is not found on the page
+   or in the chapter, nothing is highlighted (no false positives)
+
+### 20.3 Page Positioning (from ClippingStore)
+
+When the user taps "Go to clipping" in the ClippingsActivity, the callback
+populates `pendingClippingText` from the clipping's `selectedText`. During
+section load, the text-search scans **all pages** in the chapter via
+`loadPageFromSectionFile()`, using the same consecutive-word algorithm, and
+sets `nextPageNumber` to the page where the clipping text begins.
+
+### 20.4 Multi-line Highlight Rendering
+
+Consecutive matched words on the same line are grouped into a single
+background `fillRectDither` covering spaces and punctuation between them.
+Words on different lines get separate rectangles. All matched words are
+redrawn in `EpdFontFamily::BOLD`.
+
+### 20.5 `wordMatches` Helper
+
+A `wordMatches()` function in the anonymous namespace handles case-insensitive
+comparison with trailing punctuation skipping (`"Mercer"` matches `"Mercer,"`
+or `"Mercer."`). Used only by the text-search across-pages for positioning.
+
+### 20.6 Files Changed
+
+| Path | Changes |
+|------|---------|
+| `src/activities/reader/EpubReaderActivity.cpp` | Rewritten `renderClippingHighlights` (-185/+59), new text-search positioning in `render()` |
+| `src/activities/reader/EpubReaderActivity.h` | Added `pendingClippingText` member |
+
+*Last updated: 2026-08-10 — added §20 Clipping Navigation and Highlighting Fix.*
