@@ -12,8 +12,7 @@ class SleepScreenCache {
   static int invalidateAll();
 
  private:
-  static constexpr const char* CACHE_DIR = "/.crosspoint/sleep_cache";
-
   static uint32_t hashKey(const std::string& sourcePath, uint32_t fileSize);
-  static std::string getCachePath(const std::string& sourcePath, uint32_t fileSize);
+  // CACHE_DIR e buildCachePath() sono ora nel .cpp (namespace anonimo)
+  // per evitare dipendenze dall'header.
 };
