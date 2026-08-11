@@ -24,76 +24,34 @@
 extern void freeFontMemory();
 extern void restoreFontMemory();
 
-// Enable heap tracing only during development. In production, serial logging
-// adds 5-20ms per call and significantly slows down screen refresh.
-#ifdef SS_HEAP_TRACE
-#define SS_TRACE(...) LOG_DBG(__VA_ARGS__)
-#else
-#define SS_TRACE(...) ((void)0)
-#endif
-
-namespace {
-
-constexpr MappedInputManager::Button kAllButtons[] = {
-    MappedInputManager::Button::Back,      MappedInputManager::Button::Confirm,
-    MappedInputManager::Button::Left,      MappedInputManager::Button::Right,
-    MappedInputManager::Button::Up,        MappedInputManager::Button::Down,
-    MappedInputManager::Button::Power,     MappedInputManager::Button::PageBack,
-    MappedInputManager::Button::PageForward,
-};
-
-}  // namespace
-
-std::string ScreenSaverActivity::resolveScreensaverDir() const {
-  const char* dir = returnToCaller_ ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
-  if (dir[0] != '\0') {
-    return std::string(dir);
-  }
-  if (!returnToCaller_) {
-    return SleepImageUtils::resolveConfiguredSleepDirectory();
-  }
-  // Reading activity fallback to general screensaver directory
-  if (SETTINGS.screenSaverDirectory[0] != '\0') {
-    return std::string(SETTINGS.screenSaverDirectory);
-  }
-  return SleepImageUtils::resolveConfiguredSleepDirectory();
-}
-
 void ScreenSaverActivity::loadImages() {
   images_.clear();
   currentImagePath_.clear();
-
-  const std::string dirPath = resolveScreensaverDir();
-  if (dirPath.empty()) return;
-
-  images_ = SleepImageUtils::listImageFiles(dirPath);
-
-  // Determine the first image. Sequential order starts at images_[0]; shuffle
-  // picks a random image (anti-repetition) so the first shown image differs
-  // between sessions instead of always being the same file.
-  // NOTE: Do NOT call freeImageList() here — onEnter() needs images_ alive
-  // for fallback selection and initial shuffle randomization.
-  if (!images_.empty()) {
-    const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
-    if (order == CrossPointSettings::SCREENSAVER_SHUFFLE && images_.size() > 1) {
-      const size_t count = images_.size();
-      const uint8_t window = static_cast<uint8_t>(
-          std::min(static_cast<size_t>(APP_STATE.recentScreensaverFill), count - 1));
-      size_t next = static_cast<size_t>(random(static_cast<int>(count)));
-      for (uint8_t attempt = 0;
-           attempt < 20 && APP_STATE.isRecentScreensaver(static_cast<uint16_t>(next), window);
-           attempt++) {
-        next = static_cast<size_t>(random(static_cast<int>(count)));
-      }
-      currentIndex_ = static_cast<int>(next);
-      currentImagePath_ = images_[next];
-      APP_STATE.pushRecentScreensaver(static_cast<uint16_t>(next));
-      APP_STATE.saveToFile();
+  const char* dir = returnToCaller_ ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
+  std::string dirPath;
+  if (dir[0] != '\0') {
+    dirPath = dir;
+  } else if (!returnToCaller_) {
+    dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
+  } else {
+    // For reading activity fallback to general screensaver directory
+    if (SETTINGS.screenSaverDirectory[0] != '\0') {
+      dirPath = SETTINGS.screenSaverDirectory;
     } else {
-      currentIndex_ = 0;
-      currentImagePath_ = images_[0];
+      dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
     }
   }
+  if (dirPath.empty()) return;
+  images_ = SleepImageUtils::listImageFiles(dirPath);
+
+  // Extract the first image path, then free the vector to reclaim heap
+  // for the PNG decoder (~38 KB).  Only the current image path is needed
+  // for rendering; the next image is resolved lazily in pickNextImage().
+  if (!images_.empty()) {
+    currentIndex_ = 0;
+    currentImagePath_ = images_[0];
+  }
+  freeImageList();
 }
 
 void ScreenSaverActivity::freeImageList() {
@@ -103,7 +61,19 @@ void ScreenSaverActivity::freeImageList() {
 }
 
 void ScreenSaverActivity::pickNextImage() {
-  const std::string dirPath = resolveScreensaverDir();
+  const char* dir = returnToCaller_ ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
+  std::string dirPath;
+  if (dir[0] != '\0') {
+    dirPath = dir;
+  } else if (!returnToCaller_) {
+    dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
+  } else {
+    if (SETTINGS.screenSaverDirectory[0] != '\0') {
+      dirPath = SETTINGS.screenSaverDirectory;
+    } else {
+      dirPath = SleepImageUtils::resolveConfiguredSleepDirectory();
+    }
+  }
   if (dirPath.empty()) return;
 
   // Re-scan the directory to get all current images, pick one, then free.
@@ -114,10 +84,10 @@ void ScreenSaverActivity::pickNextImage() {
   }
 
   const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
-  int next = 0;
-
+  int next;
   if (order == CrossPointSettings::SCREENSAVER_SEQUENTIAL) {
     // Find current image index in the new scan to determine next sequentially.
+    next = 0;
     for (int i = 0; i < static_cast<int>(scanned.size()); ++i) {
       if (scanned[i] == currentImagePath_) {
         next = (i + 1) % static_cast<int>(scanned.size());
@@ -126,11 +96,13 @@ void ScreenSaverActivity::pickNextImage() {
     }
   } else {
     // Shuffle with anti-repetition: avoid the last N recent images.
-    const uint8_t window = static_cast<uint8_t>(
-        std::min(static_cast<size_t>(APP_STATE.recentScreensaverFill), scanned.size() - 1));
+    // Uses a persistent 12-entry circular buffer saved to APP_STATE so
+    // repetition is avoided across screensaver sessions and deep sleep cycles.
+    const uint16_t fileCount = static_cast<uint16_t>(scanned.size());
+    const uint8_t window =
+        static_cast<uint8_t>(std::min(static_cast<size_t>(APP_STATE.recentScreensaverFill), scanned.size() - 1));
     next = random(static_cast<int>(scanned.size()));
-    for (uint8_t attempt = 0;
-         attempt < 20 && APP_STATE.isRecentScreensaver(static_cast<uint16_t>(next), window);
+    for (uint8_t attempt = 0; attempt < 20 && APP_STATE.isRecentScreensaver(static_cast<uint16_t>(next), window);
          attempt++) {
       next = random(static_cast<int>(scanned.size()));
     }
@@ -164,17 +136,33 @@ int ScreenSaverActivity::getMinBatteryPercent() const {
 
 bool ScreenSaverActivity::isWakeButtonPressed() const {
   const uint8_t wakeBtn = SETTINGS.screenSaverWakeButton;
-
   if (wakeBtn == CrossPointSettings::SCREENSAVER_WAKE_ANY) {
-    for (auto btn : kAllButtons) {
+    static constexpr MappedInputManager::Button allButtons[] = {
+        MappedInputManager::Button::Back,    MappedInputManager::Button::Confirm,
+        MappedInputManager::Button::Left,    MappedInputManager::Button::Right,
+        MappedInputManager::Button::Up,      MappedInputManager::Button::Down,
+        MappedInputManager::Button::Power,   MappedInputManager::Button::PageBack,
+        MappedInputManager::Button::PageForward,
+    };
+    for (auto btn : allButtons) {
       if (mappedInput.wasPressed(btn)) return true;
     }
     return false;
   }
-
-  const int idx = static_cast<int>(wakeBtn) - 1;
-  if (idx >= 0 && idx < static_cast<int>(sizeof(kAllButtons) / sizeof(kAllButtons[0]))) {
-    return mappedInput.wasPressed(kAllButtons[idx]);
+  static constexpr MappedInputManager::Button wakeMap[] = {
+      MappedInputManager::Button::Back,
+      MappedInputManager::Button::Confirm,
+      MappedInputManager::Button::Left,
+      MappedInputManager::Button::Right,
+      MappedInputManager::Button::Up,
+      MappedInputManager::Button::Down,
+      MappedInputManager::Button::Power,
+      MappedInputManager::Button::PageBack,
+      MappedInputManager::Button::PageForward,
+  };
+  int idx = static_cast<int>(wakeBtn) - 1;
+  if (idx >= 0 && idx < static_cast<int>(sizeof(wakeMap) / sizeof(wakeMap[0]))) {
+    return mappedInput.wasPressed(wakeMap[idx]);
   }
   return false;
 }
@@ -183,29 +171,16 @@ void ScreenSaverActivity::onEnter() {
   Activity::onEnter();
   loadImages();
 
-  // Fallback: if shuffle/randomization didn't select an image, use the first.
-  // images_ is still alive here (freeImageList not yet called).
+  // Battery check: refuse to start if below minimum
   if (currentImagePath_.empty() && !images_.empty()) {
     currentImagePath_ = images_[0];
-    currentIndex_ = 0;
   }
-
-  // Randomize first image in shuffle mode (only if not already set by loadImages)
-  const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
-  if (!images_.empty() && order == CrossPointSettings::SCREENSAVER_SHUFFLE && currentIndex_ == 0) {
-    currentIndex_ = random(static_cast<int>(images_.size()));
-    if (currentIndex_ < static_cast<int>(images_.size())) {
-      currentImagePath_ = images_[currentIndex_];
-    }
-  }
-
-  // NOW free the image list — all selection logic is complete.
   freeImageList();
 
-  // Battery check: refuse to start if below minimum
   int batPct = static_cast<int>(powerManager.getBatteryPercentage());
   int minPct = getMinBatteryPercent();
   if (minPct > 0 && batPct < minPct) {
+    // Show error, then go home
     {
       RenderLock lock(*this);
       renderer.clearScreen();
@@ -222,7 +197,7 @@ void ScreenSaverActivity::onEnter() {
 
   // Save a snapshot of the caller's framebuffer to a temp file so that
   // transparent PNGs can be drawn over the original caller background on
-  // each image change. We write to SD instead of keeping a memory buffer
+  // each image change.  We write to SD instead of keeping a memory buffer
   // to avoid competing heap with the PNG decoder (~44 KB).
   if (!callerFrameBufferPath_.empty() || Storage.exists(callerFrameBufferPath_.c_str())) {
     Storage.remove(callerFrameBufferPath_.c_str());
@@ -244,6 +219,12 @@ void ScreenSaverActivity::onEnter() {
   lastBatteryCheckMs_ = millis();
   firstRender_ = true;
 
+  // Randomize first image in shuffle mode
+  const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
+  if (!images_.empty() && order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
+    currentIndex_ = random(static_cast<int>(images_.size()));
+  }
+
   powerManager.setPowerSaving(true);
   requestUpdate();
 }
@@ -253,27 +234,21 @@ void ScreenSaverActivity::onExit() {
   // screensaver does not propagate to the caller (reader/home).
   // Keep updating until the wake button is physically released;
   // a safety counter prevents an infinite stall.
-  bool drained = false;
-  for (int safety = 0; safety < 100; ++safety) {
+  for (int safety = 0; safety < 200; ++safety) {
     delay(5);
     mappedInput.update();
-
-    bool anyPressed = false;
-    for (auto btn : kAllButtons) {
-      if (mappedInput.isPressed(btn)) {
-        anyPressed = true;
-        break;
-      }
-    }
-    if (!anyPressed) {
-      drained = true;
+    if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Left) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Right) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Up) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Down) &&
+        !mappedInput.isPressed(MappedInputManager::Button::Power) &&
+        !mappedInput.isPressed(MappedInputManager::Button::PageBack) &&
+        !mappedInput.isPressed(MappedInputManager::Button::PageForward)) {
       break;
     }
   }
-  if (!drained) {
-    LOG_DBG("SS", "Wake button drain timeout after 500ms");
-  }
-
   // Restore the cached caller framebuffer so the transition back to the
   // underlying activity shows the original caller screen (home / reader)
   // without ghosting from the last screensaver frame.
@@ -285,8 +260,8 @@ void ScreenSaverActivity::onExit() {
         const uint32_t bufSize = display.getBufferSize();
         uint8_t* target = const_cast<uint8_t*>(display.getFrameBuffer());
         if (bufSize > 0 && target) {
-          const int bytesRead = f.read(target, bufSize);
-          restored = (bytesRead == static_cast<int>(bufSize));
+          f.read(target, bufSize);
+          restored = true;
         }
         f.close();
       }
@@ -294,8 +269,6 @@ void ScreenSaverActivity::onExit() {
     if (restored) {
       renderer.clearNextRefreshOverride();
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    } else {
-      LOG_ERR("SS", "Failed to restore caller framebuffer");
     }
     Storage.remove(callerFrameBufferPath_.c_str());
   }
@@ -307,10 +280,9 @@ void ScreenSaverActivity::onExit() {
     READING_STATS.resumeSession();
   }
 
-  // Release the PNG decoder and free any font/text allocations so the heap
-  // returns to its pre-screensaver state before the reader renders its next
-  // page. This order matters: release the big block first, then compact
-  // whatever font/text left behind.
+  // Release the lazily-allocated PNG decoder (sizeof(PNG) ~44 KB) and free
+  // font/text allocations so the heap returns to its pre-screensaver state
+  // before the reader renders its next page.
   PngSleepRenderer::releaseDecoder();
   freeFontMemory();
 
@@ -329,12 +301,9 @@ void ScreenSaverActivity::loop() {
     }
     return;
   }
-
   if (currentImagePath_.empty()) {
     delay(500);
-    if (isWakeButtonPressed()) {
-      if (returnToCaller_) { finish(); } else { onGoHome(); }
-    }
+    if (isWakeButtonPressed()) { if (returnToCaller_) { finish(); } else { onGoHome(); } return; }
     return;
   }
 
@@ -360,7 +329,6 @@ void ScreenSaverActivity::loop() {
     requestUpdate();
     return;
   }
-
   delay(100);
 }
 
@@ -375,21 +343,23 @@ void ScreenSaverActivity::render(RenderLock&&) {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
 
-  SS_TRACE("SS", "RENDER start: free=%d maxAlloc=%d minFree=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
-           static_cast<int>(ESP.getMinFreeHeap()));
-  SS_TRACE("SS", "RENDER path=%s", imagePath.c_str());
+  // ---- Heap trace: before font unload ----
+  LOG_DBG("SS", "RENDER start: free=%d maxAlloc=%d minFree=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getMinFreeHeap()));
+  LOG_DBG("SS", "RENDER path=%s", imagePath.c_str());
 
   // Maximise contiguous heap for image decoding.
   // Font caches and decompressor hold ~40-48 KB; freeing them before
   // the image render makes room for the PNG decoder (~38 KB) and
-  // grayscale copy buffers. They are reloaded on demand for the
+  // grayscale copy buffers.  They are reloaded on demand for the
   // text overlay and will be rebuilt by the caller when needed.
   freeFontMemory();
 
-  SS_TRACE("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+  LOG_DBG("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
+  // Use same grayscale rendering path as SleepActivity
   bool isPng = FsHelpers::hasPngExtension(imagePath);
   bool isBmp = FsHelpers::hasBmpExtension(imagePath);
 
@@ -399,36 +369,30 @@ void ScreenSaverActivity::render(RenderLock&&) {
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    SS_TRACE("SS", "RENDER done (unsupported format): free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER done (unsupported format): free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
     return;
   }
 
   if (isPng) {
     // Restore the caller framebuffer from the temp file so that transparent
-    // PNG draws over the original caller background. On the first render
+    // PNG draws over the original caller background.  On the first render
     // this shows the caller screen; on subsequent renders it clears residues
     // left by the previous image.
-    bool bgRestored = false;
     {
       FsFile f;
       if (Storage.openFileForRead("SS", callerFrameBufferPath_, f)) {
         const uint32_t bufSize = display.getBufferSize();
         uint8_t* target = const_cast<uint8_t*>(display.getFrameBuffer());
         if (bufSize > 0 && target) {
-          const int bytesRead = f.read(target, bufSize);
-          bgRestored = (bytesRead == static_cast<int>(bufSize));
+          f.read(target, bufSize);
         }
         f.close();
       }
     }
-    if (!bgRestored) {
-      renderer.clearScreen();
-      SS_TRACE("SS", "RENDER PNG: caller FB restore failed, using clear screen");
-    }
 
-    SS_TRACE("SS", "RENDER PNG before decode: free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER PNG before decode: free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
     // Try "SS" prefix first (screensaver directory), then "SLP" (sleep directory).
     bool pngOk = PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight, "SS");
@@ -436,32 +400,34 @@ void ScreenSaverActivity::render(RenderLock&&) {
       pngOk = PngSleepRenderer::drawTransparentPng(imagePath, renderer, 0, 0, pageWidth, pageHeight, "SLP");
     }
 
-    SS_TRACE("SS", "RENDER PNG after decode (ok=%d): free=%d maxAlloc=%d",
-             static_cast<int>(pngOk), static_cast<int>(ESP.getFreeHeap()),
-             static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER PNG after decode (ok=%d): free=%d maxAlloc=%d",
+            static_cast<int>(pngOk), static_cast<int>(ESP.getFreeHeap()),
+            static_cast<int>(ESP.getMaxAllocHeap()));
 
     // Restore fonts for text overlay
     restoreFontMemory();
 
-    SS_TRACE("SS", "RENDER after restoreFont: free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER after restoreFont: free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
     if (pngOk) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      SS_TRACE("SS", "RENDER done (PNG OK): free=%d maxAlloc=%d",
-               static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+      // Release font caches now to keep maxAlloc high for the next wake-up.
+      freeFontMemory();
+      LOG_DBG("SS", "RENDER done (PNG OK): free=%d maxAlloc=%d",
+              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
       return;
     }
-
     // Fall through to white screen on PNG failure
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    SS_TRACE("SS", "RENDER done (PNG FAIL, white): free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    freeFontMemory();
+    LOG_DBG("SS", "RENDER done (PNG FAIL, white): free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
     return;
   }
 
@@ -473,13 +439,13 @@ void ScreenSaverActivity::render(RenderLock&&) {
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    SS_TRACE("SS", "RENDER done (BMP open fail): free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER done (BMP open fail): free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
     return;
   }
 
-  SS_TRACE("SS", "RENDER BMP parseHeaders: free=%d maxAlloc=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+  LOG_DBG("SS", "RENDER BMP parseHeaders: free=%d maxAlloc=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
   Bitmap bitmap(file, true);
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
@@ -489,8 +455,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    SS_TRACE("SS", "RENDER done (BMP parse fail): free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER done (BMP parse fail): free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
     return;
   }
 
@@ -516,16 +482,18 @@ void ScreenSaverActivity::render(RenderLock&&) {
   bool hasGreyscale = bitmap.hasGreyscale();
 
   // Skip grayscale rendering if heap is too fragmented for the
-  // extra copy buffers needed by the LSB/MSB passes.
+  // extra copy buffers needed by the LSB/MSB passes.  On ESP32-C3
+  // with the reader's tiled grayscale buffers still allocated below,
+  // MaxAlloc can drop below 10 KB — insufficient for grayscale ops.
   if (hasGreyscale && ESP.getMaxAllocHeap() < 10000) {
-    SS_TRACE("SS", "RENDER BMP grayscale SKIPPED (maxAlloc=%d < 10000)",
-             static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER BMP grayscale SKIPPED (maxAlloc=%d < 10000)",
+            static_cast<int>(ESP.getMaxAllocHeap()));
     hasGreyscale = false;
   }
 
-  SS_TRACE("SS", "RENDER BMP BW pass: free=%d maxAlloc=%d hasGreyscale=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
-           static_cast<int>(hasGreyscale));
+  LOG_DBG("SS", "RENDER BMP BW pass: free=%d maxAlloc=%d hasGreyscale=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(hasGreyscale));
 
   // BW pass
   renderer.clearScreen();
@@ -534,8 +502,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
   // Restore fonts for text overlay on BW
   restoreFontMemory();
 
-  SS_TRACE("SS", "RENDER BMP after restoreFont: free=%d maxAlloc=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+  LOG_DBG("SS", "RENDER BMP after restoreFont: free=%d maxAlloc=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
   drawTextOverlay();
 
@@ -543,8 +511,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 
   if (hasGreyscale) {
-    SS_TRACE("SS", "RENDER BMP grayscale LSB pass: free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER BMP grayscale LSB pass: free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
     // LSB pass — fonts already restored for overlay
     bitmap.rewindToData();
@@ -554,8 +522,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
     drawTextOverlay();
     renderer.copyGrayscaleLsbBuffers();
 
-    SS_TRACE("SS", "RENDER BMP grayscale MSB pass: free=%d maxAlloc=%d",
-             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+    LOG_DBG("SS", "RENDER BMP grayscale MSB pass: free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
     // MSB pass
     bitmap.rewindToData();
@@ -570,8 +538,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
   }
 
   file.close();
-  SS_TRACE("SS", "RENDER done (BMP): free=%d maxAlloc=%d",
-           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+  LOG_DBG("SS", "RENDER done (BMP): free=%d maxAlloc=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 }
 
 void ScreenSaverActivity::drawTextOverlay() {
@@ -584,6 +552,8 @@ void ScreenSaverActivity::drawTextOverlay() {
 
   int fontId = UI_10_FONT_ID;
   EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR;
+  // Use Bookerly (always available) at the size corresponding to the setting.
+  // Regular for X_SMALL through MEDIUM, Bold for LARGE and X_LARGE.
   switch (SETTINGS.screenSaverFontSize) {
     case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
     case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
@@ -615,7 +585,7 @@ void ScreenSaverActivity::drawTextOverlay() {
   }
 
   int panelW = 0;
-  for (const auto& ln : lines) {
+  for (auto& ln : lines) {
     int w = renderer.getTextWidth(fontId, ln.c_str(), textStyle);
     if (w > panelW) panelW = w;
   }
@@ -623,8 +593,7 @@ void ScreenSaverActivity::drawTextOverlay() {
   int panelPadding = drawPanel ? 16 : 4;
   int panelX, panelY = baseY;
 
-  if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_TOP_RIGHT ||
-      pos == CrossPointSettings::SCREENSAVER_TEXT_POS_BOTTOM_RIGHT) {
+  if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_TOP_RIGHT || pos == CrossPointSettings::SCREENSAVER_TEXT_POS_BOTTOM_RIGHT) {
     panelX = pageWidth - margin - panelW - 2 * panelPadding;
   } else if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_CENTER) {
     panelX = (pageWidth - panelW) / 2 - panelPadding;
@@ -638,23 +607,23 @@ void ScreenSaverActivity::drawTextOverlay() {
   }
 
   int style = SETTINGS.screenSaverTextStyle;
-  bool textBlack = (style == CrossPointSettings::SCREENSAVER_TEXT_BLACK ||
-                    style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
-  bool outlined = (style == CrossPointSettings::SCREENSAVER_TEXT_WHITE_OUTLINED_BLACK ||
-                   style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
+  bool textBlack = (style == CrossPointSettings::SCREENSAVER_TEXT_BLACK || style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
+  bool outlined = (style == CrossPointSettings::SCREENSAVER_TEXT_WHITE_OUTLINED_BLACK || style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
 
   int drawY = baseY + panelPadding;
-  for (const auto& ln : lines) {
+  for (auto& ln : lines) {
     int tw = renderer.getTextWidth(fontId, ln.c_str(), textStyle);
     int dx = panelX + panelPadding + (panelW - tw) / 2;
 
     if (outlined) {
-      // 4-direction outline (N/S/E/W) — sufficient visual quality on EPD,
-      // avoids 4 extra drawText calls vs 8-direction diagonal outline.
-      renderer.drawText(fontId, dx - 1, drawY, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx + 1, drawY, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx, drawY - 1, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx, drawY + 1, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx - 2, drawY, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx + 2, drawY, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx, drawY - 2, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx, drawY + 2, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx - 1, drawY - 1, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx + 1, drawY - 1, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx - 1, drawY + 1, ln.c_str(), !textBlack, textStyle);
+      renderer.drawText(fontId, dx + 1, drawY + 1, ln.c_str(), !textBlack, textStyle);
     }
     renderer.drawText(fontId, dx, drawY, ln.c_str(), textBlack, textStyle);
     drawY += lineHeight;

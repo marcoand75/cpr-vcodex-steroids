@@ -113,7 +113,9 @@ static bool saveJsonDocumentToFile(const char* moduleName, const char* path, con
 
   if (doc.overflowed()) {
     LOG_ERR(moduleName, "JSON document overflowed before write: %s", targetPath.c_str());
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Refused to write overflowed JSON document: ") + targetPath);
+    // Do NOT allocate std::string here — when the JSON doc has overflowed the
+    // heap is likely fragmented and a string concatenation would OOM-crash.
+    CPR_VCODEX_LOG_EVENT(moduleName, "Refused to write overflowed JSON document");
     return false;
   }
 
