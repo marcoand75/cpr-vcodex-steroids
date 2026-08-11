@@ -86,7 +86,10 @@ void CrossPointWebServerActivity::onEnter() {
   startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) {
                            if (result.isCancelled) {
-                             requestReboot();
+                             // If the user backs out without starting any WiFi
+                             // operation, just return to Home — no heap was
+                             // fragmented by the web server or WiFi stack.
+                             activityManager.goHome();
                            } else {
                              onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
                            }
