@@ -738,17 +738,21 @@ void SleepActivity::onEnter() {
   // Snapshot the current framebuffer BEFORE any popup or sleep-screen
   // rendering, so cycleScreensaverFromDeepSleep has a fresh background
   // of whatever was on screen (reader, home, library, settings, …).
-  // main.cpp also saves before goToSleep(), this is an extra safety net.
-  Storage.mkdir("/.crosspoint");
-  {
-    FsFile f;
-    if (Storage.openFileForWrite("SLP", LAST_READER_PAGE_CACHE_PATH, f)) {
-      const uint8_t* buf = display.getFrameBuffer();
-      const uint32_t size = display.getBufferSize();
-      if (buf && size > 0) {
-        f.write(buf, size);
+  // This is the ONLY place the snapshot is saved — the duplicate write that
+  // used to exist in main.cpp's enterDeepSleep() was removed to save ~300-800 ms
+  // on slow SD cards.  Skip entirely when cycle-on-tap is disabled.
+  if (SETTINGS.cycleScreensaverOnTap) {
+    Storage.mkdir("/.crosspoint");
+    {
+      FsFile f;
+      if (Storage.openFileForWrite("SLP", LAST_READER_PAGE_CACHE_PATH, f)) {
+        const uint8_t* buf = display.getFrameBuffer();
+        const uint32_t size = display.getBufferSize();
+        if (buf && size > 0) {
+          f.write(buf, size);
+        }
+        f.close();
       }
-      f.close();
     }
   }
 
