@@ -49,6 +49,7 @@ void* pngSleepOpen(const char* filename, int32_t* size) {
     return nullptr;
   }
   if (!Storage.openFileForRead(g_pngStoragePrefix, std::string(filename), *f)) {
+    LOG_DBG("SLP", "PNG file not found with prefix '%s': %s", g_pngStoragePrefix, filename);
     return nullptr;
   }
   *size = f->size();
@@ -168,10 +169,12 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   }
 
   // Lazily allocate the PNG decoder on first call and keep it alive for the
-  // entire screensaver session.  sizeof(PNG) ~38 KB; allocating / freeing it
+  // entire screensaver session.  sizeof(PNG) ~44 KB; allocating / freeing it
   // on every image change would fragment the heap.  Instead we reuse the
   // same PNG object across images — open() and close() only reset internal
   // state without freeing the object memory.
+  // The caller must call releaseDecoder() in onExit() (before the reader
+  // renders its next page) to return the ~44 KB block to the heap.
   if (!s_png) {
     void* mem = malloc(sizeof(PNG));
     if (!mem) {
@@ -188,9 +191,20 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
   g_pngStoragePrefix = storagePrefix ? storagePrefix : "SLP";
   int rc = png->open(path.c_str(), pngSleepOpen, pngSleepClose, pngSleepRead, pngSleepSeek, pngOverlayDraw);
   g_pngStoragePrefix = previousPrefix;
-  if (rc != PNG_SUCCESS) {
-    LOG_ERR("SLP", "PNG open failed: %s (%d)", path.c_str(), rc);
-    s_png.reset();
+  // PNGdec's open() returns PNG_SUCCESS (0) even when the open callback
+  // returns NULL (file not found), so we must also validate that image
+  // dimensions were actually parsed.  Without this, decode() would be
+  // called on a null file handle and the failure would be silent.
+  if (rc != PNG_SUCCESS || png->getWidth() <= 0 || png->getHeight() <= 0) {
+    if (rc == PNG_SUCCESS && (png->getWidth() <= 0 || png->getHeight() <= 0)) {
+      LOG_ERR("SLP", "PNG file not found or unreadable: %s", path.c_str());
+    } else {
+      LOG_ERR("SLP", "PNG open failed: %s (%d)", path.c_str(), rc);
+    }
+    // Do NOT s_png.reset() here: the PNG object is reused across images.
+    // Resetting it would free the block, fragment the heap, and cause the
+    // next drawTransparentPng() call (e.g. retry with different prefix)
+    // to fail even when total free heap is sufficient.
     return false;
   }
 
