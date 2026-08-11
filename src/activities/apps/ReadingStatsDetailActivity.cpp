@@ -19,6 +19,7 @@
 #include "AppMetricCard.h"
 #include "BookStatsActionsActivity.h"
 #include "ReadingStatsStore.h"
+#include "SilentRestart.h"
 #include "components/UITheme.h"
 #include "components/icons/settings2.h"
 #include "fontIds.h"
@@ -412,9 +413,10 @@ void ReadingStatsDetailActivity::onExit() {
   Activity::onExit();
   freeBaseScreenBuffer();
   // If this stats screen was shown after reader exit (post-reading stats),
-  // fast-restart to defragment the heap before returning to Home.
+  // silent-restart to Home to defragment the heap without the "Loading..." popup.
+  // Uses the same mechanism as LibraryActivity -> silentRestartToHome().
   if (context.fromReaderExit) {
-    ESP.restart();
+    silentRestartToHome();
   }
 }
 

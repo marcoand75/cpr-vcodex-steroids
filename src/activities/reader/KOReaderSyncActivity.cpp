@@ -18,6 +18,7 @@
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
 #include "CrossPointState.h"
+#include "SilentRestart.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
@@ -584,7 +585,8 @@ void KOReaderSyncActivity::returnAfterAutoPush() {
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, finalBookPath, ReadingStatsDetailContext{true}));
   } else {
-    activityManager.goHome();
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
   }
 }
 

@@ -30,6 +30,7 @@
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
+#include "SilentRestart.h"
 #include "ProgressFile.h"
 #include "QrDisplayActivity.h"
 #include "ReaderQuickSettingsActivity.h"
@@ -245,10 +246,10 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
   } else {
-    // Fast reset: reading fragments the heap (parsing, rendering, section cache).
-    // A soft restart defragments it completely, freeing large contiguous blocks
-    // needed by the screensaver's PNG decoder (~44 KB).
-    ESP.restart();
+    // Silent restart to Home: reclaim fragmented heap (parsing, rendering,
+    // section cache) without the "Loading..." popup or display flash.
+    // Uses the same mechanism as LibraryActivity -> silentRestartToHome().
+    silentRestartToHome();
   }
 }
 

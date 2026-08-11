@@ -20,6 +20,7 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "ReaderUtils.h"
+#include "SilentRestart.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
@@ -96,7 +97,8 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
   } else {
-    activityManager.goHome();
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
   }
 }
 }  // namespace
