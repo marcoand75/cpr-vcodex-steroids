@@ -17,6 +17,9 @@ class ScreenSaverActivity final : public Activity {
   std::string currentImagePath_;
   std::string callerFrameBufferPath_ = "/.crosspoint/screensaver-caller.tmp";
 
+  // NEW: Extracted from loadImages()/pickNextImage() to eliminate DRY violation
+  std::string resolveScreensaverDir() const;
+
   void loadImages();
   void pickNextImage();
   void freeImageList();
