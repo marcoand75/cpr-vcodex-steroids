@@ -25,6 +25,8 @@ constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE = 120U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC = 80U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_FREE = 96U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_MAX_ALLOC = 48U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_FREE = 40U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 12U * 1024U;
 constexpr uint32_t IMAGE_DECODER_HEADROOM = 16U * 1024U;
 
 inline HeapSnapshot snapshot() { return {ESP.getFreeHeap(), ESP.getMaxAllocHeap()}; }
@@ -59,6 +61,10 @@ inline HeapRequirement epubInlineImageRequirementForSource(const char* source) {
 
 inline bool shouldReleaseSdFontCachesForEpubInlineImage(const HeapSnapshot heap) {
   return !hasHeap(heap, EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE, EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForEpubTextLayoutStart(const HeapSnapshot heap) {
+  return hasHeap(heap, EPUB_TEXT_LAYOUT_MIN_FREE, EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC);
 }
 
 inline bool hasHeapForEpubInlineImage(const char* tag, const char* source) {

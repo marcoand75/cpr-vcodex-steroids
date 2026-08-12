@@ -74,11 +74,10 @@ void DictionarySuggestionsActivity::render(RenderLock&&) {
   std::optional<FontCacheManager::PrewarmScope> pageFontPrewarm;
   if (page) {
     if (auto* fcm = renderer.getFontCacheManager()) {
-      pageFontPrewarm.emplace(*fcm);
-      page->recordFontUsage(*fcm, readerFontId, SETTINGS.bionicReading);
-      pageFontPrewarm->endScanAndPrewarm();
+      pageFontPrewarm.emplace(fcm->createPrewarmScope());
     }
     page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
+    if (pageFontPrewarm) pageFontPrewarm->endScanAndPrewarm();
   }
 
   const int screenWidth = renderer.getScreenWidth();

@@ -58,16 +58,15 @@ void DictionaryWordSelectActivity::extractWords() {
     const auto& block = line.getBlock();
     if (!block) continue;
 
-    const auto& wordList = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t count = std::min(wordList.size(), xPositions.size());
-    for (size_t i = 0; i < count; ++i) {
-      const std::string cleaned = DictionaryStore::cleanWord(wordList[i]);
+    const uint16_t count = block->wordCount();
+    for (uint16_t i = 0; i < count; ++i) {
+      const char* wordText = block->wordText(i);
+      const std::string cleaned = DictionaryStore::cleanWord(wordText);
       if (cleaned.empty()) continue;
-      const int16_t x = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
+      const int16_t x = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
       const int16_t y = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t width = static_cast<int16_t>(std::max(1, measureWordWidth(wordList[i].c_str())));
-      words.push_back(WordInfo{wordList[i], cleaned, x, y, width, 0});
+      const int16_t width = static_cast<int16_t>(std::max(1, measureWordWidth(wordText)));
+      words.push_back(WordInfo{wordText, cleaned, x, y, width, 0});
     }
   }
 
@@ -100,10 +99,10 @@ void DictionaryWordSelectActivity::prepareReaderFontMetrics() {
     const auto& block = line.getBlock();
     if (!block) continue;
 
-    const auto& wordList = block->getWords();
-    for (const auto& word : wordList) {
+    const uint16_t count = block->wordCount();
+    for (uint16_t i = 0; i < count; ++i) {
       if (!pageText.empty()) pageText.push_back(' ');
-      pageText += word;
+      pageText += block->wordText(i);
     }
   }
 
@@ -466,11 +465,10 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   std::optional<FontCacheManager::PrewarmScope> fontPrewarm;
   if (page) {
     if (auto* fcm = renderer.getFontCacheManager()) {
-      fontPrewarm.emplace(*fcm);
-      page->recordFontUsage(*fcm, readerFontId, SETTINGS.bionicReading);
-      fontPrewarm->endScanAndPrewarm();
+      fontPrewarm.emplace(fcm->createPrewarmScope());
     }
     page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
+    if (fontPrewarm) fontPrewarm->endScanAndPrewarm();
   }
 
   if (rows.empty()) {

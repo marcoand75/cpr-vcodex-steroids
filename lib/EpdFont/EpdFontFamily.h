@@ -16,6 +16,8 @@ class EpdFontFamily {
     STRIKETHROUGH = 8,  // drawn as a line through midline by TextBlock::render()
     SUP = 16,           // superscript: glyph scaled 50%, raised ~40% of ascender
     SUB = 32,           // subscript: glyph scaled 50%, lowered ~25% of ascender
+    SMALL_CAPS = 64,    // small caps rendering flag (imported from CrossInk)
+    RUBY_CONTINUE = 128,// ruby annotation continuation flag (imported from CrossInk)
   };
 
   explicit EpdFontFamily(const EpdFont* regular, const EpdFont* bold = nullptr, const EpdFont* italic = nullptr,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arena.h>
 #include <HalStorage.h>
 
 #include <initializer_list>
@@ -23,17 +24,42 @@
  *   - Class selectors: .classname
  *   - Combined: element.classname
  *   - Grouped: selector1, selector2 { }
+ *   - Two-part descendant: ancestor subject (e.g. "div p", "section.chapter p")
  *
  * Not supported (silently ignored):
- *   - Descendant/child selectors
+ *   - Three-or-more-part descendant selectors
+ *   - Child/sibling combinators (>, +, ~)
  *   - Pseudo-classes and pseudo-elements
  *   - Media queries (content is skipped)
  *   - @import, @font-face, etc.
  */
+
+/**
+ * Represents one open ancestor element in the HTML parse tree.
+ * The `depth` field is used by ChapterHtmlSlimParser for stack management;
+ * CssParser only reads `tag` and `classAttr` for selector matching.
+ */
+struct CssAncestorEntry {
+  int depth = 0;
+  std::string tag;
+  std::string classAttr;
+};
+
 class CssParser {
  public:
+  enum class CacheStatus : uint8_t {
+    Missing,
+    Invalid,
+    Complete,
+    Partial,
+  };
+
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 5;
+  static constexpr uint32_t CSS_CACHE_MAGIC = 0x435843FF;  // bytes: 0xFF, "CXC"
+  static constexpr uint8_t CSS_CACHE_VERSION = 15;
+
+  static constexpr size_t MAX_DESCENDANT_RULES = 100;
+  static constexpr size_t CSS_INDEX_BYTES_PER_RULE = 8;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -48,17 +74,19 @@ class CssParser {
    * @param source Open file handle to read from
    * @return true if parsing completed (even if no rules found)
    */
-  bool loadFromStream(FsFile& source);
+  bool loadFromStream(HalFile& source);
 
   /**
-   * Look up the style for an HTML element, considering tag name and class attributes.
-   * Applies CSS cascade: element style < class style < element.class style
+   * Look up the style for an HTML element, considering tag name, class attributes, and ancestors.
+   * Applies CSS cascade: element style < descendant rules < class style < element.class style
    *
    * @param tagName The HTML element name (e.g., "p", "div")
    * @param classAttr The class attribute value (may contain multiple space-separated classes)
+   * @param ancestors Open ancestor elements in the parse tree, innermost last
    * @return Combined style with all applicable rules merged
    */
-  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr) const;
+  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
+                                      const std::vector<CssAncestorEntry>& ancestors = {}) const;
 
   /**
    * Parse an inline style attribute string.
@@ -70,22 +98,44 @@ class CssParser {
   /**
    * Check if any rules have been loaded
    */
-  [[nodiscard]] bool empty() const { return rulesBySelector_.empty(); }
+  [[nodiscard]] bool empty() const {
+    return rulesBySelector_.empty() && cacheRuleOffsets_.empty() && descendantRules_.empty();
+  }
 
   /**
    * Get count of loaded rule sets
    */
-  [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size(); }
+  [[nodiscard]] size_t ruleCount() const {
+    return rulesBySelector_.empty() ? cachedRuleCount_ : rulesBySelector_.size();
+  }
 
   /**
    * Clear all loaded rules
    */
-  void clear() { rulesBySelector_.clear(); }
+  void clear() {
+    // These buffers can grow large during chapter indexing. Swap with empty
+    // vectors so the capacity is released back to the heap, matching the old
+    // post-index cleanup behavior callers relied on.
+    decltype(rulesBySelector_){}.swap(rulesBySelector_);
+    decltype(descendantRules_){}.swap(descendantRules_);
+    decltype(cacheRuleOffsets_){}.swap(cacheRuleOffsets_);
+    cachedRuleArena_.release();
+    cachedRules_ = nullptr;
+    cachedRuleTableCount_ = 0;
+    cacheIndexLoaded_ = false;
+    cachedRuleCount_ = 0;
+    cachePartial_ = false;
+  }
 
   /**
    * Check if CSS rules cache file exists
    */
   bool hasCache() const;
+
+  /**
+   * Validate the cache structure without hydrating any rule containers.
+   */
+  CacheStatus inspectCache() const;
 
   /**
    * Delete CSS rules cache file exists
@@ -94,9 +144,10 @@ class CssParser {
 
   /**
    * Save parsed CSS rules to a cache file.
+   * @param complete false when the cache contains only rules parsed before a safe low-memory stop
    * @return true if cache was written successfully
    */
-  bool saveToCache() const;
+  bool saveToCache(bool complete = true) const;
 
   /**
    * Load CSS rules from a cache file.
@@ -105,7 +156,20 @@ class CssParser {
    */
   bool loadFromCache();
 
+  /**
+   * True when the last loaded/saved cache is a usable but incomplete CSS parse.
+   */
+  [[nodiscard]] bool isCachePartial() const { return cachePartial_; }
+
  private:
+  static constexpr uint8_t CSS_CACHE_FLAG_PARTIAL = 1 << 0;
+
+  struct DescendantRule {
+    std::string ancestorSelector;  // e.g. "div", ".chapter", "section.body"
+    std::string subjectSelector;   // e.g. "p", ".indent", "p.indent"
+    CssStyle style;
+  };
+
   // Lookup key for a multi-piece selector. The pieces are hashed and compared
   // as if concatenated, so callers can look up composite keys without
   // materializing the concatenation in a scratch buffer. Constructed from a
@@ -139,11 +203,33 @@ class CssParser {
 
   // Storage: maps selector -> style properties. Hash/equal are case-insensitive.
   std::unordered_map<std::string, CssStyle, SvHash, SvEqual> rulesBySelector_;
+  std::vector<DescendantRule> descendantRules_;
 
   std::string cachePath;
+  bool cachePartial_ = false;
+
+  struct SelectorEntry {
+    uint32_t hash;
+    uint32_t offset;
+  };
+  static_assert(sizeof(SelectorEntry) == CSS_INDEX_BYTES_PER_RULE,
+                "SelectorEntry size changed; update CSS_INDEX_BYTES_PER_RULE");
+  struct CachedRule {
+    uint32_t hash;
+    uint32_t secondaryHash;
+    uint16_t selectorLen;
+    CssStyle style;
+  };
+  Arena cachedRuleArena_;
+  CachedRule* cachedRules_ = nullptr;
+  size_t cachedRuleTableCount_ = 0;
+  mutable bool cacheIndexLoaded_ = false;
+  mutable size_t cachedRuleCount_ = 0;
+  mutable std::vector<SelectorEntry> cacheRuleOffsets_;
 
   // Internal parsing helpers
-  void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style);
+  [[nodiscard]] bool processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style);
+  static bool selectorMatchesElement(std::string_view selector, std::string_view tag, std::string_view classAttr);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 
@@ -151,8 +237,16 @@ class CssParser {
   static CssTextAlign interpretAlignment(std::string_view val);
   static CssFontStyle interpretFontStyle(std::string_view val);
   static CssFontWeight interpretFontWeight(std::string_view val);
+  static CssFontVariantCaps interpretFontVariantCaps(std::string_view val);
   static CssTextDecoration interpretDecoration(std::string_view val);
   static CssLength interpretLength(std::string_view val);
   /** Returns true only when a numeric length was parsed (e.g. 2em, 50%). False for auto/inherit/initial. */
   static bool tryInterpretLength(std::string_view val, CssLength& out);
+  static uint32_t selectorHash(std::string_view selector);
+  static uint32_t selectorSecondaryHash(std::string_view selector);
+  bool lookupRule(std::string_view selector, CssStyle& outStyle) const;
+  bool lookupArenaRule(std::string_view selector, CssStyle& outStyle) const;
+  bool readRuleFromDiskAtOffset(uint32_t ruleOffset, std::string_view selector, CssStyle& outStyle) const;
+  static bool readCssStylePayload(FsFile& file, CssStyle& style);
+  static bool writeCssStylePayload(FsFile& file, const CssStyle& style);
 };

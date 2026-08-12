@@ -220,11 +220,12 @@ std::string extractBookmarkSnippet(Section& section) {
       continue;
     }
 
-    for (const auto& word : line.getBlock()->getWords()) {
+    const uint16_t wordCount = line.getBlock()->wordCount();
+    for (uint16_t wi = 0; wi < wordCount; ++wi) {
       if (!snippet.empty()) {
         snippet += ' ';
       }
-      snippet += word;
+      snippet += line.getBlock()->wordText(wi);
       if (snippet.size() >= 80) {
         return snippet;
       }
@@ -929,12 +930,10 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
     const auto& block = line.getBlock();
     if (!block) continue;
 
-    const auto& words = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t count = std::min(words.size(), xPositions.size());
-
-    for (size_t i = 0; i < count; ++i) {
-      const int16_t screenX = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
+    const uint16_t count = block->wordCount();
+    for (uint16_t i = 0; i < count; ++i) {
+      const char* wordText = block->wordText(i);
+      const int16_t screenX = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
       const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
 
       if (currentRow < 0 || std::abs(screenY - lastY) > 2) {
@@ -947,10 +946,10 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
       }
 
       ++rowWordCount;
-      clippingWords.push_back(ClippingWordInfo{words[i], screenX, screenY,
+      clippingWords.push_back(ClippingWordInfo{wordText, screenX, screenY,
                                                static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
                                                                                  SETTINGS.getReaderFontId(),
-                                                                                 words[i].c_str(),
+                                                                                 wordText,
                                                                                  EpdFontFamily::REGULAR))),
                                                currentRow, globalIndex++});
     }
@@ -1087,16 +1086,15 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block) continue;
-      const auto& xPositions = block->getWordXpos();
-      const auto& words = block->getWords();
-      const size_t wc = std::min(words.size(), xPositions.size());
-      for (size_t wi = 0; wi < wc; ++wi) {
+      const uint16_t wc = block->wordCount();
+      for (uint16_t wi = 0; wi < wc; ++wi) {
         if (pageStart + globalIdx == bm.absoluteWordStart) {
-          const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+          const char* wordText = block->wordText(wi);
+          const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
           const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-          const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
+          const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
           renderer.fillRectDither(sx - 2, sy - 2, sw + 4, ascender + 8, Color::LightGray);
-          renderer.drawText(fontId, sx, sy, words[wi].c_str(), true, EpdFontFamily::REGULAR);
+          renderer.drawText(fontId, sx, sy, wordText, true, EpdFontFamily::REGULAR);
           return;
         }
         ++globalIdx;
@@ -1134,14 +1132,13 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block) continue;
-      const auto& words = block->getWords();
-      const auto& xPositions = block->getWordXpos();
-      const size_t wc = std::min(words.size(), xPositions.size());
-      for (size_t wi = 0; wi < wc; ++wi) {
-        const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+      const uint16_t wc = block->wordCount();
+      for (uint16_t wi = 0; wi < wc; ++wi) {
+        const char* wordText = block->wordText(wi);
+        const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
         const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
-        pw.push_back({words[wi].c_str(), sx, sy, sw});
+        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
+        pw.push_back({wordText, sx, sy, sw});
       }
     }
     for (size_t start = 0; start + minMatch <= pw.size(); ++start) {
@@ -1170,12 +1167,12 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block || block->wordCount() == 0) continue;
-      const auto& xPositions = block->getWordXpos();
-      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[0] + marginLeft);
+      const char* firstWord = block->wordText(0);
+      const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(0) + marginLeft);
       const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, block->getWords()[0].c_str(), EpdFontFamily::REGULAR)));
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, firstWord, EpdFontFamily::REGULAR)));
       renderer.fillRectDither(sx - 2, sy - 2, sw + 4, ascender + 8, Color::LightGray);
-      renderer.drawText(fontId, sx, sy, block->getWords()[0].c_str(), true, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, sx, sy, firstWord, true, EpdFontFamily::REGULAR);
       return;
     }
     return;
@@ -1197,14 +1194,13 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     const auto& line = static_cast<const PageLine&>(*element);
     const auto& block = line.getBlock();
     if (!block) continue;
-    const auto& words = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t wc = std::min(words.size(), xPositions.size());
-    for (size_t wi = 0; wi < wc; ++wi) {
-      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+    const uint16_t wc = block->wordCount();
+    for (uint16_t wi = 0; wi < wc; ++wi) {
+      const char* wordText = block->wordText(wi);
+      const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
       const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
-      pw.push_back({words[wi].c_str(), sx, sy, sw});
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
+      pw.push_back({wordText, sx, sy, sw});
     }
   }
 
@@ -1307,14 +1303,14 @@ void EpubReaderActivity::createClippingFromSelection() {
       const auto& block = line.getBlock();
       if (!block) continue;
 
-      const auto& words = block->getWords();
+      const uint16_t wordCount = block->wordCount();
       bool lineHasSelectedWord = false;
       std::string lineText;
-      for (size_t i = 0; i < words.size(); ++i) {
+      for (uint16_t i = 0; i < wordCount; ++i) {
         if (globalWordIndex >= startWord && globalWordIndex <= endWord) {
           lineHasSelectedWord = true;
           if (!lineText.empty()) lineText.push_back(' ');
-          lineText += words[i];
+          lineText += block->wordText(i);
         }
         ++globalWordIndex;
       }
@@ -1803,10 +1799,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             if (el->getTag() == TAG_PageLine) {
               const auto& line = static_cast<const PageLine&>(*el);
               if (line.getBlock()) {
-                const auto& words = line.getBlock()->getWords();
-                for (const auto& w : words) {
+                const uint16_t wordCount = line.getBlock()->wordCount();
+                for (uint16_t wi = 0; wi < wordCount; ++wi) {
                   if (!fullText.empty()) fullText += " ";
-                  fullText += w;
+                  fullText += line.getBlock()->wordText(wi);
                 }
               }
             }
@@ -2237,9 +2233,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             const auto& line = static_cast<const PageLine&>(*element);
             const auto& block = line.getBlock();
             if (!block) continue;
-            const auto& words = block->getWords();
-            for (size_t wi = 0; wi < words.size(); ++wi) {
-              pww.push_back({words[wi].c_str()});
+            const uint16_t wordCount = block->wordCount();
+            for (uint16_t wi = 0; wi < wordCount; ++wi) {
+              pww.push_back({block->wordText(wi)});
             }
           }
 
@@ -2323,11 +2319,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             if (!element || element->getTag() != TAG_PageLine) continue;
             const auto& block = static_cast<const PageLine&>(*element).getBlock();
             if (!block) continue;
-            const auto& words = block->getWords();
-            for (size_t wi = 0; wi < words.size(); ++wi) {
-              if (words[wi] != firstWord) continue;
+            const uint16_t wordCount = block->wordCount();
+            for (uint16_t wi = 0; wi < wordCount; ++wi) {
+              if (strcmp(block->wordText(wi), firstWord.c_str()) != 0) continue;
               if (secondWord.empty()) { pageMatch = true; break; }
-              if (wi + 1 < words.size() && words[wi + 1] == secondWord) { pageMatch = true; break; }
+              if (wi + 1 < wordCount && strcmp(block->wordText(wi + 1), secondWord.c_str()) == 0) { pageMatch = true; break; }
             }
           }
           if (pageMatch) { resolvedPage = p; found = true; }
@@ -2559,7 +2555,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   const auto heapBefore = MemoryBudget::snapshot();
   auto scope = fcm->createPrewarmScope();
-  page->recordFontUsage(*fcm, SETTINGS.getReaderFontId(), SETTINGS.bionicReading);
+  page->renderText(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);
   scope.endScanAndPrewarm();
   const auto heapAfter = MemoryBudget::snapshot();
   fcm->logStats("prewarm");
@@ -2630,7 +2626,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                            renderer, "ERS",
                             [&]() {
                               if (enableImageGrayscaleOnly) {
-                                page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+                                page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
                               } else {
                                 page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
                                              orientedMarginTop, SETTINGS.bionicReading);
@@ -2669,7 +2665,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     if (enableImageGrayscaleOnly) {
-      page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+      page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
@@ -2682,7 +2678,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     if (enableImageGrayscaleOnly) {
-      page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+      page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
@@ -2960,7 +2956,7 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
       if (const auto pIdx = section->getParagraphIndexForPage(static_cast<uint16_t>(currentPage))) {
         localPos.paragraphIndex = *pIdx;
         localPos.hasParagraphIndex = true;
-        if (const auto hint = section->getXhtmlByteOffsetForPage(static_cast<uint16_t>(currentPage))) {
+        if (const auto hint = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage))) {
           localPos.xhtmlSeekHint = *hint;
         }
       }
@@ -2980,7 +2976,7 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
     if (const auto pIdx = section->getParagraphIndexForPage(static_cast<uint16_t>(currentPage))) {
       sync.paragraphIndex = *pIdx;
       sync.hasParagraphIndex = true;
-      if (const auto hint = section->getXhtmlByteOffsetForPage(static_cast<uint16_t>(currentPage))) {
+      if (const auto hint = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage))) {
         sync.xhtmlSeekHint = *hint;
       } else {
         sync.xhtmlSeekHint = 0;

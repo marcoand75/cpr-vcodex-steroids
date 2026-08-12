@@ -19,7 +19,7 @@ class JpegToBmpConverter {
   // (progressive encoding, image too large, corrupt) rather than a transient resource issue (OOM).
   // Callers can use this to write a sentinel file and skip future retry attempts.
   static bool jpegFileTo1BitBmpStreamWithSize(FsFile& jpegFile, Print& bmpOut, int targetMaxWidth, int targetMaxHeight,
-                                              bool* permanentFailure = nullptr);
+                                               bool adaptiveContain = false, bool* permanentFailure = nullptr);
 
   // Fallback for progressive or otherwise undecodable JPEGs: locate the small baseline JPEG
   // thumbnail embedded in the Exif APP1 block, extract it to tempThumbPath, decode it, and

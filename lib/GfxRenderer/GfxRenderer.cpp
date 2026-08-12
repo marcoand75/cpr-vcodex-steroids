@@ -394,7 +394,8 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   drawPixelRaw(x, y, effectiveState);
 }
 
-int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
+                               const BidiUtils::BidiBaseDir /*baseDir*/) const {
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -407,13 +408,13 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 }
 
 void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* text, const bool black,
-                                   const EpdFontFamily::Style style) const {
+                                   const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir /*baseDir*/) const {
   const int x = (getScreenWidth() - getTextWidth(fontId, text, style)) / 2;
   drawText(fontId, x, y, text, black, style);
 }
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
-                           const EpdFontFamily::Style style) const {
+                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir /*baseDir*/) const {
   const int yPos = y + getFontAscenderSize(fontId);
   int lastBaseX = x;
   int lastBaseLeft = 0;
@@ -1713,7 +1714,8 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
   return fp4::toPixel(kernFP);                                           // snap 4.4 fixed-point to nearest pixel
 }
 
-int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style) const {
+int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style,
+                                  const uint32_t /*followingCp*/) const {
   auto sdIt = sdCardFonts_.find(fontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
     int32_t widthFP = 0;

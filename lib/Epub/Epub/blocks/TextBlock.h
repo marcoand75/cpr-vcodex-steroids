@@ -9,68 +9,77 @@
 #include "Block.h"
 #include "BlockStyle.h"
 
-class FontCacheManager;
-
-// Represents a line of text on a page
+// Represents one rendered line. Per-word data is packed into one heap arena
+// instead of separate vectors/strings, which reduces heap fragmentation when
+// pages are loaded and discarded repeatedly on the ESP32-C3.
 class TextBlock final : public Block {
  private:
-  std::vector<std::string> words;
-  std::vector<int16_t> wordXpos;
-  std::vector<EpdFontFamily::Style> wordStyles;
-  // Per-word focus boundary: N > 0 means the first N bytes of words[i] are rendered bold,
-  // the remainder in the base style. 0 means no split (whole word uses wordStyles[i]).
-  std::vector<uint8_t> wordFocusBoundary;
-  // Pre-computed pixel offset from word start to the regular suffix, stored when boundary > 0.
-  std::vector<uint16_t> wordFocusSuffixX;
-  // Per-word Guide Dots X offset: 0 means no dot for this word.
-  // Non-zero value indicates the X position relative to word start where a Guide Dot is drawn.
-  // Vector is empty when guide dots are disabled for the entire block.
-  std::vector<uint16_t> wordGuideDotXOffset;
-  // Per-word flags: bit 0 = black background, bit 1 = layout-inserted hyphen
-  // Vector is empty when no words have flags set.
-  std::vector<uint8_t> wordFlags;
   BlockStyle blockStyle;
+  uint16_t numWords = 0;
+  uint16_t textBytes = 0;  // Total size of the text region, including NULs.
+  bool bionicPresent = false;
+  bool guideDotsPresent = false;
+  bool wordFlagsPresent = false;
+  bool isValid = true;
+  std::unique_ptr<uint8_t[]> arena;
+
+  const uint16_t* textOffArr = nullptr;
+  const int16_t* xposArr = nullptr;
+  // Distance from the word's left edge to the second visual run. The suffix is
+  // second for LTR words; the bold logical prefix is second for RTL words.
+  const uint16_t* bionicRunOffsetArr = nullptr;  // null when !bionicPresent
+  const uint16_t* guideDotXOffsetArr = nullptr;  // null when !guideDotsPresent
+  const uint8_t* stylesArr = nullptr;
+  const uint8_t* bionicBoundaryArr = nullptr;  // null when !bionicPresent
+  const uint8_t* wordFlagsArr = nullptr;       // null when !wordFlagsPresent
+  const char* textArr = nullptr;
+  std::vector<std::string> rubyTexts;
+
+  TextBlock() = default;  // deserialize() fills the fields directly.
+  static size_t arenaSize(uint16_t wordCount, bool hasBionic, bool hasGuideDots, bool hasWordFlags, uint16_t textBytes);
+  void bindArenaPointers();
 
  public:
   static constexpr uint8_t WORD_FLAG_BACKGROUND_BLACK = 0x01;
   static constexpr uint8_t WORD_FLAG_INSERTED_HYPHEN = 0x02;
+  static constexpr uint8_t WORD_FLAG_LINK_ID_SHIFT = 2;
+  static constexpr uint8_t WORD_FLAG_LINK_ID_MASK = 0xFC;
 
-  explicit TextBlock(std::vector<std::string> words, std::vector<int16_t> word_xpos,
-                     std::vector<EpdFontFamily::Style> word_styles, std::vector<uint8_t> focus_boundary,
-                     std::vector<uint16_t> focus_suffix_x, std::vector<uint16_t> guide_dot_x_offset = {},
-                     std::vector<uint8_t> word_flags = {}, const BlockStyle& blockStyle = BlockStyle())
-      : words(std::move(words)),
-        wordXpos(std::move(word_xpos)),
-        wordStyles(std::move(word_styles)),
-        wordFocusBoundary(std::move(focus_boundary)),
-        wordFocusSuffixX(std::move(focus_suffix_x)),
-        wordGuideDotXOffset(std::move(guide_dot_x_offset)),
-        wordFlags(std::move(word_flags)),
-        blockStyle(blockStyle) {}
+  explicit TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
+                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& bionicBoundary,
+                     const std::vector<uint16_t>& bionicRunOffset, const std::vector<uint16_t>& guideDotXOffset,
+                     const std::vector<uint8_t>& wordFlags, const BlockStyle& blockStyle = BlockStyle(),
+                     std::vector<std::string> rubyTexts = {});
   ~TextBlock() override = default;
+  TextBlock(const TextBlock&) = delete;
+  TextBlock& operator=(const TextBlock&) = delete;
+
   void setBlockStyle(const BlockStyle& blockStyle) { this->blockStyle = blockStyle; }
   const BlockStyle& getBlockStyle() const { return blockStyle; }
-  const std::vector<std::string>& getWords() const { return words; }
-  const std::vector<int16_t>& getWordXpos() const { return wordXpos; }
-  const std::vector<EpdFontFamily::Style>& getWordStyles() const { return wordStyles; }
-  bool hasGuideDots() const { return !wordGuideDotXOffset.empty(); }
-  const std::vector<uint16_t>& getWordGuideDotXOffset() const { return wordGuideDotXOffset; }
-  bool hasWordFlags() const { return !wordFlags.empty(); }
-  const std::vector<uint8_t>& getWordFlags() const { return wordFlags; }
-  bool isEmpty() override { return words.empty(); }
-  size_t wordCount() const { return words.size(); }
-  bool wordEndsWithInsertedHyphen(size_t i) const {
-    return i < wordFlags.size() && (wordFlags[i] & WORD_FLAG_INSERTED_HYPHEN) != 0;
+  bool isEmpty() override { return numWords == 0; }
+  bool valid() const { return isValid; }
+  uint16_t wordCount() const { return numWords; }
+  const char* wordText(const uint16_t i) const { return textArr + textOffArr[i]; }
+  uint16_t wordTextLen(const uint16_t i) const {
+    const uint16_t end = (i + 1 < numWords) ? textOffArr[i + 1] : textBytes;
+    return end - textOffArr[i] - 1;
   }
-  void recordFontUsage(FontCacheManager& fontCacheManager, int fontId, uint8_t bionicReadingMode = 0) const;
-  void render(const GfxRenderer& renderer, int fontId, int x, int y, uint8_t bionicReadingMode = 0) const;
+  int16_t wordXpos(const uint16_t i) const { return xposArr[i]; }
+  EpdFontFamily::Style wordStyle(const uint16_t i) const { return static_cast<EpdFontFamily::Style>(stylesArr[i]); }
+  uint8_t bionicBoundary(const uint16_t i) const { return bionicPresent ? bionicBoundaryArr[i] : 0; }
+  uint16_t bionicRunOffset(const uint16_t i) const { return bionicPresent ? bionicRunOffsetArr[i] : 0; }
+  uint16_t guideDotXOffset(const uint16_t i) const { return guideDotsPresent ? guideDotXOffsetArr[i] : 0; }
+  uint8_t wordFlags(const uint16_t i) const { return wordFlagsPresent ? wordFlagsArr[i] : 0; }
+  uint8_t wordLinkId(const uint16_t i) const {
+    return static_cast<uint8_t>((wordFlags(i) & WORD_FLAG_LINK_ID_MASK) >> WORD_FLAG_LINK_ID_SHIFT);
+  }
+  bool wordEndsWithInsertedHyphen(const uint16_t i) const { return (wordFlags(i) & WORD_FLAG_INSERTED_HYPHEN) != 0; }
+  bool hasRuby() const;
+  int getRubyShift(int ascender) const { return hasRuby() ? (ascender / 2) : 0; }
+  const std::vector<std::string>& getRubyTexts() const { return rubyTexts; }
 
-  /// Render a single word with optional bionic reading, used by clipping/bookmark highlights
-  /// so they match the page's rendering style.
-  static void renderWord(const GfxRenderer& renderer, int fontId, int x, int y, const std::string& word,
-                         EpdFontFamily::Style style, uint8_t bionicReadingMode);
-
+  void render(const GfxRenderer& renderer, int fontId, int x, int y, bool foregroundBlack = true) const;
   BlockType getType() override { return TEXT_BLOCK; }
-  bool serialize(FsFile& file) const;
-  static std::unique_ptr<TextBlock> deserialize(FsFile& file);
+  bool serialize(HalFile& file) const;
+  static std::unique_ptr<TextBlock> deserialize(HalFile& file);
 };

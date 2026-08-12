@@ -112,7 +112,6 @@ struct PixelCache {
       return false;
     }
 
-    LOG_DBG("IMG", "Cache stream started: %s (%dx%d, band %d rows)", cachePath.c_str(), w, h, bandRows);
     ok = true;
     return true;
   }
@@ -157,8 +156,6 @@ struct PixelCache {
       }
     }
     file.close();
-    LOG_DBG("IMG", "Cache written: %s (%dx%d, %d bytes)", cachePathStr.c_str(), width, height,
-            4 + bytesPerRow * height);
     ok = false;  // file handed off; nothing left to clean up
     return true;
   }
