@@ -346,8 +346,18 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
     return true;
   }
 
+  // Light mode (and the text-only Safe Mode that inherits it) has a lower
+  // layout headroom requirement than the decorated modes; use the relaxed
+  // threshold so image-heavy chapters can still finish as text.
+  const bool light = isLightMode();
+
   auto heap = MemoryBudget::snapshot();
-  if (MemoryBudget::hasHeapForEpubTextLayoutStart(heap)) {
+  const auto hasEnoughHeap = [light](const MemoryBudget::HeapSnapshot h) {
+    return light ? MemoryBudget::hasHeapForEpubTextLayoutStartLight(h)
+                 : MemoryBudget::hasHeapForEpubTextLayoutStart(h);
+  };
+
+  if (hasEnoughHeap(heap)) {
     return false;
   }
 
@@ -358,7 +368,7 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
       LOG_DBG("EHP", "Released SD font caches before %s: free=%u->%u maxAlloc=%u->%u", stage, heap.freeHeap,
               afterRelease.freeHeap, heap.maxAllocHeap, afterRelease.maxAllocHeap);
       heap = afterRelease;
-      if (MemoryBudget::hasHeapForEpubTextLayoutStart(heap)) {
+      if (hasEnoughHeap(heap)) {
         return false;
       }
     }
