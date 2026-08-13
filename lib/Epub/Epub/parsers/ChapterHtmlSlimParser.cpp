@@ -348,11 +348,15 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
 
   // Light mode (and the text-only Safe Mode that inherits it) has a lower
   // layout headroom requirement than the decorated modes; use the relaxed
-  // threshold so image-heavy chapters can still finish as text.
+  // threshold so image-heavy chapters can still finish as text. Safe Mode
+  // (Light + images suppressed) uses an even lower floor since only glyph runs
+  // are shaped.
   const bool light = isLightMode();
+  const bool safeMode = light && imageRendering == 2;
 
   auto heap = MemoryBudget::snapshot();
-  const auto hasEnoughHeap = [light](const MemoryBudget::HeapSnapshot h) {
+  const auto hasEnoughHeap = [safeMode, light](const MemoryBudget::HeapSnapshot h) {
+    if (safeMode) return MemoryBudget::hasHeapForEpubTextLayoutStartSafe(h);
     return light ? MemoryBudget::hasHeapForEpubTextLayoutStartLight(h)
                  : MemoryBudget::hasHeapForEpubTextLayoutStart(h);
   };

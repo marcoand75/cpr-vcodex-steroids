@@ -33,6 +33,12 @@ constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 12U * 1024U;
 // as text when the normal 40KB threshold would abort after hundreds of pages.
 constexpr uint32_t EPUB_TEXT_LAYOUT_LIGHT_MIN_FREE = 16U * 1024U;
 constexpr uint32_t EPUB_TEXT_LAYOUT_LIGHT_MIN_MAX_ALLOC = 8U * 1024U;
+// Absolute floor for the text-only Safe Mode (Light + images suppressed): the
+// layout pass then only shapes glyph runs, so even a heavily-fragmented heap can
+// still finish the chapter. Kept above the width of a single full-width text
+// line buffer so lines still measure/move correctly.
+constexpr uint32_t EPUB_TEXT_LAYOUT_SAFE_MIN_FREE = 8U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_SAFE_MIN_MAX_ALLOC = 4U * 1024U;
 constexpr uint32_t IMAGE_DECODER_HEADROOM = 16U * 1024U;
 
 inline HeapSnapshot snapshot() { return {ESP.getFreeHeap(), ESP.getMaxAllocHeap()}; }
@@ -75,6 +81,10 @@ inline bool hasHeapForEpubTextLayoutStart(const HeapSnapshot heap) {
 
 inline bool hasHeapForEpubTextLayoutStartLight(const HeapSnapshot heap) {
   return hasHeap(heap, EPUB_TEXT_LAYOUT_LIGHT_MIN_FREE, EPUB_TEXT_LAYOUT_LIGHT_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForEpubTextLayoutStartSafe(const HeapSnapshot heap) {
+  return hasHeap(heap, EPUB_TEXT_LAYOUT_SAFE_MIN_FREE, EPUB_TEXT_LAYOUT_SAFE_MIN_MAX_ALLOC);
 }
 
 inline bool hasHeapForEpubInlineImage(const char* tag, const char* source) {
