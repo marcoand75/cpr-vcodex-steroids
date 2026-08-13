@@ -1917,23 +1917,40 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
               // Read just enough compressed data to find dimensions. The full
               // image remains inside the EPUB until its page is first rendered.
+              // Reuse a per-chapter cache keyed by resolved path: repeated
+              // ornaments/illustrations are decoded once instead of once per
+              // occurrence, which otherwise fragments the heap across a long
+              // chapter with hundreds of images.
               ImageDimensions dims = {0, 0};
-              ImageDimsProbe headerProbe;
-              bool gotDimensions =
-                  self->epub->readItemContentsToStream(resolvedPath, headerProbe, 1024, /*allowEarlyStop=*/true) &&
-                  headerProbe.getDimensions(dims);
+              bool gotDimensions = false;
               std::string sourcePath;
-              if (gotDimensions) {
+              const auto cacheIt = self->imageDimsCache.find(resolvedPath);
+              if (cacheIt != self->imageDimsCache.end()) {
+                dims = {cacheIt->second.first, cacheIt->second.second};
+                gotDimensions = true;
                 sourcePath = resolvedPath;
-              } else if (self->epub->extractItemToFile(resolvedPath, cachedImagePath)) {
-                // Unusual headers fall back to the existing full-file decoder.
-                // Retry only if needed to tolerate slow SD-card sync.
-                ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
-                for (int attempt = 0; attempt < 3 && !gotDimensions; attempt++) {
-                  if (attempt > 0) {
-                    delay(50);
+                LOG_DBG("EHP", "Image dims cache hit for %s (%dx%d)", resolvedPath.c_str(), dims.width, dims.height);
+              } else {
+                ImageDimsProbe headerProbe;
+                gotDimensions =
+                    self->epub->readItemContentsToStream(resolvedPath, headerProbe, 1024, /*allowEarlyStop=*/true) &&
+                    headerProbe.getDimensions(dims);
+                if (gotDimensions) {
+                  sourcePath = resolvedPath;
+                } else if (self->epub->extractItemToFile(resolvedPath, cachedImagePath)) {
+                  // Unusual headers fall back to the existing full-file decoder.
+                  // Retry only if needed to tolerate slow SD-card sync.
+                  ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
+                  for (int attempt = 0; attempt < 3 && !gotDimensions; attempt++) {
+                    if (attempt > 0) {
+                      delay(50);
+                    }
+                    gotDimensions = decoder && decoder->getDimensions(cachedImagePath, dims);
                   }
-                  gotDimensions = decoder && decoder->getDimensions(cachedImagePath, dims);
+                }
+                if (gotDimensions) {
+                  self->imageDimsCache.emplace(resolvedPath, std::make_pair(static_cast<int16_t>(dims.width),
+                                                                            static_cast<int16_t>(dims.height)));
                 }
               }
 

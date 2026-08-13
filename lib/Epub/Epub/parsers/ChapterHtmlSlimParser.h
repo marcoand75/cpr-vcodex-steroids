@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "Epub/EpubRenderMode.h"
@@ -85,6 +86,12 @@ class ChapterHtmlSlimParser {
   std::string contentBase;
   std::string imageBasePath;
   int imageCounter = 0;
+  // Cache of image source -> decoded {width,height}, keyed by resolved path.
+  // Books commonly repeat the same illustration (e.g. a chapter ornament) many
+  // times; probing/full-decoding each occurrence fragments the heap across
+  // hundreds of images. A per-chapter map keeps the decode to one per unique
+  // source. {0,0} is never a valid image size, so presence is checked with find().
+  std::unordered_map<std::string, std::pair<int16_t, int16_t>> imageDimsCache;
   bool lowMemoryImageFallback = false;
   bool lowMemoryAbort = false;
   bool attemptedTextLayoutFontCacheRelease = false;
