@@ -9,6 +9,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
+#include <Serialization.h>
 
 #include "Epub/EpubRenderMode.h"
 
@@ -291,11 +292,16 @@ void EpubReaderActivity::onEnter() {
 
   ensureSdFontLoaded();
 
+  epub->setupCacheDir();
+
+  // Restore per-book reader settings (reader_settings.bin) before the section
+  // is loaded and orientation is applied, so the override drives pagination.
+  loadBookReaderSettings();
+
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
-  epub->setupCacheDir();
   applyPendingSyncSession();
   stableBookId = BookIdentity::resolveStableBookId(epub->getPath());
   bookmarkStore.load(epub->getCachePath(), stableBookId);
@@ -1605,6 +1611,120 @@ void EpubReaderActivity::applyReaderSettingsChanges(const ReaderSettingsSnapshot
   requestUpdate(true);
 }
 
+namespace {
+constexpr uint8_t BOOK_READER_SETTINGS_VERSION = 1;
+constexpr const char* READER_SETTINGS_FILE_NAME = "reader_settings.bin";
+}  // namespace
+
+void EpubReaderActivity::loadBookReaderSettings() {
+  hasPerBookSettingsOverride = false;
+  if (!epub) return;
+
+  FsFile file;
+  if (!Storage.openFileForRead("BRS", epub->getCachePath() + "/" + READER_SETTINGS_FILE_NAME, file)) {
+    return;
+  }
+
+  uint8_t version = 0;
+  if (!serialization::tryReadPod(file, version) || version != BOOK_READER_SETTINGS_VERSION) {
+    file.close();
+    return;
+  }
+
+  ReaderSettingsSnapshot snap;
+  const bool ok = serialization::tryReadPod(file, snap.darkMode) &&
+                  serialization::tryReadPod(file, snap.fadingFix) &&
+                  serialization::tryReadPod(file, snap.refreshFrequency) &&
+                  serialization::tryReadPod(file, snap.fontFamily) &&
+                  serialization::tryReadPod(file, snap.fontSize) &&
+                  serialization::tryReadPod(file, snap.lineSpacing) &&
+                  serialization::tryReadPod(file, snap.screenMargin) &&
+                  serialization::tryReadPod(file, snap.paragraphAlignment) &&
+                  serialization::tryReadPod(file, snap.embeddedStyle) &&
+                  serialization::tryReadPod(file, snap.hyphenationEnabled) &&
+                  serialization::tryReadPod(file, snap.bionicReading) &&
+                  serialization::tryReadPod(file, snap.guideReadingEnabled) &&
+                  serialization::tryReadPod(file, snap.dotsSpacing) &&
+                  serialization::tryReadPod(file, snap.epubRenderMode) &&
+                  serialization::tryReadPod(file, snap.orientation) &&
+                  serialization::tryReadPod(file, snap.extraParagraphSpacing) &&
+                  serialization::tryReadPod(file, snap.forceParagraphIndents) &&
+                  serialization::tryReadPod(file, snap.textAntiAliasing) &&
+                  serialization::tryReadPod(file, snap.textDarkness) &&
+                  serialization::tryReadPod(file, snap.readerRefreshMode) &&
+                  serialization::tryReadPod(file, snap.imageRendering) &&
+                  serialization::tryReadString(file, snap.sdFontFamilyName);
+  file.close();
+  if (!ok) {
+    return;
+  }
+
+  // Apply per-book overrides onto the global settings.
+  SETTINGS.darkMode = snap.darkMode;
+  SETTINGS.fadingFix = snap.fadingFix;
+  SETTINGS.refreshFrequency = snap.refreshFrequency;
+  SETTINGS.fontFamily = snap.fontFamily;
+  SETTINGS.fontSize = snap.fontSize;
+  SETTINGS.lineSpacing = snap.lineSpacing;
+  SETTINGS.screenMargin = snap.screenMargin;
+  SETTINGS.paragraphAlignment = snap.paragraphAlignment;
+  SETTINGS.embeddedStyle = snap.embeddedStyle;
+  SETTINGS.hyphenationEnabled = snap.hyphenationEnabled;
+  SETTINGS.bionicReading = snap.bionicReading;
+  SETTINGS.guideReadingEnabled = snap.guideReadingEnabled;
+  SETTINGS.dotsSpacing = snap.dotsSpacing;
+  SETTINGS.epubRenderMode = snap.epubRenderMode;
+  SETTINGS.orientation = snap.orientation;
+  SETTINGS.extraParagraphSpacing = snap.extraParagraphSpacing;
+  SETTINGS.forceParagraphIndents = snap.forceParagraphIndents;
+  SETTINGS.textAntiAliasing = snap.textAntiAliasing;
+  SETTINGS.textDarkness = snap.textDarkness;
+  SETTINGS.readerRefreshMode = snap.readerRefreshMode;
+  SETTINGS.imageRendering = snap.imageRendering;
+  std::strncpy(SETTINGS.sdFontFamilyName, snap.sdFontFamilyName.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
+  SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+  hasPerBookSettingsOverride = true;
+}
+
+void EpubReaderActivity::saveBookReaderSettings() {
+  if (!epub) return;
+
+  const ReaderSettingsSnapshot snap = captureReaderSettingsSnapshot();
+
+  FsFile file;
+  if (!Storage.openFileForWrite("BRS", epub->getCachePath() + "/" + READER_SETTINGS_FILE_NAME, file)) {
+    return;
+  }
+
+  const bool ok = serialization::tryWritePod(file, BOOK_READER_SETTINGS_VERSION) &&
+                  serialization::tryWritePod(file, snap.darkMode) &&
+                  serialization::tryWritePod(file, snap.fadingFix) &&
+                  serialization::tryWritePod(file, snap.refreshFrequency) &&
+                  serialization::tryWritePod(file, snap.fontFamily) &&
+                  serialization::tryWritePod(file, snap.fontSize) &&
+                  serialization::tryWritePod(file, snap.lineSpacing) &&
+                  serialization::tryWritePod(file, snap.screenMargin) &&
+                  serialization::tryWritePod(file, snap.paragraphAlignment) &&
+                  serialization::tryWritePod(file, snap.embeddedStyle) &&
+                  serialization::tryWritePod(file, snap.hyphenationEnabled) &&
+                  serialization::tryWritePod(file, snap.bionicReading) &&
+                  serialization::tryWritePod(file, snap.guideReadingEnabled) &&
+                  serialization::tryWritePod(file, snap.dotsSpacing) &&
+                  serialization::tryWritePod(file, snap.epubRenderMode) &&
+                  serialization::tryWritePod(file, snap.orientation) &&
+                  serialization::tryWritePod(file, snap.extraParagraphSpacing) &&
+                  serialization::tryWritePod(file, snap.forceParagraphIndents) &&
+                  serialization::tryWritePod(file, snap.textAntiAliasing) &&
+                  serialization::tryWritePod(file, snap.textDarkness) &&
+                  serialization::tryWritePod(file, snap.readerRefreshMode) &&
+                  serialization::tryWritePod(file, snap.imageRendering) &&
+                  serialization::tryWriteString(file, snap.sdFontFamilyName);
+  file.close();
+  if (!ok) {
+    LOG_ERR("BRS", "Short write saving per-book reader settings");
+  }
+}
+
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::READER_SETTINGS: {
@@ -1613,6 +1733,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       startActivityForResult(std::make_unique<ReaderQuickSettingsActivity>(renderer, mappedInput),
                              [this, before](const ActivityResult&) {
                                applyReaderSettingsChanges(before);
+                               saveBookReaderSettings();
                                READING_STATS.resumeSession();
                              });
       break;

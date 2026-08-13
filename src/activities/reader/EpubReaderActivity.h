@@ -50,6 +50,8 @@ class EpubReaderActivity final : public Activity {
   ReadingStatsDateTime crossInkSessionStartDateTime;
   bool crossInkStatsLoaded = false;
   bool crossInkHasSessionStartDateTime = false;
+  // Per-book reader settings override (reader_settings.bin under the cache dir).
+  bool hasPerBookSettingsOverride = false;
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
@@ -143,6 +145,14 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   ReaderSettingsSnapshot captureReaderSettingsSnapshot() const;
   void applyReaderSettingsChanges(const ReaderSettingsSnapshot& before);
+  // Per-book settings (reader_settings.bin): restore a book's saved reader
+  // overrides on enter and persist them when the user changes reader settings.
+  // Uses the steroids ReaderSettingsSnapshot as the on-disk payload, not the
+  // CrossInk v7 struct, since the two settings models differ enough that a
+  // byte-compatible v7 record would require porting CrossInk's whole settings
+  // surface.
+  void loadBookReaderSettings();
+  void saveBookReaderSettings();
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void saveCurrentPageBookmark();
