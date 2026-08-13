@@ -52,6 +52,14 @@ class EpubReaderActivity final : public Activity {
   bool crossInkHasSessionStartDateTime = false;
   // Per-book reader settings override (reader_settings.bin under the cache dir).
   bool hasPerBookSettingsOverride = false;
+  // Last render mode that built this book's section successfully (persisted in
+  // reader_settings.bin). 0xFF = unknown. On reopen this mode is tried first so
+  // books that fell back to Balanced/Light/Safe Mode don't re-run the failing
+  // attempts (and their long, doomed index passes) before hitting the cached
+  // section. lastSuccessfulSafeMode marks the text-only Safe Mode (Light +
+  // images suppressed), which has its own "_safe" cache suffix.
+  uint8_t lastSuccessfulRenderMode = 0xFF;
+  bool lastSuccessfulSafeMode = false;
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;

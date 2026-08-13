@@ -95,6 +95,22 @@ constexpr const char* sectionCacheSuffixForRenderMode(const uint8_t renderMode) 
   }
 }
 
+// Human-readable indexing label for a render mode, shown in the indexing popup
+// so the user can see when a fallback to a lighter mode kicks in instead of
+// staring at an unchanged "Indexing..." message.
+const char* indexingLabelForRenderMode(const uint8_t renderMode, const bool safeMode) {
+  if (safeMode) return tr(STR_INDEXING_SAFE_MODE);
+  switch (renderMode) {
+    case CrossPointSettings::EPUB_RENDER_BALANCED:
+      return tr(STR_INDEXING_BALANCED);
+    case CrossPointSettings::EPUB_RENDER_LIGHT:
+      return tr(STR_INDEXING_LIGHT);
+    case CrossPointSettings::EPUB_RENDER_DEFAULT:
+    default:
+      return tr(STR_INDEXING_DEFAULT);
+  }
+}
+
 // Build the fallback chain for a given selected render mode.
 // Returns an array of modes to try in priority order.
 constexpr uint8_t MAX_RENDER_FALLBACK_DEPTH = 3;
@@ -1654,10 +1670,21 @@ void EpubReaderActivity::loadBookReaderSettings() {
                   serialization::tryReadPod(file, snap.readerRefreshMode) &&
                   serialization::tryReadPod(file, snap.imageRendering) &&
                   serialization::tryReadString(file, snap.sdFontFamilyName);
-  file.close();
   if (!ok) {
+    file.close();
     return;
   }
+
+  // Optional trailing fields: last successful render mode + safe-mode flag.
+  // Older reader_settings.bin (v1) files end after sdFontFamilyName, so a failed
+  // read here leaves the defaults (0xFF = unknown, false) instead of aborting.
+  uint8_t lastMode = 0xFF;
+  uint8_t lastSafe = 0;
+  serialization::tryReadPod(file, lastMode);
+  serialization::tryReadPod(file, lastSafe);
+  lastSuccessfulRenderMode = lastMode;
+  lastSuccessfulSafeMode = (lastSafe != 0);
+  file.close();
 
   // Apply per-book overrides onto the global settings.
   SETTINGS.darkMode = snap.darkMode;
@@ -1718,7 +1745,9 @@ void EpubReaderActivity::saveBookReaderSettings() {
                   serialization::tryWritePod(file, snap.textDarkness) &&
                   serialization::tryWritePod(file, snap.readerRefreshMode) &&
                   serialization::tryWritePod(file, snap.imageRendering) &&
-                  serialization::tryWriteString(file, snap.sdFontFamilyName);
+                  serialization::tryWriteString(file, snap.sdFontFamilyName) &&
+                  serialization::tryWritePod(file, lastSuccessfulRenderMode) &&
+                  serialization::tryWritePod(file, static_cast<uint8_t>(lastSuccessfulSafeMode ? 1u : 0u));
   file.close();
   if (!ok) {
     LOG_ERR("BRS", "Short write saving per-book reader settings");
@@ -2275,6 +2304,50 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto fallback = renderModeFallbackChain(userRenderMode);
     uint8_t usedRenderMode = CrossPointSettings::EPUB_RENDER_DEFAULT;
     bool sectionLoadSuccess = false;
+    bool usedSafeMode = false;
+
+    // Fast path: if a previous open already settled on a render mode for this
+    // book (persisted in reader_settings.bin), try that mode's cache first.
+    // This avoids re-running the doomed index passes of the heavier modes on
+    // every reopen of a book that only builds under Balanced/Light/Safe Mode.
+    if (!sectionLoadSuccess && lastSuccessfulSafeMode) {
+      const char* safeModeSuffix = "_safe";
+      const uint8_t safeMode = CrossPointSettings::EPUB_RENDER_LIGHT;
+      const uint8_t safeImageRendering = CrossPointSettings::IMAGES_SUPPRESS;
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, safeModeSuffix));
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering,
+                                    false, 0, safeMode)) {
+        LOG_DBG("ERS", "Reopened via remembered Safe Mode cache");
+        sectionLoadSuccess = true;
+        usedRenderMode = safeMode;
+        usedSafeMode = true;
+      } else {
+        section.reset();
+      }
+    }
+    if (!sectionLoadSuccess && !lastSuccessfulSafeMode && lastSuccessfulRenderMode != 0xFF &&
+        lastSuccessfulRenderMode != userRenderMode && isValidEpubRenderMode(lastSuccessfulRenderMode)) {
+      const uint8_t rememberedMode = lastSuccessfulRenderMode;
+      const char* rememberedSuffix = sectionCacheSuffixForRenderMode(rememberedMode);
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, rememberedSuffix));
+      const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
+                                    SETTINGS.imageRendering,
+                                    SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                    guideDotMinGap, rememberedMode)) {
+        LOG_DBG("ERS", "Reopened via remembered render mode %u cache", rememberedMode);
+        sectionLoadSuccess = true;
+        usedRenderMode = rememberedMode;
+      } else {
+        section.reset();
+      }
+    }
 
     for (uint8_t attemptIdx = 0; attemptIdx < fallback.count && !sectionLoadSuccess; ++attemptIdx) {
       const uint8_t attemptMode = fallback.modes[attemptIdx];
@@ -2300,8 +2373,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       LOG_DBG("ERS", "Section cache not found for renderMode=%u, building...", attemptMode);
 
+      // Show a mode-specific indexing popup so the user sees which pass is
+      // running (and that a fallback to a lighter mode has started).
+      GUI.drawPopup(renderer, indexingLabelForRenderMode(attemptMode, false));
+
       // Build section with this mode
-      const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+      const auto popupFn = [this, attemptMode]() {
+        GUI.drawPopup(renderer, indexingLabelForRenderMode(attemptMode, false));
+      };
 
       if (section->createSectionFile(
               SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
@@ -2342,8 +2421,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         LOG_DBG("ERS", "Text-only Safe Mode section cache found");
         sectionLoadSuccess = true;
         usedRenderMode = safeMode;
+        usedSafeMode = true;
       } else {
-        const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+        GUI.drawPopup(renderer, indexingLabelForRenderMode(safeMode, true));
+        const auto popupFn = [this]() { GUI.drawPopup(renderer, indexingLabelForRenderMode(0, true)); };
         if (section->createSectionFile(
                 SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
                 SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
@@ -2352,6 +2433,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "safe mode section build");
           sectionLoadSuccess = true;
           usedRenderMode = safeMode;
+          usedSafeMode = true;
         }
       }
     }
@@ -2369,6 +2451,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       LOG_DBG("ERS", "Render mode fallback: user=%u actual=%u", userRenderMode, usedRenderMode);
       // Lightweight indication: could show a popup here in the future
     }
+
+    // Remember the render mode that succeeded so the next open starts from its
+    // cache instead of re-running the heavier, doomed index passes.
+    lastSuccessfulRenderMode = usedRenderMode;
+    lastSuccessfulSafeMode = usedSafeMode;
+    saveBookReaderSettings();
 
     // Build cumulative word counts for absolute clipping word indices.
     // Costs ~N page-loads × 0.1ms but runs once per section open.
