@@ -256,6 +256,12 @@ class SdCardFont {
   AdvanceEntry* tmpAdvStaged = nullptr;
   uint32_t tmpAdvStagedCap = 0;
 
+  // Scratch buffer for the merge output in mergeIntoAdvanceTable(). Kept as a
+  // separately-reused allocation so the merge never reads/writes the same
+  // buffer (aliasing) while the advance table grows in place via realloc.
+  AdvanceEntry* tmpAdvMerge = nullptr;
+  uint32_t tmpAdvMergeCap = 0;
+
   int8_t* tmpKernRowBuf = nullptr;
   uint16_t tmpKernRowBufCap = 0;
 
