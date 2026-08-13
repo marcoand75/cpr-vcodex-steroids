@@ -2322,8 +2322,42 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       section.reset();
     }
 
+    // Final failsafe: a minimal "Safe Mode" that suppresses images entirely and
+    // disables bionic/guide reading, so a book whose repeated image decodes
+    // fragment the heap past recovery can still open as text-only. Uses the
+    // Light render mode (least memory) as the base.
     if (!sectionLoadSuccess) {
-      LOG_ERR("ERS", "Failed to build section with any render mode");
+      LOG_DBG("ERS", "All render modes failed; trying text-only Safe Mode (images suppressed)");
+
+      const char* safeModeSuffix = "_safe";
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, safeModeSuffix));
+      const uint8_t safeMode = CrossPointSettings::EPUB_RENDER_LIGHT;
+      const uint8_t safeImageRendering = CrossPointSettings::IMAGES_SUPPRESS;
+
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering,
+                                    false, 0, safeMode)) {
+        LOG_DBG("ERS", "Text-only Safe Mode section cache found");
+        sectionLoadSuccess = true;
+        usedRenderMode = safeMode;
+      } else {
+        const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+        if (section->createSectionFile(
+                SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
+                SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering, popupFn, false, 0,
+                safeMode)) {
+          releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "safe mode section build");
+          sectionLoadSuccess = true;
+          usedRenderMode = safeMode;
+        }
+      }
+    }
+
+    if (!sectionLoadSuccess) {
+      LOG_ERR("ERS", "Failed to build section with any render mode (including Safe Mode)");
       section.reset();
       renderSectionLoadFailure();
       automaticPageTurnActive = false;
