@@ -561,6 +561,7 @@ void EpubReaderActivity::loop() {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
     handleSelectLongPress();
+    mappedInput.armConfirmReleaseGuard();
     return;
   }
 

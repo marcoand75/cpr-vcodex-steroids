@@ -892,6 +892,7 @@ void ReadingStatsStore::invalidateSummaryCache() { summaryCache.valid = false; }
 void ReadingStatsStore::markDirty() {
   dirty = true;
   invalidateSummaryCache();
+  homeInvalidationRequested = true;
 }
 
 bool ReadingStatsStore::prepareInternalBackup() const {

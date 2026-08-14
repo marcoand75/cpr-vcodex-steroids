@@ -27,7 +27,6 @@ constexpr int HIGHLIGHT_RADIUS = 3;
 
 void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
-  invalidateSelectionRegionCache();
   extractWords();
   mergeHyphenatedWords();
   if (!rows.empty()) {
@@ -38,7 +37,6 @@ void DictionaryWordSelectActivity::onEnter() {
 }
 
 void DictionaryWordSelectActivity::onExit() {
-  freeSelectionRegionCache();
   if (auto* fcm = renderer.getFontCacheManager()) {
     fcm->clearCache();
   }
@@ -189,21 +187,62 @@ void DictionaryWordSelectActivity::moveWord(const int delta) {
 }
 
 void DictionaryWordSelectActivity::updateSelectionHighlight() {
-  if (redrawSelectionFast()) return;
+  // Fast-path: avoid re-rendering the whole page (which re-warms the SD font
+  // cache and is very slow). The page is already drawn from the last render();
+  // we only need to restore the previously highlighted words to plain and draw
+  // the new highlight on top. Returns without re-rendering the page.
+  if (!rows.empty() && currentRow >= 0 && currentRow < static_cast<int>(rows.size())) {
+    refreshSelectionFast();
+    return;
+  }
   requestUpdate();
 }
 
-bool DictionaryWordSelectActivity::redrawSelectionFast() {
-  if (selectionRegionCount == 0) return false;
+void DictionaryWordSelectActivity::drawWordPlain(const int wordIndex) {
+  if (wordIndex < 0 || wordIndex >= static_cast<int>(words.size())) return;
+  const auto& word = words[wordIndex];
+  const int lineHeight = renderer.getLineHeight(readerFontId);
+  // Erase the previous highlight (fill the same rounded rect with white) and
+  // redraw the word in normal ink.
+  renderer.fillRoundedRect(word.screenX - HIGHLIGHT_PADDING_X, word.screenY - HIGHLIGHT_PADDING_Y,
+                           word.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2, HIGHLIGHT_RADIUS,
+                           Color::White);
+  renderer.drawText(readerFontId, word.screenX, word.screenY, word.text.c_str(), true, EpdFontFamily::REGULAR);
+}
 
+void DictionaryWordSelectActivity::refreshSelectionFast() {
   RenderLock lock(*this);
-  if (!restoreSelectionBaseRegions()) return false;
-  if (!storeSelectionBaseRegions()) return false;
 
-  prewarmCurrentSelectionText();
-  drawSelectionHighlight();
+  // Restore the previous highlight(s) to plain text.
+  for (const int idx : highlightedWordIndices) {
+    drawWordPlain(idx);
+  }
+  highlightedWordIndices.clear();
+
+  // Draw the new highlight.
+  if (!rows.empty() && currentRow >= 0 && currentRow < static_cast<int>(rows.size()) && currentWordInRow >= 0 &&
+      currentWordInRow < static_cast<int>(rows[currentRow].wordIndices.size())) {
+    const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
+    const auto& word = words[wordIndex];
+    const int lineHeight = renderer.getLineHeight(readerFontId);
+
+    auto drawSelectedWord = [&](const WordInfo& selectedWord, const int idx) {
+      renderer.fillRoundedRect(selectedWord.screenX - HIGHLIGHT_PADDING_X, selectedWord.screenY - HIGHLIGHT_PADDING_Y,
+                               selectedWord.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2,
+                               HIGHLIGHT_RADIUS, Color::Black);
+      renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false,
+                        EpdFontFamily::REGULAR);
+      highlightedWordIndices.push_back(idx);
+    };
+
+    drawSelectedWord(word, wordIndex);
+    const int linkedIndex = word.continuationOf >= 0 ? word.continuationOf : word.continuationIndex;
+    if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
+      drawSelectedWord(words[linkedIndex], linkedIndex);
+    }
+  }
+
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-  return true;
 }
 
 void DictionaryWordSelectActivity::prewarmCurrentSelectionText() const {
@@ -229,108 +268,8 @@ void DictionaryWordSelectActivity::prewarmCurrentSelectionText() const {
   }
 }
 
-size_t DictionaryWordSelectActivity::collectSelectionRects(SelectionRect* rects, const size_t maxRects) const {
-  if (!rects || maxRects == 0 || rows.empty() || currentRow < 0 || currentRow >= static_cast<int>(rows.size()) ||
-      currentWordInRow < 0 || currentWordInRow >= static_cast<int>(rows[currentRow].wordIndices.size())) {
-    return 0;
-  }
-
-  auto addRect = [&](const WordInfo& selectedWord, size_t& count) {
-    if (count >= maxRects) return;
-    const int lineHeight = renderer.getLineHeight(readerFontId);
-    rects[count++] = SelectionRect{selectedWord.screenX - HIGHLIGHT_PADDING_X,
-                                   selectedWord.screenY - HIGHLIGHT_PADDING_Y,
-                                   selectedWord.width + HIGHLIGHT_PADDING_X * 2,
-                                   lineHeight + HIGHLIGHT_PADDING_Y * 2};
-  };
-
-  size_t count = 0;
-  const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
-  addRect(words[wordIndex], count);
-
-  const int linkedIndex = words[wordIndex].continuationOf >= 0 ? words[wordIndex].continuationOf
-                                                               : words[wordIndex].continuationIndex;
-  if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
-    addRect(words[linkedIndex], count);
-  }
-
-  return count;
-}
-
-bool DictionaryWordSelectActivity::storeSelectionBaseRegions() {
-  SelectionRect rects[MAX_SELECTION_REGIONS];
-  const size_t rectCount = collectSelectionRects(rects, MAX_SELECTION_REGIONS);
-  invalidateSelectionRegionCache();
-  if (rectCount == 0) return false;
-
-  for (size_t i = 0; i < rectCount; ++i) {
-    const size_t required = renderer.getRegionByteSize(rects[i].x, rects[i].y, rects[i].width, rects[i].height);
-    if (required == 0) {
-      invalidateSelectionRegionCache();
-      return false;
-    }
-
-    SelectionRegionCache& region = selectionRegions[i];
-    if (region.capacity < required) {
-      uint8_t* replacement = static_cast<uint8_t*>(malloc(required));
-      if (!replacement) {
-        invalidateSelectionRegionCache();
-        return false;
-      }
-      free(region.buffer);
-      region.buffer = replacement;
-      region.capacity = required;
-    }
-
-    if (!renderer.copyRegionToBuffer(rects[i].x, rects[i].y, rects[i].width, rects[i].height, region.buffer,
-                                     region.capacity)) {
-      invalidateSelectionRegionCache();
-      return false;
-    }
-
-    region.rect = rects[i];
-    region.size = required;
-    region.stored = true;
-  }
-
-  selectionRegionCount = rectCount;
-  return true;
-}
-
-bool DictionaryWordSelectActivity::restoreSelectionBaseRegions() const {
-  if (selectionRegionCount == 0) return false;
-
-  for (size_t i = 0; i < selectionRegionCount; ++i) {
-    const SelectionRegionCache& region = selectionRegions[i];
-    if (!region.stored || !region.buffer || region.size == 0) return false;
-    if (!renderer.copyBufferToRegion(region.rect.x, region.rect.y, region.rect.width, region.rect.height,
-                                     region.buffer, region.size)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void DictionaryWordSelectActivity::invalidateSelectionRegionCache() {
-  selectionRegionCount = 0;
-  for (auto& region : selectionRegions) {
-    region.stored = false;
-    region.size = 0;
-  }
-}
-
-void DictionaryWordSelectActivity::freeSelectionRegionCache() {
-  for (auto& region : selectionRegions) {
-    free(region.buffer);
-    region.buffer = nullptr;
-    region.capacity = 0;
-    region.size = 0;
-    region.stored = false;
-  }
-  selectionRegionCount = 0;
-}
-
 void DictionaryWordSelectActivity::drawSelectionHighlight() {
+  highlightedWordIndices.clear();
   if (rows.empty() || currentRow < 0 || currentRow >= static_cast<int>(rows.size()) || currentWordInRow < 0 ||
       currentWordInRow >= static_cast<int>(rows[currentRow].wordIndices.size())) {
     return;
@@ -340,18 +279,20 @@ void DictionaryWordSelectActivity::drawSelectionHighlight() {
   const auto& word = words[wordIndex];
   const int lineHeight = renderer.getLineHeight(readerFontId);
 
-  auto drawSelectedWord = [&](const WordInfo& selectedWord) {
+  auto drawSelectedWord = [&](const WordInfo& selectedWord, const int idx) {
     renderer.fillRoundedRect(selectedWord.screenX - HIGHLIGHT_PADDING_X, selectedWord.screenY - HIGHLIGHT_PADDING_Y,
                              selectedWord.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2,
                              HIGHLIGHT_RADIUS, Color::Black);
-    renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false);
+    renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false,
+                      EpdFontFamily::REGULAR);
+    highlightedWordIndices.push_back(idx);
   };
 
-  drawSelectedWord(word);
+  drawSelectedWord(word, wordIndex);
 
   const int linkedIndex = word.continuationOf >= 0 ? word.continuationOf : word.continuationIndex;
   if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
-    drawSelectedWord(words[linkedIndex]);
+    drawSelectedWord(words[linkedIndex], linkedIndex);
   }
 }
 
@@ -360,7 +301,6 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   const std::string query = words[wordIndex].lookupText.empty() ? DictionaryStore::cleanWord(words[wordIndex].text)
                                                                 : words[wordIndex].lookupText;
-  freeSelectionRegionCache();
   if (auto* fcm = renderer.getFontCacheManager()) {
     fcm->clearCache();
   }
@@ -462,13 +402,14 @@ void DictionaryWordSelectActivity::loop() {
 
 void DictionaryWordSelectActivity::render(RenderLock&&) {
   renderer.clearScreen();
-  std::optional<FontCacheManager::PrewarmScope> fontPrewarm;
+  constexpr bool foregroundBlack = true;
   if (page) {
-    if (auto* fcm = renderer.getFontCacheManager()) {
-      fontPrewarm.emplace(fcm->createPrewarmScope());
-    }
-    page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
-    if (fontPrewarm) fontPrewarm->endScanAndPrewarm();
+    // Draw the page directly. drawText() draws real pixels when the font cache
+    // is NOT scanning, so we must not wrap page->render() in a PrewarmScope
+    // (that would only record text and skip drawing). SD glyphs are loaded
+    // on demand here and stay cached for subsequent selection moves, making
+    // them fast once the first render warms the cache.
+    page->render(renderer, readerFontId, marginLeft, marginTop, foregroundBlack);
   }
 
   if (rows.empty()) {
@@ -493,7 +434,6 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
-  storeSelectionBaseRegions();
   prewarmCurrentSelectionText();
   drawSelectionHighlight();
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);

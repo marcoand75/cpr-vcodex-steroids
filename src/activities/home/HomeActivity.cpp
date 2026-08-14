@@ -756,6 +756,18 @@ void HomeActivity::onEnter() {
     pruneCarouselFrameCache();
   }
 
+  if (READING_STATS.isHomeInvalidationRequested()) {
+    READING_STATS.clearHomeInvalidationRequest();
+    if (!isLyraCarouselTheme()) {
+      invalidateResidentCarouselFrame();
+      invalidateCarouselFrameHash();
+      carouselFramesReady = false;
+    }
+    coverRendered = false;
+    freeCoverBuffer();
+    LOG_DBG("HOME", "onEnter: stats invalidation requested, refreshed home cache");
+  }
+
   LOG_DBG("HOME", "onEnter: end heap=%u maxA=%u frag=%u(%u+%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()),
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
