@@ -6,6 +6,32 @@
 #include <type_traits>
 #include <utility>
 
+#include "esp_heap_caps.h"
+
+// Fragmentation snapshot helpers. free - largest is only a loose upper bound on
+// fragmentation (it counts every byte outside the largest free run). Use
+// heapFragInfo() to also get the exact number of free blocks: many small free
+// blocks (high count with comparatively small largest) = real fragmentation,
+// whereas a low count with free ~= largest = the heap is simply in use.
+
+struct HeapFragInfo {
+  size_t freeBytes = 0;      // total free heap (8bit+default caps, internal)
+  size_t largest = 0;        // largest contiguous free block
+  size_t freeBlocks = 0;     // number of distinct free blocks
+  size_t allocatedBytes = 0; // bytes currently in use
+};
+
+inline HeapFragInfo heapFragInfo() {
+  HeapFragInfo info{};
+  multi_heap_info_t hinfo{};
+  heap_caps_get_info(&hinfo, MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT);
+  info.freeBytes = hinfo.total_free_bytes;
+  info.largest = hinfo.largest_free_block;
+  info.freeBlocks = hinfo.free_blocks;
+  info.allocatedBytes = hinfo.total_allocated_bytes;
+  return info;
+}
+
 // Nothrow versions of std::make_unique. Return nullptr on allocation failure
 // instead of calling abort() (the default when exceptions are disabled on ESP32).
 //
