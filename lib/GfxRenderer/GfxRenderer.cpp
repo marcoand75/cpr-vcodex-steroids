@@ -1386,6 +1386,10 @@ void GfxRenderer::clearScreen(const uint8_t color) const {
   display.clearScreen(effectiveColor);
 }
 
+void GfxRenderer::resetRenderTimer() const {
+  start_ms = millis();
+}
+
 void GfxRenderer::beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const {
   assert(scratch != nullptr && stripRows > 0 && stripY0 >= 0 && stripY0 <= static_cast<int>(panelHeight) - stripRows);
   _stripBuf = scratch;

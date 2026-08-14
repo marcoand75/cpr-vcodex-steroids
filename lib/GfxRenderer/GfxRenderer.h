@@ -164,6 +164,11 @@ class GfxRenderer {
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;
   void clearScreen(uint8_t color = 0xFF) const;
+  // Re-anchor the "Time from clearScreen to displayBuffer" measurement to now.
+  // Used when frame content is loaded directly into the frame buffer (e.g. a
+  // cached carousel frame) without going through clearScreen(), so the next
+  // displayBuffer() reports only the work done since the frame was made ready.
+  void resetRenderTimer() const;
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
 
   void beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const;

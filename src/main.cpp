@@ -823,6 +823,10 @@ void setup() {
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
+
+  LOG_INF("BOOT-TIME", "setup done in %lu ms (silent=%d route=%u free=%u maxA=%u)",
+          static_cast<unsigned long>(millis() - t1), isSilentReboot ? 1 : 0, snapshotTarget,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 void loop() {

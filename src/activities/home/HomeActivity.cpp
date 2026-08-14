@@ -889,6 +889,10 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
 
   invalidateResidentCarouselFrame();
   carouselFramesReady = true;
+  // Frame content is now fully in the frame buffer. Re-anchor the render timer
+  // so the subsequent displayBuffer() GFX log measures only the compositing
+  // work done on top of the cached frame, not time since an old clearScreen().
+  renderer.resetRenderTimer();
   LOG_DBG("HCR", "loadCarouselFrameFromStorage: HIT idx=%d (%zu bytes, read=%ums)",
           safeBookIndex, bufferSize, static_cast<int>(millis() - dbgRead0));
   return true;
