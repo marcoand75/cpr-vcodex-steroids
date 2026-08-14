@@ -1249,6 +1249,28 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
                    [](const ReadingSessionLogEntry& left, const ReadingSessionLogEntry& right) {
                      return left.dayOrdinal < right.dayOrdinal;
                    });
+
+  // Release excess heap capacity on the per-book display strings. These are
+  // still copied from the JSON into std::string, whose buffer often carries
+  // extra capacity; freeing that headroom lowers persistent RAM without
+  // changing any value, so the Lyra/Marcoand75 home and stats views are
+  // unaffected but the boot heap keeps a larger largest-free-block.
+  {
+    const auto freeBefore = ESP.getFreeHeap();
+    const auto maxAllocBefore = ESP.getMaxAllocHeap();
+    for (auto& book : store.books) {
+      book.title.shrink_to_fit();
+      book.author.shrink_to_fit();
+      book.chapterTitle.shrink_to_fit();
+      book.coverBmpPath.shrink_to_fit();
+    }
+    const auto freeAfter = ESP.getFreeHeap();
+    const auto maxAllocAfter = ESP.getMaxAllocHeap();
+    LOG_DBG("HCR-FRAG", "RST shrink strings: free=%d->%d maxA=%d->%d",
+            static_cast<int>(freeBefore), static_cast<int>(freeAfter),
+            static_cast<int>(maxAllocBefore), static_cast<int>(maxAllocAfter));
+  }
+
   LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
   return true;
 }
@@ -1259,6 +1281,14 @@ bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const ch
   }
   JsonDocument doc;
   const bool parsed = loadJsonDocumentFromFile("RST", path, doc);
+  // Shrink the ArduinoJson pool to the minimum needed for this document before
+  // we copy values into the ReadingStatsStore's std::strings. This drops the
+  // transient peak and the document's resources get released from a smaller,
+  // contiguous pool, so the boot heap keeps a larger largest-free-block instead
+  // of being fragmented by pool-growth leftovers around the store's strings.
+  if (parsed && !doc.overflowed()) {
+    doc.shrinkToFit();
+  }
   const bool loaded = parsed && !doc.overflowed() && loadReadingStatsDocument(store, doc);
   if (!loaded) {
     CPR_VCODEX_LOG_EVENT("RST", std::string("Failed to load reading stats from ") + path);
