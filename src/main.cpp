@@ -229,7 +229,10 @@ void silentRestartToReader() {
 }
 
 void silentRestartToHome() {
-  if (deepSleepInProgress) return;
+  if (deepSleepInProgress) {
+    LOG_DBG("MAIN", "Silent restart skipped: deepSleepInProgress");
+    return;
+  }
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=home, seamless — no popup)");
