@@ -44,12 +44,32 @@ void ScreenSaverActivity::loadImages() {
   if (dirPath.empty()) return;
   images_ = SleepImageUtils::listImageFiles(dirPath);
 
-  // Extract the first image path, then free the vector to reclaim heap
-  // for the PNG decoder (~38 KB).  Only the current image path is needed
-  // for rendering; the next image is resolved lazily in pickNextImage().
+  // Pick the initial image, then free the vector to reclaim heap for the PNG
+  // decoder (~38 KB). Only the current image path is needed for rendering; the
+  // next image is resolved lazily in pickNextImage().
   if (!images_.empty()) {
-    currentIndex_ = 0;
-    currentImagePath_ = images_[0];
+    const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
+    if (order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
+      // Shuffle the first image too: randomize avoiding the persistent recent
+      // list so a fresh screensaver session does not always open on the same
+      // first file (images_[0]) every time.
+      const uint16_t fileCount = static_cast<uint16_t>(images_.size());
+      const uint8_t window =
+          static_cast<uint8_t>(std::min(static_cast<size_t>(APP_STATE.recentScreensaverFill), images_.size() - 1));
+      int idx = random(static_cast<int>(images_.size()));
+      for (uint8_t attempt = 0; attempt < 20 && APP_STATE.isRecentScreensaver(static_cast<uint16_t>(idx), window);
+           attempt++) {
+        idx = random(static_cast<int>(images_.size()));
+      }
+      currentIndex_ = idx;
+      currentImagePath_ = images_[static_cast<size_t>(idx)];
+      APP_STATE.pushRecentScreensaver(static_cast<uint16_t>(idx));
+      APP_STATE.saveToFile();
+    } else {
+      // Sequential mode: start from the beginning of the scan.
+      currentIndex_ = 0;
+      currentImagePath_ = images_[0];
+    }
   }
   freeImageList();
 }
@@ -171,12 +191,6 @@ void ScreenSaverActivity::onEnter() {
   Activity::onEnter();
   loadImages();
 
-  // Battery check: refuse to start if below minimum
-  if (currentImagePath_.empty() && !images_.empty()) {
-    currentImagePath_ = images_[0];
-  }
-  freeImageList();
-
   int batPct = static_cast<int>(powerManager.getBatteryPercentage());
   int minPct = getMinBatteryPercent();
   if (minPct > 0 && batPct < minPct) {
@@ -218,12 +232,6 @@ void ScreenSaverActivity::onEnter() {
   lastChangeMs_ = millis();
   lastBatteryCheckMs_ = millis();
   firstRender_ = true;
-
-  // Randomize first image in shuffle mode
-  const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
-  if (!images_.empty() && order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
-    currentIndex_ = random(static_cast<int>(images_.size()));
-  }
 
   powerManager.setPowerSaving(true);
   requestUpdate();
