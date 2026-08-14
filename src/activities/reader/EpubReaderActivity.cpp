@@ -37,8 +37,6 @@
 #include "ReaderQuickSettingsActivity.h"
 #include "ReaderUtils.h"
 #include "ReadingStatsStore.h"
-#include "ReadingStats/BookReadingStats.h"
-#include "ReadingStats/GlobalReadingStats.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontGlobals.h"
 #include "activities/apps/DictionaryActivity.h"
@@ -392,13 +390,6 @@ void EpubReaderActivity::onEnter() {
       clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, 0.0f) * 100.0f + 0.5f)),
       getStatsChapterTitle(*epub, currentSpineIndex), 0);
 
-  // Parallel CrossInk binary stats (stats_v5.bin / global_stats.bin). Load now;
-  // session time is sourced from READING_STATS's snapshot and committed on exit.
-  crossInkReadingStats = BookReadingStats::load(epub->getCachePath());
-  crossInkGlobalStats = GlobalReadingStats::load();
-  crossInkHasSessionStartDateTime = getCurrentLocalReadingStatsDateTime(crossInkSessionStartDateTime);
-  crossInkStatsLoaded = true;
-
   // Trigger first update
   requestUpdate();
 }
@@ -415,34 +406,6 @@ void EpubReaderActivity::onExit() {
   APP_STATE.saveToFile();
   READING_STATS.endSession();
   ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
-  if (crossInkStatsLoaded) {
-    // Commit the session into the CrossInk binary stats using READING_STATS's
-    // session duration, mirroring CrossInk's thresholds: sessions < 10s add no
-    // reading time, < 60s add no session count.
-    const ReadingSessionSnapshot& snap = READING_STATS.getLastSessionSnapshot();
-    const uint32_t elapsedSecs = snap.valid ? snap.sessionMs / 1000UL : 0;
-    if (elapsedSecs >= 60) {
-      crossInkReadingStats.sessionCount++;
-      crossInkGlobalStats.totalSessions++;
-    }
-    if (elapsedSecs >= 10) {
-      crossInkReadingStats.totalReadingSeconds += elapsedSecs;
-      crossInkGlobalStats.totalReadingSeconds += elapsedSecs;
-      if (crossInkHasSessionStartDateTime) {
-        crossInkReadingStats.recordReadingSpan(crossInkSessionStartDateTime, elapsedSecs);
-        crossInkGlobalStats.recordReadingSpan(crossInkSessionStartDateTime, elapsedSecs);
-      }
-      if (elapsedSecs >= 120 && !crossInkReadingStats.startDateManual && !crossInkReadingStats.startDate.isValid() &&
-          crossInkHasSessionStartDateTime) {
-        crossInkReadingStats.startDate = crossInkSessionStartDateTime.date;
-      }
-    }
-    if (epub) {
-      crossInkReadingStats.save(epub->getCachePath());
-    }
-    crossInkGlobalStats.save();
-    crossInkStatsLoaded = false;
-  }
   bookmarkStore.save();
   invalidateCurrentOverlayPageCache();
   section.reset();
@@ -2231,14 +2194,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (durationMs > 0 && durationMs < kPaceIdleThresholdMs) {
       const uint32_t pageSeconds = static_cast<uint32_t>(durationMs / 1000UL);
       READING_STATS.recordForwardPageRead(stableBookId, pageSeconds);
-      if (crossInkStatsLoaded && pageSeconds > 0) {
-        crossInkReadingStats.recordForwardPageRead(pageSeconds);
-      }
     }
-  }
-  if (isForwardTurn && crossInkStatsLoaded) {
-    crossInkReadingStats.totalPagesTurned++;
-    crossInkGlobalStats.totalPagesTurned++;
   }
   lastPageTurnTime = nowMs;
   requestUpdate();

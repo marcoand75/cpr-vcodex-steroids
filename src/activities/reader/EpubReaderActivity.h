@@ -8,8 +8,6 @@
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
 #include "EpubReaderMenuActivity.h"
-#include "ReadingStats/BookReadingStats.h"
-#include "ReadingStats/GlobalReadingStats.h"
 #include "activities/Activity.h"
 
 class Page;
@@ -42,14 +40,6 @@ class EpubReaderActivity final : public Activity {
   std::string stableBookId;
   BookmarkStore bookmarkStore;
   ClippingStore clippingStore;
-  // CrossInk parallel binary stats (stats_v5.bin / global_stats.bin), written
-  // alongside the steroids JSON ReadingStatsStore. Loaded on enter; session time
-  // is sourced from READING_STATS's snapshot and committed on exit.
-  BookReadingStats crossInkReadingStats;
-  GlobalReadingStats crossInkGlobalStats;
-  ReadingStatsDateTime crossInkSessionStartDateTime;
-  bool crossInkStatsLoaded = false;
-  bool crossInkHasSessionStartDateTime = false;
   // Per-book reader settings override (reader_settings.bin under the cache dir).
   bool hasPerBookSettingsOverride = false;
   // Last render mode that built this book's section successfully (persisted in
