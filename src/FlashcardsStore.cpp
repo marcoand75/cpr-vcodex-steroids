@@ -5,6 +5,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
+#include <FileStreamReader.h>
 
 #include <algorithm>
 #include <cctype>
@@ -186,13 +187,20 @@ bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocu
     return false;
   }
 
-  const String json = Storage.readFile(path);
-  if (json.isEmpty()) {
-    LOG_ERR(moduleName, "JSON file empty: %s", path);
+  HalFile file;
+  if (!Storage.openFileForRead(moduleName, path, file)) {
     return false;
   }
 
-  auto error = deserializeJson(doc, json);
+  // Deserialize incrementally from the file instead of reading the whole JSON
+  // into RAM first (Storage.readFile() returns a String holding the entire
+  // file). This removes a large transient allocation (the reading_stats.json
+  // with 26 books is tens of KB) that overlapped with the ArduinoJson pool and
+  // fragmented the boot heap, lowering maxAlloc after load.
+  FileStreamReader reader(file);
+  auto error = deserializeJson(doc, reader);
+  file.close();
+
   if (error) {
     LOG_ERR(moduleName, "JSON parse error in %s: %s", path, error.c_str());
 #ifndef CPR_DISABLE_EVENT_LOGS
