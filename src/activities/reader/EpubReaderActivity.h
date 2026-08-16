@@ -68,7 +68,7 @@ class EpubReaderActivity final : public Activity {
   bool clippingStartMarkSet = false;
 
   struct ClippingWordInfo {
-    const char* text = nullptr;
+    std::string text;
     int16_t screenX = 0;
     int16_t screenY = 0;
     int16_t width = 0;
@@ -84,6 +84,8 @@ class EpubReaderActivity final : public Activity {
 
   // Per-render scratch arena for temporary allocations during page rendering.
   // Initialized on first render, cleared after each render pass.
+  // NOTE: Only for allocations that live within a single render pass. Persistent
+  // data (e.g. clippingWords) must NOT use this arena — it is cleared each frame.
   Arena renderScratchArena;
   bool renderScratchArenaInitialized = false;
 

@@ -942,17 +942,6 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
 
   if (!page) return;
 
-  // Initialize a dedicated arena for clipping word strings (persists until exitClippingMode)
-  // We reuse the renderScratchArena if available, otherwise create a new one
-  if (!renderScratchArenaInitialized) {
-    if (!renderScratchArena.init(8 * 1024)) {
-      LOG_ERR("ERS", "Failed to init render scratch arena for clipping");
-      return;
-    }
-    renderScratchArenaInitialized = true;
-  }
-  renderScratchArena.clear();
-
   int globalIndex = 0;
   int currentRow = -1;
   int rowWordCount = 0;
@@ -980,16 +969,10 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
       }
 
       ++rowWordCount;
-      
-      // Copy word text to arena to avoid per-word std::string allocation
-      size_t wordLen = strlen(wordText);
-      char* arenaWordText = static_cast<char*>(renderScratchArena.alloc(wordLen + 1));
-      if (arenaWordText) {
-        memcpy(arenaWordText, wordText, wordLen);
-        arenaWordText[wordLen] = '\0';
-      }
-      
-      clippingWords.push_back(ClippingWordInfo{arenaWordText ? arenaWordText : wordText, screenX, screenY,
+      // Clipping words persist across renders, so use std::string (self-contained).
+      // This is NOT a hot loop (extractClippingWords runs once per clipping mode
+      // entry), so per-word heap allocation is acceptable and guaranteed safe.
+      clippingWords.push_back(ClippingWordInfo{wordText, screenX, screenY,
                                                static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
                                                                                  SETTINGS.getReaderFontId(),
                                                                                  wordText,
@@ -1086,7 +1069,7 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     if (cursorGlobalIndex >= 0 && cursorGlobalIndex < static_cast<int>(clippingWords.size())) {
       const auto& w = clippingWords[cursorGlobalIndex];
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     }
     return;
   }
@@ -1102,10 +1085,10 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     const bool isCursor = w.globalIndex == cursorGlobalIndex;
     if (isCursor) {
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     } else {
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     }
   }
 }
@@ -1118,17 +1101,6 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
   const uint32_t pageStart = section->getCumulativeWordOffset(currentPageNum);
   const int fontId = SETTINGS.getReaderFontId();
   const int ascender = renderer.getFontAscenderSize(fontId);
-
-  // Initialize render scratch arena if needed
-  if (!renderScratchArenaInitialized) {
-    if (!renderScratchArena.init(8 * 1024)) {  // 8KB initial slab
-      LOG_ERR("ERS", "Failed to init render scratch arena");
-      return;
-    }
-    renderScratchArenaInitialized = true;
-  }
-  // Clear arena for this render pass
-  renderScratchArena.clear();
 
   // v4 bookmark: highlight the anchor word (absolute word index).
   for (const auto& bm : bookmarkStore.getAll()) {
@@ -1267,18 +1239,7 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
 
   // Build a flat word array (same pattern as renderBookmarkHighlight v3).
   struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
-  
-  // Initialize render scratch arena if needed
-  if (!renderScratchArenaInitialized) {
-    if (!renderScratchArena.init(8 * 1024)) {  // 8KB initial slab
-      LOG_ERR("ERS", "Failed to init render scratch arena");
-      return;
-    }
-    renderScratchArenaInitialized = true;
-  }
-  // Clear arena for this render pass
-  renderScratchArena.clear();
-  
+
   ArenaVector<PW> pw(renderScratchArena);
   for (const auto& element : page->elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
