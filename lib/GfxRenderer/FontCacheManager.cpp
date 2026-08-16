@@ -94,6 +94,11 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
+  // Mark the scope as consumed: the destructor must not clear the cache we just
+  // prewarmed (an explicit endScanAndPrewarm() mean the caller will go on to
+  // render with this cache). Without this the dtor's clearCache() wiped the
+  // freshly-prewarmed glyphs every page, yielding a 0% hit rate.
+  active_ = false;
   if (manager_->scanText_.empty()) return;
 
   // Build style bitmask from all styles that appeared during the scan
@@ -112,7 +117,10 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
-    endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
+    // Reached only when the scan pass was abandoned before endScanAndPrewarm()
+    // (e.g. early return). Finish the prewarm, then clear the cache because it
+    // will not be consumed by a render in this scope.
+    endScanAndPrewarm();
     manager_->clearCache();
   }
 }

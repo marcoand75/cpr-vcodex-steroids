@@ -2820,7 +2820,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   HalDisplay::RefreshMode configuredRefreshMode = HalDisplay::FAST_REFRESH;
   const bool hasConfiguredRefreshMode = ReaderUtils::getConfiguredReaderRefreshMode(configuredRefreshMode);
 
-  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);  // foregroundBlack: bionic is baked in at layout, not render
   renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
   renderBookmarkHighlight(page, orientedMarginLeft, orientedMarginTop);
   renderClippingSelectionOverlay();
@@ -2846,7 +2846,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
 
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);  // foregroundBlack: bionic is baked in at layout, not render
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     } else {
@@ -2874,7 +2874,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                                 page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
                               } else {
                                 page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
-                                             orientedMarginTop, SETTINGS.bionicReading);
+                                             orientedMarginTop, true);  // foregroundBlack: bionic is baked in at layout, not render
                                 renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
                               }
                               renderStatusBar();
@@ -2912,7 +2912,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     if (enableImageGrayscaleOnly) {
       page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);  // foregroundBlack: bionic is baked in at layout, not render
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
@@ -2925,7 +2925,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     if (enableImageGrayscaleOnly) {
       page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
+      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);  // foregroundBlack: bionic is baked in at layout, not render
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
     }
     renderStatusBar();
