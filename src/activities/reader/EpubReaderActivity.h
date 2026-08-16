@@ -3,9 +3,6 @@
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
 
-#include <Arena.h>
-#include <ArenaVector.h>
-
 #include <optional>
 
 #include "BookmarkStore.h"
@@ -81,13 +78,6 @@ class EpubReaderActivity final : public Activity {
   int clippingCurrentWordInRow = 0;
   int16_t clippingMarginLeft = 0;
   int16_t clippingMarginTop = 0;
-
-  // Per-render scratch arena for temporary allocations during page rendering.
-  // Initialized on first render, cleared after each render pass.
-  // NOTE: Only for allocations that live within a single render pass. Persistent
-  // data (e.g. clippingWords) must NOT use this arena — it is cleared each frame.
-  Arena renderScratchArena;
-  bool renderScratchArenaInitialized = false;
 
   void extractClippingWords(std::shared_ptr<Page> page, int marginLeft, int marginTop);
   void enterClippingMode();

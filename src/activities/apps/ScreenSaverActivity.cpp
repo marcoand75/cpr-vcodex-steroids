@@ -3,7 +3,6 @@
 #include "CrossPointState.h"
 #include "ReadingStatsStore.h"
 
-#include <FontDecompressor.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
@@ -24,7 +23,6 @@
 // for PNG decoder (~38 KB) during screensaver image rendering.
 extern void freeFontMemory();
 extern void restoreFontMemory();
-extern FontDecompressor fontDecompressor;
 
 void ScreenSaverActivity::loadImages() {
   images_.clear();
@@ -369,37 +367,13 @@ void ScreenSaverActivity::render(RenderLock&&) {
   LOG_DBG("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
-  // Pre-warm font for text overlay BEFORE PNG decode, so glyphs are in page buffer
-  // while heap is still unfragmented (maxAlloc ~60KB). This avoids hot-group
-  // allocation (which can be 10+ KB) after PNG decode fragments the heap.
-  const char* text = SETTINGS.screenSaverText;
-  if (text && text[0] != '\0') {
-    int fontId = UI_10_FONT_ID;
-    EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR;
-    switch (SETTINGS.screenSaverFontSize) {
-      case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-      case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-      case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = BOOKERLY_14_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-      case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = BOOKERLY_16_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
-      case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: fontId = BOOKERLY_18_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
-    }
-    // Get font data from renderer's font map for prewarm
-    const auto& fontMap = renderer.getFontMap();
-    auto it = fontMap.find(fontId);
-    if (it != fontMap.end() && fontDecompressor.isInitialized()) {
-      const EpdFontData* fontData = it->second.getData(textStyle);
-      if (fontData) {
-        fontDecompressor.prewarmCache(fontData, text);
-      }
-    }
-  }
-
   // Use same grayscale rendering path as SleepActivity
   bool isPng = FsHelpers::hasPngExtension(imagePath);
   bool isBmp = FsHelpers::hasBmpExtension(imagePath);
 
   if (!isPng && !isBmp) {
     renderer.clearScreen();
+    restoreFontMemory();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -438,7 +412,12 @@ void ScreenSaverActivity::render(RenderLock&&) {
             static_cast<int>(pngOk), static_cast<int>(ESP.getFreeHeap()),
             static_cast<int>(ESP.getMaxAllocHeap()));
 
-    // Fonts already restored and prewarmed before PNG decode
+    // Restore fonts for text overlay
+    restoreFontMemory();
+
+    LOG_DBG("SS", "RENDER after restoreFont: free=%d maxAlloc=%d",
+            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+
     if (pngOk) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
@@ -463,6 +442,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   // BMP rendering with grayscale support (same as SleepActivity)
   FsFile file;
   if (!Storage.openFileForRead("SS", imagePath, file)) {
+    restoreFontMemory();
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
@@ -478,6 +458,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   Bitmap bitmap(file, true);
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
     file.close();
+    restoreFontMemory();
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
@@ -526,7 +507,12 @@ void ScreenSaverActivity::render(RenderLock&&) {
   renderer.clearScreen();
   renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
 
-  // Fonts already prewarmed before image decode
+  // Restore fonts for text overlay on BW
+  restoreFontMemory();
+
+  LOG_DBG("SS", "RENDER BMP after restoreFont: free=%d maxAlloc=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
+
   drawTextOverlay();
 
   renderer.clearNextRefreshOverride();
@@ -536,7 +522,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     LOG_DBG("SS", "RENDER BMP grayscale LSB pass: free=%d maxAlloc=%d",
             static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
-    // LSB pass — fonts already prewarmed for overlay
+    // LSB pass — fonts already restored for overlay
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
