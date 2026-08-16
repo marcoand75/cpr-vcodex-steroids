@@ -455,7 +455,7 @@ bool generateCover(const std::string& epubPath, int coverW, int coverH) {
       coverJpg.close(); Storage.remove(coverTempPath.c_str()); return false;
     }
 
-    bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp, coverW, coverH, nullptr);
+    bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp, coverW, coverH);
     thumbBmp.close();
 
     if (success) {

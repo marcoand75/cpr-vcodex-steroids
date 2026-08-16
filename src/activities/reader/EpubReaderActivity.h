@@ -40,6 +40,16 @@ class EpubReaderActivity final : public Activity {
   std::string stableBookId;
   BookmarkStore bookmarkStore;
   ClippingStore clippingStore;
+  // Per-book reader settings override (reader_settings.bin under the cache dir).
+  bool hasPerBookSettingsOverride = false;
+  // Last render mode that built this book's section successfully (persisted in
+  // reader_settings.bin). 0xFF = unknown. On reopen this mode is tried first so
+  // books that fell back to Balanced/Light/Safe Mode don't re-run the failing
+  // attempts (and their long, doomed index passes) before hitting the cached
+  // section. lastSuccessfulSafeMode marks the text-only Safe Mode (Light +
+  // images suppressed), which has its own "_safe" cache suffix.
+  uint8_t lastSuccessfulRenderMode = 0xFF;
+  bool lastSuccessfulSafeMode = false;
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
@@ -133,6 +143,14 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   ReaderSettingsSnapshot captureReaderSettingsSnapshot() const;
   void applyReaderSettingsChanges(const ReaderSettingsSnapshot& before);
+  // Per-book settings (reader_settings.bin): restore a book's saved reader
+  // overrides on enter and persist them when the user changes reader settings.
+  // Uses the steroids ReaderSettingsSnapshot as the on-disk payload, not the
+  // CrossInk v7 struct, since the two settings models differ enough that a
+  // byte-compatible v7 record would require porting CrossInk's whole settings
+  // surface.
+  void loadBookReaderSettings();
+  void saveBookReaderSettings();
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void saveCurrentPageBookmark();

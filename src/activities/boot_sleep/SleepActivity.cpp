@@ -1228,6 +1228,10 @@ void SleepActivity::cycleScreensaverFromDeepSleep(GfxRenderer& renderer) {
 
   LOG_INF("SLP", "Cycling sleep image to: %s", selected.path.c_str());
 
+  // Record the cycle in the persistent recent-image log so sequential mode
+  // advances past it and shuffle avoids repeating it on the next cycle/tap.
+  commitCustomSleepImage(selected);
+
   if (selected.isPng) {
     // Try to use the cached last reader page as the background so transparent
     // regions of the PNG show book text underneath. Falls back to white if the

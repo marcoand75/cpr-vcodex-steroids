@@ -214,6 +214,12 @@ class ReadingStatsStore {
   void markLoadSkippedForRecovery();
   bool releaseMemoryForNetwork();
   bool reloadAfterNetwork();
+  void requestHomeInvalidation() const { homeInvalidationRequested = true; }
+  bool isHomeInvalidationRequested() const { return homeInvalidationRequested; }
+  void clearHomeInvalidationRequest() { homeInvalidationRequested = false; }
+
+ private:
+  mutable bool homeInvalidationRequested = false;
 };
 
 #define READING_STATS ReadingStatsStore::getInstance()

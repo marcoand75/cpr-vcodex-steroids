@@ -229,7 +229,10 @@ void silentRestartToReader() {
 }
 
 void silentRestartToHome() {
-  if (deepSleepInProgress) return;
+  if (deepSleepInProgress) {
+    LOG_DBG("MAIN", "Silent restart skipped: deepSleepInProgress");
+    return;
+  }
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=home, seamless — no popup)");
@@ -699,6 +702,7 @@ void setup() {
 
   BootRecovery::enterStage(BootRecovery::BootStage::DisplayAndFonts);
   setupDisplayAndFonts(isSilentReboot);
+  LOG_DBG("BOOT", "After display/fonts: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (!isSilentReboot) {
     activityManager.goToBoot();
@@ -717,6 +721,7 @@ void setup() {
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::State);
     APP_STATE.loadFromFile();
+    LOG_DBG("BOOT", "After app state: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (skipReadingStatsLoad) {
@@ -731,6 +736,7 @@ void setup() {
         LOG_DBG("MAIN", "Skipping reading stats auto-backup on silent reboot");
       }
     }
+    LOG_DBG("BOOT", "After reading stats: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (skipRecentBooksLoad) {
@@ -738,6 +744,7 @@ void setup() {
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::RecentBooks);
     RECENT_BOOKS.loadFromFile();
+    LOG_DBG("BOOT", "After recent books: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (skipFavoritesLoad) {
@@ -745,9 +752,11 @@ void setup() {
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Favorites);
     FAVORITES.loadFromFile();
+    LOG_DBG("BOOT", "After favorites: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   HIDDEN_BOOKS.loadFromFile();
+  LOG_DBG("BOOT", "After hidden books: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (skipFlashcardsLoad || isSilentReboot) {
     if (isSilentReboot) {
@@ -758,6 +767,7 @@ void setup() {
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Flashcards);
     FLASHCARDS.loadFromFile();
+    LOG_DBG("BOOT", "After flashcards: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (skipAchievementsLoad) {
@@ -765,6 +775,7 @@ void setup() {
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Achievements);
     ACHIEVEMENTS.loadFromFile();
+    LOG_DBG("BOOT", "After achievements: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   const bool countUsefulStart = !isSilentReboot && !forceHomeBoot &&
@@ -815,6 +826,10 @@ void setup() {
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
+
+  LOG_INF("BOOT-TIME", "setup done in %lu ms (silent=%d route=%u free=%u maxA=%u)",
+          static_cast<unsigned long>(millis() - t1), isSilentReboot ? 1 : 0, snapshotTarget,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 void loop() {

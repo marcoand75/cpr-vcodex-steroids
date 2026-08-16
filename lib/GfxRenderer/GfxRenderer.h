@@ -7,11 +7,16 @@ class FontCacheManager;
 class SdCardFont;
 
 #include <cstring>
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "Bitmap.h"
+
+namespace BidiUtils {
+enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
+}
 
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
@@ -115,7 +120,20 @@ class GfxRenderer {
   void ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F) const;
   void ensureSdCardFontReady(int fontId, const std::vector<std::string>& words, bool includeHyphen,
                              uint8_t styleMask = 0x0F) const;
+  inline void ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
+                                    uint8_t styleMask = 0x0F) const {
+    std::vector<std::string> vec(words.begin(), words.end());
+    ensureSdCardFontReady(fontId, vec, includeHyphen, styleMask);
+  }
+  inline void ensureSdCardFontReady(int fontId, const uint32_t* /*codepoints*/, uint32_t /*cpCount*/,
+                                    bool /*includeSpace*/, bool /*includeHyphen*/, uint8_t /*styleMask*/) const {
+    // CrossInk codepoint-based prewarming stub: the steroids SD font loader
+    // uses utf8Text-based prewarming. Prewarm is best-effort anyway.
+  }
   bool releaseSdCardFontForLowMemory(int fontId) const;
+  inline bool releaseSdCardFontForLowMemory(int fontId, bool /*preserveAdvanceTable*/) const {
+    return releaseSdCardFontForLowMemory(fontId);
+  }
 
   /// Free all temporary render buffers that are not needed between frames.
   /// Call before cover generation or screensaver to reclaim BW chunks + row/poly vectors.
@@ -146,11 +164,17 @@ class GfxRenderer {
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;
   void clearScreen(uint8_t color = 0xFF) const;
+  // Re-anchor the "Time from clearScreen to displayBuffer" measurement to now.
+  // Used when frame content is loaded directly into the frame buffer (e.g. a
+  // cached carousel frame) without going through clearScreen(), so the next
+  // displayBuffer() reports only the work done since the frame was made ready.
+  void resetRenderTimer() const;
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
 
   void beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const;
   void endStripTarget() const;
   bool glyphIntersectsStrip(int x0, int y0, int x1, int y1) const;
+  bool isStripTargetActive() const { return _stripActive; }
   uint8_t* getWriteTarget() const { return _stripActive ? _stripBuf : frameBuffer; }
   int getWriteOriginY() const { return _stripActive ? _stripY0 : 0; }
   int getWriteRows() const { return _stripActive ? _stripRows : panelHeight; }
@@ -184,11 +208,14 @@ class GfxRenderer {
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
   // Text
-  int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                   BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
-                        EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+                        EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                        BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
-                EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+                EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   int getSpaceWidth(int fontId, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Returns the total inter-word advance: fp4::toPixel(spaceAdvance + kern(leftCp,' ') + kern(' ',rightCp)).
   /// Using a single snap avoids the +/-1 px rounding error that arises when space advance and kern are
@@ -196,7 +223,7 @@ class GfxRenderer {
   int getSpaceAdvance(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
   /// Returns the kerning adjustment between two adjacent codepoints.
   int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
-  int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
+  int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style, uint32_t followingCp = 0) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,

@@ -4,8 +4,6 @@
 #include <HalDisplay.h>
 #include <stdint.h>
 
-#include <cassert>
-
 // Direct framebuffer writer that eliminates per-pixel overhead from the image
 // rendering hot path.  Pre-computes orientation transform as linear coefficients
 // and caches render-mode state so the inner loop is: one multiply, one add,
@@ -17,8 +15,11 @@
 struct DirectPixelWriter {
   uint8_t* fb;
   GfxRenderer::RenderMode mode;
-  bool darkMode;
   uint16_t displayWidthBytes;  // Runtime framebuffer stride (X4: 100, X3: 99)
+  // Active write target: for tiled grayscale, fb is the band scratch, originY is
+  // the band's top physical row, and clipRows is the band height. Off-band
+  // pixels are dropped. With no strip active these collapse to the full frame
+  // (originY 0, clipRows panelHeight) so the clip doubles as a bounds guard.
   int originY;
   int clipRows;
 
@@ -34,11 +35,10 @@ struct DirectPixelWriter {
 
   void init(GfxRenderer& renderer) {
     fb = renderer.getWriteTarget();
-    mode = renderer.getRenderMode();
-    darkMode = renderer.isDarkMode();
-    displayWidthBytes = renderer.getDisplayWidthBytes();
     originY = renderer.getWriteOriginY();
     clipRows = renderer.getWriteRows();
+    mode = renderer.getRenderMode();
+    displayWidthBytes = renderer.getDisplayWidthBytes();
 
     const int phyW = renderer.getDisplayWidth();
     const int phyH = renderer.getDisplayHeight();
@@ -99,39 +99,6 @@ struct DirectPixelWriter {
     rowPhyYBase = phyYBase + logicalY * phyYStepY;
   }
 
-  // For the current row (set via beginRow), narrow [colStart, colEnd) to the
-  // columns whose physical Y falls inside the active strip band.
-  inline void bandColRange(int xBase, int width, int& colStart, int& colEnd) const {
-    assert(phyYStepX == 0 || phyYStepX == 1 || phyYStepX == -1);
-    colStart = 0;
-    colEnd = width;
-    if (phyYStepX == 0) {
-      const int sy = rowPhyYBase - originY;
-      if (static_cast<unsigned>(sy) >= static_cast<unsigned>(clipRows)) colEnd = 0;
-      return;
-    }
-
-    const int loY = originY;
-    const int hiY = originY + clipRows - 1;
-    int xLo = 0;
-    int xHi = 0;
-    if (phyYStepX > 0) {
-      xLo = loY - rowPhyYBase;
-      xHi = hiY - rowPhyYBase;
-    } else {
-      xLo = rowPhyYBase - hiY;
-      xHi = rowPhyYBase - loY;
-    }
-
-    const int cs = xLo - xBase;
-    const int ce = xHi - xBase + 1;
-    if (cs > colStart) colStart = cs;
-    if (ce < colEnd) colEnd = ce;
-    if (colStart < 0) colStart = 0;
-    if (colEnd > width) colEnd = width;
-    if (colStart > colEnd) colStart = colEnd;
-  }
-
   // Write a single 2-bit dithered pixel value to the framebuffer.
   // Must be called after beginRow() for the current row.
   // No bounds checking — caller guarantees coordinates are valid.
@@ -141,8 +108,8 @@ struct DirectPixelWriter {
     bool state;
     switch (mode) {
       case GfxRenderer::BW:
-        draw = darkMode ? true : (pixelValue < 3);
-        state = (pixelValue < 3);
+        draw = (pixelValue < 3);
+        state = true;
         break;
       case GfxRenderer::GRAYSCALE_MSB:
         draw = (pixelValue == 1 || pixelValue == 2);
@@ -161,10 +128,12 @@ struct DirectPixelWriter {
     const int phyX = rowPhyXBase + logicalX * phyXStepX;
     const int phyY = rowPhyYBase + logicalX * phyYStepX;
 
+    // Band-local row. The unsigned compare drops both off-band pixels (strip
+    // mode) and any out-of-frame row (full-frame mode) in one branch.
     const int sy = phyY - originY;
     if (static_cast<unsigned>(sy) >= static_cast<unsigned>(clipRows)) return;
 
-    const uint32_t byteIndex = static_cast<uint32_t>(sy) * displayWidthBytes + (phyX >> 3);
+    const uint16_t byteIndex = static_cast<uint16_t>(sy * displayWidthBytes + (phyX >> 3));
     const uint8_t bitMask = 1 << (7 - (phyX & 7));
 
     if (state) {

@@ -6,6 +6,8 @@
 #include <Logging.h>
 #include <Utf8.h>
 
+#include <esp_heap_caps.h>
+
 #include <algorithm>
 #include <climits>
 #include <cstring>
@@ -146,6 +148,9 @@ void SdCardFont::freeAll() {
   delete[] tmpAdvStaged;
   tmpAdvStaged = nullptr;
   tmpAdvStagedCap = 0;
+  heap_caps_free(tmpAdvMerge);
+  tmpAdvMerge = nullptr;
+  tmpAdvMergeCap = 0;
   delete[] tmpKernRowBuf;
   tmpKernRowBuf = nullptr;
   tmpKernRowBufCap = 0;
@@ -963,9 +968,11 @@ void SdCardFont::releaseForLowMemory() {
 
 void SdCardFont::clearPersistentCache() {
   for (uint8_t i = 0; i < MAX_STYLES; i++) {
-    delete[] advanceTable_[i];
-    advanceTable_[i] = nullptr;
-    advanceTableSize_[i] = 0;
+    if (advanceTable_[i]) {
+      heap_caps_free(advanceTable_[i]);
+      advanceTable_[i] = nullptr;
+      advanceTableSize_[i] = 0;
+    }
   }
 }
 
@@ -997,26 +1004,75 @@ void SdCardFont::mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sor
   uint32_t mergedCap = oldSize + newCount;
   if (mergedCap > ADVANCE_CACHE_LIMIT) mergedCap = ADVANCE_CACHE_LIMIT;
 
-  AdvanceEntry* merged = new (std::nothrow) AdvanceEntry[mergedCap];
-  if (!merged) {
-    LOG_ERR("SDCF", "mergeIntoAdvanceTable: alloc failed (%u entries) style %u", mergedCap, styleIdx);
-    return;
+  const uint32_t freeBefore = ESP.getFreeHeap();
+  const uint32_t maxAllocBefore = ESP.getMaxAllocHeap();
+
+  // Merge into a reused scratch buffer (never aliases the advance table), then
+  // transfer the result into the advance table. Growing the table via
+  // heap_caps_realloc keeps a single stable allocation that can expand in
+  // place, avoiding the new[]+delete[] churn that fragmented the heap across
+  // the hundreds of small merges per style during indexing.
+  if (tmpAdvMergeCap < mergedCap) {
+    AdvanceEntry* grown = (AdvanceEntry*)heap_caps_realloc(tmpAdvMerge, mergedCap * sizeof(AdvanceEntry),
+                                                           MALLOC_CAP_DEFAULT);
+    if (!grown) {
+      LOG_ERR("SDCF", "mergeIntoAdvanceTable: scratch realloc failed (%u -> %u entries) style %u", tmpAdvMergeCap,
+              mergedCap, styleIdx);
+      return;
+    }
+    tmpAdvMerge = grown;
+    tmpAdvMergeCap = mergedCap;
   }
 
   const AdvanceEntry* a = advanceTable_[styleIdx];
   const AdvanceEntry* b = sortedNew;
+  AdvanceEntry* out = tmpAdvMerge;
   uint32_t i = 0, j = 0, k = 0;
   while (k < mergedCap && (i < oldSize || j < newCount)) {
     if (i < oldSize && (j >= newCount || a[i].codepoint <= b[j].codepoint)) {
-      merged[k++] = a[i++];
+      out[k++] = a[i++];
     } else {
-      merged[k++] = b[j++];
+      out[k++] = b[j++];
     }
   }
 
-  delete[] advanceTable_[styleIdx];
-  advanceTable_[styleIdx] = merged;
+  // Grow the advance table via realloc so a single allocation expands in place
+  // when trailing free memory is available. Falls back to a fresh malloc if
+  // realloc must move but cannot find a larger block; in that case the old
+  // buffer is still live and must be freed explicitly.
+  AdvanceEntry* oldPtr = advanceTable_[styleIdx];
+  AdvanceEntry* table = (AdvanceEntry*)heap_caps_realloc(oldPtr, mergedCap * sizeof(AdvanceEntry),
+                                                         MALLOC_CAP_DEFAULT);
+  bool freshAlloc = false;
+  if (!table) {
+    table = (AdvanceEntry*)heap_caps_malloc(mergedCap * sizeof(AdvanceEntry), MALLOC_CAP_DEFAULT);
+    if (!table) {
+      LOG_ERR("SDCF", "mergeIntoAdvanceTable: table alloc failed (%u entries) style %u; keeping old table", mergedCap,
+              styleIdx);
+      return;
+    }
+    freshAlloc = true;
+  }
+
+  if (k > 0) {
+    memcpy(table, out, k * sizeof(AdvanceEntry));
+  }
+
+  // realloc already freed oldPtr when it moved/succeeded; free it only when we
+  // took the fresh-alloc fallback and oldPtr is still a live allocation.
+  if (freshAlloc && oldPtr) {
+    heap_caps_free(oldPtr);
+  }
+
+  advanceTable_[styleIdx] = table;
   advanceTableSize_[styleIdx] = k;
+
+  const uint32_t freeAfter = ESP.getFreeHeap();
+  const uint32_t maxAllocAfter = ESP.getMaxAllocHeap();
+  LOG_DBG("SDCF",
+          "Advance table style %u merge: +%u (old=%u -> total=%u/%u) free=%u->%u maxAlloc=%u->%u",
+          styleIdx, newCount, oldSize, k, ADVANCE_CACHE_LIMIT,
+          freeBefore, freeAfter, maxAllocBefore, maxAllocAfter);
 }
 
 bool SdCardFont::hasAdvanceTable() const {

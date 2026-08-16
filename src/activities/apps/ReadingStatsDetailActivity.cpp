@@ -415,6 +415,7 @@ void ReadingStatsDetailActivity::onExit() {
   // If this stats screen was shown after reader exit (post-reading stats),
   // silent-restart to Home to defragment the heap without the "Loading..." popup.
   // Uses the same mechanism as LibraryActivity -> silentRestartToHome().
+  LOG_DBG("RSTD", "onExit fromReaderExit=%d", context.fromReaderExit ? 1 : 0);
   if (context.fromReaderExit) {
     silentRestartToHome();
   }

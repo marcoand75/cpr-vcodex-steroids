@@ -29,6 +29,14 @@ struct BlockStyle {
   int16_t textIndent = 0;
   bool textIndentDefined = false;  // true if text-indent was explicitly set in CSS
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
+  bool isRtl = false;              // true if resolved direction is RTL
+  bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
+  bool pageBreakBefore = false;
+  bool pageBreakAfter = false;
+  // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
+  // a full line-height gap when the <br> block stays empty (section-break use case).
+  // NOT propagated through getCombinedBlockStyle so it can't leak into sibling blocks.
+  bool fromBrElement = false;
 
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
@@ -91,7 +99,14 @@ struct BlockStyle {
       result.paddingTop = static_cast<int16_t>(child.paddingTop + paddingTop);
       result.paddingBottom = static_cast<int16_t>(child.paddingBottom + paddingBottom);
     }
+    // fromBrElement is consumed by startNewTextBlock and should not leak through ancestor style merging.
+    result.fromBrElement = false;
 
+    // Direction is inherited independently of the horizontal/vertical box model.
+    if (!child.directionDefined && directionDefined) {
+      result.isRtl = isRtl;
+      result.directionDefined = true;
+    }
     return result;
   }
 
@@ -115,7 +130,7 @@ struct BlockStyle {
     blockStyle.paddingRight = std::min(cssStyle.paddingRight.toPixelsInt16(emSize, vw), maxHorizontalInsetPx);
 
     // For textIndent: if it's a percentage we can't resolve (no viewport width),
-    // leave textIndentDefined=false so the EmSpace fallback in applyParagraphIndent() is used
+    // leave textIndentDefined=false so the space-width fallback in resolveFirstLineIndent() is used
     if (cssStyle.hasTextIndent() && cssStyle.textIndent.isResolvable(vw)) {
       blockStyle.textIndent = cssStyle.textIndent.toPixelsInt16(emSize, vw);
       blockStyle.textIndentDefined = true;
@@ -126,6 +141,16 @@ struct BlockStyle {
       blockStyle.alignment = blockStyle.textAlignDefined ? cssStyle.textAlign : CssTextAlign::Justify;
     } else {
       blockStyle.alignment = paragraphAlignment;
+    }
+    if (cssStyle.hasDirection()) {
+      blockStyle.isRtl = cssStyle.direction == CssTextDirection::Rtl;
+      blockStyle.directionDefined = true;
+    }
+    if (cssStyle.hasPageBreakBefore()) {
+      blockStyle.pageBreakBefore = cssStyle.pageBreakBefore;
+    }
+    if (cssStyle.hasPageBreakAfter()) {
+      blockStyle.pageBreakAfter = cssStyle.pageBreakAfter;
     }
     return blockStyle;
   }

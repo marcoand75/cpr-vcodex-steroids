@@ -5,6 +5,7 @@
 // Matches order of PARAGRAPH_ALIGNMENT in CrossPointSettings
 enum class CssTextAlign : uint8_t { Justify = 0, Left = 1, Center = 2, Right = 3, None = 4 };
 enum class CssUnit : uint8_t { Pixels = 0, Em = 1, Rem = 2, Points = 3, Percent = 4 };
+enum class CssTextDirection : uint8_t { Ltr = 0, Rtl = 1 };
 
 // Represents a CSS length value with its unit, allowing deferred resolution to pixels
 struct CssLength {
@@ -51,16 +52,22 @@ enum class CssFontStyle : uint8_t { Normal = 0, Italic = 1 };
 // Font weight options - CSS supports 100-900, we simplify to normal/bold
 enum class CssFontWeight : uint8_t { Normal = 0, Bold = 1 };
 
-// Text decoration options. Bitmask so underline and line-through can coexist.
+// Font variant caps options matching the small subset CrossInk renders.
+enum class CssFontVariantCaps : uint8_t { Normal = 0, SmallCaps = 1 };
+
+// Text decoration options. Values are bit flags so CSS can combine multiple line decorations.
 enum class CssTextDecoration : uint8_t { None = 0, Underline = 1, LineThrough = 2 };
 
-inline constexpr CssTextDecoration operator|(const CssTextDecoration lhs, const CssTextDecoration rhs) {
-  return static_cast<CssTextDecoration>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+constexpr CssTextDecoration operator|(const CssTextDecoration a, const CssTextDecoration b) {
+  return static_cast<CssTextDecoration>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
 
-inline constexpr bool hasTextDecoration(const CssTextDecoration value, const CssTextDecoration flag) {
-  return (static_cast<uint8_t>(value) & static_cast<uint8_t>(flag)) != 0;
+constexpr CssTextDecoration operator&(const CssTextDecoration a, const CssTextDecoration b) {
+  return static_cast<CssTextDecoration>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
 }
+
+constexpr uint8_t CSS_TEXT_DECORATION_MASK =
+    static_cast<uint8_t>(CssTextDecoration::Underline) | static_cast<uint8_t>(CssTextDecoration::LineThrough);
 
 // Display options - only None and Block are relevant for e-ink rendering
 enum class CssDisplay : uint8_t { Block = 0, None = 1 };
@@ -70,23 +77,28 @@ enum class CssVerticalAlign : uint8_t { Baseline = 0, Super = 1, Sub = 2 };
 
 // Bitmask for tracking which properties have been explicitly set
 struct CssPropertyFlags {
-  uint16_t textAlign : 1;
-  uint16_t fontStyle : 1;
-  uint16_t fontWeight : 1;
-  uint16_t textDecoration : 1;
-  uint16_t textIndent : 1;
-  uint16_t marginTop : 1;
-  uint16_t marginBottom : 1;
-  uint16_t marginLeft : 1;
-  uint16_t marginRight : 1;
-  uint16_t paddingTop : 1;
-  uint16_t paddingBottom : 1;
-  uint16_t paddingLeft : 1;
-  uint16_t paddingRight : 1;
-  uint16_t imageHeight : 1;
-  uint16_t imageWidth : 1;
-  uint16_t display : 1;
-  uint16_t verticalAlign : 1;
+  uint32_t textAlign : 1;
+  uint32_t fontStyle : 1;
+  uint32_t fontWeight : 1;
+  uint32_t textDecoration : 1;
+  uint32_t textIndent : 1;
+  uint32_t marginTop : 1;
+  uint32_t marginBottom : 1;
+  uint32_t marginLeft : 1;
+  uint32_t marginRight : 1;
+  uint32_t paddingTop : 1;
+  uint32_t paddingBottom : 1;
+  uint32_t paddingLeft : 1;
+  uint32_t paddingRight : 1;
+  uint32_t imageHeight : 1;
+  uint32_t imageWidth : 1;
+  uint32_t display : 1;
+  uint32_t backgroundBlack : 1;
+  uint32_t verticalAlign : 1;
+  uint32_t direction : 1;
+  uint32_t pageBreakBefore : 1;
+  uint32_t pageBreakAfter : 1;
+  uint32_t fontVariantCaps : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -105,21 +117,31 @@ struct CssPropertyFlags {
         imageHeight(0),
         imageWidth(0),
         display(0),
-        verticalAlign(0) {}
+        backgroundBlack(0),
+        verticalAlign(0),
+        direction(0),
+        pageBreakBefore(0),
+        pageBreakAfter(0),
+        fontVariantCaps(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
-           imageWidth || display || verticalAlign;
+           imageWidth || display || backgroundBlack || verticalAlign || direction || pageBreakBefore ||
+           pageBreakAfter || fontVariantCaps;
   }
 
   void clearAll() {
     textAlign = fontStyle = fontWeight = textDecoration = textIndent = 0;
     marginTop = marginBottom = marginLeft = marginRight = 0;
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
-    imageHeight = imageWidth = display = verticalAlign = 0;
+    imageHeight = imageWidth = display = backgroundBlack = verticalAlign = direction = 0;
+    pageBreakBefore = pageBreakAfter = fontVariantCaps = 0;
   }
 };
+
+static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
+              "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
 
 // Represents a collection of CSS style properties
 // Only stores properties relevant to e-ink text rendering
@@ -129,6 +151,8 @@ struct CssStyle {
   CssFontStyle fontStyle = CssFontStyle::Normal;
   CssFontWeight fontWeight = CssFontWeight::Normal;
   CssTextDecoration textDecoration = CssTextDecoration::None;
+  CssTextDirection direction = CssTextDirection::Ltr;
+  CssFontVariantCaps fontVariantCaps = CssFontVariantCaps::Normal;
 
   CssLength textIndent;     // First-line indent (deferred resolution)
   CssLength marginTop;      // Vertical spacing before block
@@ -142,7 +166,10 @@ struct CssStyle {
   CssLength imageHeight;    // Height for img (e.g. 2em) – width derived from aspect ratio when only height set
   CssLength imageWidth;     // Width for img when both or only width set
   CssDisplay display = CssDisplay::Block;                       // display property (Block or None)
+  bool backgroundBlack = false;                                 // Simple black inline/block background support
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
+  bool pageBreakBefore = false;
+  bool pageBreakAfter = false;
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -213,9 +240,29 @@ struct CssStyle {
       display = base.display;
       defined.display = 1;
     }
+    if (base.hasBackgroundBlack()) {
+      backgroundBlack = base.backgroundBlack;
+      defined.backgroundBlack = 1;
+    }
+    if (base.hasDirection()) {
+      direction = base.direction;
+      defined.direction = 1;
+    }
     if (base.hasVerticalAlign()) {
       verticalAlign = base.verticalAlign;
       defined.verticalAlign = 1;
+    }
+    if (base.hasPageBreakBefore()) {
+      pageBreakBefore = base.pageBreakBefore;
+      defined.pageBreakBefore = 1;
+    }
+    if (base.hasPageBreakAfter()) {
+      pageBreakAfter = base.pageBreakAfter;
+      defined.pageBreakAfter = 1;
+    }
+    if (base.hasFontVariantCaps()) {
+      fontVariantCaps = base.fontVariantCaps;
+      defined.fontVariantCaps = 1;
     }
   }
 
@@ -235,19 +282,29 @@ struct CssStyle {
   [[nodiscard]] bool hasImageHeight() const { return defined.imageHeight; }
   [[nodiscard]] bool hasImageWidth() const { return defined.imageWidth; }
   [[nodiscard]] bool hasDisplay() const { return defined.display; }
+  [[nodiscard]] bool hasBackgroundBlack() const { return defined.backgroundBlack; }
   [[nodiscard]] bool hasVerticalAlign() const { return defined.verticalAlign; }
+  [[nodiscard]] bool hasDirection() const { return defined.direction; }
+  [[nodiscard]] bool hasPageBreakBefore() const { return defined.pageBreakBefore; }
+  [[nodiscard]] bool hasPageBreakAfter() const { return defined.pageBreakAfter; }
+  [[nodiscard]] bool hasFontVariantCaps() const { return defined.fontVariantCaps; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
     fontStyle = CssFontStyle::Normal;
     fontWeight = CssFontWeight::Normal;
     textDecoration = CssTextDecoration::None;
+    direction = CssTextDirection::Ltr;
+    fontVariantCaps = CssFontVariantCaps::Normal;
     textIndent = CssLength{};
     marginTop = marginBottom = marginLeft = marginRight = CssLength{};
     paddingTop = paddingBottom = paddingLeft = paddingRight = CssLength{};
     imageHeight = imageWidth = CssLength{};
     display = CssDisplay::Block;
+    backgroundBlack = false;
     verticalAlign = CssVerticalAlign::Baseline;
+    pageBreakBefore = false;
+    pageBreakAfter = false;
     defined.clearAll();
   }
 };

@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <string>
 
@@ -185,10 +186,11 @@ void enterStage(const BootStage stage) {
   // FRAGMENTATION DIAGNOSTIC (boot): after each stage load, log free + largest
   // contiguous block + loss, so we can see exactly where maxAlloc drops and the
   // heap fragments during startup. free - maxA = fragmentation in bytes.
-  const int freeH = static_cast<int>(ESP.getFreeHeap());
-  const int maxA  = static_cast<int>(ESP.getMaxAllocHeap());
-  LOG_DBG("HCR-FRAG", "boot stage %-18s Free=%d MaxAlloc=%d frag=%d", getStageName(stage), freeH, maxA,
-          freeH - maxA);
+  const auto frag = heapFragInfo();
+  LOG_DBG("HCR-FRAG", "boot stage %-18s Free=%d MaxAlloc=%d frag=%d blocks=%u",
+          getStageName(stage), static_cast<int>(frag.freeBytes),
+          static_cast<int>(frag.largest), static_cast<int>(frag.freeBytes - frag.largest),
+          static_cast<unsigned>(frag.freeBlocks));
 }
 
 void markBootCompleted() {

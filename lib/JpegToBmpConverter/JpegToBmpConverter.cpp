@@ -836,8 +836,8 @@ bool JpegToBmpConverter::jpegFileToBmpStreamWithSize(FsFile& jpegFile, Print& bm
 
 // Convert to 1-bit BMP (black and white only, no grays) for fast home screen rendering
 bool JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(FsFile& jpegFile, Print& bmpOut, int targetMaxWidth,
-                                                         int targetMaxHeight, bool* permanentFailure) {
-  return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, permanentFailure);
+                                                         int targetMaxHeight, bool adaptiveContain, bool* permanentFailure) {
+  return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetMaxWidth, targetMaxHeight, true, !adaptiveContain, permanentFailure);
 }
 
 // Exif thumbnail fallback for progressive / otherwise undecodable JPEGs.

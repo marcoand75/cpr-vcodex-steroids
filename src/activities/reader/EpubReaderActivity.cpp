@@ -9,6 +9,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
+#include <Serialization.h>
 
 #include "Epub/EpubRenderMode.h"
 
@@ -89,6 +90,22 @@ constexpr const char* sectionCacheSuffixForRenderMode(const uint8_t renderMode) 
     case CrossPointSettings::EPUB_RENDER_DEFAULT:
     default:
       return "";
+  }
+}
+
+// Human-readable indexing label for a render mode, shown in the indexing popup
+// so the user can see when a fallback to a lighter mode kicks in instead of
+// staring at an unchanged "Indexing..." message.
+const char* indexingLabelForRenderMode(const uint8_t renderMode, const bool safeMode) {
+  if (safeMode) return tr(STR_INDEXING_SAFE_MODE);
+  switch (renderMode) {
+    case CrossPointSettings::EPUB_RENDER_BALANCED:
+      return tr(STR_INDEXING_BALANCED);
+    case CrossPointSettings::EPUB_RENDER_LIGHT:
+      return tr(STR_INDEXING_LIGHT);
+    case CrossPointSettings::EPUB_RENDER_DEFAULT:
+    default:
+      return tr(STR_INDEXING_DEFAULT);
   }
 }
 
@@ -220,11 +237,12 @@ std::string extractBookmarkSnippet(Section& section) {
       continue;
     }
 
-    for (const auto& word : line.getBlock()->getWords()) {
+    const uint16_t wordCount = line.getBlock()->wordCount();
+    for (uint16_t wi = 0; wi < wordCount; ++wi) {
       if (!snippet.empty()) {
         snippet += ' ';
       }
-      snippet += word;
+      snippet += line.getBlock()->wordText(wi);
       if (snippet.size() >= 80) {
         return snippet;
       }
@@ -288,11 +306,16 @@ void EpubReaderActivity::onEnter() {
 
   ensureSdFontLoaded();
 
+  epub->setupCacheDir();
+
+  // Restore per-book reader settings (reader_settings.bin) before the section
+  // is loaded and orientation is applied, so the override drives pagination.
+  loadBookReaderSettings();
+
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
-  epub->setupCacheDir();
   applyPendingSyncSession();
   stableBookId = BookIdentity::resolveStableBookId(epub->getPath());
   bookmarkStore.load(epub->getCachePath(), stableBookId);
@@ -501,6 +524,7 @@ void EpubReaderActivity::loop() {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
     handleSelectLongPress();
+    mappedInput.armConfirmReleaseGuard();
     return;
   }
 
@@ -929,12 +953,10 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
     const auto& block = line.getBlock();
     if (!block) continue;
 
-    const auto& words = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t count = std::min(words.size(), xPositions.size());
-
-    for (size_t i = 0; i < count; ++i) {
-      const int16_t screenX = static_cast<int16_t>(line.xPos + xPositions[i] + marginLeft);
+    const uint16_t count = block->wordCount();
+    for (uint16_t i = 0; i < count; ++i) {
+      const char* wordText = block->wordText(i);
+      const int16_t screenX = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
       const int16_t screenY = static_cast<int16_t>(line.yPos + marginTop);
 
       if (currentRow < 0 || std::abs(screenY - lastY) > 2) {
@@ -947,10 +969,10 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
       }
 
       ++rowWordCount;
-      clippingWords.push_back(ClippingWordInfo{words[i], screenX, screenY,
+      clippingWords.push_back(ClippingWordInfo{wordText, screenX, screenY,
                                                static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
                                                                                  SETTINGS.getReaderFontId(),
-                                                                                 words[i].c_str(),
+                                                                                 wordText,
                                                                                  EpdFontFamily::REGULAR))),
                                                currentRow, globalIndex++});
     }
@@ -1087,16 +1109,15 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block) continue;
-      const auto& xPositions = block->getWordXpos();
-      const auto& words = block->getWords();
-      const size_t wc = std::min(words.size(), xPositions.size());
-      for (size_t wi = 0; wi < wc; ++wi) {
+      const uint16_t wc = block->wordCount();
+      for (uint16_t wi = 0; wi < wc; ++wi) {
         if (pageStart + globalIdx == bm.absoluteWordStart) {
-          const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+          const char* wordText = block->wordText(wi);
+          const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
           const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-          const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
+          const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
           renderer.fillRectDither(sx - 2, sy - 2, sw + 4, ascender + 8, Color::LightGray);
-          renderer.drawText(fontId, sx, sy, words[wi].c_str(), true, EpdFontFamily::REGULAR);
+          renderer.drawText(fontId, sx, sy, wordText, true, EpdFontFamily::REGULAR);
           return;
         }
         ++globalIdx;
@@ -1134,14 +1155,13 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block) continue;
-      const auto& words = block->getWords();
-      const auto& xPositions = block->getWordXpos();
-      const size_t wc = std::min(words.size(), xPositions.size());
-      for (size_t wi = 0; wi < wc; ++wi) {
-        const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+      const uint16_t wc = block->wordCount();
+      for (uint16_t wi = 0; wi < wc; ++wi) {
+        const char* wordText = block->wordText(wi);
+        const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
         const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
-        pw.push_back({words[wi].c_str(), sx, sy, sw});
+        const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
+        pw.push_back({wordText, sx, sy, sw});
       }
     }
     for (size_t start = 0; start + minMatch <= pw.size(); ++start) {
@@ -1170,12 +1190,12 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       const auto& line = static_cast<const PageLine&>(*element);
       const auto& block = line.getBlock();
       if (!block || block->wordCount() == 0) continue;
-      const auto& xPositions = block->getWordXpos();
-      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[0] + marginLeft);
+      const char* firstWord = block->wordText(0);
+      const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(0) + marginLeft);
       const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, block->getWords()[0].c_str(), EpdFontFamily::REGULAR)));
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, firstWord, EpdFontFamily::REGULAR)));
       renderer.fillRectDither(sx - 2, sy - 2, sw + 4, ascender + 8, Color::LightGray);
-      renderer.drawText(fontId, sx, sy, block->getWords()[0].c_str(), true, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, sx, sy, firstWord, true, EpdFontFamily::REGULAR);
       return;
     }
     return;
@@ -1197,14 +1217,13 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     const auto& line = static_cast<const PageLine&>(*element);
     const auto& block = line.getBlock();
     if (!block) continue;
-    const auto& words = block->getWords();
-    const auto& xPositions = block->getWordXpos();
-    const size_t wc = std::min(words.size(), xPositions.size());
-    for (size_t wi = 0; wi < wc; ++wi) {
-      const int16_t sx = static_cast<int16_t>(line.xPos + xPositions[wi] + marginLeft);
+    const uint16_t wc = block->wordCount();
+    for (uint16_t wi = 0; wi < wc; ++wi) {
+      const char* wordText = block->wordText(wi);
+      const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
       const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, words[wi].c_str(), EpdFontFamily::REGULAR)));
-      pw.push_back({words[wi].c_str(), sx, sy, sw});
+      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
+      pw.push_back({wordText, sx, sy, sw});
     }
   }
 
@@ -1307,14 +1326,14 @@ void EpubReaderActivity::createClippingFromSelection() {
       const auto& block = line.getBlock();
       if (!block) continue;
 
-      const auto& words = block->getWords();
+      const uint16_t wordCount = block->wordCount();
       bool lineHasSelectedWord = false;
       std::string lineText;
-      for (size_t i = 0; i < words.size(); ++i) {
+      for (uint16_t i = 0; i < wordCount; ++i) {
         if (globalWordIndex >= startWord && globalWordIndex <= endWord) {
           lineHasSelectedWord = true;
           if (!lineText.empty()) lineText.push_back(' ');
-          lineText += words[i];
+          lineText += block->wordText(i);
         }
         ++globalWordIndex;
       }
@@ -1572,6 +1591,133 @@ void EpubReaderActivity::applyReaderSettingsChanges(const ReaderSettingsSnapshot
   requestUpdate(true);
 }
 
+namespace {
+constexpr uint8_t BOOK_READER_SETTINGS_VERSION = 1;
+constexpr const char* READER_SETTINGS_FILE_NAME = "reader_settings.bin";
+}  // namespace
+
+void EpubReaderActivity::loadBookReaderSettings() {
+  hasPerBookSettingsOverride = false;
+  if (!epub) return;
+
+  FsFile file;
+  if (!Storage.openFileForRead("BRS", epub->getCachePath() + "/" + READER_SETTINGS_FILE_NAME, file)) {
+    return;
+  }
+
+  uint8_t version = 0;
+  if (!serialization::tryReadPod(file, version) || version != BOOK_READER_SETTINGS_VERSION) {
+    file.close();
+    return;
+  }
+
+  ReaderSettingsSnapshot snap;
+  const bool ok = serialization::tryReadPod(file, snap.darkMode) &&
+                  serialization::tryReadPod(file, snap.fadingFix) &&
+                  serialization::tryReadPod(file, snap.refreshFrequency) &&
+                  serialization::tryReadPod(file, snap.fontFamily) &&
+                  serialization::tryReadPod(file, snap.fontSize) &&
+                  serialization::tryReadPod(file, snap.lineSpacing) &&
+                  serialization::tryReadPod(file, snap.screenMargin) &&
+                  serialization::tryReadPod(file, snap.paragraphAlignment) &&
+                  serialization::tryReadPod(file, snap.embeddedStyle) &&
+                  serialization::tryReadPod(file, snap.hyphenationEnabled) &&
+                  serialization::tryReadPod(file, snap.bionicReading) &&
+                  serialization::tryReadPod(file, snap.guideReadingEnabled) &&
+                  serialization::tryReadPod(file, snap.dotsSpacing) &&
+                  serialization::tryReadPod(file, snap.epubRenderMode) &&
+                  serialization::tryReadPod(file, snap.orientation) &&
+                  serialization::tryReadPod(file, snap.extraParagraphSpacing) &&
+                  serialization::tryReadPod(file, snap.forceParagraphIndents) &&
+                  serialization::tryReadPod(file, snap.textAntiAliasing) &&
+                  serialization::tryReadPod(file, snap.textDarkness) &&
+                  serialization::tryReadPod(file, snap.readerRefreshMode) &&
+                  serialization::tryReadPod(file, snap.imageRendering) &&
+                  serialization::tryReadString(file, snap.sdFontFamilyName);
+  if (!ok) {
+    file.close();
+    return;
+  }
+
+  // Optional trailing fields: last successful render mode + safe-mode flag.
+  // Older reader_settings.bin (v1) files end after sdFontFamilyName, so a failed
+  // read here leaves the defaults (0xFF = unknown, false) instead of aborting.
+  uint8_t lastMode = 0xFF;
+  uint8_t lastSafe = 0;
+  serialization::tryReadPod(file, lastMode);
+  serialization::tryReadPod(file, lastSafe);
+  lastSuccessfulRenderMode = lastMode;
+  lastSuccessfulSafeMode = (lastSafe != 0);
+  file.close();
+
+  // Apply per-book overrides onto the global settings.
+  SETTINGS.darkMode = snap.darkMode;
+  SETTINGS.fadingFix = snap.fadingFix;
+  SETTINGS.refreshFrequency = snap.refreshFrequency;
+  SETTINGS.fontFamily = snap.fontFamily;
+  SETTINGS.fontSize = snap.fontSize;
+  SETTINGS.lineSpacing = snap.lineSpacing;
+  SETTINGS.screenMargin = snap.screenMargin;
+  SETTINGS.paragraphAlignment = snap.paragraphAlignment;
+  SETTINGS.embeddedStyle = snap.embeddedStyle;
+  SETTINGS.hyphenationEnabled = snap.hyphenationEnabled;
+  SETTINGS.bionicReading = snap.bionicReading;
+  SETTINGS.guideReadingEnabled = snap.guideReadingEnabled;
+  SETTINGS.dotsSpacing = snap.dotsSpacing;
+  SETTINGS.epubRenderMode = snap.epubRenderMode;
+  SETTINGS.orientation = snap.orientation;
+  SETTINGS.extraParagraphSpacing = snap.extraParagraphSpacing;
+  SETTINGS.forceParagraphIndents = snap.forceParagraphIndents;
+  SETTINGS.textAntiAliasing = snap.textAntiAliasing;
+  SETTINGS.textDarkness = snap.textDarkness;
+  SETTINGS.readerRefreshMode = snap.readerRefreshMode;
+  SETTINGS.imageRendering = snap.imageRendering;
+  std::strncpy(SETTINGS.sdFontFamilyName, snap.sdFontFamilyName.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
+  SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+  hasPerBookSettingsOverride = true;
+}
+
+void EpubReaderActivity::saveBookReaderSettings() {
+  if (!epub) return;
+
+  const ReaderSettingsSnapshot snap = captureReaderSettingsSnapshot();
+
+  FsFile file;
+  if (!Storage.openFileForWrite("BRS", epub->getCachePath() + "/" + READER_SETTINGS_FILE_NAME, file)) {
+    return;
+  }
+
+  const bool ok = serialization::tryWritePod(file, BOOK_READER_SETTINGS_VERSION) &&
+                  serialization::tryWritePod(file, snap.darkMode) &&
+                  serialization::tryWritePod(file, snap.fadingFix) &&
+                  serialization::tryWritePod(file, snap.refreshFrequency) &&
+                  serialization::tryWritePod(file, snap.fontFamily) &&
+                  serialization::tryWritePod(file, snap.fontSize) &&
+                  serialization::tryWritePod(file, snap.lineSpacing) &&
+                  serialization::tryWritePod(file, snap.screenMargin) &&
+                  serialization::tryWritePod(file, snap.paragraphAlignment) &&
+                  serialization::tryWritePod(file, snap.embeddedStyle) &&
+                  serialization::tryWritePod(file, snap.hyphenationEnabled) &&
+                  serialization::tryWritePod(file, snap.bionicReading) &&
+                  serialization::tryWritePod(file, snap.guideReadingEnabled) &&
+                  serialization::tryWritePod(file, snap.dotsSpacing) &&
+                  serialization::tryWritePod(file, snap.epubRenderMode) &&
+                  serialization::tryWritePod(file, snap.orientation) &&
+                  serialization::tryWritePod(file, snap.extraParagraphSpacing) &&
+                  serialization::tryWritePod(file, snap.forceParagraphIndents) &&
+                  serialization::tryWritePod(file, snap.textAntiAliasing) &&
+                  serialization::tryWritePod(file, snap.textDarkness) &&
+                  serialization::tryWritePod(file, snap.readerRefreshMode) &&
+                  serialization::tryWritePod(file, snap.imageRendering) &&
+                  serialization::tryWriteString(file, snap.sdFontFamilyName) &&
+                  serialization::tryWritePod(file, lastSuccessfulRenderMode) &&
+                  serialization::tryWritePod(file, static_cast<uint8_t>(lastSuccessfulSafeMode ? 1u : 0u));
+  file.close();
+  if (!ok) {
+    LOG_ERR("BRS", "Short write saving per-book reader settings");
+  }
+}
+
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::READER_SETTINGS: {
@@ -1580,6 +1726,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       startActivityForResult(std::make_unique<ReaderQuickSettingsActivity>(renderer, mappedInput),
                              [this, before](const ActivityResult&) {
                                applyReaderSettingsChanges(before);
+                               saveBookReaderSettings();
                                READING_STATS.resumeSession();
                              });
       break;
@@ -1803,10 +1950,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             if (el->getTag() == TAG_PageLine) {
               const auto& line = static_cast<const PageLine&>(*el);
               if (line.getBlock()) {
-                const auto& words = line.getBlock()->getWords();
-                for (const auto& w : words) {
+                const uint16_t wordCount = line.getBlock()->wordCount();
+                for (uint16_t wi = 0; wi < wordCount; ++wi) {
                   if (!fullText.empty()) fullText += " ";
-                  fullText += w;
+                  fullText += line.getBlock()->wordText(wi);
                 }
               }
             }
@@ -2045,7 +2192,8 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
     // Only count page turns within reasonable reading pace (ignore idle pauses)
     constexpr unsigned long kPaceIdleThresholdMs = 180UL * 1000UL;
     if (durationMs > 0 && durationMs < kPaceIdleThresholdMs) {
-      READING_STATS.recordForwardPageRead(stableBookId, static_cast<uint32_t>(durationMs / 1000UL));
+      const uint32_t pageSeconds = static_cast<uint32_t>(durationMs / 1000UL);
+      READING_STATS.recordForwardPageRead(stableBookId, pageSeconds);
     }
   }
   lastPageTurnTime = nowMs;
@@ -2113,6 +2261,50 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto fallback = renderModeFallbackChain(userRenderMode);
     uint8_t usedRenderMode = CrossPointSettings::EPUB_RENDER_DEFAULT;
     bool sectionLoadSuccess = false;
+    bool usedSafeMode = false;
+
+    // Fast path: if a previous open already settled on a render mode for this
+    // book (persisted in reader_settings.bin), try that mode's cache first.
+    // This avoids re-running the doomed index passes of the heavier modes on
+    // every reopen of a book that only builds under Balanced/Light/Safe Mode.
+    if (!sectionLoadSuccess && lastSuccessfulSafeMode) {
+      const char* safeModeSuffix = "_safe";
+      const uint8_t safeMode = CrossPointSettings::EPUB_RENDER_LIGHT;
+      const uint8_t safeImageRendering = CrossPointSettings::IMAGES_SUPPRESS;
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, safeModeSuffix));
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering,
+                                    false, 0, safeMode)) {
+        LOG_DBG("ERS", "Reopened via remembered Safe Mode cache");
+        sectionLoadSuccess = true;
+        usedRenderMode = safeMode;
+        usedSafeMode = true;
+      } else {
+        section.reset();
+      }
+    }
+    if (!sectionLoadSuccess && !lastSuccessfulSafeMode && lastSuccessfulRenderMode != 0xFF &&
+        lastSuccessfulRenderMode != userRenderMode && isValidEpubRenderMode(lastSuccessfulRenderMode)) {
+      const uint8_t rememberedMode = lastSuccessfulRenderMode;
+      const char* rememberedSuffix = sectionCacheSuffixForRenderMode(rememberedMode);
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, rememberedSuffix));
+      const bool bionicNormalLayout = SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_NORMAL;
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
+                                    SETTINGS.imageRendering,
+                                    SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
+                                    guideDotMinGap, rememberedMode)) {
+        LOG_DBG("ERS", "Reopened via remembered render mode %u cache", rememberedMode);
+        sectionLoadSuccess = true;
+        usedRenderMode = rememberedMode;
+      } else {
+        section.reset();
+      }
+    }
 
     for (uint8_t attemptIdx = 0; attemptIdx < fallback.count && !sectionLoadSuccess; ++attemptIdx) {
       const uint8_t attemptMode = fallback.modes[attemptIdx];
@@ -2138,8 +2330,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       LOG_DBG("ERS", "Section cache not found for renderMode=%u, building...", attemptMode);
 
+      // Show a mode-specific indexing popup so the user sees which pass is
+      // running (and that a fallback to a lighter mode has started).
+      GUI.drawPopup(renderer, indexingLabelForRenderMode(attemptMode, false));
+
       // Build section with this mode
-      const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+      const auto popupFn = [this, attemptMode]() {
+        GUI.drawPopup(renderer, indexingLabelForRenderMode(attemptMode, false));
+      };
 
       if (section->createSectionFile(
               SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
@@ -2160,8 +2358,45 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       section.reset();
     }
 
+    // Final failsafe: a minimal "Safe Mode" that suppresses images entirely and
+    // disables bionic/guide reading, so a book whose repeated image decodes
+    // fragment the heap past recovery can still open as text-only. Uses the
+    // Light render mode (least memory) as the base.
     if (!sectionLoadSuccess) {
-      LOG_ERR("ERS", "Failed to build section with any render mode");
+      LOG_DBG("ERS", "All render modes failed; trying text-only Safe Mode (images suppressed)");
+
+      const char* safeModeSuffix = "_safe";
+      section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer, safeModeSuffix));
+      const uint8_t safeMode = CrossPointSettings::EPUB_RENDER_LIGHT;
+      const uint8_t safeImageRendering = CrossPointSettings::IMAGES_SUPPRESS;
+
+      if (section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                    SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                    SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                    SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering,
+                                    false, 0, safeMode)) {
+        LOG_DBG("ERS", "Text-only Safe Mode section cache found");
+        sectionLoadSuccess = true;
+        usedRenderMode = safeMode;
+        usedSafeMode = true;
+      } else {
+        GUI.drawPopup(renderer, indexingLabelForRenderMode(safeMode, true));
+        const auto popupFn = [this]() { GUI.drawPopup(renderer, indexingLabelForRenderMode(0, true)); };
+        if (section->createSectionFile(
+                SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
+                SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                SETTINGS.hyphenationEnabled, false, SETTINGS.embeddedStyle, safeImageRendering, popupFn, false, 0,
+                safeMode)) {
+          releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "safe mode section build");
+          sectionLoadSuccess = true;
+          usedRenderMode = safeMode;
+          usedSafeMode = true;
+        }
+      }
+    }
+
+    if (!sectionLoadSuccess) {
+      LOG_ERR("ERS", "Failed to build section with any render mode (including Safe Mode)");
       section.reset();
       renderSectionLoadFailure();
       automaticPageTurnActive = false;
@@ -2173,6 +2408,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       LOG_DBG("ERS", "Render mode fallback: user=%u actual=%u", userRenderMode, usedRenderMode);
       // Lightweight indication: could show a popup here in the future
     }
+
+    // Remember the render mode that succeeded so the next open starts from its
+    // cache instead of re-running the heavier, doomed index passes.
+    lastSuccessfulRenderMode = usedRenderMode;
+    lastSuccessfulSafeMode = usedSafeMode;
+    saveBookReaderSettings();
 
     // Build cumulative word counts for absolute clipping word indices.
     // Costs ~N page-loads × 0.1ms but runs once per section open.
@@ -2237,9 +2478,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             const auto& line = static_cast<const PageLine&>(*element);
             const auto& block = line.getBlock();
             if (!block) continue;
-            const auto& words = block->getWords();
-            for (size_t wi = 0; wi < words.size(); ++wi) {
-              pww.push_back({words[wi].c_str()});
+            const uint16_t wordCount = block->wordCount();
+            for (uint16_t wi = 0; wi < wordCount; ++wi) {
+              pww.push_back({block->wordText(wi)});
             }
           }
 
@@ -2323,11 +2564,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             if (!element || element->getTag() != TAG_PageLine) continue;
             const auto& block = static_cast<const PageLine&>(*element).getBlock();
             if (!block) continue;
-            const auto& words = block->getWords();
-            for (size_t wi = 0; wi < words.size(); ++wi) {
-              if (words[wi] != firstWord) continue;
+            const uint16_t wordCount = block->wordCount();
+            for (uint16_t wi = 0; wi < wordCount; ++wi) {
+              if (strcmp(block->wordText(wi), firstWord.c_str()) != 0) continue;
               if (secondWord.empty()) { pageMatch = true; break; }
-              if (wi + 1 < words.size() && words[wi + 1] == secondWord) { pageMatch = true; break; }
+              if (wi + 1 < wordCount && strcmp(block->wordText(wi + 1), secondWord.c_str()) == 0) { pageMatch = true; break; }
             }
           }
           if (pageMatch) { resolvedPage = p; found = true; }
@@ -2559,7 +2800,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   const auto heapBefore = MemoryBudget::snapshot();
   auto scope = fcm->createPrewarmScope();
-  page->recordFontUsage(*fcm, SETTINGS.getReaderFontId(), SETTINGS.bionicReading);
+  page->renderText(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);
   scope.endScanAndPrewarm();
   const auto heapAfter = MemoryBudget::snapshot();
   fcm->logStats("prewarm");
@@ -2630,7 +2871,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                            renderer, "ERS",
                             [&]() {
                               if (enableImageGrayscaleOnly) {
-                                page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+                                page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
                               } else {
                                 page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft,
                                              orientedMarginTop, SETTINGS.bionicReading);
@@ -2669,7 +2910,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     if (enableImageGrayscaleOnly) {
-      page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+      page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
@@ -2682,7 +2923,7 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     if (enableImageGrayscaleOnly) {
-      page->renderImages(renderer, orientedMarginLeft, orientedMarginTop);
+      page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
     } else {
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, SETTINGS.bionicReading);
       renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
@@ -2960,7 +3201,7 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
       if (const auto pIdx = section->getParagraphIndexForPage(static_cast<uint16_t>(currentPage))) {
         localPos.paragraphIndex = *pIdx;
         localPos.hasParagraphIndex = true;
-        if (const auto hint = section->getXhtmlByteOffsetForPage(static_cast<uint16_t>(currentPage))) {
+        if (const auto hint = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage))) {
           localPos.xhtmlSeekHint = *hint;
         }
       }
@@ -2980,7 +3221,7 @@ void EpubReaderActivity::launchKOReaderSync(const SyncLaunchMode mode) {
     if (const auto pIdx = section->getParagraphIndexForPage(static_cast<uint16_t>(currentPage))) {
       sync.paragraphIndex = *pIdx;
       sync.hasParagraphIndex = true;
-      if (const auto hint = section->getXhtmlByteOffsetForPage(static_cast<uint16_t>(currentPage))) {
+      if (const auto hint = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(currentPage))) {
         sync.xhtmlSeekHint = *hint;
       } else {
         sync.xhtmlSeekHint = 0;

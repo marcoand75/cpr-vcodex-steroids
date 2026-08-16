@@ -3,6 +3,7 @@
 #include "CrossPointState.h"
 #include "ReadingStatsStore.h"
 
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
@@ -44,12 +45,32 @@ void ScreenSaverActivity::loadImages() {
   if (dirPath.empty()) return;
   images_ = SleepImageUtils::listImageFiles(dirPath);
 
-  // Extract the first image path, then free the vector to reclaim heap
-  // for the PNG decoder (~38 KB).  Only the current image path is needed
-  // for rendering; the next image is resolved lazily in pickNextImage().
+  // Pick the initial image, then free the vector to reclaim heap for the PNG
+  // decoder (~38 KB). Only the current image path is needed for rendering; the
+  // next image is resolved lazily in pickNextImage().
   if (!images_.empty()) {
-    currentIndex_ = 0;
-    currentImagePath_ = images_[0];
+    const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
+    if (order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
+      // Shuffle the first image too: randomize avoiding the persistent recent
+      // list so a fresh screensaver session does not always open on the same
+      // first file (images_[0]) every time.
+      const uint16_t fileCount = static_cast<uint16_t>(images_.size());
+      const uint8_t window =
+          static_cast<uint8_t>(std::min(static_cast<size_t>(APP_STATE.recentScreensaverFill), images_.size() - 1));
+      int idx = random(static_cast<int>(images_.size()));
+      for (uint8_t attempt = 0; attempt < 20 && APP_STATE.isRecentScreensaver(static_cast<uint16_t>(idx), window);
+           attempt++) {
+        idx = random(static_cast<int>(images_.size()));
+      }
+      currentIndex_ = idx;
+      currentImagePath_ = images_[static_cast<size_t>(idx)];
+      APP_STATE.pushRecentScreensaver(static_cast<uint16_t>(idx));
+      APP_STATE.saveToFile();
+    } else {
+      // Sequential mode: start from the beginning of the scan.
+      currentIndex_ = 0;
+      currentImagePath_ = images_[0];
+    }
   }
   freeImageList();
 }
@@ -171,12 +192,6 @@ void ScreenSaverActivity::onEnter() {
   Activity::onEnter();
   loadImages();
 
-  // Battery check: refuse to start if below minimum
-  if (currentImagePath_.empty() && !images_.empty()) {
-    currentImagePath_ = images_[0];
-  }
-  freeImageList();
-
   int batPct = static_cast<int>(powerManager.getBatteryPercentage());
   int minPct = getMinBatteryPercent();
   if (minPct > 0 && batPct < minPct) {
@@ -218,12 +233,6 @@ void ScreenSaverActivity::onEnter() {
   lastChangeMs_ = millis();
   lastBatteryCheckMs_ = millis();
   firstRender_ = true;
-
-  // Randomize first image in shuffle mode
-  const uint8_t order = returnToCaller_ ? SETTINGS.screenSaverReaderOrder : SETTINGS.screenSaverOrder;
-  if (!images_.empty() && order == CrossPointSettings::SCREENSAVER_SHUFFLE) {
-    currentIndex_ = random(static_cast<int>(images_.size()));
-  }
 
   powerManager.setPowerSaving(true);
   requestUpdate();
@@ -359,13 +368,29 @@ void ScreenSaverActivity::render(RenderLock&&) {
   LOG_DBG("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
+  // Re-initialise the decompressor and pre-load the overlay glyphs into its
+  // page buffer NOW, while heap is still ~60 KB contiguous. Doing it after the
+  // image decode would force FontDecompressor::getBitmap() to allocate the hot
+  // group on a fragmented heap (maxAlloc ~10 KB) and abort with std::bad_alloc.
+  restoreFontMemory();
+  const char* overlayText = SETTINGS.screenSaverText;
+  if (overlayText != nullptr && overlayText[0] != '\0') {
+    int overlayFontId = UI_10_FONT_ID;
+    EpdFontFamily::Style overlayStyle = EpdFontFamily::REGULAR;
+    getOverlayFont(overlayFontId, overlayStyle);
+    // styleMask covers REGULAR(0) and BOLD(1); the overlay uses one of them.
+    const uint8_t styleMask = (overlayStyle == EpdFontFamily::BOLD) ? 0x02 : 0x01;
+    if (auto* fcm = renderer.getFontCacheManager()) {
+      fcm->prewarmCache(overlayFontId, overlayText, styleMask);
+    }
+  }
+
   // Use same grayscale rendering path as SleepActivity
   bool isPng = FsHelpers::hasPngExtension(imagePath);
   bool isBmp = FsHelpers::hasBmpExtension(imagePath);
 
   if (!isPng && !isBmp) {
     renderer.clearScreen();
-    restoreFontMemory();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -404,12 +429,8 @@ void ScreenSaverActivity::render(RenderLock&&) {
             static_cast<int>(pngOk), static_cast<int>(ESP.getFreeHeap()),
             static_cast<int>(ESP.getMaxAllocHeap()));
 
-    // Restore fonts for text overlay
-    restoreFontMemory();
-
-    LOG_DBG("SS", "RENDER after restoreFont: free=%d maxAlloc=%d",
-            static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
-
+    // Fonts were already restored and prewarmed before the decode; the overlay
+    // glyphs are in the page buffer so no hot-group alloc happens here.
     if (pngOk) {
       drawTextOverlay();
       renderer.clearNextRefreshOverride();
@@ -434,7 +455,6 @@ void ScreenSaverActivity::render(RenderLock&&) {
   // BMP rendering with grayscale support (same as SleepActivity)
   FsFile file;
   if (!Storage.openFileForRead("SS", imagePath, file)) {
-    restoreFontMemory();
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
@@ -450,7 +470,6 @@ void ScreenSaverActivity::render(RenderLock&&) {
   Bitmap bitmap(file, true);
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
     file.close();
-    restoreFontMemory();
     renderer.clearScreen();
     drawTextOverlay();
     renderer.clearNextRefreshOverride();
@@ -499,12 +518,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   renderer.clearScreen();
   renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
 
-  // Restore fonts for text overlay on BW
-  restoreFontMemory();
-
-  LOG_DBG("SS", "RENDER BMP after restoreFont: free=%d maxAlloc=%d",
-          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
-
+  // Fonts were already restored and prewarmed before the decode.
   drawTextOverlay();
 
   renderer.clearNextRefreshOverride();
@@ -542,6 +556,20 @@ void ScreenSaverActivity::render(RenderLock&&) {
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 }
 
+void ScreenSaverActivity::getOverlayFont(int& fontId, EpdFontFamily::Style& style) const {
+  fontId = UI_10_FONT_ID;
+  style = EpdFontFamily::REGULAR;
+  // Use Bookerly (always available) at the size corresponding to the setting.
+  // Regular for X_SMALL through MEDIUM, Bold for LARGE and X_LARGE.
+  switch (SETTINGS.screenSaverFontSize) {
+    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; style = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; style = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = BOOKERLY_14_FONT_ID; style = EpdFontFamily::REGULAR; break;
+    case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = BOOKERLY_16_FONT_ID; style = EpdFontFamily::BOLD; break;
+    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: fontId = BOOKERLY_18_FONT_ID; style = EpdFontFamily::BOLD; break;
+  }
+}
+
 void ScreenSaverActivity::drawTextOverlay() {
   const char* text = SETTINGS.screenSaverText;
   if (text == nullptr || text[0] == '\0') return;
@@ -552,15 +580,7 @@ void ScreenSaverActivity::drawTextOverlay() {
 
   int fontId = UI_10_FONT_ID;
   EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR;
-  // Use Bookerly (always available) at the size corresponding to the setting.
-  // Regular for X_SMALL through MEDIUM, Bold for LARGE and X_LARGE.
-  switch (SETTINGS.screenSaverFontSize) {
-    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = BOOKERLY_14_FONT_ID; textStyle = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = BOOKERLY_16_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
-    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: fontId = BOOKERLY_18_FONT_ID; textStyle = EpdFontFamily::BOLD; break;
-  }
+  getOverlayFont(fontId, textStyle);
 
   const int lineHeight = renderer.getLineHeight(fontId);
   auto lines = renderer.wrappedText(fontId, text, pageWidth - 2 * margin, 4, textStyle);

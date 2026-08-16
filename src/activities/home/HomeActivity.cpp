@@ -756,6 +756,18 @@ void HomeActivity::onEnter() {
     pruneCarouselFrameCache();
   }
 
+  if (READING_STATS.isHomeInvalidationRequested()) {
+    READING_STATS.clearHomeInvalidationRequest();
+    if (!isLyraCarouselTheme()) {
+      invalidateResidentCarouselFrame();
+      invalidateCarouselFrameHash();
+      carouselFramesReady = false;
+    }
+    coverRendered = false;
+    freeCoverBuffer();
+    LOG_DBG("HOME", "onEnter: stats invalidation requested, refreshed home cache");
+  }
+
   LOG_DBG("HOME", "onEnter: end heap=%u maxA=%u frag=%u(%u+%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()),
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -877,6 +889,10 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
 
   invalidateResidentCarouselFrame();
   carouselFramesReady = true;
+  // Frame content is now fully in the frame buffer. Re-anchor the render timer
+  // so the subsequent displayBuffer() GFX log measures only the compositing
+  // work done on top of the cached frame, not time since an old clearScreen().
+  renderer.resetRenderTimer();
   LOG_DBG("HCR", "loadCarouselFrameFromStorage: HIT idx=%d (%zu bytes, read=%ums)",
           safeBookIndex, bufferSize, static_cast<int>(millis() - dbgRead0));
   return true;

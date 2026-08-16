@@ -43,23 +43,6 @@ class DictionaryWordSelectActivity final : public Activity {
     std::vector<int> wordIndices;
   };
 
-  struct SelectionRect {
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
-  };
-
-  struct SelectionRegionCache {
-    SelectionRect rect;
-    uint8_t* buffer = nullptr;
-    size_t capacity = 0;
-    size_t size = 0;
-    bool stored = false;
-  };
-
-  static constexpr size_t MAX_SELECTION_REGIONS = 2;
-
   std::shared_ptr<Page> page;
   int readerFontId = 0;
   int marginLeft = 0;
@@ -68,8 +51,9 @@ class DictionaryWordSelectActivity final : public Activity {
   std::vector<Row> rows;
   int currentRow = 0;
   int currentWordInRow = 0;
-  SelectionRegionCache selectionRegions[MAX_SELECTION_REGIONS];
-  size_t selectionRegionCount = 0;
+  // Indices of words currently drawn highlighted, so a selection move can
+  // redraw them plain (fill white + draw black) without re-rendering the page.
+  std::vector<int> highlightedWordIndices;
 
   void extractWords();
   void prepareReaderFontMetrics();
@@ -79,12 +63,8 @@ class DictionaryWordSelectActivity final : public Activity {
   void moveWord(int delta);
   void lookupSelectedWord();
   void updateSelectionHighlight();
-  bool redrawSelectionFast();
   void prewarmCurrentSelectionText() const;
-  size_t collectSelectionRects(SelectionRect* rects, size_t maxRects) const;
-  bool storeSelectionBaseRegions();
-  bool restoreSelectionBaseRegions() const;
-  void invalidateSelectionRegionCache();
-  void freeSelectionRegionCache();
   void drawSelectionHighlight();
+  void drawWordPlain(int wordIndex);
+  void refreshSelectionFast();
 };

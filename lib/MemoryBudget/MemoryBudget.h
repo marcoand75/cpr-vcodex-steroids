@@ -25,6 +25,20 @@ constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE = 120U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC = 80U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_FREE = 96U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_MAX_ALLOC = 48U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_FREE = 40U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 12U * 1024U;
+// Relaxed threshold for the Light render mode (and the text-only Safe Mode that
+// inherits it). Light mode skips embedded styling/guide/image work, so the text
+// layout pass needs less headroom. A lower floor lets image-heavy chapters finish
+// as text when the normal 40KB threshold would abort after hundreds of pages.
+constexpr uint32_t EPUB_TEXT_LAYOUT_LIGHT_MIN_FREE = 16U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_LIGHT_MIN_MAX_ALLOC = 8U * 1024U;
+// Absolute floor for the text-only Safe Mode (Light + images suppressed): the
+// layout pass then only shapes glyph runs, so even a heavily-fragmented heap can
+// still finish the chapter. Kept above the width of a single full-width text
+// line buffer so lines still measure/move correctly.
+constexpr uint32_t EPUB_TEXT_LAYOUT_SAFE_MIN_FREE = 8U * 1024U;
+constexpr uint32_t EPUB_TEXT_LAYOUT_SAFE_MIN_MAX_ALLOC = 4U * 1024U;
 constexpr uint32_t IMAGE_DECODER_HEADROOM = 16U * 1024U;
 
 inline HeapSnapshot snapshot() { return {ESP.getFreeHeap(), ESP.getMaxAllocHeap()}; }
@@ -59,6 +73,18 @@ inline HeapRequirement epubInlineImageRequirementForSource(const char* source) {
 
 inline bool shouldReleaseSdFontCachesForEpubInlineImage(const HeapSnapshot heap) {
   return !hasHeap(heap, EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE, EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForEpubTextLayoutStart(const HeapSnapshot heap) {
+  return hasHeap(heap, EPUB_TEXT_LAYOUT_MIN_FREE, EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForEpubTextLayoutStartLight(const HeapSnapshot heap) {
+  return hasHeap(heap, EPUB_TEXT_LAYOUT_LIGHT_MIN_FREE, EPUB_TEXT_LAYOUT_LIGHT_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForEpubTextLayoutStartSafe(const HeapSnapshot heap) {
+  return hasHeap(heap, EPUB_TEXT_LAYOUT_SAFE_MIN_FREE, EPUB_TEXT_LAYOUT_SAFE_MIN_MAX_ALLOC);
 }
 
 inline bool hasHeapForEpubInlineImage(const char* tag, const char* source) {
