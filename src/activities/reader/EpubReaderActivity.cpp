@@ -942,6 +942,17 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
 
   if (!page) return;
 
+  // Initialize a dedicated arena for clipping word strings (persists until exitClippingMode)
+  // We reuse the renderScratchArena if available, otherwise create a new one
+  if (!renderScratchArenaInitialized) {
+    if (!renderScratchArena.init(8 * 1024)) {
+      LOG_ERR("ERS", "Failed to init render scratch arena for clipping");
+      return;
+    }
+    renderScratchArenaInitialized = true;
+  }
+  renderScratchArena.clear();
+
   int globalIndex = 0;
   int currentRow = -1;
   int rowWordCount = 0;
@@ -969,7 +980,16 @@ void EpubReaderActivity::extractClippingWords(std::shared_ptr<Page> page, int ma
       }
 
       ++rowWordCount;
-      clippingWords.push_back(ClippingWordInfo{wordText, screenX, screenY,
+      
+      // Copy word text to arena to avoid per-word std::string allocation
+      size_t wordLen = strlen(wordText);
+      char* arenaWordText = static_cast<char*>(renderScratchArena.alloc(wordLen + 1));
+      if (arenaWordText) {
+        memcpy(arenaWordText, wordText, wordLen);
+        arenaWordText[wordLen] = '\0';
+      }
+      
+      clippingWords.push_back(ClippingWordInfo{arenaWordText ? arenaWordText : wordText, screenX, screenY,
                                                static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(
                                                                                  SETTINGS.getReaderFontId(),
                                                                                  wordText,
@@ -1066,7 +1086,7 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     if (cursorGlobalIndex >= 0 && cursorGlobalIndex < static_cast<int>(clippingWords.size())) {
       const auto& w = clippingWords[cursorGlobalIndex];
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
     }
     return;
   }
@@ -1082,10 +1102,10 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     const bool isCursor = w.globalIndex == cursorGlobalIndex;
     if (isCursor) {
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
     } else {
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+      renderer.drawText(fontId, w.screenX, w.screenY, w.text, false, EpdFontFamily::REGULAR);
     }
   }
 }
@@ -1098,6 +1118,17 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
   const uint32_t pageStart = section->getCumulativeWordOffset(currentPageNum);
   const int fontId = SETTINGS.getReaderFontId();
   const int ascender = renderer.getFontAscenderSize(fontId);
+
+  // Initialize render scratch arena if needed
+  if (!renderScratchArenaInitialized) {
+    if (!renderScratchArena.init(8 * 1024)) {  // 8KB initial slab
+      LOG_ERR("ERS", "Failed to init render scratch arena");
+      return;
+    }
+    renderScratchArenaInitialized = true;
+  }
+  // Clear arena for this render pass
+  renderScratchArena.clear();
 
   // v4 bookmark: highlight the anchor word (absolute word index).
   for (const auto& bm : bookmarkStore.getAll()) {
@@ -1130,26 +1161,51 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
   for (const auto& bm : bookmarkStore.getAll()) {
     if (bm.spineIndex != static_cast<uint16_t>(currentSpineIndex)) continue;
 
-    std::vector<std::string> tokens;
+    // Tokenize using arena-backed vector
+    ArenaVector<const char*> tokens(renderScratchArena);
     {
-      std::string tok;
-      for (char c : bm.snippet) {
-        if (c == ' ' || c == '\n' || c == '\r') { if (!tok.empty()) { tokens.push_back(tok); tok.clear(); } }
-        else { tok += c; }
+      const char* start = bm.snippet.c_str();
+      const char* p = start;
+      while (*p) {
+        if (*p == ' ' || *p == '\n' || *p == '\r') {
+          if (p > start) {
+            size_t len = p - start;
+            char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+            if (tokenCopy) {
+              memcpy(tokenCopy, start, len);
+              tokenCopy[len] = '\0';
+              tokens.push_back(tokenCopy);
+            }
+          }
+          start = p + 1;
+        }
+        ++p;
       }
-      if (!tok.empty()) tokens.push_back(tok);
+      if (p > start) {
+        size_t len = p - start;
+        char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+        if (tokenCopy) {
+          memcpy(tokenCopy, start, len);
+          tokenCopy[len] = '\0';
+          tokens.push_back(tokenCopy);
+        }
+      }
     }
     size_t skip = 0;
-    while (skip < tokens.size() && tokens[skip].size() <= 1) ++skip;
+    while (skip < tokens.size() && strlen(tokens[skip]) <= 1) ++skip;
     if (tokens.size() < skip + 3) continue;
-    tokens.erase(tokens.begin(), tokens.begin() + skip);
+    // Remove skipped tokens by adjusting start index
+    const char** tokenData = tokens.data();
+    const size_t tokenCount = tokens.size();
+    const size_t effectiveStart = skip;
+    const size_t effectiveCount = tokenCount - skip;
     // Require at least 3 tokens OR 50% of the clipping text, whichever is higher.
     // This prevents matching short random word sequences that happen to share
     // the first token.
-    const size_t minMatch = std::max(tokens.size() / 2 + tokens.size() % 2, size_t{3});
+    const size_t minMatch = std::max(effectiveCount / 2 + effectiveCount % 2, size_t{3});
 
     struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
-    std::vector<PW> pw;
+    ArenaVector<PW> pw(renderScratchArena);
     for (const auto& element : page->elements) {
       if (!element || element->getTag() != TAG_PageLine) continue;
       const auto& line = static_cast<const PageLine&>(*element);
@@ -1165,14 +1221,14 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
       }
     }
     for (size_t start = 0; start + minMatch <= pw.size(); ++start) {
-      if (pw[start].t != tokens[0]) continue;
+      if (strcmp(pw[start].t, tokenData[effectiveStart]) != 0) continue;
       size_t m = 1;
       for (size_t k = 1; k < minMatch && start + k < pw.size(); ++k) {
-        if (pw[start + k].t == tokens[k]) ++m; else break;
+        if (strcmp(pw[start + k].t, tokenData[effectiveStart + k]) == 0) ++m; else break;
       }
       if (m < minMatch) continue;
       int16_t hx = pw[start].x, hw = pw[start].w;
-      if (tokens[0].size() <= 2 && start + 1 < pw.size() && pw[start + 1].t == tokens[1])
+      if (strlen(tokenData[effectiveStart]) <= 2 && start + 1 < pw.size() && strcmp(pw[start + 1].t, tokenData[effectiveStart + 1]) == 0)
         hw = static_cast<int16_t>(pw[start + 1].x + pw[start + 1].w - hx);
       renderer.fillRectDither(hx - 1, pw[start].y - 1, hw + 2, ascender + 6, Color::LightGray);
       renderer.drawText(fontId, hx, pw[start].y, pw[start].t, true, EpdFontFamily::REGULAR);
@@ -1211,7 +1267,19 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
 
   // Build a flat word array (same pattern as renderBookmarkHighlight v3).
   struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
-  std::vector<PW> pw;
+  
+  // Initialize render scratch arena if needed
+  if (!renderScratchArenaInitialized) {
+    if (!renderScratchArena.init(8 * 1024)) {  // 8KB initial slab
+      LOG_ERR("ERS", "Failed to init render scratch arena");
+      return;
+    }
+    renderScratchArenaInitialized = true;
+  }
+  // Clear arena for this render pass
+  renderScratchArena.clear();
+  
+  ArenaVector<PW> pw(renderScratchArena);
   for (const auto& element : page->elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
     const auto& line = static_cast<const PageLine&>(*element);
@@ -1234,24 +1302,45 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     const auto& text = clipping.selectedText;
     if (text.empty()) continue;
 
-    std::vector<std::string> tokens;
+    // Tokenize using arena-backed vector
+    ArenaVector<const char*> tokens(renderScratchArena);
     {
-      std::string token;
-      for (char c : text) {
-        if (c == ' ' || c == '\n' || c == '\r') {
-          if (!token.empty()) { tokens.push_back(token); token.clear(); }
-        } else { token += c; }
+      const char* start = text.c_str();
+      const char* p = start;
+      while (*p) {
+        if (*p == ' ' || *p == '\n' || *p == '\r') {
+          if (p > start) {
+            // Need to copy token to arena since text.c_str() is temporary
+            size_t len = p - start;
+            char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+            if (tokenCopy) {
+              memcpy(tokenCopy, start, len);
+              tokenCopy[len] = '\0';
+              tokens.push_back(tokenCopy);
+            }
+          }
+          start = p + 1;
+        }
+        ++p;
       }
-      if (!token.empty()) tokens.push_back(token);
+      if (p > start) {
+        size_t len = p - start;
+        char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+        if (tokenCopy) {
+          memcpy(tokenCopy, start, len);
+          tokenCopy[len] = '\0';
+          tokens.push_back(tokenCopy);
+        }
+      }
     }
     if (tokens.size() < 3) continue;
     const size_t minMatch = std::max(tokens.size() / 2, size_t{3});
 
     for (size_t startIdx = 0; startIdx + minMatch <= pw.size(); ++startIdx) {
-      if (strcmp(pw[startIdx].t, tokens[0].c_str()) != 0) continue;
+      if (strcmp(pw[startIdx].t, tokens[0]) != 0) continue;
       size_t m = 1;
       for (size_t k = 1; k < tokens.size() && startIdx + k < pw.size(); ++k) {
-        if (strcmp(pw[startIdx + k].t, tokens[k].c_str()) == 0) ++m; else break;
+        if (strcmp(pw[startIdx + k].t, tokens[k]) == 0) ++m; else break;
       }
       if (m < minMatch) continue;
 
@@ -2449,15 +2538,36 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     if (!pendingClippingText.empty()) {
       const auto& searchText = pendingClippingText;
       LOG_DBG("CLP", "text-search: scanning chapter for '%.40s...'", searchText.c_str());
-      std::vector<std::string> tokens;
+
+      // Tokenize using arena-backed vector
+      ArenaVector<const char*> tokens(renderScratchArena);
       {
-        std::string token;
-        for (char c : searchText) {
-          if (c == ' ' || c == '\n' || c == '\r') {
-            if (!token.empty()) { tokens.push_back(token); token.clear(); }
-          } else { token += c; }
+        const char* start = searchText.c_str();
+        const char* p = start;
+        while (*p) {
+          if (*p == ' ' || *p == '\n' || *p == '\r') {
+            if (p > start) {
+              size_t len = p - start;
+              char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+              if (tokenCopy) {
+                memcpy(tokenCopy, start, len);
+                tokenCopy[len] = '\0';
+                tokens.push_back(tokenCopy);
+              }
+            }
+            start = p + 1;
+          }
+          ++p;
         }
-        if (!token.empty()) tokens.push_back(token);
+        if (p > start) {
+          size_t len = p - start;
+          char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+          if (tokenCopy) {
+            memcpy(tokenCopy, start, len);
+            tokenCopy[len] = '\0';
+            tokens.push_back(tokenCopy);
+          }
+        }
       }
       if (!tokens.empty()) {
         const uint16_t minMatch = static_cast<uint16_t>(std::max(tokens.size() / 2, size_t{3}));
@@ -2470,9 +2580,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           auto pg = section->loadPageFromSectionFile();
           if (!pg) continue;
 
-          // Build flat word array (same pattern as renderBookmarkHighlight v3)
+          // Build flat word array using arena-backed vector
           struct PW { const char* t; };
-          std::vector<PW> pww;
+          ArenaVector<PW> pww(renderScratchArena);
           for (const auto& element : pg->elements) {
             if (!element || element->getTag() != TAG_PageLine) continue;
             const auto& line = static_cast<const PageLine&>(*element);
@@ -2486,10 +2596,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
           // Consecutive match on flat word array
           for (size_t start = 0; start + minMatch <= pww.size(); ++start) {
-            if (strcmp(pww[start].t, tokens[0].c_str()) != 0) continue;
+            if (strcmp(pww[start].t, tokens[0]) != 0) continue;
             size_t m = 1;
             for (size_t k = 1; k < tokens.size() && start + k < pww.size(); ++k) {
-              if (strcmp(pww[start + k].t, tokens[k].c_str()) == 0) ++m; else break;
+              if (strcmp(pww[start + k].t, tokens[k]) == 0) ++m; else break;
             }
             if (m >= minMatch) { textFound = true; foundPage = p; break; }
           }
@@ -2529,27 +2639,46 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
     // Resolve v3 bookmark snippet to page number via text search
     if (!pendingBookmarkSnippet.empty() && section->cumulativeWordCounts.size() > 1) {
-      std::string firstWord;
-      std::string secondWord;
+      // Extract first two significant words from snippet using arena
+      const char* firstWord = nullptr;
+      const char* secondWord = nullptr;
       {
-        std::string tok;
+        const char* start = pendingBookmarkSnippet.c_str();
+        const char* p = start;
         bool gotFirst = false;
-        for (char c : pendingBookmarkSnippet) {
-          if (c == ' ' || c == '\n' || c == '\r') {
-            if (!tok.empty()) {
-              if (tok.size() > 1) {  // skip single-char tokens
-                if (!gotFirst) { firstWord = tok; gotFirst = true; }
-                else { secondWord = tok; break; }
+        while (*p) {
+          if (*p == ' ' || *p == '\n' || *p == '\r') {
+            if (p > start) {
+              size_t len = p - start;
+              if (len > 1) {  // skip single-char tokens
+                char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+                if (tokenCopy) {
+                  memcpy(tokenCopy, start, len);
+                  tokenCopy[len] = '\0';
+                  if (!gotFirst) { firstWord = tokenCopy; gotFirst = true; }
+                  else { secondWord = tokenCopy; break; }
+                }
               }
-              tok.clear();
             }
-          } else { tok += c; }
+            start = p + 1;
+          }
+          ++p;
         }
-        if (!gotFirst && tok.size() > 1) firstWord = tok;
-        else if (gotFirst && secondWord.empty() && tok.size() > 1) secondWord = tok;
+        if (p > start) {
+          size_t len = p - start;
+          if (len > 1) {
+            char* tokenCopy = static_cast<char*>(renderScratchArena.alloc(len + 1));
+            if (tokenCopy) {
+              memcpy(tokenCopy, start, len);
+              tokenCopy[len] = '\0';
+              if (!gotFirst) { firstWord = tokenCopy; }
+              else if (!secondWord) { secondWord = tokenCopy; }
+            }
+          }
+        }
       }
 
-      if (!firstWord.empty()) {
+      if (firstWord) {
         // Search each page for the first word(s) of the snippet
         bool found = false;
         uint16_t resolvedPage = 0;
@@ -2566,9 +2695,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
             if (!block) continue;
             const uint16_t wordCount = block->wordCount();
             for (uint16_t wi = 0; wi < wordCount; ++wi) {
-              if (strcmp(block->wordText(wi), firstWord.c_str()) != 0) continue;
-              if (secondWord.empty()) { pageMatch = true; break; }
-              if (wi + 1 < wordCount && strcmp(block->wordText(wi + 1), secondWord.c_str()) == 0) { pageMatch = true; break; }
+              if (strcmp(block->wordText(wi), firstWord) != 0) continue;
+              if (!secondWord) { pageMatch = true; break; }
+              if (wi + 1 < wordCount && strcmp(block->wordText(wi + 1), secondWord) == 0) { pageMatch = true; break; }
             }
           }
           if (pageMatch) { resolvedPage = p; found = true; }
@@ -2797,6 +2926,17 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   auto* fcm = renderer.getFontCacheManager();
   fcm->resetStats();
 
+  // Initialize render scratch arena if needed
+  if (!renderScratchArenaInitialized) {
+    if (!renderScratchArena.init(8 * 1024)) {  // 8KB initial slab
+      LOG_ERR("ERS", "Failed to init render scratch arena");
+      return;
+    }
+    renderScratchArenaInitialized = true;
+  }
+  // Save arena checkpoint at start of render to ensure all scratch allocations are released
+  const ArenaCheckpoint renderCheckpoint = renderScratchArena.save();
+
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   const auto heapBefore = MemoryBudget::snapshot();
   auto scope = fcm->createPrewarmScope();
@@ -2890,6 +3030,8 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
             tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tiledTimings.grayLsb - tDisplay,
             tiledTimings.grayMsb - tiledTimings.grayLsb, tiledTimings.grayDisplay - tiledTimings.grayMsb,
             tiledTimings.cleanup - tiledTimings.grayDisplay, tEnd - t0);
+    // Restore arena checkpoint to release all scratch allocations
+    renderScratchArena.restore(renderCheckpoint);
     return;
   }
 
@@ -2954,6 +3096,9 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
             tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay,
             needsGrayscale ? "skipped" : "off", tEnd - t0);
   }
+  
+  // Restore arena checkpoint to release all scratch allocations from this render pass
+  renderScratchArena.restore(renderCheckpoint);
 }
 
 void EpubReaderActivity::renderStatusBar() const {
