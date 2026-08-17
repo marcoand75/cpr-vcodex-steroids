@@ -1039,6 +1039,12 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
   const auto& settings = *currentSettings;
   if (settings.empty() || rect.height <= 0) { return; }
 
+  // Use settings.size() (not the member settingsCount), so the loops are always
+  // consistent with the vector we just read. The member can be updated out of
+  // band by enterCategory() while the render runs, which caused an out-of-bounds
+  // read and intermittent use-after-free when switching tabs quickly.
+  const int settingsCount = static_cast<int>(settings.size());
+
   const int rowHeight = metrics.listRowHeight;
   const int sectionHeight = 40;
   const int sidePadding = metrics.contentSidePadding;
