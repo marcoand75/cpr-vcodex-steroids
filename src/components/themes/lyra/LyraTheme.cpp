@@ -546,7 +546,7 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
   for (const auto& tab : tabs) {
     const int fontId = tab.compact ? SMALL_FONT_ID : UI_10_FONT_ID;
     fontIds.push_back(fontId);
-    desiredWidths.push_back(renderer.getTextWidth(fontId, tab.label, EpdFontFamily::REGULAR));
+    desiredWidths.push_back(renderer.getTextWidth(fontId, tab.label.c_str(), EpdFontFamily::REGULAR));
   }
 
   const int availableWidth = std::max(0, rect.width - LyraMetrics::values.contentSidePadding * 2);
@@ -565,7 +565,7 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
     const auto& tab = tabs[i];
     const int fontId = fontIds[i];
     const std::string label =
-        textWidths[i] > 0 ? fitTabTextToWidth(renderer, fontId, tab.label, textWidths[i], EpdFontFamily::REGULAR)
+        textWidths[i] > 0 ? fitTabTextToWidth(renderer, fontId, tab.label.c_str(), textWidths[i], EpdFontFamily::REGULAR)
                           : std::string();
     const int textWidth =
         label.empty() ? 0 : renderer.getTextWidth(fontId, label.c_str(), EpdFontFamily::REGULAR);

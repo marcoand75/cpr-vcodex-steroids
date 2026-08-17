@@ -1252,7 +1252,7 @@ void SettingsActivity::render(RenderLock&&) {
         utf8LimitChars(fullLabel != nullptr ? std::string(fullLabel) : std::string(), SETTINGS_TAB_MAX_CHARS));
     const bool compact =
         utf8CodepointCount(fullLabel != nullptr ? std::string(fullLabel) : std::string()) > SETTINGS_TAB_MAX_CHARS;
-    tabs.push_back({tabLabels.back().c_str(), selectedCategoryIndex == i, compact});
+    tabs.push_back({tabLabels.back(), selectedCategoryIndex == i, compact});
   }
   GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight}, tabs,
                  selectedSettingIndex == 0);

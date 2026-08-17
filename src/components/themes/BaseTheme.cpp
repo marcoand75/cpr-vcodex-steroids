@@ -454,7 +454,7 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     const EpdFontFamily::Style family = tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
     fontIds.push_back(fontId);
     fontFamilies.push_back(family);
-    desiredWidths.push_back(renderer.getTextWidth(fontId, tab.label, family));
+    desiredWidths.push_back(renderer.getTextWidth(fontId, tab.label.c_str(), family));
   }
 
   const int availableWidth = std::max(0, rect.width - BaseMetrics::values.contentSidePadding * 2);
@@ -469,7 +469,7 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     const EpdFontFamily::Style fontFamily = fontFamilies[i];
     const int lineHeight = renderer.getLineHeight(fontId);
     const std::string label =
-        textWidths[i] > 0 ? fitTabTextToWidth(renderer, fontId, tab.label, textWidths[i], fontFamily) : std::string();
+        textWidths[i] > 0 ? fitTabTextToWidth(renderer, fontId, tab.label.c_str(), textWidths[i], fontFamily) : std::string();
     const int textWidth = label.empty() ? 0 : renderer.getTextWidth(fontId, label.c_str(), fontFamily);
 
     // Draw underline for selected tab

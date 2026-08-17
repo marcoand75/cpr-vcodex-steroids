@@ -181,8 +181,8 @@ void AchievementsActivity::render(RenderLock&&) {
   const std::string pendingTab = tabLabelWithCount(false, pendingCount);
   const std::string completedTab = tabLabelWithCount(true, completedCount);
   const std::vector<TabInfo> tabs = {
-      {pendingTab.c_str(), selectedTab == FilterTab::Pending},
-      {completedTab.c_str(), selectedTab == FilterTab::Completed},
+      {pendingTab, selectedTab == FilterTab::Pending},
+      {completedTab, selectedTab == FilterTab::Completed},
   };
   GUI.drawTabBar(renderer, Rect{0, tabY, pageWidth, metrics.tabBarHeight}, tabs, false);
 

@@ -19,7 +19,7 @@ struct Rect {
 };
 
 struct TabInfo {
-  const char* label;
+  std::string label;
   bool selected;
   bool compact = false;
 };

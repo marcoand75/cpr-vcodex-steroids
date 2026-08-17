@@ -98,6 +98,12 @@ uint32_t utf8NextCodepoint(const unsigned char** string) {
 
   // Validate continuation bytes before consuming them
   for (int i = 1; i < bytes; i++) {
+    if (chr[i] == 0) {
+      // String ends mid-codepoint (truncated input) — stop at the terminator to
+      // avoid an out-of-bounds read past the allocation.
+      *string += i;
+      return REPLACEMENT_GLYPH;
+    }
     if ((chr[i] & 0xC0) != 0x80) {
       // Missing or invalid continuation byte — skip all bytes consumed so far
       *string += i;
