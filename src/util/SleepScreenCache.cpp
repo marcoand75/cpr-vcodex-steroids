@@ -47,6 +47,23 @@ uint32_t SleepScreenCache::hashKey(const std::string& sourcePath, const uint32_t
     hash *= 16777619u;
     hash ^= static_cast<uint8_t>(SETTINGS.sleepScreenCoverMode);
     hash *= 16777619u;
+    // Image-rendering params affect the rendered framebuffer: changing them must
+    // produce a different cache key so a stale grayscale/dithering result is not
+    // reused.
+    hash ^= static_cast<uint8_t>(SETTINGS.imageDitheringEnabled);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageDitheringAlgorithm);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageLutEnabled);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageThresholdBlack);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageThresholdDark);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageThresholdLight);
+    hash *= 16777619u;
+    hash ^= static_cast<uint8_t>(SETTINGS.imageGamma);
+    hash *= 16777619u;
     return hash;
 }
 

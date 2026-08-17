@@ -1,6 +1,7 @@
 #include "PngSleepRenderer.h"
 
 #include <GfxRenderer.h>
+#include <BitmapHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <PNGdec.h>
@@ -144,7 +145,11 @@ int pngOverlayDraw(PNGDRAW* pDraw) {
       }
 
       if (alpha >= 128) {
-        ctx->renderer->drawPixel(outX, destY, gray < 128);
+        // Apply the gamma-correction LUT (already respects g_imageRenderLutEnabled).
+        // The PNG overlay path is 1-bit (drawPixel takes a bool), so the 4-level
+        // thresholds do not apply here; gamma improves perceptually correct
+        // black/white mapping before the fixed split point.
+        ctx->renderer->drawPixel(outX, destY, adjustPixel(gray) < 128);
       }
     }
 

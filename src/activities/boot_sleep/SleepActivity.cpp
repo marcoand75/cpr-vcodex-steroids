@@ -76,14 +76,14 @@ void displaySleepBuffer(const GfxRenderer& renderer) {
 }
 
 void displaySleepGrayscaleBase(const GfxRenderer& renderer) {
+  // The grayscale base MUST stay HALF: the gray nudge LUT (gc bank) is
+  // calibrated against the pixel state the single-pass HALF waveform leaves
+  // behind. A FULL (GC) base parks pixels in a different charge state, so the
+  // differential nudge lands unevenly -> blotchy noise / artefacts in gray
+  // areas (matches CrossInk/upstream guidance; cleanSleepRefresh governs the
+  // B/W sleep paths, not the grayscale base).
   renderer.clearNextRefreshOverride();
-  const auto mode = sleepRefreshMode();
-  if (mode == HalDisplay::FULL_REFRESH) {
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
-    renderer.preconditionGrayscale();
-    return;
-  }
-  renderer.displayGrayscaleBase(mode);
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 }
 
 template <typename RenderFn>

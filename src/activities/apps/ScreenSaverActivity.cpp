@@ -342,6 +342,9 @@ void ScreenSaverActivity::loop() {
 }
 
 void ScreenSaverActivity::render(RenderLock&&) {
+  // Re-pick the random overlay text position for this frame so the image swap
+  // can place the text somewhere new each cycle.
+  overlayTextPosition_ = -1;
   if (currentImagePath_.empty()) {
     renderer.clearScreen();
     renderer.displayBuffer();
@@ -589,9 +592,20 @@ void ScreenSaverActivity::drawTextOverlay() {
   const int textHeight = static_cast<int>(lines.size()) * lineHeight;
 
   bool drawPanel = SETTINGS.screenSaverShowPanel != 0;
-  int pos = SETTINGS.screenSaverTextPosition;
-  if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_RANDOM) {
-    pos = random(CrossPointSettings::SCREENSAVER_TEXT_POSITION_COUNT - 1);
+  int pos;
+  const uint8_t configuredPos = SETTINGS.screenSaverTextPosition;
+  if (configuredPos == CrossPointSettings::SCREENSAVER_TEXT_POS_RANDOM) {
+    // Resolve the random position ONCE per frame (not per pass). Rolled lazily
+    // here and cached so the BW / LSB / MSB grayscale passes and any subsequent
+    // drawTextOverlay() call in the same render all agree on the same spot,
+    // otherwise the text would land in different random places between passes
+    // and the discarded position would look like ghosting.
+    if (overlayTextPosition_ < 0) {
+      overlayTextPosition_ = random(CrossPointSettings::SCREENSAVER_TEXT_POSITION_COUNT - 1);
+    }
+    pos = overlayTextPosition_;
+  } else {
+    pos = configuredPos;
   }
 
   int baseX = margin, baseY = margin;

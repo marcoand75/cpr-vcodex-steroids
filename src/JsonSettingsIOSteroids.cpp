@@ -199,7 +199,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   s.imageThresholdBlack  = clamp(doc["imageThresholdBlack"]  | s.imageThresholdBlack,  static_cast<uint8_t>(255), s.imageThresholdBlack);
   s.imageThresholdDark   = clamp(doc["imageThresholdDark"]   | s.imageThresholdDark,   static_cast<uint8_t>(255), s.imageThresholdDark);
   s.imageThresholdLight  = clamp(doc["imageThresholdLight"]  | s.imageThresholdLight,  static_cast<uint8_t>(255), s.imageThresholdLight);
-  s.imageGamma           = clamp(doc["imageGamma"]           | s.imageGamma,           static_cast<uint8_t>(50),  s.imageGamma);
+  s.imageGamma           = clamp(doc["imageGamma"]           | s.imageGamma,           static_cast<uint8_t>(30),  s.imageGamma);
 
   loadEnum("statusBarTimeLeft", s.statusBarTimeLeft, S::STATUS_BAR_TIME_LEFT_COUNT);
 
