@@ -28,6 +28,7 @@
 #include "components/LibraryIndex.h"
 #include <Epub.h>
 #include <Xtc.h>
+#include <ZipFile.h>
 #include "components/icons/bookshelf.h"
 #include "components/icons/cleanmonitor.h"
 #include "components/icons/cover.h"
@@ -1644,12 +1645,13 @@ bool LibraryActivity::generatePageCover(const std::string& path) {
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   if (thumbPath.empty()) return false;
 
-  // Ensure the cache directory exists
-  unsigned long long hash = std::hash<std::string>{}(path);
+  // Ensure the cache directory exists (hash must match the Epub/Xtc cache path)
   char cacheDir[64];
   if (FsHelpers::hasEpubExtension(path)) {
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", hash);
+    const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
+    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
   } else if (FsHelpers::hasXtcExtension(path)) {
+    const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
     snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
   } else {
     return false;  // TXT/MD not supported for cover generation
