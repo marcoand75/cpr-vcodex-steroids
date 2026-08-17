@@ -436,9 +436,19 @@ bool ZipFile::loadZipDetails() {
     return false;  // Minimum EOCD size is 22 bytes
   }
 
-  // We scan the last 1KB (or the whole file if smaller) for the EOCD signature
-  // 0x06054b50 is stored as 0x50, 0x4b, 0x05, 0x06 in little-endian
-  const int scanRange = fileSize > 1024 ? 1024 : fileSize;
+  // We scan the tail of the file for the EOCD signature
+  // 0x06054b50 is stored as 0x50, 0x4b, 0x05, 0x06 in little-endian.
+  //
+  // The EOCD record can be preceded by a ZIP file comment of up to 65535 bytes
+  // (and be followed by an optional archive "digital signature" record). A fixed
+  // 1KB scan therefore misses valid archives whose comment is more than ~1KB,
+  // making EPUBs fail cover generation with "EOCD signature not found".
+  // Scan the full legal tail: 65535 (max comment) + 22 (min EOCD) + a margin for
+  // the signature record.
+  constexpr size_t maxCommentLen = 65535;
+  constexpr size_t eocdMinLen = 22;
+  constexpr size_t digitalSigLen = 65536 + 8;  // signature data (<=64K) + header
+  const size_t scanRange = std::min<size_t>(fileSize, maxCommentLen + eocdMinLen + digitalSigLen);
   const auto buffer = static_cast<uint8_t*>(malloc(scanRange));
   if (!buffer) {
     LOG_ERR("ZIP", "Failed to allocate memory for EOCD scan buffer");
@@ -450,11 +460,15 @@ bool ZipFile::loadZipDetails() {
 
   // Scan backwards for the signature
   int foundOffset = -1;
-  for (int i = scanRange - 22; i >= 0; i--) {
-    constexpr uint32_t signature = 0x06054b50;
-    if (*reinterpret_cast<uint32_t*>(&buffer[i]) == signature) {
-      foundOffset = i;
-      break;
+  // memcmp avoids a misaligned uint32_t load (the signature can sit at any byte
+  // offset within the comment tail).
+  static constexpr uint8_t eocdSig[4] = {0x50, 0x4b, 0x05, 0x06};
+  if (scanRange >= 22) {
+    for (size_t i = scanRange - 22 + 1; i-- > 0;) {
+      if (memcmp(&buffer[i], eocdSig, 4) == 0) {
+        foundOffset = static_cast<int>(i);
+        break;
+      }
     }
   }
 
