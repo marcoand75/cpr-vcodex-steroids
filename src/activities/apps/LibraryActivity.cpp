@@ -204,11 +204,17 @@ void LibraryActivity::deleteBookFile(const std::string& bookPath) {
   Storage.remove(bookPath.c_str());
 
   // 2. Remove the per-book cache directory (epub_<hash> or xtc_<hash>)
-  unsigned long long hash = std::hash<std::string>{}(bookPath);
   if (FsHelpers::hasEpubExtension(bookPath) || FsHelpers::hasXtcExtension(bookPath)) {
     char cacheDir[64];
-    const char* prefix = FsHelpers::hasEpubExtension(bookPath) ? "epub" : "xtc";
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/%s_%llu", prefix, hash);
+    if (FsHelpers::hasEpubExtension(bookPath)) {
+      // EPUB caches under FNV-1a 64-bit (see Epub::cachePathForFilePath).
+      const uint64_t hash = ZipFile::fnvHash64(bookPath.c_str(), bookPath.size());
+      snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
+    } else {
+      // Xtc caches under std::hash (see Xtc.h).
+      const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(bookPath));
+      snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
+    }
     if (Storage.exists(cacheDir)) {
       Storage.rmdir(cacheDir);
       LOG_DBG("LIB", "DelBook: removed cache dir %s", cacheDir);
