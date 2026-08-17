@@ -436,68 +436,43 @@ bool ZipFile::loadZipDetails() {
     return false;  // Minimum EOCD size is 22 bytes
   }
 
-  // Find the EOCD signature 0x06054b50 (stored as 0x50, 0x4b, 0x05, 0x06 LE).
-  //
-  // The EOCD record can be preceded by a ZIP archive comment of up to 65535
-  // bytes (and followed by an optional archive "digital signature" record), so a
-  // naive fixed-size tail scan either misses valid archives (comment >1KB) or
-  // tries to heap-allocate a ~131KB contiguous buffer, which fails on the
-  // ESP32-C3's constrained heap ("Failed to allocate memory for EOCD scan
-  // buffer"). Instead we stream the legal tail (max comment + min EOCD + digital
-  // signature margin, capped at fileSize) in small 512-byte windows, reusing one
-  // stack-side fixed buffer, and scan each window backwards.
-  constexpr size_t maxCommentLen = 65535;
-  constexpr size_t eocdMinLen = 22;
-  constexpr size_t digitalSigLen = 65536 + 8;  // signature data (<=64K) + header
-  const size_t scanLen = std::min<size_t>(fileSize, maxCommentLen + eocdMinLen + digitalSigLen);
+  // We scan the last 1KB (or the whole file if smaller) for the EOCD signature
+  // 0x06054b50 is stored as 0x50, 0x4b, 0x05, 0x06 in little-endian
+  const int scanRange = fileSize > 1024 ? 1024 : fileSize;
+  const auto buffer = static_cast<uint8_t*>(malloc(scanRange));
+  if (!buffer) {
+    LOG_ERR("ZIP", "Failed to allocate memory for EOCD scan buffer");
+    return false;
+  }
 
-  static constexpr uint8_t eocdSig[4] = {0x50, 0x4b, 0x05, 0x06};
-  constexpr size_t winSize = 512;
-  constexpr size_t overlap = sizeof(eocdSig) - 1;  // find signatures crossing a window boundary
+  file.seek(fileSize - scanRange);
+  file.read(buffer, scanRange);
 
-  uint8_t window[winSize];
-  int foundOffset = -1;  // offset from scan start (start of the scanned tail)
-
-  size_t scanned = 0;
-  while (scanned < scanLen && foundOffset < 0) {
-    const size_t chunk = std::min(winSize, scanLen - scanned);
-    // seek relative to the START of the scanned tail, walking backwards.
-    const size_t start = scanLen - scanned - chunk;
-    if (!file.seek(start)) break;
-    const size_t read = file.read(window, chunk);
-    if (read != chunk) break;
-
-    // Scan this window backwards. Find the LAST signature occurrence.
-    for (size_t i = chunk; i-- > 0;) {
-      if (i + sizeof(eocdSig) <= chunk && memcmp(&window[i], eocdSig, 4) == 0) {
-        foundOffset = static_cast<int>(start + i);
-        break;
-      }
+  // Scan backwards for the signature
+  int foundOffset = -1;
+  for (int i = scanRange - 22; i >= 0; i--) {
+    constexpr uint32_t signature = 0x06054b50;
+    if (*reinterpret_cast<uint32_t*>(&buffer[i]) == signature) {
+      foundOffset = i;
+      break;
     }
-    // Advance past the window, keeping `overlap` bytes for the boundary case.
-    scanned += chunk - overlap;
   }
 
   if (foundOffset == -1) {
     LOG_ERR("ZIP", "EOCD signature not found in zip file");
+    free(buffer);
     return false;
   }
 
-  // Extract the EOCD fields with a seek + byte reads (no unaligned larger loads).
-  // EOCD layout, offsets relative to the signature:
-  //   +10: total number of entries (2 bytes)
-  //   +16: offset of start of central directory (4 bytes)
-  uint8_t eocdFields[6];
-  if (!file.seek(static_cast<size_t>(foundOffset) + 10) || file.read(eocdFields, 6) != 6) {
-    LOG_ERR("ZIP", "Failed to read EOCD fields");
-    return false;
-  }
-  zipDetails.totalEntries = static_cast<uint16_t>(eocdFields[0]) | (static_cast<uint16_t>(eocdFields[1]) << 8);
-  zipDetails.centralDirOffset = static_cast<uint32_t>(eocdFields[2]) | (static_cast<uint32_t>(eocdFields[3]) << 8) |
-                                (static_cast<uint32_t>(eocdFields[4]) << 16) |
-                                (static_cast<uint32_t>(eocdFields[5]) << 24);
+  // Now extract the values we need from the EOCD record
+  // Relative positions within EOCD:
+  // Offset 10: Total number of entries (2 bytes)
+  // Offset 16: Offset of start of central directory with respect to the starting disk number (4 bytes)
+  zipDetails.totalEntries = *reinterpret_cast<uint16_t*>(&buffer[foundOffset + 10]);
+  zipDetails.centralDirOffset = *reinterpret_cast<uint32_t*>(&buffer[foundOffset + 16]);
   zipDetails.isSet = true;
 
+  free(buffer);
   return true;
 }
 
