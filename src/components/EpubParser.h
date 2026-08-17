@@ -21,14 +21,4 @@ bool extractMetadata(const std::string& epubPath, const std::string& cacheDir,
                      std::string& outTitle, std::string& outAuthor,
                      std::string* outSeries = nullptr, float* outSeriesIndex = nullptr);
 
-/**
- * @brief Extracts and generates a 1-bit BMP cover thumbnail from an EPUB.
- * Handles JPEG and PNG formats, including EXIF thumbnail fallback for low-memory situations.
- * @param epubPath Path to the .epub file.
- * @param coverW Target thumbnail width.
- * @param coverH Target thumbnail height.
- * @return true if the thumbnail was successfully generated and saved.
- */
-bool generateCover(const std::string& epubPath, int coverW, int coverH);
-
 } // namespace EpubParser
