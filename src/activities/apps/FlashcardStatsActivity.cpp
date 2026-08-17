@@ -50,6 +50,7 @@ void FlashcardStatsActivity::reloadDecks() {
 
 void FlashcardStatsActivity::onEnter() {
   Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
   reloadDecks();
   requestUpdate();
 }

@@ -509,6 +509,7 @@ void ReadingProfileActivity::rebuildProfileCache() {
 
 void ReadingProfileActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   scrollOffset = 0;
   maxScrollOffset = 0;

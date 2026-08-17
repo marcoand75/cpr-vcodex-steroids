@@ -105,6 +105,7 @@ class ReadingStatsStore {
   mutable bool persistenceSuspended = false;
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
+  mutable bool loaded_ = false;
   bool _readingPaused = false;
 
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
@@ -212,6 +213,9 @@ class ReadingStatsStore {
   int clearAutoBackups() const;
   bool loadFromFile();
   void markLoadSkippedForRecovery();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; }
   bool releaseMemoryForNetwork();
   bool reloadAfterNetwork();
   void requestHomeInvalidation() const { homeInvalidationRequested = true; }

@@ -105,6 +105,8 @@ void AchievementsActivity::refreshEntries() {
 
 void AchievementsActivity::onEnter() {
   Activity::onEnter();
+  ACHIEVEMENTS.ensureLoaded();
+  READING_STATS.ensureLoaded();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   refreshEntries();

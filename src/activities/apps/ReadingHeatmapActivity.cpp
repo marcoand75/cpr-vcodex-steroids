@@ -301,6 +301,7 @@ void drawLegend(GfxRenderer& renderer, const Rect& rect) {
 
 void ReadingHeatmapActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
 
   uint32_t referenceDayOrdinal = 0;
   resolveReferenceMonth(viewedYear, viewedMonth, referenceDayOrdinal);

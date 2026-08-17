@@ -282,6 +282,7 @@ void drawReadingChart(GfxRenderer& renderer, const Rect& rect, const std::vector
 
 void ReadingStatsExtendedActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   scrollOffset = 0;
   requestUpdate();
 }

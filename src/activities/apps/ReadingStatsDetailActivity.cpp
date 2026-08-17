@@ -394,6 +394,7 @@ void drawCover(GfxRenderer& renderer, const Rect& rect, const std::string& cover
 
 void ReadingStatsDetailActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   invalidateBaseScreenBuffer();
   resolvedCoverBmpPath.clear();
   coverLoadPending = false;

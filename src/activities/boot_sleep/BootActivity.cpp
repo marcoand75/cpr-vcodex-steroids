@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include "ReadingStatsStore.h"
 #include "fontIds.h"
 #include "images/Logo.h"
 #include "version.h"
@@ -34,6 +35,11 @@ void BootActivity::onEnter() {
   renderer.drawCenteredText(SMALL_FONT_ID, subtitleY, tr(STR_BOOTING));
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, CROSSPOINT_VERSION);
   renderer.displayBuffer();
+
+  // Load reading stats while the boot screen is visible. This keeps setup()
+  // memory-light while ensuring stats are ready for HomeActivity/carousel
+  // progress badges without fragmenting the heap later.
+  READING_STATS.ensureLoaded();
 
   if (restoreDarkMode) {
     renderer.setDarkMode(true);

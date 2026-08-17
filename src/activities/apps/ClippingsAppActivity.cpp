@@ -66,6 +66,8 @@ bool loadClippingsForBook(const std::string& path, ClippingStore& store) {
 
 void ClippingsAppActivity::refreshEntries() {
   entries.clear();
+  READING_STATS.ensureLoaded();
+  FAVORITES.ensureLoaded();
   std::vector<ClippingBookCandidate> candidates;
   for (const auto& book : READING_STATS.getBooks())
     addCandidate(candidates, ClippingBookCandidate{book.bookId, book.path, book.title, book.author});
@@ -139,6 +141,7 @@ void ClippingsAppActivity::confirmDeleteSelectedBook() {
 
 void ClippingsAppActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   refreshEntries();
   requestUpdate();
 }

@@ -956,6 +956,9 @@ bool sync(const char* rootDir) {
 
 // Populate a BookRef from a Record.
 static void recordToBookRef(const Record& rec, BookRef& ref) {
+  HIDDEN_BOOKS.ensureLoaded();
+  FAVORITES.ensureLoaded();
+  READING_STATS.ensureLoaded();
   ref.id = rec.id;
   std::strncpy(ref.title, rec.title, 64); ref.title[64] = '\0';
   std::strncpy(ref.author, rec.author, 48); ref.author[48] = '\0';
@@ -970,6 +973,9 @@ static void recordToBookRef(const Record& rec, BookRef& ref) {
 // Check if a Record matches the active filter (favourites/recent/etc.)
 // Hidden books are always excluded except when explicitly showing hidden only.
 static bool matchesFilter(const Record& rec, FilterMode m) {
+  HIDDEN_BOOKS.ensureLoaded();
+  FAVORITES.ensureLoaded();
+  READING_STATS.ensureLoaded();
   // Hidden books are excluded from all standard views.
   if (m != FilterMode::HIDDEN && HIDDEN_BOOKS.isHidden(rec.path)) {
     LOG_DBG("LIBIDX", "matchesFilter: hidden book excluded: %s", rec.path);

@@ -187,5 +187,15 @@ bool FavoritesStore::loadFromFile() {
     return false;
   }
 
-  return JsonSettingsIO::loadFavorites(*this, json.c_str());
+  const bool loaded = JsonSettingsIO::loadFavorites(*this, json.c_str());
+  if (loaded) {
+    loaded_ = true;
+  }
+  return loaded;
+}
+
+bool FavoritesStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }

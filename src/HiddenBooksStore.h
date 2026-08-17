@@ -21,6 +21,8 @@ class HiddenBooksStore {
   // Toggle: if hidden -> unhide, if not -> hide. Returns new state (true=hidden).
   bool toggleBook(const std::string& path);
   const std::vector<HiddenBookEntry>& getBooks() const { return hiddenBooks; }
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
 
  private:
   HiddenBooksStore() = default;
@@ -31,6 +33,7 @@ class HiddenBooksStore {
   void normalizeAndDeduplicate();
 
   std::vector<HiddenBookEntry> hiddenBooks;
+  mutable bool loaded_ = false;
 };
 
 #define HIDDEN_BOOKS HiddenBooksStore::getInstance()

@@ -36,6 +36,7 @@ int wrapIndex(const int value, const int delta, const int count) {
 
 void BookReadingAdjustmentActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   selectedField = 0;
   selectedOperation = 0;
   selectedDuration = 1;

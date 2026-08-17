@@ -37,6 +37,7 @@ uint32_t getInitialStartDateDayOrdinal(const std::string& bookPath) {
 
 void BookStatsActionsActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   selectedIndex = ACTION_ADJUST_READING_TIME;
   startDateApplyFailed = false;
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);

@@ -25,6 +25,7 @@ class FavoritesStore {
   static FavoritesStore instance;
 
   std::vector<FavoriteBook> favoriteBooks;
+  mutable bool loaded_ = false;
 
   friend bool JsonSettingsIO::saveFavorites(const FavoritesStore&, const char*);
   friend bool JsonSettingsIO::loadFavorites(FavoritesStore&, const char*);
@@ -51,6 +52,8 @@ class FavoritesStore {
 
   bool saveToFile() const;
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
   FavoriteBook getDataFromBook(std::string path) const;
 
  private:

@@ -56,6 +56,7 @@ bool FlashcardRecentsActivity::openSelectedDeck() {
 
 void FlashcardRecentsActivity::onEnter() {
   Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
   reloadDecks();
   requestUpdate();
 }

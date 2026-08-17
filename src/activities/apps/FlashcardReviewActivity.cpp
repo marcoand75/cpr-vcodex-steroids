@@ -377,6 +377,7 @@ void FlashcardReviewActivity::finishWithSummary() {
 
 void FlashcardReviewActivity::onEnter() {
   Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
   originalOrientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
   renderer.requestNextFullRefresh();

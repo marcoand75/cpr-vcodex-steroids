@@ -119,6 +119,8 @@ bool loadBookmarksForBook(const std::string& path, const std::string& preferredB
 
 void BookmarksAppActivity::refreshEntries() {
   entries.clear();
+  READING_STATS.ensureLoaded();
+  FAVORITES.ensureLoaded();
 
   std::vector<BookmarkBookCandidate> candidates;
   for (const auto& book : READING_STATS.getBooks()) {
@@ -212,6 +214,7 @@ void BookmarksAppActivity::confirmDeleteSelectedBook() {
 
 void BookmarksAppActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   refreshEntries();
   requestUpdate();
 }

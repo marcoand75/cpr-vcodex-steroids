@@ -1703,6 +1703,7 @@ void ReadingStatsStore::reset() {
   sessionLog.clear();
   activeSession = {};
   lastSessionSnapshot = {};
+  loaded_ = false;
   markDirty();
   saveToFile();
 }
@@ -1876,6 +1877,8 @@ bool ReadingStatsStore::loadFromFile() {
   if (!loaded) {
     markLoadSkippedForRecovery();
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats persistence suspended after load failure");
+  } else {
+    loaded_ = true;
   }
   return loaded;
 }
@@ -1888,6 +1891,12 @@ void ReadingStatsStore::markLoadSkippedForRecovery() {
   lastSessionSnapshot = {};
   dirty = false;
   invalidateSummaryCache();
+}
+
+bool ReadingStatsStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 bool ReadingStatsStore::releaseMemoryForNetwork() {
@@ -1919,6 +1928,7 @@ bool ReadingStatsStore::releaseMemoryForNetwork() {
   invalidateSummaryCache();
   dirty = false;
   lastSaveMs = millis();
+  loaded_ = false;
 
   LOG_DBG("RST", "After network release: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));

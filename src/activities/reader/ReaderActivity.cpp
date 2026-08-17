@@ -8,6 +8,7 @@
 #include "Epub.h"
 #include "EpubReaderActivity.h"
 #include "KOReaderCredentialStore.h"
+#include "ReadingStatsStore.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
 #include "Xtc.h"
@@ -122,6 +123,8 @@ void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
 
 void ReaderActivity::onEnter() {
   Activity::onEnter();
+
+  READING_STATS.ensureLoaded();
 
   if (initialBookPath.empty()) {
     goToLibrary();  // Start from root when entering via Browse

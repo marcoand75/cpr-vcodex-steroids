@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include "AchievementsStore.h"
+#include "ReadingStatsStore.h"
 #include "SleepPreviewActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -48,6 +50,8 @@ void SleepAppActivity::onNav(void* ctx, int delta) {
 
 void SleepAppActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
+  ACHIEVEMENTS.ensureLoaded();
   loadDirectories();
 
   listInputMapper.setBackHandler(onBack, this, false);

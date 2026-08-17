@@ -573,7 +573,14 @@ bool FlashcardsStore::loadFromFile() {
     recentDeckIds.resize(MAX_RECENT_DECKS);
   }
 
+  loaded_ = true;
   return true;
+}
+
+bool FlashcardsStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std::string* error) const {

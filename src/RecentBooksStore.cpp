@@ -192,6 +192,9 @@ bool RecentBooksStore::loadFromFile() {
       LOG_DBG("HCR-FRAG", "RBS loadRecentBooks: free=%d maxA=%d frag=%d ok=%d",
               static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
               static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()), ok ? 1 : 0);
+      if (ok) {
+        loaded_ = true;
+      }
       return ok;
     }
   }
@@ -202,11 +205,18 @@ bool RecentBooksStore::loadFromFile() {
       saveToFile();
       Storage.rename(RECENT_BOOKS_FILE_BIN, RECENT_BOOKS_FILE_BAK);
       LOG_DBG("RBS", "Migrated recent.bin to recent.json");
+      loaded_ = true;
       return true;
     }
   }
 
   return false;
+}
+
+bool RecentBooksStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 bool RecentBooksStore::loadFromBinaryFile() {

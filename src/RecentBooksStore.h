@@ -25,6 +25,7 @@ class RecentBooksStore {
   static RecentBooksStore instance;
 
   std::vector<RecentBook> recentBooks;
+  mutable bool loaded_ = false;
 
   friend bool JsonSettingsIO::saveRecentBooks(const RecentBooksStore&, const char*);
   friend bool JsonSettingsIO::loadRecentBooks(RecentBooksStore&, const char*);
@@ -63,6 +64,8 @@ class RecentBooksStore {
   bool saveToFile() const;
 
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
   RecentBook getDataFromBook(std::string path) const;
   const RecentBook* findBook(const std::string& path) const;
 

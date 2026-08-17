@@ -729,14 +729,8 @@ void setup() {
     READING_STATS.markLoadSkippedForRecovery();
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
-    if (READING_STATS.loadFromFile()) {
-      if (!isSilentReboot) {
-        READING_STATS.createDueAutoBackup();
-      } else {
-        LOG_DBG("MAIN", "Skipping reading stats auto-backup on silent reboot");
-      }
-    }
-    LOG_DBG("BOOT", "After reading stats: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    // Reading stats are loaded on demand by the first activity that needs them.
+    LOG_DBG("BOOT", "Reading stats deferred (loaded on demand)");
   }
 
   if (skipRecentBooksLoad) {
@@ -751,12 +745,12 @@ void setup() {
     logSkip("Skipping favorites load due to recovery mode");
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Favorites);
-    FAVORITES.loadFromFile();
-    LOG_DBG("BOOT", "After favorites: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    // Favorites are loaded on demand by HomeActivity/LibraryActivity to save boot heap.
+    LOG_DBG("BOOT", "Favorites deferred (loaded on demand)");
   }
 
-  HIDDEN_BOOKS.loadFromFile();
-  LOG_DBG("BOOT", "After hidden books: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  // Hidden books are loaded on demand by LibraryActivity to save boot heap.
+  LOG_DBG("BOOT", "Hidden books deferred (loaded on demand)");
 
   if (skipFlashcardsLoad || isSilentReboot) {
     if (isSilentReboot) {
@@ -766,16 +760,16 @@ void setup() {
     }
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Flashcards);
-    FLASHCARDS.loadFromFile();
-    LOG_DBG("BOOT", "After flashcards: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    // Flashcards are loaded on demand by FlashcardsAppActivity/QuickCardsActivity.
+    LOG_DBG("BOOT", "Flashcards deferred (loaded on demand)");
   }
 
   if (skipAchievementsLoad) {
     logSkip("Skipping achievements load due to recovery mode");
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::Achievements);
-    ACHIEVEMENTS.loadFromFile();
-    LOG_DBG("BOOT", "After achievements: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    // Achievements are loaded on demand by AchievementsActivity/SleepActivity.
+    LOG_DBG("BOOT", "Achievements deferred (loaded on demand)");
   }
 
   const bool countUsefulStart = !isSilentReboot && !forceHomeBoot &&

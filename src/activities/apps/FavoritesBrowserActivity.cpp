@@ -117,6 +117,7 @@ void FavoritesBrowserActivity::loadFiles() {
 
 void FavoritesBrowserActivity::onEnter() {
   Activity::onEnter();
+  FAVORITES.ensureLoaded();
   selectorIndex = 0;
 
   auto root = Storage.open(basepath.c_str());

@@ -67,6 +67,7 @@ void FavoritesAppActivity::continuousNav(void* ctx, int delta) {
 
 void FavoritesAppActivity::onEnter() {
   Activity::onEnter();
+  FAVORITES.ensureLoaded();
   refreshEntries();
 
   listInputMapper.setBackHandler(onBack, this, true);

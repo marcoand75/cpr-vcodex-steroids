@@ -117,6 +117,7 @@ void FlashcardsAppActivity::continuousNav(void* ctx, int delta) {
 
 void FlashcardsAppActivity::onEnter() {
   Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   refreshCounts();
 

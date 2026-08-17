@@ -35,6 +35,7 @@ void drawMetricCard(GfxRenderer& renderer, const Rect& rect, const char* label, 
 }  // namespace
 
 void FlashcardDeckStatsActivity::loadDeckData() {
+  FLASHCARDS.ensureLoaded();
   errorMessage.clear();
   if (!FLASHCARDS.loadDeck(deckPath, deck, &errorMessage)) {
     loaded = false;

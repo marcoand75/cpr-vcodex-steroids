@@ -64,6 +64,7 @@ namespace {
 constexpr unsigned long RECENT_BOOK_LONG_PRESS_MS = 1000;
 constexpr int DEFAULT_HOME_SHORTCUT_PAGE_SIZE = 4;
 constexpr int LYRA_HOME_SHORTCUT_PAGE_SIZE = 5;
+constexpr int HOME_MAX_BOOKS = 10;
 constexpr const char* CAROUSEL_FRAME_CACHE_DIR_LYRA = "/.crosspoint/home-carousel-cache";
 constexpr const char* CAROUSEL_FRAME_CACHE_DIR_MARCOAND75 = "/.crosspoint/marcoand75-cache-v4";
 
@@ -464,6 +465,7 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
   invalidateCarouselFrameHash();
   recentBooks.clear();
   if (homeUsesFavorites()) {
+    FAVORITES.ensureLoaded();
     const auto books = FAVORITES.getBooks();
     std::vector<std::string> staleFavorites;
     const bool unlimited = (maxBooks <= 0);
@@ -740,8 +742,7 @@ void HomeActivity::onEnter() {
   carouselCoverLoadAttemptPath.clear();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  // Carousel themes show all books (0 = unlimited); other themes respect the configured count.
-  reloadHomeBooks(isLyraCarouselTheme() ? 0 : metrics.homeRecentBooksCount);
+  reloadHomeBooks(std::min(HOME_MAX_BOOKS, metrics.homeRecentBooksCount));
 
   LOG_DBG("HOME", "onEnter: after reloadHomeBooks heap=%u maxA=%u books=%zu",
                ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
@@ -750,6 +751,7 @@ void HomeActivity::onEnter() {
   // statistics) and force a fresh render — important after returning from a
   // finished read so the carousel shows updated progress/last-read at once.
   if (isLyraCarouselTheme()) {
+    READING_STATS.ensureLoaded();
     invalidateResidentCarouselFrame();
     invalidateCarouselFrameHash();
     carouselFramesReady = false;
@@ -1232,7 +1234,7 @@ void HomeActivity::loop() {
                                            : RECENT_BOOKS.removeBook(selectedBook.path);
                   if (removed) {
                     const auto& metrics = UITheme::getInstance().getMetrics();
-                    reloadHomeBooks(isLyraCarouselTheme() ? 0 : metrics.homeRecentBooksCount);
+                    reloadHomeBooks(std::min(HOME_MAX_BOOKS, metrics.homeRecentBooksCount));
                     if (recentBooks.empty()) {
                       selectorIndex = 0;
                     } else if (currentSelection >= static_cast<int>(recentBooks.size())) {
@@ -1374,7 +1376,7 @@ void HomeActivity::loop() {
           startActivityForResult(std::make_unique<FavoritesAppActivity>(renderer, mappedInput),
                                  [this](const ActivityResult&) {
                                    const auto& metrics = UITheme::getInstance().getMetrics();
-                                   reloadHomeBooks(isLyraCarouselTheme() ? 0 : metrics.homeRecentBooksCount);
+                                   reloadHomeBooks(std::min(HOME_MAX_BOOKS, metrics.homeRecentBooksCount));
                                    requestFreshHomeRender(true);
                                  });
           break;

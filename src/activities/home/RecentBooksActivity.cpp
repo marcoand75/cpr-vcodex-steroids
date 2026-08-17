@@ -25,6 +25,7 @@ std::string getRecentBookConfirmationLabel(const RecentBook& book) {
 void RecentBooksActivity::loadRecentBooks() {
   recentBooks.clear();
   recentBookCompletedStates.clear();
+  READING_STATS.ensureLoaded();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(books.size());
   recentBookCompletedStates.reserve(books.size());

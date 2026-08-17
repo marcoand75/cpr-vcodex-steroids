@@ -131,6 +131,7 @@ bool FlashcardBrowserActivity::openDeckPath(const std::string& path) {
 
 void FlashcardBrowserActivity::onEnter() {
   Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
   selectorIndex = 0;
 
   auto root = Storage.open(basepath.c_str());

@@ -108,6 +108,7 @@ void drawBookRow(GfxRenderer& renderer, const Rect& rect, const ReadingBookStats
 
 void ReadingStatsActivity::onEnter() {
   Activity::onEnter();
+  READING_STATS.ensureLoaded();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   selectedIndex = READING_STATS.getBooks().empty() ? 0 : 1;
 

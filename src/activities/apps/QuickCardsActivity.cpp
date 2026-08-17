@@ -14,6 +14,7 @@
 #include <string>
 
 #include "CrossPointSettings.h"
+#include "FlashcardsStore.h"
 #include "components/PanelDrawHelper.h"
 #include "components/UITheme.h"
 #include "components/icons/quickcards.h"
@@ -111,6 +112,7 @@ QuickCardsActivity::QuickCardsActivity(GfxRenderer& r, MappedInputManager& m)
 
 void QuickCardsActivity::onEnter() {
     Activity::onEnter();
+    FLASHCARDS.ensureLoaded();
     selectedIndex = 0; fullscreenMode = false;
     cards.clear(); currentText.clear();
     scanDirectory(); requestUpdate();

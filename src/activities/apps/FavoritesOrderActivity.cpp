@@ -27,6 +27,7 @@ std::string getFavoriteTitle(const FavoriteBook& book) {
 
 void FavoritesOrderActivity::onEnter() {
   Activity::onEnter();
+  FAVORITES.ensureLoaded();
   reloadEntries();
   requestUpdate();
 }

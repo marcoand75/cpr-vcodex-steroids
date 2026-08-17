@@ -6,7 +6,11 @@
 #include <algorithm>
 
 #include "AchievementsActivity.h"
+#include "AchievementsStore.h"
 #include "BookmarksAppActivity.h"
+#include "FavoritesStore.h"
+#include "ReadingStatsStore.h"
+#include "RecentBooksStore.h"
 #include "DictionaryActivity.h"
 #include "FavoritesAppActivity.h"
 #include "FlashcardsAppActivity.h"
@@ -52,6 +56,10 @@ void AppsActivity::onEnter() {
                        appShortcuts.end());
   }
   selectedIndex = 0;
+  READING_STATS.ensureLoaded();
+  RECENT_BOOKS.ensureLoaded();
+  FAVORITES.ensureLoaded();
+  ACHIEVEMENTS.ensureLoaded();
   rebuildShortcutSubtitles();
   requestUpdate();
 }

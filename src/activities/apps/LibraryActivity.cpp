@@ -259,6 +259,10 @@ void LibraryActivity::onEnter() {
   Activity::onEnter();
   LOG_DBG("LIB", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
+  HIDDEN_BOOKS.ensureLoaded();
+  FAVORITES.ensureLoaded();
+  READING_STATS.ensureLoaded();
+
   applyLayoutFromSettings();
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;

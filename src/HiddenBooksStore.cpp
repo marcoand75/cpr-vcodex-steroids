@@ -83,7 +83,14 @@ bool HiddenBooksStore::loadFromFile() {
     for (const auto& e : hiddenBooks) {
         LOG_DBG("HBN", "  hidden: bookId=%s path=%s", e.bookId.c_str(), e.path.c_str());
     }
+    loaded_ = true;
     return true;
+}
+
+bool HiddenBooksStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 bool HiddenBooksStore::saveToFile() const {

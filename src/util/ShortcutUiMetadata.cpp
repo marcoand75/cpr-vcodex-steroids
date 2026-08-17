@@ -37,6 +37,7 @@ std::string getStatsShortcutSubtitle() {
 }
 
 std::string getAchievementsShortcutSubtitle() {
+  ACHIEVEMENTS.ensureLoaded();
   const auto views = ACHIEVEMENTS.buildViews();
   const size_t unlockedCount =
       std::count_if(views.begin(), views.end(), [](const AchievementView& view) { return view.state.unlocked; });

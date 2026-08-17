@@ -104,6 +104,8 @@ class FlashcardsStore {
 
   bool saveToFile() const;
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
 
   bool loadDeck(const std::string& path, FlashcardDeck& deck, std::string* error = nullptr) const;
   bool loadDeckCard(const FlashcardDeck& deck, int cardIndex, FlashcardCard& card,
@@ -120,9 +122,11 @@ class FlashcardsStore {
 
   const FlashcardDeckRecord* findDeckRecord(const std::string& deckIdOrPath) const;
 
-  void markCardSuccess(FlashcardCardProgress& progress) const;
-  void markCardFailure(FlashcardCardProgress& progress) const;
-  void markCardSkipped(FlashcardCardProgress& progress) const;
+   void markCardSuccess(FlashcardCardProgress& progress) const;
+   void markCardFailure(FlashcardCardProgress& progress) const;
+   void markCardSkipped(FlashcardCardProgress& progress) const;
+
+   mutable bool loaded_ = false;
 };
 
 #define FLASHCARDS FlashcardsStore::getInstance()
