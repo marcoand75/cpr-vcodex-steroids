@@ -1479,14 +1479,24 @@ void LibraryActivity::render(RenderLock&&) {
       }
     }
 
-    // Pagination dots
+    // Pagination dots (wrap onto multiple rows when there are many pages)
     if (totalPages > 1) {
-      constexpr int DS = 8, DSp = 6;
-      int dotW = totalPages * DS + (totalPages - 1) * DSp;
-      int sx = (pageWidth - dotW) / 2;
-      int sy = pageHeight - metrics.buttonHintsHeight - 14 - DS;
+      constexpr int DS = 8, DSp = 6, rowGap = 4;
+      const int maxDotW = pageWidth - 16;  // keep dots inside the panel with a margin
+      const int dotsPerRow = std::max(1, (maxDotW + DSp) / (DS + DSp));
+      const int numRows = (totalPages + dotsPerRow - 1) / dotsPerRow;
+      // Bottom of the dot block sits above the button-hints bar; taller blocks
+      // (extra rows) push the block up so it never overlaps the hints.
+      const int bottomY = pageHeight - metrics.buttonHintsHeight - 14;
+      const int blockTop = bottomY - numRows * DS - (numRows - 1) * rowGap;
       for (int p = 0; p < totalPages; ++p) {
-        int dx = sx + p * (DS + DSp);
+        const int r = p / dotsPerRow;
+        const int c = p % dotsPerRow;
+        const int rowDots = (r == numRows - 1) ? (totalPages - r * dotsPerRow) : dotsPerRow;
+        const int rowW = rowDots * DS + (rowDots - 1) * DSp;
+        const int sx = (pageWidth - rowW) / 2;
+        const int sy = blockTop + r * (DS + rowGap);
+        const int dx = sx + c * (DS + DSp);
         if (p == curPage - 1) renderer.fillRect(dx, sy, DS, DS, true);
         else renderer.drawRect(dx, sy, DS, DS, true);
       }
