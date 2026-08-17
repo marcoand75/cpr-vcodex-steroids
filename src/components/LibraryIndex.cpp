@@ -255,7 +255,7 @@ std::string thumbPathFor(const std::string& bookPath, int coverW, int coverH) {
   } else if (FsHelpers::hasTxtExtension(bookPath) || FsHelpers::hasMarkdownExtension(bookPath)) {
     std::snprintf(buf, sizeof(buf), "/.crosspoint/txt_%llu/cover.bmp", hash);
   } else {
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/epub_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
+    std::snprintf(buf, sizeof(buf), "/.crosspoint/epub_%llu/thumb_%dx%d_fit.bmp", hash, coverW, coverH);
   }
   return buf;
 }

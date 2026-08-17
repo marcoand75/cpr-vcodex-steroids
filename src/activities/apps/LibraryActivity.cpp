@@ -1670,7 +1670,10 @@ bool LibraryActivity::generatePageCover(const std::string& path) {
       LOG_DBG("LIB", "CovGen: EPUB SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
       return false;
     }
-    const bool ok = epub.generateThumbBmp(coverWidth_, coverHeight_);
+    // Adaptive contain: the resulting BMP is never larger than the tile box, so
+    // the runtime drawBitmap() never needs to crop a "fill" (oversized) image,
+    // which produced out-of-range pixels on non-3:5 cover ratios.
+    const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
     LOG_DBG("LIB", "CovGen: EPUB thumb gen=%d path=%s heap=%u maxA=%u",
             ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     return ok;
