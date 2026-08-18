@@ -1021,6 +1021,7 @@ STR_PRESS_CONFIRM_FULL_ARTICLE: "Premi Seleziona per scaricare e convertire arti
 STR_SEARCH_HINT: "Cerca su Wikipedia..."
 STR_RECENT_SEARCHES: "Ricerche recenti"
 STR_CACHED_PAGES: "Pagine in cache"
+STR_DELETE_CACHED_PAGE: "Eliminare la pagina in cache?"
 STR_WIKIPEDIA_DOWNLOAD_NOTE: "Premi Seleziona per scaricare e convertire l'articolo completo"
 STR_WIKIPEDIA_DOWNLOAD_NOTE2: "Viene salvato in cache per la lettura offline"
 STR_WIKIPEDIA_OPENING_NOTE: "Premi Seleziona per aprire l'articolo completo in cache"

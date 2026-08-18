@@ -7,17 +7,19 @@
 #include "CrossPointSettings.h"
 #include "../Activity.h"
 #include "util/MarkdownReader.h"
+#include "util/ScreenshotInfo.h"
 
 /**
- * Reader for cached Wikipedia articles (.wiki files).
+ * Reader for cached Wikipedia articles (per-article cache folders containing
+ * article.md + index.bin + progress.bin).
  *
- * Uses the exact same reading/rendering pipeline as TxtReaderActivity (markdown
+ * Uses the same reading/rendering pipeline as TxtReaderActivity (markdown
  * span parsing, chunked file reading with span-aware wrapping, page index in
  * RAM + a per-article index.bin cache, two-pass prewarm rendering) but WITHOUT
  * the book-reader side effects: no reading stats, achievements, recent books,
  * progress files, completed-book mover, or orientation handling.
  *
- * The .wiki content is always treated as markdown.
+ * The article.md content is always treated as markdown.
  */
 class WikiTxtReaderActivity final : public Activity {
  public:
@@ -35,8 +37,8 @@ class WikiTxtReaderActivity final : public Activity {
   };
 
  private:
-  // File to read.
-  std::string wikiPath;
+  // Article cache directory (per-article folder created by WikipediaActivity).
+  std::string wikiDir;
   std::string title;
   size_t fileSize = 0;
 
@@ -51,7 +53,7 @@ class WikiTxtReaderActivity final : public Activity {
   int viewportWidth = 0;
   bool initialized = false;
 
-  // Cached settings for index.cache validation.
+  // Cached settings for cache validation.
   int cachedFontId = 0;
   uint8_t cachedScreenMargin = 0;
   uint8_t cachedParagraphAlignment = CrossPointSettings::LEFT_ALIGN;
@@ -70,13 +72,18 @@ class WikiTxtReaderActivity final : public Activity {
   void buildPageIndex();
   bool loadPageIndexCache();
   void savePageIndexCache() const;
+  bool saveProgress(int page, size_t offset) const;
+  bool loadProgress();
+  static bool drawCurrentPageToBuffer(const std::string& wikiDir, GfxRenderer& renderer, MappedInputManager& mappedInput);
 
  public:
-  explicit WikiTxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string wikiPath,
+  explicit WikiTxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string wikiDir,
                                  std::string title);
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return true; }
+  bool isReaderActivity() const override { return true; }
+  ScreenshotInfo getScreenshotInfo() const override;
 };

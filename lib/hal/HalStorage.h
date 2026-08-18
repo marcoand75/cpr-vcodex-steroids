@@ -15,7 +15,7 @@ class HalStorage {
   HalStorage();
   bool begin();
   bool ready() const;
-  std::vector<String> listFiles(const char* path = "/", int maxFiles = 200);
+  std::vector<String> listFiles(const char* path = "/", int maxFiles = 200, bool includeDirectories = false);
   // Read the entire file at `path` into a String. Returns empty string on failure.
   String readFile(const char* path);
   // Low-memory helpers:

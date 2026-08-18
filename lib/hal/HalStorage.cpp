@@ -40,8 +40,8 @@ class HalStorage::StorageLock {
   HalStorage::StorageLock lock;               \
   return SDCard.method(__VA_ARGS__);
 
-std::vector<String> HalStorage::listFiles(const char* path, int maxFiles) {
-  HAL_STORAGE_WRAPPED_CALL(listFiles, path, maxFiles);
+std::vector<String> HalStorage::listFiles(const char* path, int maxFiles, bool includeDirectories) {
+  HAL_STORAGE_WRAPPED_CALL(listFiles, path, maxFiles, includeDirectories);
 }
 
 String HalStorage::readFile(const char* path) { HAL_STORAGE_WRAPPED_CALL(readFile, path); }

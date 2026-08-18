@@ -47,7 +47,11 @@ class WikipediaActivity final : public Activity {
 
   std::vector<std::string> cachedPageTitles;
   static constexpr const char* CACHE_DIR = "/.crosspoint/wikipedia-cache";
-  static constexpr const char* CACHE_EXT = ".wiki";
+  static constexpr const char* ARTICLE_FILE = "article.md";
+  static constexpr const char* RAW_FILE = "raw.json";
+  static constexpr const char* INDEX_FILE = "index.bin";
+  static constexpr const char* PROGRESS_FILE = "progress.bin";
+  static constexpr const char* TITLE_FILE = "title.txt";
 
   int readingFontId = 0;
   int readingLineHeight = 20;
@@ -90,7 +94,7 @@ class WikipediaActivity final : public Activity {
   void loadHistory();
   void saveToHistory(const std::string& query);
   void loadCachedPages();
-  std::string sanitizeFilename(const std::string& s);
+  static std::string legacyCachePathForTitle(const std::string& title);
   std::string cachePathForTitle(const std::string& title);
   bool cacheArticle(const std::string& title);
   bool loadCachedArticle(const std::string& title);

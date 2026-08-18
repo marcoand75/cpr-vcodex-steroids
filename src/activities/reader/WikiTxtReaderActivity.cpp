@@ -1,5 +1,6 @@
 #include "WikiTxtReaderActivity.h"
 
+#include <BidiUtils.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -10,6 +11,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib> // Aggiunto per malloc/free
+#include <cstring>
 
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
@@ -247,14 +250,15 @@ WikiTxtReaderActivity::TextLine sliceTextLine(const WikiTxtReaderActivity::TextL
 }  // namespace
 
 WikiTxtReaderActivity::WikiTxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                             std::string wikiPath, std::string title)
+                                             std::string wikiDir, std::string title)
     : Activity("WikiTxtReader", renderer, mappedInput),
-      wikiPath(std::move(wikiPath)),
+      wikiDir(std::move(wikiDir)),
       title(std::move(title)) {}
 
 bool WikiTxtReaderActivity::readContent(uint8_t* buffer, size_t offset, size_t length) const {
-  FsFile file;
-  if (!Storage.openFileForRead("WIKITXT", wikiPath.c_str(), file)) {
+  const std::string articlePath = wikiDir + "/article.md";
+  HalFile file; // Corretto: FsFile -> HalFile per coerenza con HalStorage
+  if (!Storage.openFileForRead("WIKITXT", articlePath.c_str(), file)) {
     return false;
   }
   if (!file.seek(offset)) {
@@ -269,8 +273,9 @@ void WikiTxtReaderActivity::onEnter() {
   ensureSdFontLoaded();
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
-  FsFile f;
-  if (Storage.openFileForRead("WIKITXT", wikiPath.c_str(), f)) {
+  const std::string articlePath = wikiDir + "/article.md";
+  HalFile f; // Corretto: FsFile -> HalFile
+  if (Storage.openFileForRead("WIKITXT", articlePath.c_str(), f)) {
     fileSize = f.size();
     f.close();
   } else {
@@ -284,6 +289,7 @@ void WikiTxtReaderActivity::onExit() {
   Activity::onExit();
   ReaderUtils::requestReaderUiTransitionRefresh(renderer);
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  saveProgress(currentPage, pageOffsets.empty() ? 0 : pageOffsets[currentPage]);
   pageOffsets.clear();
   currentPageLines.clear();
 }
@@ -324,16 +330,18 @@ void WikiTxtReaderActivity::render(RenderLock&&) {
   if (currentPage >= totalPages) currentPage = totalPages - 1;
 
   size_t offset = pageOffsets[currentPage];
-  size_t nextOffset;
+  size_t nextOffset = 0;
   currentPageLines.clear();
   loadPageAtOffset(offset, currentPageLines, nextOffset);
 
   renderer.clearScreen();
   renderPage();
+
+  saveProgress(currentPage, pageOffsets.empty() ? 0 : pageOffsets[currentPage]);
 }
 
 void WikiTxtReaderActivity::renderPage() {
-  const int lineHeight = renderer.getLineHeight(cachedFontId);
+  const int lineHeight = std::max(1, static_cast<int>(renderer.getLineHeight(cachedFontId) * SETTINGS.getReaderLineCompression() + 0.5f));
   const int contentWidth = viewportWidth;
 
   auto renderLines = [&]() {
@@ -388,12 +396,22 @@ void WikiTxtReaderActivity::renderPage() {
   renderLines();
   renderStatusBar();
 
-  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, false);
+  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 }
 
 void WikiTxtReaderActivity::renderStatusBar() const {
   const float progress = totalPages > 0 ? (currentPage + 1) * 100.0f / totalPages : 0;
   GUI.drawStatusBar(renderer, progress, currentPage + 1, totalPages, title.c_str());
+}
+
+ScreenshotInfo WikiTxtReaderActivity::getScreenshotInfo() const {
+  ScreenshotInfo info;
+  info.readerType = ScreenshotInfo::ReaderType::Txt;
+  info.currentPage = currentPage + 1;
+  info.totalPages = totalPages;
+  info.progressPercent = totalPages > 0 ? static_cast<int>((currentPage + 1) * 100.0f / totalPages + 0.5f) : 0;
+  if (info.progressPercent > 100) info.progressPercent = 100;
+  return info;
 }
 
 void WikiTxtReaderActivity::initializeReader() {
@@ -415,7 +433,7 @@ void WikiTxtReaderActivity::initializeReader() {
 
   viewportWidth = renderer.getScreenWidth() - cachedOrientedMarginLeft - cachedOrientedMarginRight;
   const int viewportHeight = renderer.getScreenHeight() - cachedOrientedMarginTop - cachedOrientedMarginBottom;
-  const int lineHeight = renderer.getLineHeight(cachedFontId);
+  const int lineHeight = std::max(1, static_cast<int>(renderer.getLineHeight(cachedFontId) * SETTINGS.getReaderLineCompression() + 0.5f));
 
   linesPerPage = viewportHeight / lineHeight;
   if (linesPerPage < 1) linesPerPage = 1;
@@ -425,11 +443,19 @@ void WikiTxtReaderActivity::initializeReader() {
     savePageIndexCache();
   }
 
+  loadProgress();
+
   initialized = true;
 }
 
 void WikiTxtReaderActivity::buildPageIndex() {
   pageOffsets.clear();
+  // Preallocare evita le continue riallocazioni del vector durante la scansione,
+  // riducendo la frammentazione dell'heap (particolarmente critica sull'X4/C3).
+  if (fileSize > 0) {
+    const size_t estPages = fileSize / 512 + 4;
+    pageOffsets.reserve(std::max(size_t{2}, estPages));
+  }
   pageOffsets.push_back(0);
 
   size_t offset = 0;
@@ -446,10 +472,17 @@ void WikiTxtReaderActivity::buildPageIndex() {
       break;
     }
     offset = nextOffset;
-    pageOffsets.push_back(offset);
+    if (offset < fileSize) {
+      pageOffsets.push_back(offset);
+    }
+
+    // Yield to other tasks periodically
+    if (pageOffsets.size() % 20 == 0) {
+      vTaskDelay(1);
+    }
   }
 
-  totalPages = pageOffsets.size();
+  totalPages = static_cast<int>(pageOffsets.size());
   LOG_DBG("WIKITXT", "Built page index: %d pages", totalPages);
 }
 
@@ -485,7 +518,7 @@ bool WikiTxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine
     }
 
     bool lineComplete = (lineEnd < chunkSize) || (offset + lineEnd >= fileSize);
-    if (!lineComplete && static_cast<int>(outLines.size()) > 0) {
+    if (!lineComplete && !outLines.empty()) {
       break;
     }
 
@@ -575,77 +608,77 @@ bool WikiTxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine
 }
 
 bool WikiTxtReaderActivity::loadPageIndexCache() {
-  std::string cachePath = wikiPath + ".bin";
-  FsFile f;
+  std::string cachePath = wikiDir + "/index.bin";
+  HalFile f; // Corretto: FsFile -> HalFile
   if (!Storage.openFileForRead("WIKITXT", cachePath, f)) {
     return false;
   }
 
-  uint32_t magic;
+  uint32_t magic = 0;
   serialization::readPod(f, magic);
   if (magic != CACHE_MAGIC) {
     return false;
   }
 
-  uint8_t version;
+  uint8_t version = 0;
   serialization::readPod(f, version);
   if (version != CACHE_VERSION) {
     return false;
   }
 
-  uint32_t cachedSize;
+  uint32_t cachedSize = 0;
   serialization::readPod(f, cachedSize);
   if (cachedSize != fileSize) {
     return false;
   }
 
-  int32_t cachedWidth;
+  int32_t cachedWidth = 0;
   serialization::readPod(f, cachedWidth);
   if (cachedWidth != viewportWidth) {
     return false;
   }
 
-  int32_t cachedLines;
+  int32_t cachedLines = 0;
   serialization::readPod(f, cachedLines);
   if (cachedLines != linesPerPage) {
     return false;
   }
 
-  int32_t fontId;
+  int32_t fontId = 0;
   serialization::readPod(f, fontId);
   if (fontId != cachedFontId) {
     return false;
   }
 
-  int32_t margin;
+  int32_t margin = 0;
   serialization::readPod(f, margin);
   if (margin != cachedScreenMargin) {
     return false;
   }
 
-  uint8_t alignment;
+  uint8_t alignment = 0;
   serialization::readPod(f, alignment);
   if (alignment != cachedParagraphAlignment) {
     return false;
   }
 
-  uint32_t numPages;
+  uint32_t numPages = 0;
   serialization::readPod(f, numPages);
   pageOffsets.clear();
   pageOffsets.reserve(numPages);
   for (uint32_t i = 0; i < numPages; i++) {
-    uint32_t offset;
-    serialization::readPod(f, offset);
-    pageOffsets.push_back(offset);
+    uint32_t offsetVal = 0;
+    serialization::readPod(f, offsetVal);
+    pageOffsets.push_back(offsetVal);
   }
 
-  totalPages = pageOffsets.size();
+  totalPages = static_cast<int>(pageOffsets.size());
   return true;
 }
 
 void WikiTxtReaderActivity::savePageIndexCache() const {
-  std::string cachePath = wikiPath + ".bin";
-  FsFile f;
+  std::string cachePath = wikiDir + "/index.bin";
+  HalFile f; // Corretto: FsFile -> HalFile
   if (!Storage.openFileForWrite("WIKITXT", cachePath, f)) {
     LOG_ERR("WIKITXT", "Failed to save page index cache");
     return;
@@ -666,4 +699,101 @@ void WikiTxtReaderActivity::savePageIndexCache() const {
   }
 
   LOG_DBG("WIKITXT", "Saved page index cache: %d pages", totalPages);
+}
+
+bool WikiTxtReaderActivity::saveProgress(int page, size_t offset) const {
+  if (!initialized) return false;
+  const std::string progressPath = wikiDir + "/progress.bin";
+  HalFile f;
+  if (!Storage.openFileForWrite("WIKITXT", progressPath, f)) {
+    return false;
+  }
+  uint8_t data[6];
+  data[0] = static_cast<uint8_t>(page & 0xFF);
+  data[1] = static_cast<uint8_t>((page >> 8) & 0xFF);
+  data[2] = static_cast<uint8_t>(offset & 0xFF);
+  data[3] = static_cast<uint8_t>((offset >> 8) & 0xFF);
+  data[4] = static_cast<uint8_t>((offset >> 16) & 0xFF);
+  data[5] = static_cast<uint8_t>((offset >> 24) & 0xFF);
+  const bool written = f.write(data, sizeof(data)) == sizeof(data);
+  f.close();
+  if (!written) {
+    LOG_ERR("WIKITXT", "Short write saving reader progress");
+  }
+  return written;
+}
+
+bool WikiTxtReaderActivity::loadProgress() {
+  const std::string progressPath = wikiDir + "/progress.bin";
+  HalFile f;
+  if (Storage.openFileForRead("WIKITXT", progressPath, f)) {
+    uint8_t data[6] = {0};
+    const int n = f.read(data, sizeof(data));
+    f.close();
+    if (n >= 2) {
+      currentPage = static_cast<int>((static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8)));
+      if (currentPage >= totalPages && totalPages > 0) {
+        currentPage = totalPages - 1;
+      }
+      if (currentPage < 0) currentPage = 0;
+      LOG_DBG("WIKITXT", "Loaded progress: page %d/%d", currentPage, totalPages);
+    }
+  }
+  return true;
+}
+
+bool WikiTxtReaderActivity::drawCurrentPageToBuffer(const std::string& wikiDir, GfxRenderer& renderer, MappedInputManager& mappedInput) {
+  WikiTxtReaderActivity reader(renderer, mappedInput, wikiDir, "");
+  reader.initializeReader();
+  if (reader.pageOffsets.empty()) {
+    return false;
+  }
+
+  size_t offset = reader.pageOffsets[reader.currentPage];
+  size_t nextOffset = 0;
+  std::vector<WikiTxtReaderActivity::TextLine> pageLines;
+  reader.loadPageAtOffset(offset, pageLines, nextOffset);
+  if (pageLines.empty()) return false;
+
+  const int lineHeight = std::max(1, static_cast<int>(renderer.getLineHeight(reader.cachedFontId) * SETTINGS.getReaderLineCompression() + 0.5f));
+  const int contentWidth = reader.viewportWidth;
+
+  renderer.clearScreen();
+  int y = reader.cachedOrientedMarginTop;
+  for (const auto& line : pageLines) {
+    if (!line.text.empty()) {
+      int x = reader.cachedOrientedMarginLeft;
+      const bool lineIsRtl = BidiUtils::startsWithRtl(line.text.c_str(), BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH);
+      uint8_t effectiveAlignment = reader.cachedParagraphAlignment;
+      if (lineIsRtl && (effectiveAlignment == CrossPointSettings::LEFT_ALIGN ||
+                        effectiveAlignment == CrossPointSettings::JUSTIFIED)) {
+        effectiveAlignment = CrossPointSettings::RIGHT_ALIGN;
+      }
+      const int textWidth = renderer.getTextAdvanceX(reader.cachedFontId, line.text.c_str(), EpdFontFamily::REGULAR);
+
+      switch (effectiveAlignment) {
+        case CrossPointSettings::CENTER_ALIGN:
+          x = reader.cachedOrientedMarginLeft + (contentWidth - textWidth) / 2;
+          break;
+        case CrossPointSettings::RIGHT_ALIGN:
+          x = reader.cachedOrientedMarginLeft + contentWidth - textWidth;
+          break;
+        default:
+          break;
+      }
+
+      if (line.spans.empty()) {
+        renderer.drawText(reader.cachedFontId, x, y, line.text.c_str(), true);
+      } else {
+        int spanX = x;
+        for (const auto& span : line.spans) {
+          const auto spanStyle = static_cast<EpdFontFamily::Style>(span.style);
+          renderer.drawText(reader.cachedFontId, spanX, y, span.text.c_str(), true, spanStyle);
+          spanX += renderer.getTextAdvanceX(reader.cachedFontId, span.text.c_str(), spanStyle);
+        }
+      }
+    }
+    y += lineHeight;
+  }
+  return true;
 }

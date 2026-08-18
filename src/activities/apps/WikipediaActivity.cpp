@@ -13,6 +13,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cctype>
+#include <functional> // Aggiunto per std::function usata nelle lambda/callback
 
 #include "CrossPointSettings.h"
 #include "SdCardFontGlobals.h"
@@ -26,10 +27,12 @@
 #include "network/HttpDownloader.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/WikiTxtReaderActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/PanelDrawHelper.h"
 #include "components/icons/wikipediaicon.h"
 #include "util/HeaderDateUtils.h"
 #include "util/MarkdownReader.h"
+#include "util/StringUtils.h"
 #include "util/WikitextToMarkdown.h"
 #include "util/NetworkMemory.h"
 
@@ -116,7 +119,7 @@ std::string urlEncode(const std::string& s) {
   for (unsigned char c : s) {
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
         (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-      result += (char)c;
+      result += static_cast<char>(c);
     } else if (c == ' ') {
       result += "%20";
     } else {
@@ -135,7 +138,7 @@ std::string urlEncodeForPath(const std::string& s) {
   for (unsigned char c : s) {
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
         (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-      result += (char)c;
+      result += static_cast<char>(c);
     } else if (c == ' ') {
       result += '_';
     } else {
@@ -162,17 +165,29 @@ int parseOpensearchTitles(const char* json, std::string* out, int max) {
     while (*p && (*p == ' ' || *p == ',' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
     if (*p == ']') break;
     if (*p == '"') {
-      const char* ts = p + 1, *te = ts;
+      const char* ts = p + 1; 
+      const char* te = ts;
       while (*te) { if (*te == '\\' && *(te+1)) { te += 2; continue; } if (*te == '"') break; te++; }
       if (*te != '"') break;
-      size_t len = te - ts;
+      size_t len = static_cast<size_t>(te - ts);
       if (len > 0) {
         char buf[256]; size_t o = 0;
         for (const char* s = ts; s < te && o < 255; s++) {
-          if (*s == '\\' && s+1 < te) { s++; switch (*s) { case 'n': buf[o++]='\n'; break; case 't': buf[o++]='\t'; break; case '\\': buf[o++]='\\'; break; case '"': buf[o++]='"'; break; default: buf[o++]=*s; break; } }
+          if (*s == '\\' && s+1 < te) { 
+            s++; 
+            switch (*s) { 
+              case 'n': buf[o++]='\n'; break; 
+              case 't': buf[o++]='\t'; break; 
+              case '\\': buf[o++]='\\'; break; 
+              case '"': buf[o++]='"'; break; 
+              default: buf[o++]=*s; break; 
+            } 
+          }
           else buf[o++] = *s;
         }
-        buf[o] = '\0'; out[count] = std::string(buf, o); count++;
+        buf[o] = '\0'; 
+        out[count] = std::string(buf, o); 
+        count++;
       }
       p = te + 1;
     } else break;
@@ -203,9 +218,9 @@ size_t extractExtractField(const char* json, char* buf, size_t sz) {
                 if (h <= '9') val = val * 16 + (h - '0');
                 else val = val * 16 + ((h & 0xDF) - 'A' + 10);
               }
-              if (val < 0x80) { if (o < sz-1) buf[o++] = (char)val; }
-              else if (val < 0x800) { if (o < sz-2) { buf[o++] = (char)(0xC0 | (val >> 6)); buf[o++] = (char)(0x80 | (val & 0x3F)); } }
-              else { if (o < sz-3) { buf[o++] = (char)(0xE0 | (val >> 12)); buf[o++] = (char)(0x80 | ((val >> 6) & 0x3F)); buf[o++] = (char)(0x80 | (val & 0x3F)); } }
+              if (val < 0x80) { if (o < sz-1) buf[o++] = static_cast<char>(val); }
+              else if (val < 0x800) { if (o < sz-2) { buf[o++] = static_cast<char>(0xC0 | (val >> 6)); buf[o++] = static_cast<char>(0x80 | (val & 0x3F)); } }
+              else { if (o < sz-3) { buf[o++] = static_cast<char>(0xE0 | (val >> 12)); buf[o++] = static_cast<char>(0x80 | ((val >> 6) & 0x3F)); buf[o++] = static_cast<char>(0x80 | (val & 0x3F)); } }
               break;
             }
             default: buf[o++]=*p; p++; break;
@@ -258,6 +273,10 @@ MarkdownReader::TextLine sliceMdLine(const MarkdownReader::TextLine& source, siz
 }
 
 } // anonymous namespace
+
+std::string WikipediaActivity::legacyCachePathForTitle(const std::string& title) {
+  return std::string(CACHE_DIR) + "/" + StringUtils::sanitizeFilename(title, 50) + ".wiki";
+}
 
 void WikipediaActivity::cacheReadingSettings() {
   int px = fontSizeToPixels(SETTINGS.fontSize);
@@ -398,12 +417,27 @@ void WikipediaActivity::loop() {
       case State::CACHED_PAGES:
         if (selectedIndex >= 0 && selectedIndex < static_cast<int>(cachedPageTitles.size())) {
           if (mappedInput.getHeldTime() >= 1500 && !cachedPageTitles.empty()) {
-            LOG_DBG("WIKI", "Long-press: deleting cached page %d", selectedIndex);
-            std::string path = cachePathForTitle(cachedPageTitles[selectedIndex]);
-            Storage.remove(path.c_str());
-            loadCachedPages();
-            if (selectedIndex >= static_cast<int>(cachedPageTitles.size())) selectedIndex = std::max(0, static_cast<int>(cachedPageTitles.size()) - 1);
-            requestUpdate();
+            LOG_DBG("WIKI", "Long-press: asking confirmation to delete cached page %d", selectedIndex);
+            const std::string cachedTitle = cachedPageTitles[selectedIndex];
+            const int currentSelection = selectedIndex;
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_DELETE_CACHED_PAGE),
+                                                       cachedTitle),
+                [this, currentSelection, cachedTitle](const ActivityResult& result) {
+                  if (result.isCancelled) {
+                    requestUpdate();
+                    return;
+                  }
+                  const std::string path = cachePathForTitle(cachedTitle);
+                  if (!Storage.removeDir(path.c_str())) {
+                    LOG_ERR("WIKI", "Failed to delete cached page: %s", path.c_str());
+                  }
+                  loadCachedPages();
+                  if (currentSelection >= static_cast<int>(cachedPageTitles.size())) {
+                    selectedIndex = std::max(0, static_cast<int>(cachedPageTitles.size()) - 1);
+                  }
+                  requestUpdate();
+                });
           } else {
             const std::string& title = cachedPageTitles[selectedIndex];
             if (loadCachedArticle(title)) {
@@ -419,8 +453,15 @@ void WikipediaActivity::loop() {
         if (selectedIndex >= 0 && selectedIndex < static_cast<int>(searchResults.size())) fetchArticleSummary();
         break;
       case State::ARTICLE_DISPLAY:
-        LOG_DBG("WIKI", "Confirm on ARTICLE_DISPLAY — calling fetchFullArticle");
-        fetchFullArticle();
+        LOG_DBG("WIKI", "Confirm on ARTICLE_DISPLAY — opening/loading full article");
+        // Se l'articolo completo è già in cache lo apriamo subito senza rete;
+        // altrimenti, scarichiamo e convertiamo il full article.
+        if (loadCachedArticle(currentQuery)) {
+          fromCache = true;
+          openArticleForReading(currentQuery);
+        } else {
+          fetchFullArticle();
+        }
         break;
       default: break;
     }
@@ -665,7 +706,7 @@ void WikipediaActivity::renderArticle() {
     const char* nl = text;
     while (*nl && *nl != '\n') nl++;
 
-    std::string seg(text, nl - text);
+    std::string seg(text, static_cast<size_t>(nl - text));
     auto wrapped = renderer.wrappedText(fId, seg.c_str(), tw, 1000);
 
     if (wrapped.empty()) {
@@ -778,13 +819,9 @@ void WikipediaActivity::openArticleForReading(const std::string& title) {
   currentQuery = title;
   cacheReadingSettings();
 
-  // Il testo dell'articolo e' gia' stato convertito in markdown e salvato nel
-  // file .wiki in cache. La lettura/rendering e' affidata a WikiTxtReaderActivity,
-  // che usa lo stesso identico sistema di TxtReaderActivity (span markdown,
-  // paginazione con indice, rendering a doppio passaggio) senza aggiornare
-  // statistiche/progressi/recent books.
-  const std::string wikiPath = cachePathForTitle(title);
-  if (!Storage.exists(wikiPath.c_str())) {
+  const std::string wikiDir = cachePathForTitle(title);
+  const std::string articlePath = wikiDir + "/" + ARTICLE_FILE;
+  if (!Storage.exists(articlePath.c_str())) {
     showError(tr(STR_WIKIPEDIA_ERROR));
     return;
   }
@@ -794,10 +831,15 @@ void WikipediaActivity::openArticleForReading(const std::string& title) {
 
   // Quando il reader chiude, si torna SEMPRE al menu principale di Wikipedia.
   startActivityForResult(
-      std::make_unique<WikiTxtReaderActivity>(renderer, mappedInput, wikiPath, title),
+      std::make_unique<WikiTxtReaderActivity>(renderer, mappedInput, wikiDir, title),
       [this](const ActivityResult& /*r*/) {
         freeBuffer();
         searchResults.clear();
+        // Riporta la home allo stato pulito: altrimenti il pulsante "Cerca su
+        // Wikipedia" continua a mostrare il titolo dell'articolo appena letto.
+        searchInput.clear();
+        currentQuery.clear();
+        errorMessage.clear();
         state = State::SEARCH_INPUT;
         selectedIndex = 0;
         requestUpdate();
@@ -879,7 +921,9 @@ void WikipediaActivity::fetchFullArticle() {
   for (auto& c : titleForUrl) { if (c == ' ') c = '_'; }
   std::string encodedTitle = urlEncode(titleForUrl);
 
-  std::string rawPath = std::string(CACHE_DIR) + "/raw_" + sanitizeFilename(currentQuery) + ".json";
+  std::string cacheDir = cachePathForTitle(currentQuery);
+  Storage.mkdir(cacheDir.c_str());
+  std::string rawPath = cacheDir + "/" + RAW_FILE;
   Storage.mkdir(CACHE_DIR);
   LOG_DBG("WIKI", "Streaming wikitext JSON to SD: %s", rawPath.c_str());
 
@@ -888,6 +932,13 @@ void WikipediaActivity::fetchFullArticle() {
            "%s/w/api.php?action=parse&page=%s&prop=wikitext&format=json",
            wikipediaBaseUrl().c_str(), encodedTitle.c_str());
 
+  size_t totalSaved = 0;
+  // HTTP/TLS racchiusi in uno scope: sia HTTPClient sia il client TLS vengono
+  // distrutti qui (ordine corretto: prima http, poi il client) liberando decine
+  // di KB prima della conversione/restore. NON chiamare httpClient.reset()
+  // manualmente: HTTPClient conserva un riferimento interno al client TLS, e
+  // il suo distruttore finirebbe in un double free (multi_heap_free).
+  {
   std::unique_ptr<NetworkClient> httpClient;
   auto* secClient = new NetworkClientSecure();
   secClient->setInsecure();
@@ -933,7 +984,6 @@ void WikipediaActivity::fetchFullArticle() {
   }
 
   uint8_t chunkBuf[512];
-  size_t totalSaved = 0;
   unsigned long lastChunk = millis();
   bool streamOk = true;
   const unsigned long GRACEFUL_IDLE = 10000;
@@ -956,7 +1006,7 @@ void WikipediaActivity::fetchFullArticle() {
     }
     int got = stream->read(chunkBuf, sizeof(chunkBuf));
     if (got > 0) {
-      size_t wrote = sdFile.write(chunkBuf, got);
+      size_t wrote = sdFile.write(chunkBuf, static_cast<size_t>(got));
       if (wrote != static_cast<size_t>(got)) {
         LOG_ERR("WIKI", "SD write failed at %zu bytes", totalSaved);
         streamOk = false;
@@ -989,6 +1039,8 @@ void WikipediaActivity::fetchFullArticle() {
   }
 
   http.end();
+  }  // fine scope HTTP/TLS: distrugge http e httpClient (ordine corretto)
+
   LOG_DBG("WIKI", "Streamed %zu bytes to SD, starting conversion...", totalSaved);
 
   LOG_DBG("WIKI", "Converting wikitext to markdown...");
@@ -999,48 +1051,73 @@ void WikipediaActivity::fetchFullArticle() {
     return;
   }
 
-  std::string cachePath = cachePathForTitle(currentQuery);
-  if (Storage.exists(cachePath.c_str())) Storage.remove(cachePath.c_str());
+  std::string articlePath = cacheDir + "/" + ARTICLE_FILE;
+  if (Storage.exists(articlePath.c_str())) Storage.remove(articlePath.c_str());
 
   WikitextToMarkdown converter;
-  bool convOk = converter.convert(inFile, cachePath.c_str());
+  bool convOk = converter.convert(inFile, articlePath.c_str());
   inFile.close();
   Storage.remove(rawPath.c_str());
 
   if (!convOk) {
     LOG_ERR("WIKI", "Wikitext conversion failed");
-    Storage.remove(cachePath.c_str());
+    Storage.remove(articlePath.c_str());
     if (!fallbackText.empty()) {
       char* buf = ensureBuffer();
       size_t len = std::min(fallbackText.size(), static_cast<size_t>(TEXT_BUF_SIZE - 1));
       memcpy(buf, fallbackText.c_str(), len);
       textLength = len; buf[textLength] = '\0';
-      openArticleForReading(currentQuery);
+      state = State::ARTICLE_DISPLAY;
+      requestUpdate();
     } else { showError(tr(STR_WIKIPEDIA_ERROR)); }
     return;
   }
 
   LOG_DBG("WIKI", "Conversion done. Article saved to SD cache.");
+  // Persist the real display title so the CACHED_PAGES list can show and
+  // reopen the article by title (the folder name is a hash of the title).
+  Storage.writeFile((cacheDir + "/" + TITLE_FILE).c_str(), String(currentQuery.c_str()));
 
   size_t writtenSize = 0;
   {
     HalFile check;
-    if (Storage.openFileForRead("WIKI", cachePath.c_str(), check)) {
+    if (Storage.openFileForRead("WIKI", articlePath.c_str(), check)) {
       writtenSize = check.size();
       check.flush();
       check.close();
     }
     if (writtenSize == 0) {
-      LOG_ERR("WIKI", "Converted .wiki is empty; nothing to open");
+      LOG_ERR("WIKI", "Converted article is empty; nothing to open");
       showError(tr(STR_WIKIPEDIA_ERROR));
       return;
     }
   }
 
-  loadCachedPages();
+  // Il flusso di download+conversione usa allocazioni transienti (HTTP, chunk,
+  // conversione). Verifichiamo lo stato dell'heap e la coerenza prima di
+  // toccare la cache/reader: un abort() qui indica corruzione heap dello
+  // streaming/conversione, non del reader.
+  heap_caps_check_integrity_all(true);
+  LOG_DBG("HCR-FRAG", "WIKI full-article after-convert: free=%d maxA=%d frag=%d bytes=%zu",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()), writtenSize);
 
-  NetworkMemory::restoreAfterNetwork(renderer, "WIKI", "after_full");
-  
+  loadCachedPages();
+  LOG_DBG("HCR-FRAG", "WIKI full-article after-loadCachedPages: free=%d maxA=%d frag=%d pages=%zu",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()),
+          cachedPageTitles.size());
+
+  // Il WikiTxtReader NON usa le reading stats. Dopo lo streaming+conversione
+  // l'heap è basso/frammentato (~46KB, maxA~20KB): ricaricare le 29 stats qui
+  // richiede allocazioni grandi e faceva abort() (illegal instruction). Le
+  // stats sono già persistite su file da prepareBeforeNetwork; verranno
+  // ricaricate in modo lazy da ensureLoaded() alla prossima esigenza reale.
+  NetworkMemory::restoreAfterNetwork(renderer, "WIKI", "after_full", /*reloadReadingStats=*/false);
+  LOG_DBG("HCR-FRAG", "WIKI full-article after-restore: free=%d maxA=%d frag=%d",
+          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+
   openArticleForReading(currentQuery);
 }
 
@@ -1093,7 +1170,7 @@ void WikipediaActivity::loadHistory() {
   int start = 0;
   while (start < static_cast<int>(content.length())) {
     int end = content.indexOf('\n', start);
-    if (end < 0) end = content.length();
+    if (end < 0) end = static_cast<int>(content.length());
     if (end > start) {
       std::string line = content.substring(start, end).c_str();
       while (!line.empty() && (line.back()=='\r' || line.back()=='\n' || line.back()==' ')) line.pop_back();
@@ -1110,7 +1187,7 @@ void WikipediaActivity::saveToHistory(const std::string& query) {
   int dupPos = content.indexOf(newEntry);
   if (dupPos >= 0) {
     int dupEnd = content.indexOf('\n', dupPos + 1);
-    if (dupEnd < 0) dupEnd = content.length();
+    if (dupEnd < 0) dupEnd = static_cast<int>(content.length());
     content = content.substring(0, dupPos) + content.substring(dupEnd + 1);
   }
   content = newEntry + content;
@@ -1123,88 +1200,128 @@ void WikipediaActivity::saveToHistory(const std::string& query) {
   loadHistory();
 }
 
-std::string WikipediaActivity::sanitizeFilename(const std::string& s) {
-  std::string r = s;
-  for (auto& c : r) {
-    if (c == ' ' || c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
-      c = '_';
-    }
-  }
-  if (r.length() > 50) r = r.substr(0, 50);
-  return r;
-}
-
 std::string WikipediaActivity::cachePathForTitle(const std::string& title) {
-  return std::string(CACHE_DIR) + "/" + sanitizeFilename(title) + CACHE_EXT;
+  return std::string(CACHE_DIR) + "/wiki_" + std::to_string(std::hash<std::string>{}(title));
 }
 
 bool WikipediaActivity::cacheArticle(const std::string& title) {
   if (!textBuffer || textLength == 0) return false;
-  Storage.mkdir(CACHE_DIR);
-  std::string path = cachePathForTitle(title);
+  const std::string cacheDir = cachePathForTitle(title);
+  Storage.mkdir(cacheDir.c_str());
+  const std::string articlePath = cacheDir + "/" + ARTICLE_FILE;
   String s(textBuffer.get(), textLength);
-  bool ok = Storage.writeFile(path.c_str(), s);
+  bool ok = Storage.writeFile(articlePath.c_str(), s);
   if (ok) {
-    LOG_DBG("WIKI", "Cached article: %s (%zu bytes)", path.c_str(), textLength);
+    // Persist the real display title so the CACHED_PAGES list can show and
+    // reopen the article even though the folder name is a hash.
+    Storage.writeFile((cacheDir + "/" + TITLE_FILE).c_str(), String(title.c_str()));
+    LOG_DBG("WIKI", "Cached article: %s (%zu bytes)", articlePath.c_str(), textLength);
+    const std::string legacyPath = legacyCachePathForTitle(title);
+    if (Storage.exists(legacyPath.c_str())) {
+      Storage.remove(legacyPath.c_str());
+      LOG_DBG("WIKI", "Removed legacy cache: %s", legacyPath.c_str());
+    }
     loadCachedPages();
   }
   return ok;
 }
 
 bool WikipediaActivity::loadCachedArticle(const std::string& title) {
-  std::string path = cachePathForTitle(title);
-  if (!Storage.exists(path.c_str())) return false;
+  const std::string cacheDir = cachePathForTitle(title);
+  const std::string articlePath = cacheDir + "/" + ARTICLE_FILE;
+  if (Storage.exists(articlePath.c_str())) {
+    HalFile f;
+    if (!Storage.openFileForRead("WIKI", articlePath.c_str(), f)) return false;
+    size_t fileSize = f.size();
+    f.close();
 
-  HalFile f;
-  if (!Storage.openFileForRead("WIKI", path.c_str(), f)) return false;
-  size_t fileSize = f.size();
-  f.close();
+    if (fileSize == 0) return false;
 
-  if (fileSize == 0) return false;
+    freeBuffer();
 
-  freeBuffer();
+    if (fileSize > TEXT_BUF_SIZE - 1) {
+      g_articleFilePath = articlePath;
+      textLength = fileSize;
+      LOG_DBG("WIKI", "Loaded large cached article: %s (%zu bytes on SD)", articlePath.c_str(), textLength);
+      return true;
+    }
 
-  if (fileSize > TEXT_BUF_SIZE - 1) {
-    g_articleFilePath = path;
-    textLength = fileSize;
-    LOG_DBG("WIKI", "Loaded large cached article: %s (%zu bytes on SD)", path.c_str(), textLength);
+    String content = Storage.readFile(articlePath.c_str());
+    if (content.length() == 0) return false;
+
+    char* buf = ensureBuffer();
+    size_t maxCopy = std::min(static_cast<size_t>(content.length()), TEXT_BUF_SIZE - 1);
+    memcpy(buf, content.c_str(), maxCopy);
+    textLength = maxCopy;
+    buf[textLength] = '\0';
+    g_articleFilePath.clear();
+    
+    LOG_DBG("WIKI", "Loaded cached article: %s (%zu bytes in RAM)", articlePath.c_str(), textLength);
     return true;
   }
 
-  String content = Storage.readFile(path.c_str());
-  if (content.length() == 0) return false;
+  const std::string legacyPath = legacyCachePathForTitle(title);
+  if (Storage.exists(legacyPath.c_str())) {
+    HalFile f;
+    if (!Storage.openFileForRead("WIKI", legacyPath.c_str(), f)) return false;
+    size_t fileSize = f.size();
+    f.close();
 
-  char* buf = ensureBuffer();
-  size_t maxCopy = std::min(static_cast<size_t>(content.length()), TEXT_BUF_SIZE - 1);
-  memcpy(buf, content.c_str(), maxCopy);
-  textLength = maxCopy;
-  buf[textLength] = '\0';
-  g_articleFilePath.clear();
-  
-  LOG_DBG("WIKI", "Loaded cached article: %s (%zu bytes in RAM)", path.c_str(), textLength);
-  return true;
+    if (fileSize == 0) return false;
+
+    freeBuffer();
+
+    if (fileSize > TEXT_BUF_SIZE - 1) {
+      g_articleFilePath = legacyPath;
+      textLength = fileSize;
+      LOG_DBG("WIKI", "Loaded legacy cached article: %s (%zu bytes on SD)", legacyPath.c_str(), textLength);
+      return true;
+    }
+
+    String content = Storage.readFile(legacyPath.c_str());
+    if (content.length() == 0) return false;
+
+    char* buf = ensureBuffer();
+    size_t maxCopy = std::min(static_cast<size_t>(content.length()), TEXT_BUF_SIZE - 1);
+    memcpy(buf, content.c_str(), maxCopy);
+    textLength = maxCopy;
+    buf[textLength] = '\0';
+    g_articleFilePath.clear();
+    
+    LOG_DBG("WIKI", "Loaded legacy cached article: %s (%zu bytes in RAM)", legacyPath.c_str(), textLength);
+    return true;
+  }
+
+  return false;
 }
 
 void WikipediaActivity::loadCachedPages() {
   cachedPageTitles.clear();
   Storage.mkdir(CACHE_DIR);
-  auto files = Storage.listFiles(CACHE_DIR, 100);
+  auto files = Storage.listFiles(CACHE_DIR, 200, /*includeDirectories=*/true);
   for (auto& f : files) {
     std::string name = f.c_str();
-    if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".bin") == 0) {
-      continue;
+    // New format: per-article directories named wiki_<hash> containing article.md
+    // and a title.txt carrying the real display title. Without title.txt we
+    // cannot show a readable name nor reopen the article, so we skip it.
+    if (name.size() > 5 && name.compare(0, 5, "wiki_") == 0 && Storage.exists((std::string(CACHE_DIR) + "/" + name + "/" + ARTICLE_FILE).c_str())) {
+      const std::string titlePath = std::string(CACHE_DIR) + "/" + name + "/" + TITLE_FILE;
+      const String titleFile = Storage.readFile(titlePath.c_str());
+      if (titleFile.length() > 0) {
+        cachedPageTitles.push_back(std::string(titleFile.c_str(), titleFile.length()));
+      }
     }
-    if (name.size() >= 4 && name.compare(0, 4, "raw_") == 0) continue;
-
-    const size_t extLen = strlen(CACHE_EXT);
-    size_t extPos = name.rfind(CACHE_EXT);
-    size_t lastExtend = 0;
-    if (name.size() >= extLen) lastExtend = name.size() - extLen;
-    if (extPos == std::string::npos || extPos != lastExtend) continue;
-    name = name.substr(0, extPos);
-    if (!name.empty()) {
-      std::replace(name.begin(), name.end(), '_', ' ');
-      cachedPageTitles.push_back(name);
+  }
+  // Fallback: legacy flat .wiki files for backward compatibility.
+  for (auto& f : files) {
+    std::string name = f.c_str();
+    if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".wiki") == 0) {
+      std::string title = name.substr(0, name.size() - 4);
+      // Sostituito std::replace con ciclo manuale per massima compatibilità di compilazione
+      for (char& c : title) {
+        if (c == '_') c = ' ';
+      }
+      cachedPageTitles.push_back(title);
     }
   }
   std::sort(cachedPageTitles.begin(), cachedPageTitles.end());
