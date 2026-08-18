@@ -36,10 +36,13 @@ void BootActivity::onEnter() {
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, CROSSPOINT_VERSION);
   renderer.displayBuffer();
 
-  // Load reading stats while the boot screen is visible. This keeps setup()
-  // memory-light while ensuring stats are ready for HomeActivity/carousel
-  // progress badges without fragmenting the heap later.
-  READING_STATS.ensureLoaded();
+  // Preload only the lightweight summary.json while the boot screen is visible.
+  // The Home renders the global-stats panel and per-book progress badges from
+  // this small file, so the ~41 KB full reading_stats.json store stays out of
+  // RAM at boot. The full store is loaded lazily (ensureLoaded) when a screen
+  // that needs it opens (Reader, Reading Stats, Library, ...), and dropped
+  // again by releaseMemoryForNetwork() when a heavy network op needs the RAM.
+  READING_STATS.preloadHomeSummary();
 
   if (restoreDarkMode) {
     renderer.setDarkMode(true);

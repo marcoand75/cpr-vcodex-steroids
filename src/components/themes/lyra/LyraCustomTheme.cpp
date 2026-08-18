@@ -24,21 +24,11 @@ constexpr int PROGRESS_BAR_HEIGHT = 8;
 constexpr int TITLE_TOP_GAP = 10;
 
 uint8_t getBookProgressPercent(const RecentBook& recentBook) {
-  for (const auto& book : READING_STATS.getBooks()) {
-    if (book.path == recentBook.path) {
-      return book.lastProgressPercent;
-    }
-  }
-  return 0;
+  return READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path);
 }
 
 const ReadingBookStats* getBookStats(const RecentBook& recentBook) {
-  if (!recentBook.bookId.empty()) {
-    if (const ReadingBookStats* stats = READING_STATS.findBook(recentBook.bookId)) {
-      return stats;
-    }
-  }
-  return READING_STATS.findBook(recentBook.path);
+  return READING_STATS.getHomeBookStatsForRender(recentBook.bookId, recentBook.path);
 }
 
 void drawMiniProgressBar(GfxRenderer& renderer, const Rect& rect, const uint8_t progressPercent) {

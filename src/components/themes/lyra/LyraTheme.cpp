@@ -414,12 +414,7 @@ void drawCompletedListBadge(const GfxRenderer& renderer, const int x, const int 
 }
 
 const ReadingBookStats* getRecentBookStats(const RecentBook& recentBook) {
-  if (!recentBook.bookId.empty()) {
-    if (const ReadingBookStats* stats = READING_STATS.findBook(recentBook.bookId)) {
-      return stats;
-    }
-  }
-  return READING_STATS.findBook(recentBook.path);
+  return READING_STATS.getHomeBookStatsForRender(recentBook.bookId, recentBook.path);
 }
 
 void drawLyraProgressBar(GfxRenderer& renderer, const Rect& rect, const uint8_t progressPercent) {

@@ -261,13 +261,7 @@ void drawCoverPlaceholder(GfxRenderer& renderer, int x, int y, int maxW, int max
 }
 
 uint8_t getBookProgressPercent(const RecentBook& recentBook) {
-  const ReadingBookStats* stats = nullptr;
-  if (!recentBook.bookId.empty()) {
-    stats = READING_STATS.findBook(recentBook.bookId);
-  }
-  if (stats == nullptr) {
-    stats = READING_STATS.findBook(recentBook.path);
-  }
+  const ReadingBookStats* stats = READING_STATS.getHomeBookStatsForRender(recentBook.bookId, recentBook.path);
   if (stats == nullptr) {
     return 0;
   }
@@ -309,13 +303,7 @@ void drawProgressBadge(GfxRenderer& renderer, const RecentBook& book, const int 
                        const int coverW, const int coverH) {
   // Build combined string: "35%" or "35% ~2h 15m"
   std::string badgeText = std::to_string(getBookProgressPercent(book)) + "%";
-  const ReadingBookStats* stats = nullptr;
-  if (!book.bookId.empty()) {
-    stats = READING_STATS.findBook(book.bookId);
-  }
-  if (stats == nullptr) {
-    stats = READING_STATS.findBook(book.path);
-  }
+  const ReadingBookStats* stats = READING_STATS.getHomeBookStatsForRender(book.bookId, book.path);
   if (stats != nullptr) {
     const std::string timeLeftText = getEstimatedTimeLeftText(*stats);
     if (!timeLeftText.empty()) {

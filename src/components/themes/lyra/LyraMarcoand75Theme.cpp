@@ -198,17 +198,11 @@ void drawSegmentProgressBar(const GfxRenderer& r, int x, int y, int filled, int 
 }
 
 uint8_t getBookProgress(const RecentBook& b) {
-  const ReadingBookStats* s = nullptr;
-  if (!b.bookId.empty()) s = READING_STATS.findBook(b.bookId);
-  if (!s) s = READING_STATS.findBook(b.path);
-  return s ? std::min<uint8_t>(s->lastProgressPercent, 100) : 0;
+  return READING_STATS.getBookProgressForHome(b.bookId, b.path);
 }
 
 const ReadingBookStats* getBookStats(const RecentBook& b) {
-  const ReadingBookStats* s = nullptr;
-  if (!b.bookId.empty()) s = READING_STATS.findBook(b.bookId);
-  if (!s) s = READING_STATS.findBook(b.path);
-  return s;
+  return READING_STATS.getHomeBookStatsForRender(b.bookId, b.path);
 }
 
 void fmtDuration(uint64_t ms, char* buf, size_t bufSize) {
@@ -523,10 +517,8 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     }
 
     if (hasCover && !book.path.empty()) {
-      const ReadingBookStats* readStats = nullptr;
-      if (!book.bookId.empty()) readStats = READING_STATS.findBook(book.bookId);
-      if (readStats == nullptr) readStats = READING_STATS.findBook(book.path);
-      if (readStats != nullptr && readStats->completed) {
+      SummaryJSON::BookBadge badge;
+      if (READING_STATS.getBookHomeStats(book.bookId, book.path, badge) && badge.completed) {
         drawReadRibbon(renderer, sx, sy, sw, sh);
       }
     }
@@ -621,10 +613,8 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                              recentBooks[centerIdx].title.c_str());
       }
       if (hasCover && !book.path.empty()) {
-        const ReadingBookStats* readStats = nullptr;
-        if (!book.bookId.empty()) readStats = READING_STATS.findBook(book.bookId);
-        if (readStats == nullptr) readStats = READING_STATS.findBook(book.path);
-        if (readStats != nullptr && readStats->completed) {
+        SummaryJSON::BookBadge badge;
+        if (READING_STATS.getBookHomeStats(book.bookId, book.path, badge) && badge.completed) {
           drawReadRibbon(renderer, centerX, centerCoverTop,
                          kFiveCoverCenterW, kFiveCoverCenterH);
         }

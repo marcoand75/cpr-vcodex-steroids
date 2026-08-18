@@ -519,6 +519,12 @@ words from chapter start to the beginning of `page`. Bookmarks store
 - **Performance & memory** — inventory caching, system-dir exclusion, zero-size
   thumbnail cleanup, font-decompressor lazy init (saves ~48 KB), `freeUnusedRenderMemory()`,
   library background memory release, lower cover-gen heap guards, full CPU during cover gen.
+- **Home reading-stats summary fast path** — a small derived `/.crosspoint/summary.json`
+  (global panel values + per-book home badges) lets the Home render the Lyra/Marcoand75
+  dashboard, carousel progress badges, read ribbon and long-press menu **without loading
+  the ~41 KB full `reading_stats.json` store into RAM at boot**. Written on every
+  `markDirty()`/`saveToFile()`, read lazily at boot (`preloadHomeSummary`), with an
+  upgrade path that generates it once from the existing store. Detail in [§22](#22-home-reading-stats-summary-json-fast-path).
 - **Power button / deep-sleep state machine** (see §4.3).
 
 - **Select Long Press configuration** (`CrossPointSettings::selectLongPress`) — 3 modes:
@@ -892,6 +898,16 @@ Carousel cache directory: `/.crosspoint/marcoand75-cache-v3`. Bump
 `MARCOAND75_CACHE_VERSION` in `src/activities/home/HomeActivity.cpp` when
 the theme rendering logic changes.
 
+### 15.5 Data source: summary.json fast path
+
+The dashboard panel (GLOBAL STATS / BOOK STATS) and the carousel progress
+badges/ETA/read-ribbon read their numbers through the **summary.json fast path**
+(see [§22](#22-home-reading-stats-summary-json-fast-path)): at boot only the small
+`/.crosspoint/summary.json` snapshot is loaded into RAM, so the full
+`reading_stats.json` store (~41 KB) stays on SD. When the store is actually loaded
+(reading, Reading Stats, Library, …), the getters transparently fall back to the
+in-RAM store — no visible difference in the panel.
+
 ---
 
 ## 16. Image Rendering Tuning (Settings → Display)
@@ -1143,6 +1159,11 @@ anything reverted is called out under *not active*.
   the dangling label pointer in the tab bar (label is now `std::string`).
 - **Boot / perf:** lazy store load, `silentRestartToHome()` (defragments heap on
   reader exit instead of a popup), boot-stage `HCR-FRAG` diagnostics.
+- **Home reading-stats summary fast path** — `/.crosspoint/summary.json` snapshot
+  (global stats + per-book home badges) so the Home renders its dashboard/carousel
+  without loading the full ~41 KB store at boot. BootActivity now preloads the
+  summary instead of the store; the full store stays lazy (`ensureLoaded`). See
+  [§22](#22-home-reading-stats-summary-json-fast-path).
 - **Wikipedia overhaul** — see [§5](#5-wikipedia-app).
 - **Quick Cards** — see [§19](#19-quick-cards-app).
 - **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
@@ -1189,4 +1210,95 @@ anything reverted is called out under *not active*.
 
 ---
 
-*Last updated: 2026-08-18 — added §21 Feature State & Changelog (base 07126f2b → HEAD), §5 Wikipedia cache overhaul, i18n/cache fixes.*
+## 22. Home Reading-Stats Summary (summary.json fast path)
+
+The Home screen (Lyra/Marcoand75 dashboard, carousel progress badges/ETA, read
+ribbon, book long-press menu) previously forced the full `reading_stats.json`
+store (~41 KB: all books + `readingDays` + `sessionLog`) into RAM at boot just to
+show the global stats panel and per-book progress. This feature removes that
+requirement: the Home now renders from a small derived snapshot.
+
+### 22.1 Storage & schema
+
+`/.crosspoint/summary.json` — a lightweight, derived snapshot regenerated on every
+stats change:
+
+```json
+{
+  "summary": {
+    "totalReadingMs": 0, "todayReadingMs": 0, "recent7ReadingMs": 0,
+    "recent30ReadingMs": 0, "currentStreakDays": 0, "maxStreakDays": 0,
+    "booksFinishedCount": 0, "goalReadingMs": 0, "referenceDayOrdinal": 0
+  },
+  "bookBadges": [
+    { "bookId": "", "path": "", "progressPercent": 0, "totalReadingMs": 0,
+      "sessions": 0, "readingDaysCount": 0, "completed": false }
+  ]
+}
+```
+
+Badges are written only for books that have progress / are completed / have read
+time, keeping the file small (tens of bytes per entry). Each badge carries the
+fields the Home data panel needs (total time, sessions, distinct days, completed)
+so the panel renders correctly even when the store is not in RAM.
+
+### 22.2 Write path
+
+- `ReadingStatsStore::markDirty()` → `saveSummaryJSON()` rebuilds the summary cache
+  and rewrites `summary.json` whenever the in-RAM store changes. Guarded by
+  `loaded_` so it never clobbers a good file right after a network memory release.
+- `saveToFile()` also refreshes the summary after every store save.
+- `reset()` / `importFromFile()` regenerate it (empty or new) via the same paths.
+
+### 22.3 Read path (Home fast path)
+
+- `preloadHomeSummary()` (called from `BootActivity`) reads `summary.json` once and
+  caches it (`summaryJson` + `summaryJsonValid_`). If the file is missing (upgrade
+  from a pre-feature build), it loads the full store once, generates the summary,
+  then releases the store again.
+- Getters that work from the cached summary when the store is **not** loaded, and
+  fall back to the in-RAM store when it is:
+  `getGlobalSummary()`, `getBookProgressForHome()`, `getBookHomeStats()`,
+  `getHomeBookStatsForRender()` (synthesizes a `ReadingBookStats` for the themes),
+  plus the existing `getTotalReadingMs()` / `getTodayReadingMs()` /
+  `getRecentReadingMs()` / `getCurrentStreakDays()` / `getMaxStreakDays()` /
+  `getBooksFinishedCount()`.
+- **Day-rollover handling:** `getTodayReadingMs()` returns 0 when the snapshot
+  predates today; `getCurrentStreakDays()` returns 0 when the snapshot is more
+  than one day old (streak possibly broken).
+
+### 22.4 Consumers switched to the fast path
+
+- `BootActivity` — `preloadHomeSummary()` instead of `ensureLoaded()`.
+- `HomeActivity` — carousel badge hash/percent, long-press context menu (completed
+  state) via `getBookProgressForHome()` / `getBookHomeStats()`.
+- All Lyra themes (`LyraTheme`, `LyraCarouselTheme`, `LyraCustomTheme`,
+  `LyraMarcoand75Theme`) — progress %, ETA, read ribbon via
+  `getBookProgressForHome()` / `getHomeBookStatsForRender()`.
+
+### 22.5 Correctness guards
+
+- `beginSession()` calls `ensureLoaded()` first, so opening a book while the store
+  is unloaded can never lose existing stats.
+- Screens that need the full store (Reading Stats, Library, Achievements, Reader,
+  …) still call `ensureLoaded()` and load it lazily as before.
+- `releaseMemoryForNetwork()` keeps the cached summary valid, so the Home keeps
+  rendering correctly after a network-heavy operation drops the store.
+
+### 22.6 RAM impact & verification
+
+At boot the ~41 KB store stays on SD; the Home reads only the small summary.
+Verified on device via boot log: `Reading stats deferred (loaded on demand)`
+followed by `HOME onEnter: global summary: total=163161649 today=721793 streak=2`
+and the carousel frame cache `HIT` — the dashboard and badges render with correct
+values while the full store is never loaded.
+
+**Files:** `src/ReadingStatsStore.{h,cpp}` (SummaryJSON, save/load summary,
+summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
+`src/activities/home/HomeActivity.cpp`,
+`src/components/themes/lyra/LyraTheme.cpp`, `LyraCarouselTheme.cpp`,
+`LyraCustomTheme.cpp`, `LyraMarcoand75Theme.cpp`.
+
+---
+
+*Last updated: 2026-08-18 — added §22 Home reading-stats summary.json fast path (dashboard/carousel without full store at boot), §21 Feature State & Changelog (base 07126f2b → HEAD), §5 Wikipedia cache overhaul, i18n/cache fixes.*

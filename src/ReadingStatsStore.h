@@ -65,6 +65,39 @@ bool loadReadingStatsDocument(ReadingStatsStore& store, const JsonDocument& doc)
 bool loadReadingStatsFromFile(ReadingStatsStore& store, const char* path);
 }  // namespace JsonSettingsIO
 
+// Lightweight global + per-book snapshot written to summary.json so the Home
+// screen can render the stats panel and carousel progress badges without
+// loading the full reading stats store (~41 KB) into RAM.
+struct SummaryJSON {
+  struct Global {
+    uint64_t totalReadingMs = 0;
+    uint64_t todayReadingMs = 0;
+    uint64_t recent7ReadingMs = 0;
+    uint64_t recent30ReadingMs = 0;
+    uint32_t currentStreakDays = 0;
+    uint32_t maxStreakDays = 0;
+    uint32_t booksFinishedCount = 0;
+    uint64_t goalReadingMs = 0;
+    // Day ordinal the snapshot was computed for. Lets getTodayReadingMs()
+    // return 0 after a day rollover instead of a stale "yesterday" value.
+    uint32_t referenceDayOrdinal = 0;
+  } global;
+
+  // Per-book home badge. Carries the fields the Home data panel needs so that
+  // the panel works even when the full store is not loaded.
+  struct BookBadge {
+    std::string bookId;
+    std::string path;
+    uint8_t progressPercent = 0;
+    uint64_t totalReadingMs = 0;
+    uint32_t sessions = 0;
+    uint32_t readingDaysCount = 0;
+    bool completed = false;
+  };
+
+  std::vector<BookBadge> bookBadges;
+};
+
 class ReadingStatsStore {
   // RIMOSSO: static ReadingStatsStore instance;
   // Non c'è più alcun membro statico a livello di classe che richieda 
@@ -108,6 +141,12 @@ class ReadingStatsStore {
   mutable bool loaded_ = false;
   bool _readingPaused = false;
 
+  // Cached copy of summary.json contents (for the "not fully loaded" fast path).
+  // `summaryJsonValid_` is true once summaryJson has been populated either from
+  // disk or from a freshly built summary.
+  mutable SummaryJSON summaryJson;
+  mutable bool summaryJsonValid_ = false;
+
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore&, const JsonDocument&);
@@ -146,6 +185,9 @@ class ReadingStatsStore {
   bool restoreInternalBackupToMain(const char* reason) const;
   bool maybeCreateAutoBackup(bool force) const;
   bool persistToFile(const char* path) const;
+  bool saveSummaryJSON() const;
+  bool loadSummaryJSON(SummaryJSON& out) const;
+  const SummaryJSON& getSummaryJSON() const;
   static bool isClockValid(uint32_t epochSeconds);
 
  public:
@@ -221,6 +263,26 @@ class ReadingStatsStore {
   void requestHomeInvalidation() const { homeInvalidationRequested = true; }
   bool isHomeInvalidationRequested() const { return homeInvalidationRequested; }
   void clearHomeInvalidationRequest() { homeInvalidationRequested = false; }
+
+  // Global summary read from summary.json (avoids full store load).
+  SummaryJSON::Global getGlobalSummary() const;
+  // Book progress for the home carousel - reads from summary.json if the store
+  // is not fully loaded, falls back to the in-RAM store otherwise.
+  uint8_t getBookProgressForHome(const std::string& bookId, const std::string& path) const;
+  // Full per-book home badge (progress, total ms, sessions, days, completed)
+  // used by the Home data panel. Returns false if the book has no stats.
+  bool getBookHomeStats(const std::string& bookId, const std::string& path, SummaryJSON::BookBadge& out) const;
+  // Returns a pointer to a synthesized ReadingBookStats for Home rendering
+  // (data panel / progress badge / read ribbon). When the full store is loaded
+  // it returns the real in-RAM entry; otherwise it synthesizes one from
+  // summary.json. The returned pointer stays valid until the next call, so
+  // callers must consume it before calling again.
+  const ReadingBookStats* getHomeBookStatsForRender(const std::string& bookId, const std::string& path) const;
+  // Preloads the summary.json cache (called at boot so the first Home render
+  // has the global panel + badges without blocking on file I/O). If summary.json
+  // is missing (e.g. upgrade from a version without it), loads the full store
+  // once, generates the summary, then releases the store back.
+  void preloadHomeSummary();
 
  private:
   mutable bool homeInvalidationRequested = false;

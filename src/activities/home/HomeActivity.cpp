@@ -378,17 +378,7 @@ uint32_t hashCarouselThumbState(uint32_t hash, const RecentBook& book) {
 }
 
 uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
-  const ReadingBookStats* stats = nullptr;
-  if (!recentBook.bookId.empty()) {
-    stats = READING_STATS.findBook(recentBook.bookId);
-  }
-  if (stats == nullptr) {
-    stats = READING_STATS.findBook(recentBook.path);
-  }
-  if (stats == nullptr) {
-    return 0;
-  }
-  return std::min<uint8_t>(stats->lastProgressPercent, 100);
+  return READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path);
 }
 
 // The portion of the frame hash that is shared by every book index: all params
@@ -750,8 +740,14 @@ void HomeActivity::onEnter() {
   // Drop any stale carousel frame cache (e.g. frames rendered with old reading
   // statistics) and force a fresh render — important after returning from a
   // finished read so the carousel shows updated progress/last-read at once.
+  // Instead of ensureLoaded(), read from summary.json which is much lighter.
   if (isLyraCarouselTheme()) {
-    READING_STATS.ensureLoaded();
+    // Read global summary from summary.json - no need to load full store
+    auto global = READING_STATS.getGlobalSummary();
+    LOG_DBG("HOME", "onEnter: global summary: total=%llu today=%llu streak=%d",
+               (unsigned long long)global.totalReadingMs,
+               (unsigned long long)global.todayReadingMs,
+               global.currentStreakDays);
     invalidateResidentCarouselFrame();
     invalidateCarouselFrameHash();
     carouselFramesReady = false;
@@ -1191,14 +1187,9 @@ void HomeActivity::loop() {
             deleteFromFavorites || FAVORITES.isFavorite(selectedBook.path);
 
         // Check reading status
-        const ReadingBookStats* stats = nullptr;
-        if (!selectedBook.bookId.empty()) {
-          stats = READING_STATS.findBook(selectedBook.bookId);
-        }
-        if (stats == nullptr) {
-          stats = READING_STATS.findBook(selectedBook.path);
-        }
-        const bool isCompleted = (stats != nullptr && stats->completed);
+        SummaryJSON::BookBadge badge;
+        const bool hasBadge = READING_STATS.getBookHomeStats(selectedBook.bookId, selectedBook.path, badge);
+        const bool isCompleted = hasBadge && badge.completed;
 
         const std::string subtitle = !selectedBook.author.empty() ? selectedBook.author : selectedBook.path;
 

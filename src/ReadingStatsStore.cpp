@@ -19,6 +19,7 @@
 
 namespace {
 constexpr char READING_STATS_FILE_JSON[] = "/.crosspoint/reading_stats.json";
+constexpr char READING_STATS_SUMMARY_JSON[] = "/.crosspoint/summary.json";
 constexpr char READING_STATS_BACKUP_FILE_JSON[] = "/.crosspoint/reading_stats.json.bak";
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_BACKUP_EXPORT_PREFIX[] = "/exports/stats_backup_";
@@ -892,6 +893,13 @@ void ReadingStatsStore::invalidateSummaryCache() { summaryCache.valid = false; }
 void ReadingStatsStore::markDirty() {
   dirty = true;
   invalidateSummaryCache();
+  // Regenerate the summary JSON so the Home can read it without loading the
+  // full store. Only run when the store is actually in RAM: with an unloaded
+  // store the in-RAM vectors are empty and writing would clobber the good
+  // summary.json on disk (e.g. right after releaseMemoryForNetwork()).
+  if (loaded_) {
+    saveSummaryJSON();
+  }
   homeInvalidationRequested = true;
 }
 
@@ -1221,6 +1229,12 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
   if (path.empty()) {
     return;
   }
+
+  // A session mutates the in-RAM store. The Home screen intentionally avoids
+  // loading the full store (it renders from summary.json), so make sure the
+  // real store is in RAM before touching it — otherwise existing stats would
+  // be silently lost.
+  ensureLoaded();
 
   if (activeSession.active) {
     endSession();
@@ -1604,13 +1618,141 @@ bool ReadingStatsStore::setBookFirstReadDate(const std::string& path, const uint
 }
 
 uint32_t ReadingStatsStore::getBooksFinishedCount() const {
+  if (!loaded_) {
+    return getSummaryJSON().global.booksFinishedCount;
+  }
   if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
   return summaryCache.booksFinishedCount;
 }
 
+SummaryJSON::Global ReadingStatsStore::getGlobalSummary() const {
+  if (!loaded_) {
+    return getSummaryJSON().global;
+  }
+
+  if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
+    rebuildSummaryCache();
+  }
+  SummaryJSON::Global result;
+  result.totalReadingMs = summaryCache.totalReadingMs;
+  result.todayReadingMs = summaryCache.todayReadingMs;
+  result.recent7ReadingMs = summaryCache.recent7ReadingMs;
+  result.recent30ReadingMs = summaryCache.recent30ReadingMs;
+  result.currentStreakDays = summaryCache.currentStreakDays;
+  result.maxStreakDays = summaryCache.maxStreakDays;
+  result.booksFinishedCount = summaryCache.booksFinishedCount;
+  result.goalReadingMs = summaryCache.goalReadingMs;
+  return result;
+}
+
+uint8_t ReadingStatsStore::getBookProgressForHome(const std::string& bookId, const std::string& path) const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    for (const auto& badge : summary.bookBadges) {
+      if ((!badge.bookId.empty() && badge.bookId == bookId) ||
+          (!badge.path.empty() && badge.path == path)) {
+        return std::min<uint8_t>(badge.progressPercent, 100);
+      }
+    }
+    return 0;
+  }
+
+  const ReadingBookStats* stats = nullptr;
+  if (!bookId.empty()) {
+    stats = findBook(bookId);
+  }
+  if (stats == nullptr) {
+    stats = findBook(path);
+  }
+  return stats ? std::min<uint8_t>(stats->lastProgressPercent, 100) : 0;
+}
+
+bool ReadingStatsStore::getBookHomeStats(const std::string& bookId, const std::string& path,
+                                         SummaryJSON::BookBadge& out) const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    for (const auto& badge : summary.bookBadges) {
+      if ((!badge.bookId.empty() && badge.bookId == bookId) ||
+          (!badge.path.empty() && badge.path == path)) {
+        out = badge;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const ReadingBookStats* stats = nullptr;
+  if (!bookId.empty()) {
+    stats = findBook(bookId);
+  }
+  if (stats == nullptr) {
+    stats = findBook(path);
+  }
+  if (stats == nullptr) {
+    return false;
+  }
+  out.bookId = stats->bookId;
+  out.path = stats->path;
+  out.progressPercent = stats->lastProgressPercent;
+  out.totalReadingMs = stats->totalReadingMs;
+  out.sessions = stats->sessions;
+  out.readingDaysCount = static_cast<uint32_t>(stats->readingDays.size());
+  out.completed = stats->completed;
+  return true;
+}
+
+void ReadingStatsStore::preloadHomeSummary() {
+  if (loadSummaryJSON(summaryJson)) {
+    summaryJsonValid_ = true;
+    return;
+  }
+
+  // No summary.json yet (e.g. first boot after an upgrade from a version that
+  // predates this feature). Load the full store once, generate the summary,
+  // then drop the store so the boot stays memory-light.
+  if (Storage.exists(READING_STATS_FILE_JSON) && ensureLoaded()) {
+    saveSummaryJSON();
+    releaseMemoryForNetwork();
+  }
+}
+
+const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::string& bookId,
+                                                                     const std::string& path) const {
+  if (loaded_) {
+    const ReadingBookStats* stats = nullptr;
+    if (!bookId.empty()) {
+      stats = findBook(bookId);
+    }
+    if (stats == nullptr) {
+      stats = findBook(path);
+    }
+    return stats;
+  }
+
+  // Not loaded: synthesize from summary.json so the Home panel/badges render
+  // correctly. Rendering is synchronous, so a single reusable buffer is safe.
+  static ReadingBookStats synthesized;
+  SummaryJSON::BookBadge badge;
+  if (!getBookHomeStats(bookId, path, badge)) {
+    return nullptr;
+  }
+  synthesized = ReadingBookStats{};
+  synthesized.bookId = badge.bookId;
+  synthesized.path = badge.path;
+  synthesized.lastProgressPercent = badge.progressPercent;
+  synthesized.totalReadingMs = badge.totalReadingMs;
+  synthesized.sessions = badge.sessions;
+  synthesized.readingDays.resize(badge.readingDaysCount);
+  synthesized.completed = badge.completed;
+  return &synthesized;
+}
+
 uint64_t ReadingStatsStore::getTotalReadingMs() const {
+  if (!loaded_) {
+    return getSummaryJSON().global.totalReadingMs;
+  }
   if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
@@ -1618,6 +1760,15 @@ uint64_t ReadingStatsStore::getTotalReadingMs() const {
 }
 
 uint64_t ReadingStatsStore::getTodayReadingMs() const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    // If the snapshot predates today (day rollover), today has no reading yet.
+    if (summary.global.referenceDayOrdinal != 0 &&
+        summary.global.referenceDayOrdinal != getReferenceDayOrdinal()) {
+      return 0;
+    }
+    return summary.global.todayReadingMs;
+  }
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
       summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
@@ -1629,6 +1780,18 @@ uint64_t ReadingStatsStore::getRecentReadingMs(const uint32_t days) const {
   if (days == 0) {
     return 0;
   }
+
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    if (days <= 7) {
+      return summary.global.recent7ReadingMs;
+    }
+    if (days <= 30) {
+      return summary.global.recent30ReadingMs;
+    }
+    return 0;
+  }
+
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
       summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
@@ -1656,6 +1819,17 @@ uint64_t ReadingStatsStore::getRecentReadingMs(const uint32_t days) const {
 }
 
 uint32_t ReadingStatsStore::getCurrentStreakDays() const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    // The streak is alive only if the snapshot is from today or yesterday
+    // (today pending). Older snapshots mean the streak may have been broken.
+    const uint32_t referenceDayOrdinal = getReferenceDayOrdinal();
+    const uint32_t snapshotDayOrdinal = summary.global.referenceDayOrdinal;
+    if (snapshotDayOrdinal != 0 && snapshotDayOrdinal + 1 < referenceDayOrdinal) {
+      return 0;
+    }
+    return summary.global.currentStreakDays;
+  }
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
       summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
@@ -1664,6 +1838,9 @@ uint32_t ReadingStatsStore::getCurrentStreakDays() const {
 }
 
 uint32_t ReadingStatsStore::getMaxStreakDays() const {
+  if (!loaded_) {
+    return getSummaryJSON().global.maxStreakDays;
+  }
   if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
@@ -1802,7 +1979,13 @@ bool ReadingStatsStore::saveToFile() const {
   if (activeSession.active && !shouldSaveDeferred()) {
     return true;
   }
-  return persistToFile(READING_STATS_FILE_JSON);
+  const bool saved = persistToFile(READING_STATS_FILE_JSON);
+  if (saved) {
+    // Also refresh the summary JSON so the Home can read it without loading
+    // the full store.
+    saveSummaryJSON();
+  }
+  return saved;
 }
 
 bool ReadingStatsStore::loadFromFile() {
@@ -1891,6 +2074,131 @@ void ReadingStatsStore::markLoadSkippedForRecovery() {
   lastSessionSnapshot = {};
   dirty = false;
   invalidateSummaryCache();
+}
+
+bool ReadingStatsStore::saveSummaryJSON() const {
+  // The caller (markDirty) invalidates the summary cache before invoking this,
+  // so rebuild it from the in-RAM store first.
+  if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
+    rebuildSummaryCache();
+  }
+
+  SummaryJSON json;
+  json.global.totalReadingMs = summaryCache.totalReadingMs;
+  json.global.todayReadingMs = summaryCache.todayReadingMs;
+  json.global.recent7ReadingMs = summaryCache.recent7ReadingMs;
+  json.global.recent30ReadingMs = summaryCache.recent30ReadingMs;
+  json.global.currentStreakDays = summaryCache.currentStreakDays;
+  json.global.maxStreakDays = summaryCache.maxStreakDays;
+  json.global.booksFinishedCount = summaryCache.booksFinishedCount;
+  json.global.goalReadingMs = summaryCache.goalReadingMs;
+  json.global.referenceDayOrdinal = summaryCache.referenceDayOrdinal;
+
+  // Only books that have any progress (or are completed) need a home badge.
+  // This keeps the file small (tens of bytes per entry vs. the full store).
+  for (const auto& book : books) {
+    if (book.lastProgressPercent == 0 && !book.completed && book.totalReadingMs == 0) {
+      continue;
+    }
+    SummaryJSON::BookBadge badge;
+    badge.bookId = book.bookId;
+    badge.path = book.path;
+    badge.progressPercent = book.lastProgressPercent;
+    badge.totalReadingMs = book.totalReadingMs;
+    badge.sessions = book.sessions;
+    badge.readingDaysCount = static_cast<uint32_t>(book.readingDays.size());
+    badge.completed = book.completed;
+    json.bookBadges.push_back(std::move(badge));
+  }
+
+  JsonDocument doc;
+  JsonObject summary = doc["summary"].to<JsonObject>();
+  summary["totalReadingMs"] = json.global.totalReadingMs;
+  summary["todayReadingMs"] = json.global.todayReadingMs;
+  summary["recent7ReadingMs"] = json.global.recent7ReadingMs;
+  summary["recent30ReadingMs"] = json.global.recent30ReadingMs;
+  summary["currentStreakDays"] = json.global.currentStreakDays;
+  summary["maxStreakDays"] = json.global.maxStreakDays;
+  summary["booksFinishedCount"] = json.global.booksFinishedCount;
+  summary["goalReadingMs"] = json.global.goalReadingMs;
+  summary["referenceDayOrdinal"] = json.global.referenceDayOrdinal;
+
+  JsonArray badges = doc["bookBadges"].to<JsonArray>();
+  for (const auto& badge : json.bookBadges) {
+    JsonObject obj = badges.add<JsonObject>();
+    obj["bookId"] = badge.bookId;
+    obj["path"] = badge.path;
+    obj["progressPercent"] = badge.progressPercent;
+    obj["totalReadingMs"] = badge.totalReadingMs;
+    obj["sessions"] = badge.sessions;
+    obj["readingDaysCount"] = badge.readingDaysCount;
+    obj["completed"] = badge.completed;
+  }
+
+  String serialized;
+  serializeJson(doc, serialized);
+  if (!Storage.writeFile(READING_STATS_SUMMARY_JSON, serialized)) {
+    LOG_ERR("RST", "Failed to write summary JSON (%u bytes)", serialized.length());
+    return false;
+  }
+
+  // Cache the freshly built summary so subsequent getters need no file I/O.
+  summaryJson = std::move(json);
+  summaryJsonValid_ = true;
+  LOG_DBG("RST", "Saved summary JSON: %u bytes (%zu badges)", serialized.length(), summaryJson.bookBadges.size());
+  return true;
+}
+
+bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
+  if (!Storage.exists(READING_STATS_SUMMARY_JSON)) {
+    return false;
+  }
+
+  const String json = Storage.readFile(READING_STATS_SUMMARY_JSON);
+  if (json.isEmpty()) {
+    return false;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, json)) {
+    return false;
+  }
+
+  JsonObject summary = doc["summary"];
+  if (!summary.isNull()) {
+    out.global.totalReadingMs = summary["totalReadingMs"] | 0ULL;
+    out.global.todayReadingMs = summary["todayReadingMs"] | 0ULL;
+    out.global.recent7ReadingMs = summary["recent7ReadingMs"] | 0ULL;
+    out.global.recent30ReadingMs = summary["recent30ReadingMs"] | 0ULL;
+    out.global.currentStreakDays = summary["currentStreakDays"] | 0U;
+    out.global.maxStreakDays = summary["maxStreakDays"] | 0U;
+    out.global.booksFinishedCount = summary["booksFinishedCount"] | 0U;
+    out.global.goalReadingMs = summary["goalReadingMs"] | 0ULL;
+    out.global.referenceDayOrdinal = summary["referenceDayOrdinal"] | 0U;
+  }
+
+  out.bookBadges.clear();
+  JsonArray badges = doc["bookBadges"];
+  for (JsonObject obj : badges) {
+    SummaryJSON::BookBadge badge;
+    badge.bookId = obj["bookId"] | std::string("");
+    badge.path = obj["path"] | std::string("");
+    badge.progressPercent = obj["progressPercent"] | 0U;
+    badge.totalReadingMs = obj["totalReadingMs"] | 0ULL;
+    badge.sessions = obj["sessions"] | 0U;
+    badge.readingDaysCount = obj["readingDaysCount"] | 0U;
+    badge.completed = obj["completed"] | false;
+    out.bookBadges.push_back(std::move(badge));
+  }
+  return true;
+}
+
+const SummaryJSON& ReadingStatsStore::getSummaryJSON() const {
+  if (!summaryJsonValid_) {
+    summaryJson = SummaryJSON{};
+    summaryJsonValid_ = loadSummaryJSON(summaryJson);
+  }
+  return summaryJson;
 }
 
 bool ReadingStatsStore::ensureLoaded() {

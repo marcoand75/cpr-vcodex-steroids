@@ -55,8 +55,8 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/network/html/AppSettingsPage.html`** | **Browser stats/settings editor (deleted by upstream!)** |
 | **`src/SettingsList.cpp`** | **Steroids menu items (library, screensaver, frontLongPress, clippingsShortcut, etc.)** |
 | **`src/activities/ActivityManager.cpp/h`** | **goToLibrary, goToScreensaver, goToClippings methods** |
-| **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount)** |
-| **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread)** |
+| **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary)** |
+| **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot)** |
 | **`src/ReadingStatsActivity.cpp/h`** | **selectedBookPath constructor param (pre-select book in stats)** |
 | **`src/components/LibraryIndex.cpp`** | **Incremental scan vector pre-allocation, null-terminated ZIP reads** |
 | **`src/activities/settings/StatusBarSettingsActivity.cpp`** | **Clock position, clock format, sync clock now in status bar menu** |
@@ -115,6 +115,13 @@ found missing in Steroids and have been restored:
 - `loadedBookCount` counter with periodic heap logging
 - Meyers' Singleton pattern (inline `getInstance()`)
 - `#include <ArduinoJson.h>` in `ReadingStatsStore.h` (upstream already had it)
+- `SummaryJSON` + `/.crosspoint/summary.json` fast path — the Home renders the
+  global panel and carousel badges from the small derived summary instead of
+  loading the full store at boot. If an upstream merge rewrites
+  `ReadingStatsStore.{h,cpp}`, re-apply: `SummaryJSON` struct, `summaryJson`
+  cache + `summaryJsonValid_`, `saveSummaryJSON`/`loadSummaryJSON`/
+  `getSummaryJSON`, the `loaded_` guards on all summary getters, `beginSession()`
+  `ensureLoaded()` guard, and `preloadHomeSummary()` in `BootActivity`.
 
 **Files modified in this alignment:**
 - `src/ReadingStatsStore.h`: added `#include <ArduinoJson.h>`, friend
@@ -1029,6 +1036,13 @@ deltas to watch in the next upstream pull. Details by feature in
 - **Boot memory:** `src/main.cpp` and the lazy-load of `*Store`s diverge (eager in
   upstream). `src/main.cpp` is a protected file (power-hold sequence, silent restart,
   boot instrumentation, initGammaLUT).
+- **Home reading-stats summary.json fast path:** Steroids reads a small derived
+  `/.crosspoint/summary.json` on the Home screen and keeps the full
+  `reading_stats.json` store (~41 KB) out of RAM at boot; upstream loads the store
+  eagerly. This lives entirely in the protected `ReadingStatsStore.{h,cpp}` +
+  `BootActivity.cpp` + the Lyra themes. `summary.json` is a **derived** artifact —
+  never back it up or import it; it is regenerated on the next stats save if missing.
+  See `STEROIDS-ADDICTIONS.md` §22.
 - **Library cover cache** uses FNV-1a 64 (aligned with `Epub`) instead of upstream
   `std::hash`; a hash mismatch is what used to make cover thumbs and book-cache
   deletion miss.
@@ -1052,4 +1066,4 @@ Priority order if cherry-picking the next upstream release into this base:
 
 ---
 
-*Last updated: 2026-08-18 — added Wikipedia cache overhaul, CrossInk/EPUB, boot/perf, PNG stability, multi-device X3/X4, hyphenation opt-in, and align-upstream notes base 07126f2b→HEAD.*
+*Last updated: 2026-08-18 — added Home reading-stats summary.json fast path divergence (ReadingStatsStore protected + derived-artifact note), Wikipedia cache overhaul, CrossInk/EPUB, boot/perf, PNG stability, multi-device X3/X4, hyphenation opt-in, and align-upstream notes base 07126f2b→HEAD.*
