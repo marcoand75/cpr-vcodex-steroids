@@ -421,6 +421,28 @@ These files were added in the 2026-08-10 Steroids development round and must nev
 | `freeink-sdk/` | Replaces `open-x4-sdk` — multi-device SDK |
 | `platformio.ini` | Added `BoardConfig`, `XteinkDetect`, `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1` |
 
+### New Additions (2026-08-09 → 2026-08-18, base `07126f2b` → HEAD)
+
+Added/restructured between `07126f2b` and `4eaf2371`. Some of these are brand-new
+upstream files (never overwrite with an old upstream copy); others replace an upstream
+implementation Steroids no longer ships.
+
+| File | Steroids state / note |
+|---|---|
+| `lib/Epub/epub/*` (Section, Page, ParsedText, blocks, parsers, css) | **CrossInk EPUB engine**; massive divergence from upstream. Merge manually only. |
+| `lib/MiniBidi/*` | Bidi engine pulled in by CrossInk; not in upstream master. |
+| `lib/miniz/` + `third_party/miniz.c` | New inflater used by CrossInk. |
+| `lib/Memory/Arena.h` / `ArenaVector.h` | Arena allocator used **inside** the CrossInk engine, **not** on the epub render hot path. |
+| `src/activities/apps/WikipediaActivity.cpp/h` | Per-article folder cache (`wiki_<hash>`), crash fixes, i18n delete key, `listFiles(includeDirectories)`. |
+| `src/activities/reader/WikiTxtReaderActivity.cpp/h` | Dedicated wiki reader (progress.bin, screenshot info, frame reserve). |
+| `src/util/ScreenshotInfo.h` | New reader-metadata hook (used by wiki reader). |
+| `src/ReadingStats/` | **Intentionally empty** — CrossInk binary stats removed; vCodex JSON is the only store. |
+| `lib/EpdFont/SdCardFont.cpp` | SD-font advance table grows in place via `realloc` (Steroids). |
+| `lib/EpdFont/builtinFonts/all.h` (font set) | UI font is **Ubuntu**, not Inter (Inter default was reverted). |
+| `lib/GfxRenderer/ImageRenderConfig.h/cpp` | Grayscale/gamma/dither shared config (see §8A / Grayscale section). |
+| `src/util/PngSleepRenderer.*`, `src/util/SleepScreenCache.*` | Steroids PNG sleep renderer — **never merge upstream `patch_pngdec.py`**. |
+| `enums/hyph-*` | Hyphenation dictionaries: non-core ones opt-in via `CPR_ENABLE_*_HYPHENATION`.
+
 ### Existing Protected Files — DO NOT overwrite
 
 These files contain Steroids-only features. **Never `git checkout --theirs`**
@@ -982,4 +1004,52 @@ section in `STEROIDS-ADDICTIONS.md` §8A for the full design rationale.
 
 ---
 
-*Last updated: 2026-08-10 — added multi-device X3/X4 integration (freeink-sdk, BoardConfig, HalSpiBus, XteinkDetectExt, UC8279/UC8179 detection), Quick Cards app, Select Long Press, Settings dividers, X4 clock hide, clear cache fix, QR field parser, new protected files list.*
+## What changed since `07126f2b` — align-upstream notes
+
+Base `07126f2b` (2026-08-09) → HEAD `4eaf2371` (2026-08-18). Key merge-sensitive
+deltas to watch in the next upstream pull. Details by feature in
+`STEROIDS-ADDICTIONS.md` §21.
+
+### Divergence that will conflict on upstream merge
+- **CrossInk EPUB engine** (`lib/Epub/epub/*`, `MiniBidi`, `miniz`, `Memory/Arena.*`)
+  replaced the EPUB stack. Upstream EPUB changes must be re-applied on top of the
+  CrossInk files — do **not** take upstream `lib/Epub/*` wholesale. The render
+  signature is now `foregroundBlack` (bionic-mode param removed): keep the
+  `c2a65b20` fix (foreground black when bionic OFF).
+- **Reading stats:** upstream re-adding `src/ReadingStats/` binaries will conflict with
+  the decision to keep vCodex JSON only. Reject binary reintroduction.
+- **PNG/screensaver:** never import upstream `patch_pngdec.py` (incompatible with
+  `PngSleepRenderer`). `ScreenSaverActivity`/`SleepActivity`/`PngSleepRenderer` are
+  protected Steroids files.
+- **ZipFile EOCD scan stays at 1 KB.** If upstream grows the EOCD scan (> 1 KB) or
+  streams it, do not take it (caused a ~131 KB malloc failure / infinite loop here) —
+  keep the 1 KB scan.
+- **UI font is Ubuntu** (upstream may default to Inter). Keep local `lib/EpdFont`
+  font set and hyphenation opt-in flags (`CPR_ENABLE_*_HYPHENATION`).
+- **Boot memory:** `src/main.cpp` and the lazy-load of `*Store`s diverge (eager in
+  upstream). `src/main.cpp` is a protected file (power-hold sequence, silent restart,
+  boot instrumentation, initGammaLUT).
+- **Library cover cache** uses FNV-1a 64 (aligned with `Epub`) instead of upstream
+  `std::hash`; a hash mismatch is what used to make cover thumbs and book-cache
+  deletion miss.
+- **Wikipedia** is a full Steroids app (`WikipediaActivity`/`WikiTxtReaderActivity`)
+  plus cache plumbing (`HalStorage::listFiles(includeDirectories=false)`),
+  `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
+  Steroids string keys (keep local; see I18N workflow).
+
+### Protected-file additions since `07126f2b`
+See the "New Additions (2026-08-09 → 2026-08-18)" table above. In particular the
+`lib/Epub/epub/*`, `lib/MiniBidi/*`, `lib/miniz`, `lib/Memory/Arena.*`, and the
+per-article Wikipedia cache files must never be replaced by upstream copies.
+
+### Suggested incremental-merge focus for this delta
+Priority order if cherry-picking the next upstream release into this base:
+1. Any updated `.yaml`/i18n keys **except** english/italian (keep local).
+2. Settings bugfixes excluding `SettingsActivity.cpp` (label) and `settingsCount`
+   logic (already fixed locally).
+3. EPUB engine fixes — re-apply to CrossInk files, verifying `foregroundBlack`.
+4. Re-check `freeink-sdk` submodule pin (SDCardManager `listFiles` signature).
+
+---
+
+*Last updated: 2026-08-18 — added Wikipedia cache overhaul, CrossInk/EPUB, boot/perf, PNG stability, multi-device X3/X4, hyphenation opt-in, and align-upstream notes base 07126f2b→HEAD.*

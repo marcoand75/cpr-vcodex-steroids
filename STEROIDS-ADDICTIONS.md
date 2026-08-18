@@ -49,7 +49,7 @@ icon/theme checklist at the end of this file).
 | App | Activity | Purpose |
 |---|---|---|
 | **Library** | `LibraryActivity` | Grid-based e-book library (EPUB/XTC/TXT/MD), sort/filter/search, cover generation, collections/series. Full technical detail in [§6](#6-library-module-detail). |
-| **Wikipedia** | `WikipediaActivity` + `WikiTxtReaderActivity` | Download/read Wikipedia articles. Search, save as markdown `.wiki` in cache, summary preview (in-app), full-article reading via a dedicated reader. Detail in [§5](#5-wikipedia-app). |
+| **Wikipedia** | `WikipediaActivity` + `WikiTxtReaderActivity` | Download/read Wikipedia articles. Search, summary preview (in-app), full-article reading via a dedicated reader. Each downloaded/converted article is cached in a per-article folder (`wiki_<hash>` with `article.md` + `title.txt` + `index.bin` + `progress.bin`) for offline reopen. Detail in [§5](#5-wikipedia-app). |
 | **Quick Cards** | `QuickCardsActivity` | Image, QR code, and barcode viewer. Browses `/cards/` on SD. Renders BMP/JPEG/PNG images with auto-scaling, QR codes with structured field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone, SMS, OTP, calendar event, URL), and Code‑128 barcodes. Cyberpunk panel file list. Fullscreen mode. Detail in [§19](#19-quick-cards-app). |
 | **Screensaver** | `ScreenSaverActivity`, `ScreenSaverDirActivity`, `ScreenSaverPreviewActivity` | Dual-mode e-ink screensaver (general + in-book), PNG compositing, folder picker. Detail in [§4](#4-screensaver--sleep--deepsleep). |
 | **Sleep** | `SleepAppActivity`, `SleepPreviewActivity` | Sleep screen, image rotation on short power press, deep-sleep handling. Detail in [§4](#4-screensaver--sleep--deepsleep). |
@@ -312,43 +312,80 @@ and full-article reading are decoupled:
 - **`WikipediaActivity`** — search (opensearch), search history, cached-article list,
   summary preview (`renderArticle()`, plain text, in-app), download + wikitext→markdown
   conversion, and launching the reader.
-- **`WikiTxtReaderActivity`** — dedicated reader for the cached `.wiki` files.
+- **`WikiTxtReaderActivity`** — dedicated reader for the cached per-article folders.
+
+> **Cache layout (current): per-article folder.** Each downloaded/converted article is
+> stored in `/.crosspoint/wikipedia-cache/wiki_<FNVhash>/` and contains:
+> `article.md` (the markdown body), `title.txt` (the real display title, so the
+> `CACHED_PAGES` list can show and reopen by title even though the folder name is an
+> opaque hash), `index.bin` (page-index cache), `progress.bin` (last read page).
+> The old flat format (`.wiki` files) is a legacy fallback; legacy files are removed
+> when a newer per-folder copy is cached.
 
 ### 5.1 Download flow (`fetchFullArticle`)
 1. Calls `https://it.wikipedia.org/w/api.php?action=parse&page=<TITLE>&prop=wikitext&format=json`
    (wikitext JSON, not the mobile-html REST API).
-2. Streams the JSON response to `raw_<title>.json` on SD (no full-RAM copy).
+2. Streams the JSON response to `wiki_<hash>/raw.json` on SD (no full-RAM copy).
+   **HTTP/TLS lifetime matters:** `HTTPClient` + the `NetworkClientSecure` (TLS) are
+   held in a dedicated scope that destroys them **in the right order (http first, then
+   client)** **before** conversion/restore; calling `httpClient.reset()` manually was a
+   **double-free** (`HTTPClient` keeps an internal ref to the TLS client) → abort at
+   `multi_heap_free`.
 3. **`WikitextToMarkdown`** (`src/util/WikitextToMarkdown.{h,cpp}`) streams the JSON,
-   scans the `"wikitext"` → `"*"` field, decodes JSON escapes on the fly, and writes a
-   **markdown** `.wiki` cache file (`/.crosspoint/wikipedia-cache/<title>.wiki`).
+   scans the `"wikitext"` → `"*"` field, decodes JSON escapes on the fly, and writes
+   `wiki_<hash>/article.md` as **markdown**.
    - wikitext `'''...'''`/`''...''` → markdown `**...**`/`*...*`; `==H==` → `# H`;
      lists `*`/`#`; links `[[X|Y]]` → display text; `{{templates}}`, `<ref>`, HTML
      comments and multi-line infobox templates stripped.
    - `HtmlToTxt` is **kept but unused** in the Wikipedia flow.
+4. Writes `wiki_<hash>/title.txt` with the real title, then `loadCachedPages()`.
+5. **No reading-stats reload here.** After this heavy streaming the heap is low and
+   fragmented (`~46 KB free / ~20 KB maxAlloc`): reloading all book stats caused
+   `abort()` (illegal instruction). `restoreAfterNetwork(..., reloadReadingStats=false)`
+   skips it because `WikiTxtReaderActivity` does not use reading stats; they stay
+   persisted on SD and load lazily via `ensureLoaded()` when actually needed.
 
 ### 5.2 Reading flow
-- **Summary preview** uses the original in-app Wikipedia rendering (`renderArticle()`).
-- **Full downloaded article / cached `.wiki` files** open via **`WikiTxtReaderActivity`**
-  (launched with `startActivityForResult`).
+- **Summary preview** (`/api/rest_v1/page/summary/...`) uses the in-app Wikipedia
+  rendering (`renderArticle()`).
+- **Confirm on summary** opens the full article **directly from cache when available**
+  (no network), else falls back to `fetchFullArticle()`.
+- **Cached article reopen** (`State::CACHED_PAGES`) opens by the **stored title** via
+  `loadCachedArticle()` → `openArticleForReading()` (no re-connect). Large articles are
+  read straight from `article.md` on SD (`g_articleFilePath`); small ones into RAM.
+- **Long-press on a cached page** asks for confirmation (`ConfirmationActivity`,
+  `STR_DELETE_CACHED_PAGE`) and then deletes the whole `wiki_<hash>` folder with
+  `Storage.removeDir()`.
+- **Home cleanup:** when the reader closes, `searchInput`/`currentQuery`/`errorMessage`
+  are cleared so the "Search Wikipedia" button returns to its hint (previously it kept
+  showing the last-read title).
 
 ### 5.3 WikiTxtReaderActivity (dedicated reader)
 Uses the **same reading/rendering system as `TxtReaderActivity`** but without the
 book-reader side effects:
 - **Markdown span parsing**: `**bold**`, `*italic*`, `#` headings, `-`/ordered lists,
   `>` blockquotes.
-- **Page index** built in RAM (`buildPageIndex`) + **per-article `.bin` cache**
-  (`<title>.wiki.bin`) with settings-validation (font / margin / lines / viewport).
+- **Page index** built in RAM (`buildPageIndex`, with `pageOffsets.reserve()` to curb
+  heap fragmentation) + **per-article `index.bin`** cache with settings-validation
+  (font / margin / lines / viewport).
 - **Chunked file reading** (`loadPageAtOffset`) with span-aware wrapping and SD-font
   priming per chunk.
 - **Two-pass prewarm rendering** (`renderPage`) + status bar with progress
   (`Pag. N/M`).
-- `.wiki` content is always treated as markdown.
-- **No** reading stats, achievements, recent books, progress files, completed-book
-  mover, or orientation handling.
+- **Reading progress persisted** in `wiki_<hash>/progress.bin` (page + byte offset) and
+  restored on `onEnter`; saves on each render and on exit.
+- **`getScreenshotInfo()` / `isReaderActivity()`** so screenshots and reader-related
+  framework hooks work for the wiki reader too.
+- `article.md` content is always treated as markdown.
+- **No** reading stats, achievements, recent books, completed-book mover, or
+  orientation handling (RTL is supported at line level via `BidiUtils`).
 
 **Files:** `src/activities/apps/WikipediaActivity.{cpp,h}`,
 `src/activities/reader/WikiTxtReaderActivity.{cpp,h}`, `src/util/WikitextToMarkdown.{cpp,h}`,
 `src/util/MarkdownReader.{cpp,h}`.
+**Plumbing:** `lib/hal/HalStorage.{cpp,h}` + `freeink-sdk`
+`SDCardManager::listFiles()` gained an `includeDirectories` option (default `false`)
+so the cache can enumerate `wiki_*` folders; existing callers unchanged.
 
 ---
 
@@ -1067,4 +1104,89 @@ or `"Mercer."`). Used only by the text-search across-pages for positioning.
 | `src/activities/reader/EpubReaderActivity.cpp` | Rewritten `renderClippingHighlights` (-185/+59), new text-search positioning in `render()` |
 | `src/activities/reader/EpubReaderActivity.h` | Added `pendingClippingText` member |
 
-*Last updated: 2026-08-10 — added §20 Clipping Navigation and Highlighting Fix.*
+---
+
+## 21. Feature State & Changelog (base `07126f2b` → HEAD)
+
+What actually changed from commit `07126f2b` (2026-08-09) up to `4eaf2371`
+(2026-08-18). Repeatedly: only **maintained** changes are listed as active;
+anything reverted is called out under *not active*.
+
+### 21.1 Active (maintained) additions
+
+- **CrossInk EPUB engine integration** (`9430b747`, merged in `102211a6`): replaces the
+  EPUB parser/rendering stack with CrossInk (`lib/Epub/epub/*`, `lib/MiniBidi/*`,
+  `lib/miniz` + `third_party/miniz.c`, arena allocators `lib/Memory/Arena.*` used
+  **inside** the engine). The arena is **not** used on the reader render hot path.
+  - Per-book reader settings + remember successful render mode to skip re-indexing.
+  - Text-only **Safe Mode** as final fallback for large chapters + relaxed
+    low-memory thresholds (LIGHT/SAFE).
+  - Per-chapter image-dimension cache (less heap churn).
+  - **Bionic-reading OFF fix** (`c2a65b20`): reader now passes `foregroundBlack=true` to
+    `page->render()`; also fixed the prewarm scope that was clearing the font cache.
+- **Widening/hook refinements:** hyphenation dictionaries are now opt-in
+  (`CPR_ENABLE_*_HYPHENATION`, default OFF; EN/IT/PT enabled) — `d96809b8`. Flash
+  dropped to ~98.2%.
+- **SD-font advance table** grows in place via `realloc` (`0ce73e5f`) — maxAlloc
+  stable (~34 KB) instead of spikey new[]/delete[].
+- **Reading stats:** vCodex JSON pipeline retained; **CrossInk binary stats were
+  removed** (`src/ReadingStats/` empty). Boot lazy-loads stores
+  (`6c264043`), JSON deserialized from stream (no whole-file String, `4b9055ed`).
+- **Screensaver / sleep PNG** stabilised and tuned: prewarm overlay glyphs *before*
+  PNG decode (avoids OOM), release memory before each decode/no double SD write,
+  shuffle/sequential first-image + persisted cycle index, and Image-rendering/gamma
+  + grayscale + text-overlay ghosting fixes (`1a9eaa98`).
+- **Library cover cache** now uses the same **FNV-1a 64** hash as `Epub` for EPUB
+  covers (delete/align), plus adaptive (contain) cover thumbnails and wrapped
+  pagination dots.
+- **Settings stability:** fixed OOB read (settingsCount/currentSettings mismatch) and
+  the dangling label pointer in the tab bar (label is now `std::string`).
+- **Boot / perf:** lazy store load, `silentRestartToHome()` (defragments heap on
+  reader exit instead of a popup), boot-stage `HCR-FRAG` diagnostics.
+- **Wikipedia overhaul** — see [§5](#5-wikipedia-app).
+- **Quick Cards** — see [§19](#19-quick-cards-app).
+- **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
+- **X3/X4 multi-device** migration to **freeink-sdk** + `XteinkDetectExt`, hold power
+  rails, HalSpiBus mutex, boot-sequence fixes.
+
+### 21.2 Not active (introduced then reverted / removed)
+
+- **Arena "optimizations" in `EpubReaderActivity` render hot path** — introduced in
+  `bac51044`, reverted in `afe9b42c` (dangling `ClippingWordInfo`, arena clear/checkpoint
+  conflict, unbounded growth). Render path stays on `std::vector`/`std::string`.
+- **Zip EOCD scan >1 KB / streaming** — introduced `d4026a42`/`9c5de90b`, reverted in
+  `a086ee3d` back to the original **1 KB EOCD scan** (the wide scan caused a ~131 KB
+  malloc failure and the streaming variant an infinite loop). Note: some non-standard
+  zips (e.g. `Vengeful - V.E. Schwab.epub`) remain unloadable.
+- **Inter as default UI font** — reverted in `ef8dd0c5`; the UI font is **Ubuntu**
+  (ubuntu_10/12). The hyphenation-shrink part was kept independently (`d96809b8`).
+- **CrossInk binary reading stats** — removed (`1a0dbcc1`); only the vCodex JSON store
+  remains.
+- **Reading-stats pool/string shrinkToFit** — introduced `20ed6787`, reverted `875fab16`.
+- **`patch_pngdec.py` (upstream PNG optimization)** — removed `25bac0e3` because it is
+  incompatible with the Steroids `PngSleepRenderer`.
+
+### 21.3 Improvements that could still come (gaps / next candidates)
+
+- Wikipedia **full-article indexing is slow** (first open builds `index.bin` by wrapping
+  every page; SD-font glyph advance lookups dominate — see §5.3). A per-article
+  precomputed `index.bin` already mitigates repeats, but the very first build is costly.
+- Non-standard-zip EPUBs with oversized EOCD comments remain unloadable (locked to the
+  1 KB EOCD scan).
+- The CrossInk engine is the single largest divergence; future upstream merges touching
+  `lib/Epub/epub/*`, `lib/MiniBidi`, `lib/Memory/Arena.*` must be reconciled manually.
+
+### 21.4 Addictions / dependency notes
+
+- Steroids now **depends** on the CrossInk engine artifacts (`lib/Epub/epub/*`,
+  `MiniBidi`, `miniz`, `Memory/Arena.*`) and on **freeink-sdk** at a **new pinned
+  submodule commit** (`SDCardManager::listFiles(..., includeDirectories)`). Any upstream
+  merge that drops or restructures these will silently regress EPUB rendering and wiki
+  cache listing unless re-pinned/re-added.
+- `src/ReadingStats/` is intentionally empty at HEAD; an upstream merge that re-adds
+  those binaries needs a decision (keep vCodex JSON, do not reintroduce binary).
+- PNG/screensaver path must never take upstream `patch_pngdec.py` again.
+
+---
+
+*Last updated: 2026-08-18 — added §21 Feature State & Changelog (base 07126f2b → HEAD), §5 Wikipedia cache overhaul, i18n/cache fixes.*
