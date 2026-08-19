@@ -2,6 +2,7 @@
 
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
+#include <Epub/blocks/ImageBlock.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -262,7 +263,9 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
 
   if (SETTINGS.showStatsAfterReading && countedSession && !bookPath.empty()) {
     activityManager.replaceActivity(
-        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                              /*fromReaderExit=*/true}));
   } else {
     // Silent restart to Home: reclaim fragmented heap (parsing, rendering,
     // section cache) without the "Loading..." popup or display flash.
@@ -303,6 +306,10 @@ void EpubReaderActivity::onEnter() {
   if (!epub) {
     return;
   }
+
+  // Register this reader as the ImageBlock lazy-extraction source so inline
+  // EPUB images (still inside the archive) can be pulled out on first render.
+  ImageBlock::setExtractor(this, &EpubReaderActivity::extractInlineImage);
 
   ensureSdFontLoaded();
 
@@ -397,6 +404,10 @@ void EpubReaderActivity::onEnter() {
 void EpubReaderActivity::onExit() {
   Activity::onExit();
 
+  // Drop the ImageBlock extraction callback before tearing down reader state,
+  // so no stale render path can reach a released EPUB.
+  ImageBlock::setExtractor(nullptr, nullptr);
+
   ReaderUtils::requestReaderUiTransitionRefresh(renderer);
 
   // Reset orientation back to portrait for the rest of the UI
@@ -410,6 +421,15 @@ void EpubReaderActivity::onExit() {
   invalidateCurrentOverlayPageCache();
   section.reset();
   epub.reset();
+}
+
+bool EpubReaderActivity::extractInlineImage(void* context, const char* sourcePath,
+                                            const char* destinationPath) {
+  auto* reader = static_cast<EpubReaderActivity*>(context);
+  if (!reader || !reader->epub || !sourcePath || !destinationPath) {
+    return false;
+  }
+  return reader->epub->extractItemToFile(sourcePath, destinationPath);
 }
 
 void EpubReaderActivity::loop() {
@@ -1207,23 +1227,54 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
   if (!page) return;
 
   const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
+
+  // Cheap pre-check: only do the expensive word-array build (and its heap
+  // allocation) when there is at least one clipping for the current spine.
+  // Without this, the allocation runs on every grayscale pass of every page and
+  // an uncaught std::bad_alloc aborts the device under memory pressure.
+  bool hasClipForSpine = false;
+  for (const auto& clipping : clippingStore.getAll()) {
+    if (clipping.spineIndex == currentSpine) {
+      hasClipForSpine = true;
+      break;
+    }
+  }
+  if (!hasClipForSpine) return;
+
   const int fontId = SETTINGS.getReaderFontId();
 
   // Build a flat word array (same pattern as renderBookmarkHighlight v3).
   struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
-  std::vector<PW> pw;
+
+  // Count words first so the array can be allocated in a single nothrow shot
+  // instead of growing a std::vector (whose reallocation throws std::bad_alloc
+  // when the heap is fragmented).
+  size_t totalWords = 0;
+  for (const auto& element : page->elements) {
+    if (!element || element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = line.getBlock();
+    if (!block) continue;
+    totalWords += block->wordCount();
+  }
+  if (totalWords == 0) return;
+
+  std::unique_ptr<PW[]> pw(new (std::nothrow) PW[totalWords]);
+  if (!pw) return;  // Graceful degradation: skip highlights this frame on OOM.
+
+  size_t pwCount = 0;
   for (const auto& element : page->elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
     const auto& line = static_cast<const PageLine&>(*element);
     const auto& block = line.getBlock();
     if (!block) continue;
     const uint16_t wc = block->wordCount();
-    for (uint16_t wi = 0; wi < wc; ++wi) {
+    for (uint16_t wi = 0; wi < wc && pwCount < totalWords; ++wi) {
       const char* wordText = block->wordText(wi);
       const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
       const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
       const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
-      pw.push_back({wordText, sx, sy, sw});
+      pw[pwCount++] = {wordText, sx, sy, sw};
     }
   }
 
@@ -1247,10 +1298,10 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     if (tokens.size() < 3) continue;
     const size_t minMatch = std::max(tokens.size() / 2, size_t{3});
 
-    for (size_t startIdx = 0; startIdx + minMatch <= pw.size(); ++startIdx) {
+    for (size_t startIdx = 0; startIdx + minMatch <= pwCount; ++startIdx) {
       if (strcmp(pw[startIdx].t, tokens[0].c_str()) != 0) continue;
       size_t m = 1;
-      for (size_t k = 1; k < tokens.size() && startIdx + k < pw.size(); ++k) {
+      for (size_t k = 1; k < tokens.size() && startIdx + k < pwCount; ++k) {
         if (strcmp(pw[startIdx + k].t, tokens[k].c_str()) == 0) ++m; else break;
       }
       if (m < minMatch) continue;
@@ -2336,6 +2387,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       // Build section with this mode
       const auto popupFn = [this, attemptMode]() {
+        // The streaming-inflate scratch (framebuffer loan) overwrites the buffer
+        // below the popup during the build, so redrawing only the popup box
+        // would leave garbage beneath it until the page render. Clear first.
+        renderer.clearScreen();
         GUI.drawPopup(renderer, indexingLabelForRenderMode(attemptMode, false));
       };
 
@@ -2355,6 +2410,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // Build failed — fall through to next mode
       LOG_DBG("ERS", "Section build failed for renderMode=%u, trying fallback %u/%u", attemptMode,
               static_cast<unsigned>(attemptIdx) + 1, static_cast<unsigned>(fallback.count));
+      // Release the SD font caches accumulated by the aborted build (advance
+      // tables + glyph caches) so the next fallback render starts from a clean,
+      // less-fragmented heap. Without this the fragmentation left behind can
+      // drop maxAlloc below the 20KB JPEG-decode gate and blank inline images.
+      releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "section build failed");
       section.reset();
     }
 
@@ -2381,7 +2441,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         usedSafeMode = true;
       } else {
         GUI.drawPopup(renderer, indexingLabelForRenderMode(safeMode, true));
-        const auto popupFn = [this]() { GUI.drawPopup(renderer, indexingLabelForRenderMode(0, true)); };
+        const auto popupFn = [this]() {
+          renderer.clearScreen();
+          GUI.drawPopup(renderer, indexingLabelForRenderMode(0, true));
+        };
         if (section->createSectionFile(
                 SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
                 SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
@@ -2752,7 +2815,8 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.hyphenationEnabled, bionicNormalLayout, SETTINGS.embeddedStyle,
                                       SETTINGS.imageRendering, nullptr,
                                       SETTINGS.bionicReading != CrossPointSettings::BIONIC_READING_OFF,
-                                      guideDotMinGap, userRenderMode)) {
+                                      guideDotMinGap, userRenderMode,
+                                      /*lendFramebufferScratch=*/false)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   } else {
     releaseReaderSdFontCachesForLowMemory(renderer, "ERS", "silent section cache build");

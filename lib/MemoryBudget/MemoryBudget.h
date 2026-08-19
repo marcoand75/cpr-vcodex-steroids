@@ -20,7 +20,17 @@ struct HeapRequirement {
 
 constexpr uint32_t EPUB_INLINE_IMAGE_MIN_FREE = 72U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_MIN_MAX_ALLOC = 48U * 1024U;
-constexpr uint32_t EPUB_INLINE_JPEG_MIN_MAX_ALLOC = 36U * 1024U;
+// JPEG inline images use a lower budget than generic images: the expensive full
+// decode is deferred to render time (budgeted separately there), while the
+// build only probes dimensions. CrossInk uses these lower values; Steroids
+// previously reused EPUB_INLINE_IMAGE_MIN_FREE (72KB) for JPEGs, which the
+// chapter build can never satisfy once its own tables/fonts are allocated, so
+// every JPEG was suppressed (blank image-only pages, no images shown).
+constexpr uint32_t JPEG_DECODER_APPROX_BYTES = 20U * 1024U;
+// = JPEG_DECODER_APPROX_BYTES + IMAGE_DECODER_HEADROOM (16KB), kept inline to
+// stay below the later-declared IMAGE_DECODER_HEADROOM.
+constexpr uint32_t EPUB_INLINE_JPEG_MIN_FREE = 36U * 1024U;
+constexpr uint32_t EPUB_INLINE_JPEG_MIN_MAX_ALLOC = JPEG_DECODER_APPROX_BYTES;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE = 120U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC = 80U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_FREE = 96U * 1024U;
@@ -67,8 +77,10 @@ inline bool isJpegSource(const char* source) {
 }
 
 inline HeapRequirement epubInlineImageRequirementForSource(const char* source) {
-  return {EPUB_INLINE_IMAGE_MIN_FREE,
-          isJpegSource(source) ? EPUB_INLINE_JPEG_MIN_MAX_ALLOC : EPUB_INLINE_IMAGE_MIN_MAX_ALLOC};
+  if (isJpegSource(source)) {
+    return {EPUB_INLINE_JPEG_MIN_FREE, EPUB_INLINE_JPEG_MIN_MAX_ALLOC};
+  }
+  return {EPUB_INLINE_IMAGE_MIN_FREE, EPUB_INLINE_IMAGE_MIN_MAX_ALLOC};
 }
 
 inline bool shouldReleaseSdFontCachesForEpubInlineImage(const HeapSnapshot heap) {

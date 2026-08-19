@@ -583,7 +583,9 @@ void KOReaderSyncActivity::returnAfterAutoPush() {
       snapshot.valid && snapshot.counted && (snapshot.path == epubPath || snapshot.path == finalBookPath);
   if (SETTINGS.showStatsAfterReading && countedSession && !finalBookPath.empty()) {
     activityManager.replaceActivity(
-        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, finalBookPath, ReadingStatsDetailContext{true}));
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, finalBookPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                              /*fromReaderExit=*/true}));
   } else {
     // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
     silentRestartToHome();

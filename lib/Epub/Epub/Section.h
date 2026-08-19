@@ -104,7 +104,13 @@ class Section {
   bool clearCache() const;
   bool createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr,
                          bool* imagesWereSuppressed = nullptr, bool* layoutAbortedForLowMemory = nullptr,
-                         SectionBuildOptions buildOptions = {});
+                         SectionBuildOptions buildOptions = {},
+                         // When true (on-demand navigation) the framebuffer is lent as build scratch for the
+                         // streaming-inflate window. That is safe because the freshly-built page overwrites the
+                         // framebuffer right after the build. When building in the background while a page is
+                         // already on screen, leave this false: lending would corrupt the displayed framebuffer
+                         // and the next idle refresh would flash garbage below the text.
+                         bool lendFramebufferScratch = true);
 
   bool startBuild(const ReaderRenderSpec& spec, SectionBuildOptions buildOptions = {},
                   const std::function<void()>& popupFn = nullptr);
@@ -203,5 +209,5 @@ class Section {
                          uint8_t paragraphAlignment, uint16_t viewportWidth, uint16_t viewportHeight,
                          bool hyphenationEnabled, bool focusReadingEnabled, bool embeddedStyle, uint8_t imageRendering,
                          const std::function<void()>& popupFn = nullptr, bool bionicReadingEnabled = false,
-                         uint8_t guideDotMinGap = 0, uint8_t renderMode = 0);
+                         uint8_t guideDotMinGap = 0, uint8_t renderMode = 0, bool lendFramebufferScratch = true);
 };

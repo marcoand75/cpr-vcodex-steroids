@@ -136,6 +136,11 @@ class EpubReaderActivity final : public Activity {
                       int orientedMarginBottom, int orientedMarginLeft);
   void renderStatusBar() const;
   void renderSectionLoadFailure();
+  // Inline-image lazy-extraction callback registered with ImageBlock so EPUB
+  // images (whose source lives inside the archive, not yet extracted to disk)
+  // get pulled out on first render. Registered in onEnter/onExit; uses the
+  // reader as context so it can bail out if the EPUB has already been released.
+  static bool extractInlineImage(void* context, const char* sourcePath, const char* destinationPath);
   void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
   void saveProgress(int spineIndex, int currentPage, int pageCount);
   // Jump to a percentage of the book (0-100), mapping it to spine and page.

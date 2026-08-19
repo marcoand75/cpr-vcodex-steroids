@@ -411,6 +411,11 @@ void ReadingStatsDetailActivity::onEnter() {
 }
 
 void ReadingStatsDetailActivity::onExit() {
+  // Request a half refresh for the screen revealed underneath (Home, or the
+  // Reading Stats list). Matches ReadingStatsActivity::onExit() and the reader's
+  // exit path; without it the next screen re-renders with FAST_REFRESH and
+  // leaves ghosting below the text.
+  renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   Activity::onExit();
   freeBaseScreenBuffer();
   // If this stats screen was shown after reader exit (post-reading stats),

@@ -1976,6 +1976,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   return;
                 }
 
+                // Eagerly extract the full image to its per-occurrence cache path
+                // now, while the section build holds the framebuffer loan (a
+                // guaranteed ~43KB inflate window). Deferring to lazy extraction
+                // at render time fails when the heap is too fragmented for the
+                // window (the framebuffer is in use then), which drops the image.
+                if (!Storage.exists(cachedImagePath.c_str())) {
+                  self->epub->extractItemToFile(resolvedPath, cachedImagePath);
+                }
+
                 int displayWidth = 0;
                 int displayHeight = 0;
                 const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(self->fontId));

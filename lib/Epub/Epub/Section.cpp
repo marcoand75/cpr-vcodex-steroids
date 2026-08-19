@@ -1,6 +1,7 @@
 #include "Section.h"
 
 #include <Arduino.h>
+#include <BuildScratch.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <InflateStream.h>
@@ -79,6 +80,27 @@ size_t sectionHtmlStreamChunkSize(const bool preview) {
   }
   return SECTION_HTML_STREAM_CHUNK_SIZE;
 }
+
+// Streaming (ring-window) inflate needs a ~43KB contiguous buffer. The heap can
+// fragment below that during a long reading session, which makes later chapters
+// impossible to build (and the book unreadable, not merely un-indexed). The
+// framebuffer is a guaranteed ~48KB block; lend it as build scratch during the
+// build so the window is always available. The build never renders to the
+// framebuffer (it only computes layout into memory), and a synchronous build
+// returns before any page is displayed, so lending it cannot corrupt the
+// currently shown page. Reclaimed on scope exit (all return paths).
+struct FramebufferBuildScratchLoan {
+  FramebufferBuildScratchLoan(GfxRenderer& renderer, const bool lend) : active_(lend) {
+    if (lend && (fb_ = renderer.getFrameBuffer())) {
+      buildscratch::lend(fb_, renderer.getBufferSize());
+    }
+  }
+  ~FramebufferBuildScratchLoan() {
+    if (active_) buildscratch::reclaim();
+  }
+  uint8_t* fb_ = nullptr;
+  bool active_ = false;
+};
 
 std::string sectionBackupPath(const std::string& filePath) { return filePath + ".bak"; }
 
@@ -404,8 +426,8 @@ bool Section::clearCache() const {
 }
 
 bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn,
-                                bool* imagesWereSuppressed, bool* layoutAbortedForLowMemory,
-                                const SectionBuildOptions buildOptions) {
+                                 bool* imagesWereSuppressed, bool* layoutAbortedForLowMemory,
+                                 const SectionBuildOptions buildOptions, bool lendFramebufferScratch) {
   const int fontId = spec.fontId;
   const float lineCompression = spec.lineCompression;
   const bool extraParagraphSpacing = spec.extraParagraphSpacing;
@@ -430,6 +452,12 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
     std::string& path;
     ~ClearActiveBuildTmpPath() { path.clear(); }
   } clearActiveBuildTmpPath{activeBuildTmpSectionPath_};
+  // Lend the framebuffer as build scratch so the streaming inflate has a
+  // guaranteed ~43KB contiguous window even when the heap is fragmented. Only
+  // when this is an on-demand build: the built page overwrites the framebuffer
+  // right after, so the loan cannot corrupt the on-screen page. Background
+  // indexing leaves this off to avoid flashing garbage below the text.
+  FramebufferBuildScratchLoan framebufferBuildScratchLoan(renderer, lendFramebufferScratch);
   pageCount = 0;
   if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = false;
   if (buildOptions.cancellationObserved) *buildOptions.cancellationObserved = false;
@@ -1879,10 +1907,11 @@ bool Section::createSectionFile(int fontId, float lineCompression, bool extraPar
                                 bool forceParagraphIndents, uint8_t paragraphAlignment, uint16_t viewportWidth,
                                 uint16_t viewportHeight, bool hyphenationEnabled, bool focusReadingEnabled,
                                 bool embeddedStyle, uint8_t imageRendering, const std::function<void()>& popupFn,
-                                bool bionicReadingEnabled, uint8_t guideDotMinGap, uint8_t renderMode) {
+                                bool bionicReadingEnabled, uint8_t guideDotMinGap, uint8_t renderMode,
+                                bool lendFramebufferScratch) {
   const ReaderRenderSpec spec = legacySpecFrom(fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
                                                paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled,
                                                focusReadingEnabled, embeddedStyle, imageRendering, bionicReadingEnabled,
                                                guideDotMinGap, renderMode);
-  return createSectionFile(spec, popupFn);
+  return createSectionFile(spec, popupFn, nullptr, nullptr, {}, lendFramebufferScratch);
 }
