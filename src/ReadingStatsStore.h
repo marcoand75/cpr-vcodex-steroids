@@ -283,6 +283,11 @@ class ReadingStatsStore {
   // is missing (e.g. upgrade from a version without it), loads the full store
   // once, generates the summary, then releases the store back.
   void preloadHomeSummary();
+  // Regenerate summary.json after the system clock changed (NTP sync / manual
+  // clock adjustment) so the Home stats panel reflects the new reference day
+  // (today / streak / recent 7-30 windows). Loads the store if needed, then
+  // releases it again to keep the boot/Home fast path memory-light.
+  void regenerateSummaryAfterClockChange();
 
  private:
   mutable bool homeInvalidationRequested = false;

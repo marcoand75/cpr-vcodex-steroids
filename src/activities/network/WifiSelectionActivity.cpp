@@ -11,6 +11,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -414,6 +415,9 @@ void WifiSelectionActivity::checkConnectionStatus() {
         SETTINGS.clockHasBeenSynced = 1;
         SETTINGS.saveToFile();
         TimeUtils::applySystemClockFromRtc(true);
+        // The system date changed, so the derived summary.json snapshot is now
+        // stale. Regenerate it so the Home stats panel reflects the new day.
+        READING_STATS.regenerateSummaryAfterClockChange();
       }
     }
 

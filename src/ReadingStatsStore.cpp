@@ -1718,6 +1718,25 @@ void ReadingStatsStore::preloadHomeSummary() {
   }
 }
 
+void ReadingStatsStore::regenerateSummaryAfterClockChange() {
+  const bool wasLoaded = loaded_;
+  if (!wasLoaded && Storage.exists(READING_STATS_FILE_JSON) && !ensureLoaded()) {
+    return;
+  }
+
+  // Recompute the summary with the new reference day. todayReadingMs, the
+  // recent 7/30 windows and the streak are all derived from
+  // getReferenceDayOrdinal(), so rebuilding the cache picks up the new date.
+  invalidateSummaryCache();
+  saveSummaryJSON();
+
+  if (!wasLoaded) {
+    // Drop the store again so the Home fast path stays memory-light.
+    releaseMemoryForNetwork();
+  }
+  requestHomeInvalidation();
+}
+
 const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::string& bookId,
                                                                      const std::string& path) const {
   if (loaded_) {

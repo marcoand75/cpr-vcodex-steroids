@@ -336,6 +336,11 @@ uint32_t fnv1aU32(uint32_t hash, const uint32_t value) {
   return fnv1aByte(hash, static_cast<uint8_t>((value >> 24) & 0xFF));
 }
 
+uint32_t fnv1aU64(uint32_t hash, const uint64_t value) {
+  hash = fnv1aU32(hash, static_cast<uint32_t>(value & 0xFFFFFFFFULL));
+  return fnv1aU32(hash, static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFULL));
+}
+
 // Theme-aware helpers for cover dimensions
 int getCarouselCenterCoverW() {
   return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_MARCOAND75
@@ -406,6 +411,16 @@ uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const 
     hash = hashCarouselThumbState(hash, book);
     hash = fnv1aByte(hash, getCarouselBookProgressPercent(book));
   }
+
+  // The cached frame also renders the global stats panel (today / goal / streak
+  // / finished). Include those values in the hash so the frame is regenerated
+  // when they change (reading, day rollover, manual/auto clock sync). Without
+  // this a stale frame is reused after a date change and the Home panel shows
+  // yesterday's numbers even though summary.json was already regenerated.
+  hash = fnv1aU64(hash, READING_STATS.getTodayReadingMs());
+  hash = fnv1aU64(hash, getDailyReadingGoalMs());
+  hash = fnv1aU32(hash, READING_STATS.getCurrentStreakDays());
+  hash = fnv1aU32(hash, READING_STATS.getBooksFinishedCount());
 
   return hash;
 }

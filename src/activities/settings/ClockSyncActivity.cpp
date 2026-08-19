@@ -10,6 +10,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -85,6 +86,11 @@ void ClockSyncActivity::runSync() {
   SETTINGS.saveToFile();
 
   TimeUtils::applySystemClockFromRtc(true);
+
+  // The system date just changed, so the derived summary.json snapshot is stale
+  // (its referenceDayOrdinal predates the new day). Regenerate it so the Home
+  // stats panel shows the correct today/streak/recent-window numbers.
+  READING_STATS.regenerateSummaryAfterClockChange();
 
   // Read the freshly synced time back for the user-facing confirmation.
   char buf[9];

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "CrossPointState.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
@@ -88,6 +89,9 @@ void ManualDateActivity::saveDate() {
 
   APP_STATE.registerValidTimeSync(epoch);
   APP_STATE.saveToFile();
+  // The system date changed, so the derived summary.json snapshot is stale.
+  // Regenerate it so the Home stats panel reflects the new reference day.
+  READING_STATS.regenerateSummaryAfterClockChange();
   finish();
 }
 
