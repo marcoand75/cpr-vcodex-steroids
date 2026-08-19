@@ -1719,20 +1719,16 @@ void ReadingStatsStore::preloadHomeSummary() {
 }
 
 void ReadingStatsStore::regenerateSummaryAfterClockChange() {
-  const bool wasLoaded = loaded_;
-  if (!wasLoaded && Storage.exists(READING_STATS_FILE_JSON) && !ensureLoaded()) {
-    return;
-  }
-
-  // Recompute the summary with the new reference day. todayReadingMs, the
-  // recent 7/30 windows and the streak are all derived from
-  // getReferenceDayOrdinal(), so rebuilding the cache picks up the new date.
+  // Mirror the path that already works (ending a reading session): load the
+  // store, invalidate the summary cache, and regenerate summary.json. Crucially,
+  // keep the store loaded (do NOT releaseMemoryForNetwork here) so the Home
+  // render recomputes the summary from the current clock instead of reading a
+  // possibly-stale summary.json snapshot. The store is released again on the
+  // next boot / network operation, which is fine.
+  ensureLoaded();
   invalidateSummaryCache();
-  saveSummaryJSON();
-
-  if (!wasLoaded) {
-    // Drop the store again so the Home fast path stays memory-light.
-    releaseMemoryForNetwork();
+  if (loaded_) {
+    saveSummaryJSON();
   }
   requestHomeInvalidation();
 }
