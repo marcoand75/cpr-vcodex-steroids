@@ -18,7 +18,6 @@
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
 #include "CrossPointState.h"
-#include "SilentRestart.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
@@ -76,6 +75,10 @@ bool shouldSyncNtpNow() {
   }
   const unsigned long ageSec = (millis() - s_lastNtpSyncMs) / 1000UL;
   return ageSec >= static_cast<unsigned long>(NTP_RESYNC_MIN_INTERVAL_SEC);
+}
+
+bool isAutomaticSyncIntent(const KOReaderSyncIntentState intent) {
+  return intent == KOReaderSyncIntentState::AUTO_PULL || intent == KOReaderSyncIntentState::AUTO_PUSH;
 }
 
 void wifiOff() {
@@ -509,9 +512,12 @@ void KOReaderSyncActivity::onEnter() {
     return;
   }
 
-  const bool chooseWifiManually = SETTINGS.syncDayWifiChoice == CrossPointSettings::SYNC_DAY_WIFI_MANUAL;
+  const bool automaticSync = isAutomaticSyncIntent(syncIntent);
+  const bool chooseWifiManually =
+      !automaticSync && SETTINGS.syncDayWifiChoice == CrossPointSettings::SYNC_DAY_WIFI_MANUAL;
   LOG_DBG("KOSync", "Launching WifiSelectionActivity...");
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, !chooseWifiManually),
+  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, !chooseWifiManually, true,
+                                                                 automaticSync),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
@@ -587,8 +593,7 @@ void KOReaderSyncActivity::returnAfterAutoPush() {
                                                      ReadingStatsDetailContext{/*showSessionSummary=*/true,
                                                                               /*fromReaderExit=*/true}));
   } else {
-    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
-    silentRestartToHome();
+    activityManager.goHome();
   }
 }
 

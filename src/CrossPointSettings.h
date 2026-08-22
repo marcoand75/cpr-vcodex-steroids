@@ -138,7 +138,7 @@ class CrossPointSettings {
     BIONIC_READING_SUBTLE = 2,
     BIONIC_READING_MODE_COUNT
   };
-  enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
+  enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, EXTRA_WIDE = 3, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
     JUSTIFIED = 0,
     LEFT_ALIGN = 1,
@@ -544,6 +544,8 @@ class CrossPointSettings {
   uint8_t embeddedStyle = 1;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
+  // Hide the file-browser extension value so long titles get more row width.
+  uint8_t hideFileExtension = 0;
   uint8_t libraryLayout = LIBRARY_LAYOUT_3X3;
   uint8_t libraryFilter = LIBRARY_FILTER_ALL;
   uint8_t librarySort = LIBRARY_SORT_TITLE_ASC;

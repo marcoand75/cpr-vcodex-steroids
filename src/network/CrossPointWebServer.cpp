@@ -1978,7 +1978,10 @@ void CrossPointWebServer::handleGetSettings() const {
             value = KOREADER_STORE.getUsername();
             break;
           case WebDynamicSetting::KoPassword:
-            value = KOREADER_STORE.getPassword();
+            // Credentials are write-only in the browser. An empty field is
+            // ignored by the diff-based settings form unless the user enters
+            // a replacement, so the stored password remains unchanged.
+            value.clear();
             break;
           case WebDynamicSetting::KoServerUrl:
             value = KOREADER_STORE.getServerUrl();
@@ -2002,6 +2005,10 @@ void CrossPointWebServer::handleGetSettings() const {
             break;
         }
         sendJsonStringField(server.get(), "value", value.c_str());
+        if (s.dynamic == WebDynamicSetting::KoPassword) {
+          server->sendContent(",\"configured\":", 14);
+          server->sendContent(KOREADER_STORE.getPassword().empty() ? "false" : "true");
+        }
         break;
       }
       default:

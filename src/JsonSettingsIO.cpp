@@ -4,13 +4,16 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
+#include <Serialization.h>
 #include <Stream.h>
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 #include "AchievementsStore.h"
+#include <CredentialIntegrity.h>
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FavoritesStore.h"
@@ -171,6 +174,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadEnum("tiltPageTurn", s.tiltPageTurn, CrossPointSettings::TILT_PAGE_TURN_COUNT);
   loadEnum("sleepTimeout", s.sleepTimeout, CrossPointSettings::SLEEP_TIMEOUT_COUNT);
   loadToggle("showHiddenFiles", s.showHiddenFiles);
+  loadToggle("hideFileExtension", s.hideFileExtension);
 
   loadString("opdsServerUrl", s.opdsServerUrl, sizeof(s.opdsServerUrl));
   loadString("opdsUsername", s.opdsUsername, sizeof(s.opdsUsername));
@@ -539,6 +543,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 
   doc["sleepTimeout"] = s.sleepTimeout;
   doc["showHiddenFiles"] = s.showHiddenFiles;
+  doc["hideFileExtension"] = s.hideFileExtension;
   doc["syncDayWifiChoice"] = s.syncDayWifiChoice;
   doc["syncDayReminderStarts"] = s.syncDayReminderStarts;
   doc["dateFormat"] = s.dateFormat;
@@ -789,20 +794,25 @@ bool JsonSettingsIO::loadKOReaderLegacyProfile(KOReaderProfile& profile, const c
 
 bool JsonSettingsIO::saveWifi(const WifiCredentialStore& store, const char* path) {
   JsonDocument doc;
-  doc["lastConnectedSsid"] = store.getLastConnectedSsid();
+  {
+    std::lock_guard<std::mutex> lock(store.credentialMutex);
+    doc["lastConnectedSsid"] = store.lastConnectedSsid;
 
-  JsonArray arr = doc["credentials"].to<JsonArray>();
-  for (const auto& cred : store.getCredentials()) {
-    JsonObject obj = arr.add<JsonObject>();
-    obj["ssid"] = cred.ssid;
-    obj["password_obf"] = obfuscation::obfuscateToBase64(cred.password);
+    JsonArray arr = doc["credentials"].to<JsonArray>();
+    for (const auto& cred : store.credentials) {
+      JsonObject obj = arr.add<JsonObject>();
+      obj["ssid"] = cred.ssid;
+      obj["password_obf"] = obfuscation::obfuscateToBase64(cred.password);
+      obj["password_len"] = cred.password.size();
+      obj["password_crc32"] = credential_integrity::crc32(cred.password);
+    }
   }
 
   return saveJsonDocumentToFile("WCS", path, doc);
 }
 
 bool JsonSettingsIO::loadWifi(WifiCredentialStore& store, const char* json, bool* needsResave) {
-  if (needsResave) *needsResave = false;
+  bool resave = false;
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error) {
@@ -811,24 +821,93 @@ bool JsonSettingsIO::loadWifi(WifiCredentialStore& store, const char* json, bool
     return false;
   }
 
-  store.lastConnectedSsid = doc["lastConnectedSsid"] | std::string("");
-
-  store.credentials.clear();
+  std::string loadedLastConnectedSsid = doc["lastConnectedSsid"] | std::string("");
+  std::vector<WifiCredential> loadedCredentials;
   JsonArray arr = doc["credentials"].as<JsonArray>();
+  loadedCredentials.reserve(std::min(arr.size(), store.MAX_NETWORKS));
   for (JsonObject obj : arr) {
-    if (store.credentials.size() >= store.MAX_NETWORKS) break;
+    if (loadedCredentials.size() >= store.MAX_NETWORKS) break;
     WifiCredential cred;
     cred.ssid = obj["ssid"] | std::string("");
-    bool ok = false;
-    cred.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &ok);
-    if (!ok || cred.password.empty()) {
-      cred.password = obj["password"] | std::string("");
-      if (!cred.password.empty() && needsResave) *needsResave = true;
+
+    const JsonVariant passwordLength = obj["password_len"];
+    const bool hasPasswordLength = !passwordLength.isNull();
+    size_t expectedLength = 0;
+    if (hasPasswordLength) {
+      if (!passwordLength.is<size_t>()) {
+        LOG_ERR("WCS", "Discarding corrupted password for %s (invalid length)", cred.ssid.c_str());
+        resave = true;
+        continue;
+      }
+      expectedLength = passwordLength.as<size_t>();
+      if (expectedLength > store.MAX_PASSWORD_LENGTH) {
+        LOG_ERR("WCS", "Discarding oversized password for %s (%zu bytes)", cred.ssid.c_str(), expectedLength);
+        resave = true;
+        continue;
+      }
     }
-    store.credentials.push_back(cred);
+
+    bool ok = false;
+    bool tooLong = false;
+    cred.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", store.MAX_PASSWORD_LENGTH, &ok,
+                                                       &tooLong);
+    if (tooLong) {
+      LOG_ERR("WCS", "Discarding oversized password for %s", cred.ssid.c_str());
+      resave = true;
+      continue;
+    }
+    if (!ok) {
+      const char* legacyPassword = obj["password"] | "";
+      const size_t legacyLength = strlen(legacyPassword);
+      if (legacyLength > store.MAX_PASSWORD_LENGTH) {
+        LOG_ERR("WCS", "Discarding oversized legacy password for %s", cred.ssid.c_str());
+        resave = true;
+        continue;
+      }
+      cred.password.assign(legacyPassword, legacyLength);
+      if (!cred.password.empty()) resave = true;
+    }
+
+    bool integrityValid = true;
+    if (hasPasswordLength) {
+      if (cred.password.size() != expectedLength) {
+        LOG_ERR("WCS", "Discarding corrupted password for %s (expected %zu bytes, decoded %zu)", cred.ssid.c_str(),
+                expectedLength, cred.password.size());
+        integrityValid = false;
+      }
+    } else {
+      resave = true;
+    }
+
+    const JsonVariant checksum = obj["password_crc32"];
+    if (checksum.is<uint32_t>()) {
+      if (credential_integrity::crc32(cred.password) != checksum.as<uint32_t>()) {
+        LOG_ERR("WCS", "Discarding corrupted password for %s (checksum mismatch)", cred.ssid.c_str());
+        integrityValid = false;
+      }
+    } else if (checksum.isNull()) {
+      resave = true;
+    } else {
+      LOG_ERR("WCS", "Discarding corrupted password for %s (invalid checksum)", cred.ssid.c_str());
+      integrityValid = false;
+    }
+
+    if (!integrityValid) {
+      resave = true;
+      continue;
+    }
+    loadedCredentials.push_back(std::move(cred));
   }
 
-  LOG_DBG("WCS", "Loaded %zu WiFi credentials from file", store.credentials.size());
+  const size_t loadedCount = loadedCredentials.size();
+  {
+    std::lock_guard<std::mutex> lock(store.credentialMutex);
+    store.lastConnectedSsid = std::move(loadedLastConnectedSsid);
+    store.credentials = std::move(loadedCredentials);
+  }
+
+  if (needsResave) *needsResave = resave;
+  LOG_DBG("WCS", "Loaded %zu WiFi credentials from file", loadedCount);
   return true;
 }
 

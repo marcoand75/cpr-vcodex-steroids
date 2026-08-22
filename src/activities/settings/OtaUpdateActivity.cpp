@@ -188,6 +188,9 @@ void OtaUpdateActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing,
                               (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
+    if (failedDetail) {
+      renderer.drawCenteredText(UI_10_FONT_ID, top + height * 2 + metrics.verticalSpacing, failedDetail);
+    }
     if (!updater.getLatestVersion().empty()) {
       renderer.drawCenteredText(UI_10_FONT_ID, top + height * 2 + metrics.verticalSpacing * 2,
                                 buildNewVersionLine(updater).c_str());
@@ -226,6 +229,7 @@ void OtaUpdateActivity::loop() {
         LOG_DBG("OTA", "Update failed: %d", res);
         {
           RenderLock lock(*this);
+          failedDetail = res == OtaUpdater::WRONG_DEVICE_ERROR ? tr(STR_FIRMWARE_WRONG_DEVICE) : nullptr;
           state = FAILED;
         }
         requestUpdate();

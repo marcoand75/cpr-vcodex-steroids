@@ -420,7 +420,9 @@ void FileBrowserActivity::render(RenderLock&&) {
         renderer, Rect{0, contentTop, pageWidth, contentHeight}, files.size(), selectorIndex,
         [this](int index) { return getFileName(files[index]); }, nullptr,
         [this](int index) { return UITheme::getFileIcon(files[index]); },
-        [this](int index) { return getFileExtension(files[index]); }, false,
+         [this](int index) {
+           return SETTINGS.hideFileExtension ? std::string() : getFileExtension(files[index]);
+         }, false,
         [this](int index) {
           return index >= 0 && index < static_cast<int>(completedFileStates.size()) && completedFileStates[index] != 0;
         });

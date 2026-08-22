@@ -538,7 +538,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
       }
       return REDIRECT_ERROR;
     }
-    if (httpCode == 200) {
+    if (httpCode >= 200 && httpCode < 300) {
       // Accept empty body or JSON body. Reject non-empty non-JSON (login/captive-portal HTML).
       if (activeBuf->data && activeBuf->data[0] != '\0') {
         const char* first = skipBomAndWhitespace(activeBuf->data);
@@ -637,7 +637,13 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
       return REDIRECT_ERROR;
     }
 
-    if (httpCode == 200 && activeBuf->data) {
+    if (httpCode == 204) {
+      LOG_INF("KOSync", "No progress found for %s (HTTP 204)", documentHash.c_str());
+      rememberResolvedProfile(profile);
+      return NOT_FOUND;
+    }
+
+    if (httpCode >= 200 && httpCode < 300 && activeBuf->data) {
       if (responseLooksLikeHtml(activeBuf)) {
         rememberResponsePreview(activeBuf->data);
         if (hasFallback) {
@@ -781,7 +787,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
       }
       return REDIRECT_ERROR;
     }
-    if (httpCode == 200 || httpCode == 202) {
+    if (httpCode >= 200 && httpCode < 300) {
       if (activeBuf->data) {
         const char c = *skipBomAndWhitespace(activeBuf->data);
         if (c != '\0' && c != '{') {
@@ -835,7 +841,7 @@ const char* KOReaderSyncClient::lastFailureDetail() {
     }
     return g_failureDetailBuf;
   }
-  if ((lastHttpCode == 200 || lastHttpCode == 202) && lastEspError == ESP_OK) {
+  if (lastHttpCode >= 200 && lastHttpCode < 300 && lastEspError == ESP_OK) {
     snprintf(g_failureDetailBuf, sizeof(g_failureDetailBuf),
              "%s: expected JSON but received HTML (captive portal or proxy?)", lastOperation);
     return g_failureDetailBuf;

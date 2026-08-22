@@ -4,6 +4,7 @@
 #include <HalClock.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <WiFi.h>
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
+#include "SdCardFontGlobals.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -33,11 +35,29 @@ bool hasBssidBytes(const uint8_t bssid[WIFI_BSSID_LEN]) {
 void WifiSelectionActivity::onEnter() {
   Activity::onEnter();
 
+  // WiFi startup needs several contiguous driver buffers. Release both the
+  // active SD font and its catalog before the radio starts allocating them.
+  const auto heapBeforeFontRelease = MemoryBudget::snapshot();
+  const bool releasedSdFont = sdFontSystem.releaseForNetwork(renderer);
+  const auto heapAfterFontRelease = MemoryBudget::snapshot();
+  LOG_DBG("WIFI", "SD font network trim released=%d free=%u->%u delta=%ld maxAlloc=%u->%u delta=%ld",
+          releasedSdFont, heapBeforeFontRelease.freeHeap, heapAfterFontRelease.freeHeap,
+          static_cast<int32_t>(heapAfterFontRelease.freeHeap) - static_cast<int32_t>(heapBeforeFontRelease.freeHeap),
+          heapBeforeFontRelease.maxAllocHeap, heapAfterFontRelease.maxAllocHeap,
+          static_cast<int32_t>(heapAfterFontRelease.maxAllocHeap) -
+              static_cast<int32_t>(heapBeforeFontRelease.maxAllocHeap));
+
   // Load saved WiFi credentials - SD card operations need lock as we use SPI
   // for both
   {
     RenderLock lock(*this);
     WIFI_STORE.loadFromFile();
+  }
+
+  if (allowAutoConnect && autoConnectOnly && !WIFI_STORE.hasCredentials()) {
+    LOG_DBG("WIFI", "Auto-connect only requested with no saved credentials");
+    onComplete(false);
+    return;
   }
 
   // Reset state
@@ -158,6 +178,11 @@ void WifiSelectionActivity::processWifiScanResults() {
   if (scanResult == WIFI_SCAN_FAILED) {
     networks.clear();
     realNetworkCount = 0;
+    if (allowAutoConnect && autoConnectOnly) {
+      LOG_DBG("WIFI", "Auto-connect only requested but WiFi scan failed");
+      onComplete(false);
+      return;
+    }
     appendHiddenNetworkEntry();
     state = WifiSelectionState::NETWORK_LIST;
     selectedNetworkIndex = 0;
@@ -246,6 +271,12 @@ void WifiSelectionActivity::processWifiScanResults() {
         return;
       }
     }
+  }
+
+  if (allowAutoConnect && autoConnectOnly) {
+    LOG_DBG("WIFI", "Auto-connect only found no saved network in range");
+    onComplete(false);
+    return;
   }
 
   state = WifiSelectionState::NETWORK_LIST;
@@ -344,7 +375,7 @@ void WifiSelectionActivity::setSelectedNetwork(const WifiNetworkInfo& network) {
 }
 
 bool WifiSelectionActivity::connectUsingSavedCredential(const WifiNetworkInfo& network, const bool isAutoConnectAttempt) {
-  const auto* savedCred = WIFI_STORE.findCredential(network.ssid);
+  const auto savedCred = WIFI_STORE.findCredential(network.ssid);
   if (!savedCred || (network.isEncrypted && savedCred->password.empty())) {
     return false;
   }
@@ -452,6 +483,12 @@ void WifiSelectionActivity::checkConnectionStatus() {
     // Stop the SDK from retrying in the background while the user is back in
     // the list; the timeout path below does the same.
     WiFi.disconnect();
+    if (autoConnectOnly) {
+      LOG_DBG("WIFI", "Auto-connect only failed for saved network %s (status=%d)", selectedSSID.c_str(),
+              static_cast<int>(status));
+      onComplete(false);
+      return;
+    }
     state = WifiSelectionState::CONNECTION_FAILED;
     requestUpdate();
     return;
@@ -463,6 +500,11 @@ void WifiSelectionActivity::checkConnectionStatus() {
             static_cast<int>(status), static_cast<int>(selectedChannel), selectedHasBssid ? 1 : 0);
     WiFi.disconnect();
     connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+    if (autoConnectOnly) {
+      LOG_DBG("WIFI", "Auto-connect only timed out for saved network %s", selectedSSID.c_str());
+      onComplete(false);
+      return;
+    }
     state = WifiSelectionState::CONNECTION_FAILED;
     requestUpdate();
     return;
