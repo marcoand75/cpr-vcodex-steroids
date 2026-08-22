@@ -473,9 +473,7 @@ void freeFontMemory() {
   const int beforeFree = static_cast<int>(ESP.getFreeHeap());
   const int beforeMaxAlloc = static_cast<int>(ESP.getMaxAllocHeap());
   fontCacheManager.clearCache();
-  if (fontDecompressor.isInitialized()) {
-    fontDecompressor.deinit();
-  }
+  fontDecompressor.deinit();
   LOG_DBG("FNT", "freeFontMemory: free=%d->%d maxAlloc=%d->%d",
           beforeFree, static_cast<int>(ESP.getFreeHeap()),
           beforeMaxAlloc, static_cast<int>(ESP.getMaxAllocHeap()));
@@ -486,9 +484,7 @@ void freeFontMemory() {
 void restoreFontMemory() {
   const int beforeFree = static_cast<int>(ESP.getFreeHeap());
   const int beforeMaxAlloc = static_cast<int>(ESP.getMaxAllocHeap());
-  if (!fontDecompressor.isInitialized()) {
-    fontDecompressor.init();
-  }
+  fontDecompressor.init();
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   LOG_DBG("FNT", "restoreFontMemory: free=%d->%d maxAlloc=%d->%d",
           beforeFree, static_cast<int>(ESP.getFreeHeap()),

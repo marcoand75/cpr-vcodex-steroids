@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -42,14 +43,17 @@ class SdCardFont {
   // Default 0x0F = all present styles.
   // When metadataOnly=true, only glyph metrics are loaded (no bitmap data).
   // Returns number of glyphs that couldn't be loaded (0 on full success).
-  int prewarm(const char* utf8Text, uint8_t styleMask = 0x0F, bool metadataOnly = false);
+  int prewarm(const char* utf8Text, uint8_t styleMask = 0x0F, bool metadataOnly = false, bool loadKernLig = true);
+  using TextGetter = const char* (*)(const void* ctx, uint32_t index);
+  int prewarm(TextGetter getter, const void* ctx, uint32_t textCount, uint8_t styleMask = 0x0F,
+              bool metadataOnly = false, bool loadKernLig = true);
 
   // Build a compact advance-only table for layout measurement.
   // Extracts ALL unique codepoints from text/words (no MAX_PAGE_GLYPHS cap),
   // batch-reads advanceX from SD, stores in a sorted per-style table.
   // Returns number of codepoints not found in font coverage.
   int buildAdvanceTable(const char* utf8Text, uint8_t styleMask = 0x0F);
-  int buildAdvanceTable(const std::vector<std::string>& words, bool includeHyphen, uint8_t styleMask = 0x0F);
+  int buildAdvanceTable(const std::deque<std::string>& words, bool includeHyphen, uint8_t styleMask = 0x0F);
 
   // Look up advanceX for a codepoint from the advance table.
   // Returns the 12.4 fixed-point advance, or 0 if not found.
@@ -58,6 +62,10 @@ class SdCardFont {
 
   // Returns true if advance table is populated for at least one style.
   bool hasAdvanceTable() const;
+
+  // Batch-fetch advanceX values for an array of codepoints from SD card.
+  // Returns number of codepoints not found in font coverage.
+  int fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask);
 
   // Free mini data for all styles, restore stub EpdFontData.
   // Also clears the temporary advance table (built per layout pass) but
@@ -92,6 +100,9 @@ class SdCardFont {
 
   // Returns the bitmap for an on-demand-loaded (overflow) glyph.
   const uint8_t* getOverflowBitmap(const EpdGlyph* glyph) const;
+
+  // Resolve a prewarmed mini glyph stored in the chunked page bitmap.
+  const uint8_t* miniGlyphBitmap(const void* ctx, uint32_t dataOffset) const;
 
   // Extract SdCardFont* from an opaque glyphMissCtx pointer.
   // Used by GfxRenderer::getGlyphBitmap() to recover the SdCardFont from EpdFontData::glyphMissCtx.
@@ -128,6 +139,13 @@ class SdCardFont {
     uint8_t ligaturePairCount = 0;
   };
 
+  // A page of a large 2-bpp font can require 20-40 KB of bitmap data. Keep
+  // glyphs whole inside fixed-size chunks so prewarm does not depend on one
+  // large contiguous allocation (adapted from upstream 28af4189).
+  static constexpr uint32_t MINI_BM_CHUNK_SHIFT = 12;
+  static constexpr uint32_t MINI_BM_CHUNK_SIZE = 1u << MINI_BM_CHUNK_SHIFT;
+  static constexpr uint32_t MINI_BM_MAX_CHUNKS = 24;
+
   // All per-style data: file offsets, intervals, kern/lig, prewarm cache, EpdFont
   struct PerStyle {
     CpFontHeader header{};
@@ -161,13 +179,13 @@ class SdCardFont {
     // Mini EpdFontData built during prewarm
     EpdFontData miniData{};
     EpdUnicodeInterval* miniIntervals = nullptr;
-    uint32_t miniIntervalsCap = 0;
     EpdGlyph* miniGlyphs = nullptr;
-    uint32_t miniGlyphsCap = 0;
-    uint8_t* miniBitmap = nullptr;
-    uint32_t miniBitmapCap = 0;
+    uint8_t* miniBitmapChunks[MINI_BM_MAX_CHUNKS] = {};
+    uint32_t miniBitmapChunkCount = 0;
     uint32_t miniIntervalCount = 0;
     uint32_t miniGlyphCount = 0;
+    bool miniMetadataOnly = false;
+    bool miniLoadedWithKernLig = false;
 
     // Per-page mini kern matrix (built by buildMiniKernMatrix on each full
     // prewarm). miniKernLeftClasses/miniKernRightClasses map ONLY the codepoints
@@ -176,15 +194,12 @@ class SdCardFont {
     // flat matrix. Typical Latin page: ~25×25 matrix = ~625 bytes per style vs
     // ~36KB for the full Literata matrix — ~50× reduction.
     EpdKernClassEntry* miniKernLeftClasses = nullptr;
-    uint16_t miniKernLeftClassesCap = 0;
     EpdKernClassEntry* miniKernRightClasses = nullptr;
-    uint16_t miniKernRightClassesCap = 0;
     uint16_t miniKernLeftEntryCount = 0;
     uint16_t miniKernRightEntryCount = 0;
     uint8_t miniKernLeftClassCount = 0;
     uint8_t miniKernRightClassCount = 0;
     int8_t* miniKernMatrix = nullptr;
-    uint32_t miniKernMatrixCap = 0;
 
     // The EpdFont whose data pointer we manage
     EpdFont epdFont{&stubData};
@@ -209,7 +224,6 @@ class SdCardFont {
   struct OverflowEntry {
     EpdGlyph glyph;
     uint8_t* bitmap = nullptr;
-    uint32_t bitmapCap = 0;
     uint32_t codepoint = 0;
     uint8_t styleIdx = 0;
   };
@@ -234,52 +248,25 @@ class SdCardFont {
   // Merge sortedNew (sorted by codepoint, no overlap with existing) into the
   // advance table for styleIdx, preserving sort order; cap-truncates the tail.
   void mergeIntoAdvanceTable(uint8_t styleIdx, const AdvanceEntry* sortedNew, uint32_t newCount);
-  int fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCount, uint8_t styleMask);
   template <typename Iter>
   int buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, bool includeHyphen, uint8_t styleMask);
-
-  // Reusable temporary buffers to eliminate heap fragmentation across pages and passes.
-  // Capacities are tracked to only reallocate when growing.
-  uint32_t* tmpCodepoints = nullptr;
-  uint32_t tmpCodepointsCap = 0;
-
-  struct TmpMapping {
-    uint32_t codepoint;
-    int32_t globalIndex;
-  };
-  TmpMapping* tmpMappings = nullptr;
-  uint32_t tmpMappingsCap = 0;
-
-  uint32_t* tmpReadOrder = nullptr;
-  uint32_t tmpReadOrderCap = 0;
-
-  AdvanceEntry* tmpAdvStaged = nullptr;
-  uint32_t tmpAdvStagedCap = 0;
-
-  // Scratch buffer for the merge output in mergeIntoAdvanceTable(). Kept as a
-  // separately-reused allocation so the merge never reads/writes the same
-  // buffer (aliasing) while the advance table grows in place via realloc.
-  AdvanceEntry* tmpAdvMerge = nullptr;
-  uint32_t tmpAdvMergeCap = 0;
-
-  int8_t* tmpKernRowBuf = nullptr;
-  uint16_t tmpKernRowBufCap = 0;
 
   Stats stats_;
   uint32_t contentHash_ = 0;
   bool loaded_ = false;
 
   // Per-style helpers
-  void freeStyleMiniData(PerStyle& s, bool freeMemory = true);
+  void freeStyleMiniData(PerStyle& s);
   void freeStyleAll(PerStyle& s);
   void freeStyleKernLigatureData(PerStyle& s);
-  void freeStyleMiniKern(PerStyle& s, bool freeMemory = true);
+  void freeStyleMiniKern(PerStyle& s);
   bool loadStyleKernLigatureData(PerStyle& s);
   bool buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, uint32_t cpCount);
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data) const;
   void applyGlyphMissCallback(uint8_t styleIdx);
   int32_t findGlobalGlyphIndex(const PerStyle& s, uint32_t codepoint) const;
-  int prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly);
+  int prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly,
+                   bool loadKernLig);
 
   // Global helpers
   void freeAll();
@@ -288,4 +275,5 @@ class SdCardFont {
 
   // Static callback for EpdFontData::glyphMissHandler (per-style via OverflowContext)
   static const EpdGlyph* onGlyphMiss(void* ctx, uint32_t codepoint);
+  static bool onCoverageQuery(void* ctx, uint32_t codepoint);
 };

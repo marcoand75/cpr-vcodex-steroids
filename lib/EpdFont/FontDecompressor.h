@@ -2,8 +2,6 @@
 
 #include <InflateReader.h>
 
-#include <vector>
-
 #include "EpdFontData.h"
 
 class FontDecompressor {
@@ -44,7 +42,6 @@ class FontDecompressor {
   void logStats(const char* label = "FDC");
   void resetStats();
   const Stats& getStats() const { return stats; }
-  bool isInitialized() const { return _initialized; }
 
  private:
   Stats stats;
@@ -68,14 +65,15 @@ class FontDecompressor {
 
   // Hot group: last decompressed group (byte-aligned) for non-prewarmed fallback path.
   // Kept in byte-aligned format; individual glyphs are compacted on demand into hotGlyphBuf.
-  const EpdFontData* hotGroupFont = nullptr;
-  uint16_t hotGroupIndex = UINT16_MAX;
-  std::vector<uint8_t> hotGroup;
+   const EpdFontData* hotGroupFont = nullptr;
+   uint16_t hotGroupIndex = UINT16_MAX;
+   uint8_t* hotGroup = nullptr;
+   uint32_t hotGroupCapacity = 0;
 
-  // Scratch buffer for compacting a single glyph from the hot group.
-  // Valid until the next getBitmap() call.
-  std::vector<uint8_t> hotGlyphBuf;
-  bool _initialized = false;
+   // Scratch buffer for compacting a single glyph from the hot group.
+   // Valid until the next getBitmap() call.
+   uint8_t* hotGlyphBuf = nullptr;
+   uint32_t hotGlyphBufCapacity = 0;
 
   void freePageBuffer();
   void freeHotGroup();

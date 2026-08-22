@@ -59,6 +59,7 @@ class GfxRenderer {
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
   mutable std::map<int, SdCardFont*> sdCardFonts_;
+  std::map<int, int> fallbackFontMap_;
   mutable bool nextRefreshOverridePending = false;
   mutable HalDisplay::RefreshMode nextRefreshOverride = HalDisplay::FAST_REFRESH;
 
@@ -79,6 +80,9 @@ class GfxRenderer {
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
   mutable FontCacheManager* fontCacheManager_ = nullptr;
+
+  int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
+  void ensureSdGlyphsResident(int fontId, const char* text, EpdFontFamily::Style style, bool metadataOnly) const;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
@@ -110,6 +114,9 @@ class GfxRenderer {
   }
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
+  using TextGetter = const char* (*)(const void* ctx, uint32_t index);
+  void prewarmFallbackText(int fontId, TextGetter getter, const void* ctx, uint32_t textCount,
+                           EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
   void registerSdCardFont(int fontId, SdCardFont* font) { sdCardFonts_[fontId] = font; }
@@ -117,19 +124,18 @@ class GfxRenderer {
   void clearSdCardFonts() { sdCardFonts_.clear(); }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
+  void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
+  void clearFallbackFonts() { fallbackFontMap_.clear(); }
   void ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F) const;
-  void ensureSdCardFontReady(int fontId, const std::vector<std::string>& words, bool includeHyphen,
+  void ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
                              uint8_t styleMask = 0x0F) const;
-  inline void ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
+  inline void ensureSdCardFontReady(int fontId, const std::vector<std::string>& words, bool includeHyphen,
                                     uint8_t styleMask = 0x0F) const {
-    std::vector<std::string> vec(words.begin(), words.end());
-    ensureSdCardFontReady(fontId, vec, includeHyphen, styleMask);
+    std::deque<std::string> dq(words.begin(), words.end());
+    ensureSdCardFontReady(fontId, dq, includeHyphen, styleMask);
   }
-  inline void ensureSdCardFontReady(int fontId, const uint32_t* /*codepoints*/, uint32_t /*cpCount*/,
-                                    bool /*includeSpace*/, bool /*includeHyphen*/, uint8_t /*styleMask*/) const {
-    // CrossInk codepoint-based prewarming stub: the steroids SD font loader
-    // uses utf8Text-based prewarming. Prewarm is best-effort anyway.
-  }
+  void ensureSdCardFontReady(int fontId, const uint32_t* codepoints, uint32_t cpCount,
+                             bool includeSpace, bool includeHyphen, uint8_t styleMask) const;
   bool releaseSdCardFontForLowMemory(int fontId) const;
   inline bool releaseSdCardFontForLowMemory(int fontId, bool /*preserveAdvanceTable*/) const {
     return releaseSdCardFontForLowMemory(fontId);
@@ -253,6 +259,25 @@ class GfxRenderer {
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
   void restoreBwBuffer();  // Restore and free the stored buffer
   void cleanupGrayscaleWithFrameBuffer() const;
+
+  // Temporarily expose the framebuffer as build scratch. No drawing is valid
+  // while it is lent; restore always returns a cleared, ready-to-redraw buffer.
+  void releaseFrameBufferForBuild();
+  bool restoreFrameBufferAfterBuild();
+  bool hasFrameBuffer() const { return frameBuffer != nullptr; }
+
+  class FrameBufferLoan {
+   public:
+    explicit FrameBufferLoan(GfxRenderer& renderer);
+    ~FrameBufferLoan() { end(); }
+    FrameBufferLoan(const FrameBufferLoan&) = delete;
+    FrameBufferLoan& operator=(const FrameBufferLoan&) = delete;
+    void end();
+
+   private:
+    GfxRenderer& renderer_;
+    bool active_ = false;
+  };
 
   // Font helpers
   const uint8_t* getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const;

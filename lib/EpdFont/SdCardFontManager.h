@@ -7,6 +7,7 @@
 class GfxRenderer;
 class SdCardFont;
 struct SdCardFontFamilyInfo;
+struct SdCardFontFileInfo;
 
 class SdCardFontManager {
  public:
@@ -15,12 +16,12 @@ class SdCardFontManager {
   SdCardFontManager(const SdCardFontManager&) = delete;
   SdCardFontManager& operator=(const SdCardFontManager&) = delete;
 
-  // Load the font file matching fontSizeEnum (SMALL=0 .. EXTRA_LARGE=3) by
-  // ordinal position in the family's sorted size list. Only one .cpfont file
-  // is loaded; other sizes remain on disk. This keeps resident interval +
-  // kern/ligature tables to one size's worth of memory.
+  // Load the font file matching fontSizeEnum (SMALL=0 .. EXTRA_LARGE=3).
   // Returns true on success.
   bool loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t fontSizeEnum);
+  // Load an additional size for the currently loaded family (for fallback fonts).
+  // Returns the font ID, or 0 on failure.
+  int loadFamilyExtraSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize);
 
   // Unload everything, unregister from renderer.
   void unloadAll(GfxRenderer& renderer);
@@ -44,6 +45,7 @@ class SdCardFontManager {
     uint8_t size;
   };
   static int computeFontId(uint32_t contentHash, const char* familyName, uint8_t pointSize);
+  int loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer);
 
   std::string loadedFamilyName_;
   uint8_t loadedPointSize_ = 0;
