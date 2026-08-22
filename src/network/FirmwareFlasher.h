@@ -59,6 +59,11 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
 // success so the caller can immediately reread it for flashing.
 Result validateImageFile(const char* sdPath, size_t partitionSize);
 
-const char* resultName(Result r);
+  const char* resultName(Result r);
+
+  // Read the chip_id embedded in the currently running image. The running slot
+  // is authoritative for this device even on X4 units whose image verification
+  // path differs from stock ESP-IDF.
+  uint16_t runningPartitionChipId();
 
 }  // namespace firmware_flash

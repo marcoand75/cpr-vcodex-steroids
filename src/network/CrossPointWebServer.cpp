@@ -2,12 +2,16 @@
 
 #include <ArduinoJson.h>
 #include <FsHelpers.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <WiFi.h>
+#include <cctype>
+#include <esp_efuse.h>
+#include <esp_efuse_table.h>
 #include <esp_task_wdt.h>
 
 #include <algorithm>
@@ -828,6 +832,16 @@ void CrossPointWebServer::handleStatus() const {
   doc["streakDays"] = READING_STATS.getCurrentStreakDays();
   doc["achievementsUnlocked"] = unlockedAchievements;
   doc["achievementsTotal"] = totalAchievements;
+
+  char serialNumber[33] = {};
+  bool validSerial = false;
+  if (esp_efuse_read_field_blob(ESP_EFUSE_USER_DATA, serialNumber, 256) == ESP_OK) {
+    validSerial = serialNumber[0] != '\0' && serialNumber[0] != static_cast<char>(0xFF);
+    for (size_t index = 0; validSerial && index < 32 && serialNumber[index] != '\0'; ++index) {
+      validSerial = std::isprint(static_cast<unsigned char>(serialNumber[index])) != 0;
+    }
+  }
+  doc["serial"] = validSerial ? serialNumber : "Not found";
 
   String json;
   serializeJson(doc, json);
