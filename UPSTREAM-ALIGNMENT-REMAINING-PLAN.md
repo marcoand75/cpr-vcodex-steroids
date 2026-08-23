@@ -2,6 +2,13 @@
 
 ## DETAILED ANALYSIS: SdCardFont Fragmentation-Resistant Bitmap Storage
 
+> **Status: PORTED (commit `72515f4f`)**. This analysis was written before the
+> port decision was finalized. The full SdCardFont + GfxRenderer +
+> FontCacheManager + FontDecompressor changes from upstream 1.5.0.20 (`3e46941c`)
+> were integrated despite the "DEFER" recommendation below. The analysis is
+> preserved for historical context. See the "REMAINING DEFERRED ITEMS" section
+> at the bottom for current status.
+
 ### Background: The Problem
 
 Steroids runs on the ESP32-C3 (320 KB RAM, no PSRAM). The SdCardFont system
@@ -295,22 +302,58 @@ pattern in GfxRenderer. Without FrameBufferLoan, the chunking provides
 minimal benefit. With FrameBufferLoan, it requires auditing the entire
 rendering pipeline for frame-buffer-safety.
 
-**Recommendation**: DEFER. The risk/reward ratio is unfavorable for
-Steroids' current architecture. The chunked allocation should be
-revisited when/if the EPUB SectionBuilder is modernized to the
-progressive model.
+**Recommendation (historical)**: DEFER. The risk/reward ratio was
+considered unfavorable for Steroids' current architecture.
+
+**Actual outcome**: The port was performed anyway in commit `72515f4f`,
+integrating the full SdCardFont + GfxRenderer + FontCacheManager +
+FontDecompressor changes. The FrameBufferLoan pattern was integrated
+via `BuildScratch.h` (`lib/Memory/`), which was already present in
+Steroids. Build succeeded with 0 warnings. See "REMAINING DEFERRED ITEMS"
+below for what was NOT ported.
 
 ---
 
 ## REMAINING DEFERRED ITEMS
 
+### 1. SdCardFont fragmentation-resistant storage (ACTUALLY PORTED)
+
+**Status**: COMPLETED — ported in commit `72515f4f` despite the analysis
+above recommending deferral. The full SdCardFont + GfxRenderer +
+FontCacheManager + FontDecompressor changes from upstream 1.5.0.20
+(`3e46941c`) were integrated into Steroids.
+
+**What was done:**
+- Chunked 4 KiB bitmap storage (`miniBitmapChunks[24]`) in SdCardFont
+- `TextGetter` callback + `prewarm` overload
+- `coverageHandler` field on `EpdFontData` + `hasCodepoint()` on EpdFont/EpfFontFamily
+- `miniGlyphBitmap()` overflow bitmap resolution in `GfxRenderer::getGlyphBitmap`
+- `FrameBufferLoan` RAII pattern via `BuildScratch.h` (lend/reclaim during prewarm)
+- `resolveTextFontId` / `ensureSdGlyphsResident` for CJK fallback font resolution
+- `FontDecompressor` raw-buffer refactor (malloc/realloc instead of std::vector)
+- `FontCacheManager::scanFontIdSet_` flag for negative font ID handling
+- `SdCardFontManager` refactored with `loadFile` helper + `loadFamilyExtraSize`
+- `ensureSdCardFontReady(std::deque)` with backward-compat inline wrapper
+
+**What was NOT ported (still deferred):**
+- HAL crash detection (`PANIC_CAPTURE_MAGIC`) — see §2 below
+- SdCardFontRegistry case-insensitive directory resolution
+  (`resolveRootDirectoryIgnoreCase`) — not needed; Steroids uses a
+  different font directory management approach
+
+**Build verification:** SUCCESS — RAM 16.0% (52276/327680), Flash 98.5%,
+0 warnings.
+
+**Note:** The `HalSystem.h/cpp` files are NOT in the protected list and
+can be taken from upstream if needed for HAL crash detection.
+
+---
+
 ### 2. HAL Crash Detection (PANIC_CAPTURE_MAGIC)
+
 - **Diff**: 25 insertions / 6 deletions in `lib/hal/HalSystem.cpp`
 - **Risk**: MEDIUM (watchdog reset detection needs device testing on X4)
 - **Approach**: Port as-is, test on device
-
-### 3. Web Server Serial Number
-- **Status**: COMPLETED (already ported — see commit f467593a)
-
-### 4. FirmwareFlasher runningPartitionChipId()
-- **Status**: COMPLETED (already ported — see commit f467593a)
+- **Status**: DEFERRED — not yet ported. Requires X4 hardware testing to
+  verify watchdog-reset-as-crash logic doesn't false-positive on normal
+  deep-sleep wake cycles. `HalSystem.h/cpp` are NOT protected files.

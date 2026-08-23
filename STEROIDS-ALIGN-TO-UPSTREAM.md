@@ -444,7 +444,7 @@ implementation Steroids no longer ships.
 | `src/activities/reader/WikiTxtReaderActivity.cpp/h` | Dedicated wiki reader (progress.bin, screenshot info, frame reserve). |
 | `src/util/ScreenshotInfo.h` | New reader-metadata hook (used by wiki reader). |
 | `src/ReadingStats/` | **Intentionally empty** — CrossInk binary stats removed; vCodex JSON is the only store. |
-| `lib/EpdFont/SdCardFont.cpp` | SD-font advance table grows in place via `realloc` (Steroids). |
+| `lib/EpdFont/SdCardFont.cpp` | **Chunked 4 KiB bitmap storage** (1.5.0.20 port: `miniBitmapChunks[24]`, TextGetter, `miniGlyphBitmap`, `onCoverageQuery`). Advance table still grows in place via `realloc`. |
 | `lib/EpdFont/builtinFonts/all.h` (font set) | UI font is **Ubuntu**, not Inter (Inter default was reverted). |
 | `lib/GfxRenderer/ImageRenderConfig.h/cpp` | Grayscale/gamma/dither shared config (see §8A / Grayscale section). |
 | `src/util/PngSleepRenderer.*`, `src/util/SleepScreenCache.*` | Steroids PNG sleep renderer — **never merge upstream `patch_pngdec.py`**. |
@@ -1070,11 +1070,69 @@ has been fully ported (`72515f4f`):
 
 **Build:** SUCCESS — RAM 16.0% (52276/327680), Flash 98.5% (6455495/6553600), 0 warnings.
 
+### Completed 1.5.0.20–22 alignment (commit `669ccb1a` + `f467593a`)
+
+The following upstream 1.5.0.20–22 changes were ported in commit `669ccb1a`
+(2026-08-22) and `f467593a` (2026-08-22):
+
+**Phase 1 — WifiCredentialStore security hardening:**
+- `lib/Serialization/CredentialIntegrity.h` — new CRC-32 constexpr utility
+- `lib/Serialization/ObfuscationUtils.h/cpp` — bounded `deobfuscateFromBase64`
+  overload, thread-safe `std::array` key init
+- `src/WifiCredentialStore.h/cpp` — mutable mutexes, `MAX_PASSWORD_LENGTH=64`,
+  `saveToFileUnlocked`, `hasCredentials()`, `findCredential` returns `std::optional`,
+  `getLastConnectedSsid` returns `std::string`, `getCredentials` returns vector copy
+- `src/JsonSettingsIO.cpp` — `saveWifi`/`loadWifi` with CRC-32 + password length,
+  legacy plaintext migration, mutex locking
+
+**Phase 1c — WifiSelectionActivity:** `autoConnectOnly` constructor param,
+  `sdFontSystem.releaseForNetwork` + MemoryBudget instrumentation, early-complete
+  paths, `findCredential` updated to `std::optional`.
+
+**Phase 1d/1e — hideFileExtension + EXTRA_WIDE:**
+  `EXTRA_WIDE=3` in `LINE_COMPRESSION` enum, `hideFileExtension` member,
+  `STR_HIDE_FILE_EXTENSION`/`STR_EXTRA_WIDE`/`STR_FIRMWARE_WRONG_DEVICE` i18n,
+  FileBrowser extension column hidden when set.
+
+**Phase 2 — OTA wrong-device rejection:**
+  `WRONG_DEVICE_ERROR` in `OtaUpdaterError`, `BAD_CHIP → WRONG_DEVICE_ERROR` mapping,
+  `STR_FIRMWARE_WRONG_DEVICE` in `OtaUpdateActivity`, `BAD_CHIP` in
+  `FirmwareFlasher::Result`.
+
+**Phase 3 — KOReaderSyncActivity:** `isAutomaticSyncIntent()` helper,
+  auto-sync uses `autoConnectOnly=true`, `silentRestartToHome` replaced with
+  `activityManager.goHome()` (Steroids preserves `fromReaderExit=true` for
+  `ReadingStatsDetailActivity` heap defragmentation).
+
+**Phase 4 — Write-only KOReader password (web):** `CrossPointWebServer.cpp`
+  returns empty password with `configured:true/false` boolean.
+
+**Phase 5 — FileBrowser hideFileExtension:** extension getter returns empty
+  string when `SETTINGS.hideFileExtension`.
+
+**Phase 6 — KOReaderSyncClient HTTP robustness:** accepts all 2xx, treats 204
+  as `NOT_FOUND` in `getProgress`.
+
+**Phase 7 — CJK codepoint detection:** `lib/Utf8/Utf8.h` —
+  `utf8IsCjkCodepoint()` for UI font fallback selection.
+
+**Phase 8 — ConfirmationActivity:** `MAX_BODY_LINES=6` (was 8),
+  `safeHeading` (single-line truncated), `bodyLines` (newline-paragraph word-wrap).
+
+**Phase 3 remaining (`f467593a`):** Web Server serial number (reads
+  `ESP_EFUSE_USER_DATA`), `FirmwareFlasher::runningPartitionChipId()` (cached
+  chip_id validation in `validateImageFile()`).
+
+**Build:** SUCCESS — RAM 15.9%, Flash 98.5%, 0 new warnings.
+
 ### Deferred: HAL crash detection (PANIC_CAPTURE_MAGIC)
 The `PANIC_CAPTURE_MAGIC` watchdog crash detection from upstream 1.5.0.20 was NOT
 ported. This is deferred pending X4 device testing (see
-`UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"HAL crash detection"). The `HalSystem.h/cpp`
-files are NOT in the protected list — they can be taken from upstream if needed.
+`UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"REMAINING DEFERRED ITEMS: HAL Crash Detection").
+The `HalSystem.h/cpp` files are NOT in the protected list — they can be taken from
+upstream if needed. Also deferred: SdCardFontRegistry case-insensitive directory
+resolution (`resolveRootDirectoryIgnoreCase`) — not needed; Steroids uses a different
+approach.
 
 ---
 
