@@ -109,6 +109,7 @@ class ActivityManager {
   bool isReaderActivity() const;
   bool skipLoopDelay() const;
   bool isScreenSaverActive() const;
+  bool isWifiActivity() const;
   ScreenshotInfo getScreenshotInfo() const;
 
   // If immediate is true, the update will be triggered immediately.

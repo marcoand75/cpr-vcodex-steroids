@@ -333,6 +333,8 @@ bool ActivityManager::skipLoopDelay() const { return currentActivity && currentA
 
 bool ActivityManager::isScreenSaverActive() const { return currentActivity && currentActivity->isScreenSaverActivity(); }
 
+bool ActivityManager::isWifiActivity() const { return currentActivity && currentActivity->isWifiActivity(); }
+
 ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   if (currentActivity) {
     return currentActivity->getScreenshotInfo();

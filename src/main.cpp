@@ -832,6 +832,34 @@ void loop() {
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
+  // --- Battery safety under high-power-draw activities (WiFi, OTA) ---
+  // When WiFi is active (file transfer, OTA, web server), the ESP32 draws much
+  // more current. A battery reading that looks fine at idle can sag below the
+  // brown-out threshold mid-operation, causing an abrupt power-off with the e-ink
+  // display frozen. We now proactively check for critically low battery and render
+  // a shutdown screen BEFORE the device dies.
+  static unsigned long lastBatteryCheckMs = 0;
+  const unsigned long now = millis();
+  if (now - lastBatteryCheckMs >= 5000) {  // Check every 5 seconds to limit I2C overhead
+    lastBatteryCheckMs = now;
+    const uint16_t batteryPct = powerManager.getBatteryPercentage();
+    if (batteryPct < 5 && !deepSleepInProgress) {
+      LOG_INF("PWR", "Battery critically low (%u%%) under load — rendering shutdown screen", batteryPct);
+      {
+        RenderLock lock;
+        renderer.clearScreen();
+        const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+        const auto top = (renderer.getScreenHeight() - height) / 2;
+        renderer.drawCenteredText(UI_10_FONT_ID, top - height, tr(STR_BATTERY_EMPTY_TITLE), true, EpdFontFamily::BOLD);
+        renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BATTERY_EMPTY_BODY));
+        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      }
+      delay(2000);  // Let the user see the shutdown screen
+      enterDeepSleep();
+      // Should never reach here (esp_deep_sleep_start blocks)
+    }
+  }
+
   renderer.setFadingFix(SETTINGS.fadingFix);
   renderer.setDarkMode(SETTINGS.darkMode);
   renderer.setTextDarkness(SETTINGS.textDarkness);

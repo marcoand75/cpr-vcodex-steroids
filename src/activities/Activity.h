@@ -49,6 +49,7 @@ class Activity {
   virtual bool preventAutoSleep() { return false; }
   virtual bool isReaderActivity() const { return false; }
   virtual bool isScreenSaverActivity() const { return false; }
+  virtual bool isWifiActivity() const { return false; }
   virtual uint8_t getUiTransitionRefreshWeight() const { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
