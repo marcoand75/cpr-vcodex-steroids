@@ -1327,22 +1327,23 @@ upstream merges:
 - **SdCardFontRegistry case-insensitive dirs**: NOT NEEDED — Steroids uses a
   different font directory management approach.
 
-### 23.12 Carousel recents panel (home screen)
+### 23.12 Carousel recents panel + icon count (home screen)
 
-- **Problem**: `HomeActivity::drawCarouselRecentsPanel()` was guarded by
+- **Panel removal**: `HomeActivity::drawCarouselRecentsPanel()` was guarded by
   `isLyraCarouselTheme()`, which returns true for **both** `LYRA_CAROUSEL` and
-  `LYRA_MARCOAND75`. The cyber panel showing "Carousel Recents (N)" with book
-  count was designed specifically for Lyra Marcoand75's carousel + data panel
-  layout, not for the standalone Lyra Carousel theme.
-- **Fix**: Changed the guard to check `UI_THEME::LYRA_MARCOAND75` specifically,
-  so the panel only renders in that theme. Lyra Carousel keeps its clean
-  cover-only layout.
-- **Also**: Increased `homeRecentBooksCount` from 3 to 20 in `LyraCarouselTheme`
-  (clamped to `HOME_MAX_BOOKS=10` by `HomeActivity`), allowing navigation through
-  all 10 recent books in the carousel.
+  `LYRA_MARCOAND75`. The cyber panel showing "Carousel Recents (N)" was designed
+  specifically for Lyra Marcoand75's layout. Changed the guard to check
+  `UI_THEME::LYRA_MARCOAND75` specifically — the panel now only appears in that theme.
+- **Icon count**: `kVisibleMenuSlots` in `LyraCarouselTheme::drawButtonMenu` increased
+  from 5 to 7, matching `LyraMarcoand75Theme`. Both carousel themes now show 7 app
+  icons before scrolling.
+- **Recent books count**: `homeRecentBooksCount` in `LyraCarouselTheme` increased from
+  3 to 20 (clamped to `HOME_MAX_BOOKS=10` by `HomeActivity`), allowing navigation
+  through all 10 recent books.
 
 **Files:** `src/activities/home/HomeActivity.cpp` (`drawCarouselRecentsPanel`
-guard), `src/components/themes/lyra/LyraCarouselTheme.h` (`homeRecentBooksCount`).
+guard), `src/components/themes/lyra/LyraCarouselTheme.h` (`homeRecentBooksCount`),
+`src/components/themes/lyra/LyraCarouselTheme.cpp` (`kVisibleMenuSlots`).
 
 ---
 

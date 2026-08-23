@@ -1161,7 +1161,7 @@ Not needed — Steroids uses a different font directory management approach.
 | Web Server serial number | — | COMPLETED (commit `f467593a`) |
 | FirmwareFlasher chip validation | — | COMPLETED (commit `f467593a`) |
 | HAL crash detection (`PANIC_CAPTURE_MAGIC`) | MEDIUM | COMPLETED (commit `d3e21a61`) |
-| Carousel recents panel (Lyra Carousel) | LOW | COMPLETED (commit `a605404d`) — removed panel from LYRA_CAROUSEL, kept only in LYRA_MARCOAND75; increased `homeRecentBooksCount` from 3 to 20 |
+| Carousel recents panel (Lyra Carousel) | LOW | COMPLETED (commit `a605404d` + `b2601c90`) — removed cyber panel from LYRA_CAROUSEL, kept only in LYRA_MARCOAND75; increased `homeRecentBooksCount` from 3 to 20; matched `kVisibleMenuSlots` to 7 (same as Marcoand75) |
 
 ## What changed since `07126f2b` — align-upstream notes
 
