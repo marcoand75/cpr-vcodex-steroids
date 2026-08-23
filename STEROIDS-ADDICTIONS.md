@@ -1327,6 +1327,23 @@ upstream merges:
 - **SdCardFontRegistry case-insensitive dirs**: NOT NEEDED — Steroids uses a
   different font directory management approach.
 
+### 23.12 Carousel recents panel (home screen)
+
+- **Problem**: `HomeActivity::drawCarouselRecentsPanel()` was guarded by
+  `isLyraCarouselTheme()`, which returns true for **both** `LYRA_CAROUSEL` and
+  `LYRA_MARCOAND75`. The cyber panel showing "Carousel Recents (N)" with book
+  count was designed specifically for Lyra Marcoand75's carousel + data panel
+  layout, not for the standalone Lyra Carousel theme.
+- **Fix**: Changed the guard to check `UI_THEME::LYRA_MARCOAND75` specifically,
+  so the panel only renders in that theme. Lyra Carousel keeps its clean
+  cover-only layout.
+- **Also**: Increased `homeRecentBooksCount` from 3 to 20 in `LyraCarouselTheme`
+  (clamped to `HOME_MAX_BOOKS=10` by `HomeActivity`), allowing navigation through
+  all 10 recent books in the carousel.
+
+**Files:** `src/activities/home/HomeActivity.cpp` (`drawCarouselRecentsPanel`
+guard), `src/components/themes/lyra/LyraCarouselTheme.h` (`homeRecentBooksCount`).
+
 ---
 
 ## 22. Home Reading-Stats Summary (summary.json fast path)
@@ -1420,4 +1437,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes, §23.10/23.11 HAL crash detection completed.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*

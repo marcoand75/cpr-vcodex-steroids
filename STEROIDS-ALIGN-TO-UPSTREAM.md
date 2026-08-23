@@ -1033,6 +1033,11 @@ Steroids HEAD (`d3e21a61`) is synced through upstream **1.5.0.22** (`upstream/ma
 | 1.5.0.21 | `723a1a4d` | **Not yet ported** | EPUB image + low-memory handling |
 | 1.5.0.22 | `1c060a24` | **Not yet ported** | docs only (auto-flash firmware sync) |
 
+Steroids HEAD (`a605404d`) also includes the carousel recents panel fix:
+the cyber panel (showing book count + filter) is now only visible in
+`LYRA_MARCOAND75` theme, and `homeRecentBooksCount` increased from 3 to 20
+in `LyraCarouselTheme` (clamped to `HOME_MAX_BOOKS=10`).
+
 The next upstream pull target is **1.5.0.21** (`723a1a4d`), which contains EPUB image
 hardening and low-memory fixes that need to be re-applied on top of the Steroids
 CrossInk engine (see §"What changed since" below for divergence details).
@@ -1156,6 +1161,7 @@ Not needed — Steroids uses a different font directory management approach.
 | Web Server serial number | — | COMPLETED (commit `f467593a`) |
 | FirmwareFlasher chip validation | — | COMPLETED (commit `f467593a`) |
 | HAL crash detection (`PANIC_CAPTURE_MAGIC`) | MEDIUM | COMPLETED (commit `d3e21a61`) |
+| Carousel recents panel (Lyra Carousel) | LOW | COMPLETED (commit `a605404d`) — removed panel from LYRA_CAROUSEL, kept only in LYRA_MARCOAND75; increased `homeRecentBooksCount` from 3 to 20 |
 
 ## What changed since `07126f2b` — align-upstream notes
 
@@ -1260,4 +1266,4 @@ python -X utf8 -m platformio run -e default -j 16
 
 ---
 
-*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 fully ported including HAL crash detection), added completed alignment phases summary, SdCardFont port details, WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*
+*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 fully ported incl. HAL crash detection), added completed alignment phases summary, SdCardFont port details, HAL crash detection port details, carousel recents panel fix (a605404d), WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*
