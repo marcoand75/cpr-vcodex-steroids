@@ -12,6 +12,7 @@
 #include "esp_wifi.h"
 #include "FirmwareFlasher.h"
 #include "HttpDownloader.h"
+#include <HalGPIO.h>
 #include "version.h"
 
 namespace {
@@ -318,7 +319,7 @@ bool OtaUpdater::isUpdateNewer() const {
 
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }
 
-OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgress, void* ctx) {
+OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgress, void* ctx, bool* cancelFlag) {
   if (!isUpdateNewer()) {
     return UPDATE_OLDER_ERROR;
   }
@@ -331,21 +332,49 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   int lastReportedPercent = -1;
   const auto downloadResult = HttpDownloader::downloadToFile(
       otaUrl, otaCachePath,
-      [this, onProgress, ctx, &lastReportedPercent](size_t downloaded, size_t total) {
+      [this, onProgress, ctx, &lastReportedPercent, cancelFlag](size_t downloaded, size_t total) {
         const size_t effectiveTotal = total > 0 ? total : otaSize;
         setProgress(downloaded, effectiveTotal);
         if (effectiveTotal > 0) {
           const int percent =
               static_cast<int>(std::min<size_t>(100, static_cast<uint64_t>(downloaded) * 100 / effectiveTotal));
           if (percent == lastReportedPercent) {
+            // Check for cancel (Back button) even on non-reporting ticks
+            if (cancelFlag && *cancelFlag) {
+              return;
+            }
+            gpio.update();
+            if (gpio.isPressed(HalGPIO::BTN_BACK)) {
+              if (cancelFlag) {
+                *cancelFlag = true;
+                LOG_INF("OTA", "Cancel requested (Back button during download)");
+              }
+              return;
+            }
             return;
           }
           lastReportedPercent = percent;
         }
         notifyProgress(onProgress, ctx);
-      });
+        // Check for cancel between progress ticks
+        if (cancelFlag && *cancelFlag) {
+          return;
+        }
+        gpio.update();
+        if (gpio.isPressed(HalGPIO::BTN_BACK)) {
+          if (cancelFlag) {
+            *cancelFlag = true;
+            LOG_INF("OTA", "Cancel requested (Back button during download)");
+          }
+        }
+      }, cancelFlag);
 
   if (downloadResult != HttpDownloader::OK) {
+    if (downloadResult == HttpDownloader::ABORTED) {
+      LOG_INF("OTA", "Download cancelled by user");
+      Storage.remove(otaCachePath);
+      return ABORTED;
+    }
     LOG_ERR("OTA", "Firmware download failed: %d", downloadResult);
     return downloadResult == HttpDownloader::FILE_ERROR ? INTERNAL_UPDATE_ERROR : HTTP_ERROR;
   }

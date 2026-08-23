@@ -22,6 +22,7 @@ class OtaUpdater {
     INTERNAL_UPDATE_ERROR,
     OOM_ERROR,
     WRONG_DEVICE_ERROR,
+    ABORTED,
   };
 
   size_t getOtaSize() const { return otaSize; }
@@ -39,5 +40,6 @@ class OtaUpdater {
   bool isUpdateNewer() const;
   const std::string& getLatestVersion() const;
   OtaUpdaterError checkForUpdate();
-  OtaUpdaterError installUpdate(ProgressCallback onProgress = nullptr, void* ctx = nullptr);
+  OtaUpdaterError installUpdate(ProgressCallback onProgress = nullptr, void* ctx = nullptr,
+                                bool* cancelFlag = nullptr);
 };

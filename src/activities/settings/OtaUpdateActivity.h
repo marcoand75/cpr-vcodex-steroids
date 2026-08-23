@@ -12,7 +12,8 @@ class OtaUpdateActivity : public Activity {
     NO_UPDATE,
     FAILED,
     FINISHED,
-    SHUTTING_DOWN
+    SHUTTING_DOWN,
+    LOW_BATTERY_WARNING,
   };
 
   // Can't initialize this to 0 or the first render doesn't happen
@@ -22,6 +23,10 @@ class OtaUpdateActivity : public Activity {
   unsigned int lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
   OtaUpdater updater;
   const char* failedDetail = nullptr;
+  bool cancelRequested = false;
+
+  // Minimum battery percentage to allow starting an OTA update.
+  static constexpr uint8_t OTA_MIN_BATTERY_PERCENT = 30;
 
   void onWifiSelectionComplete(bool success);
   void checkForUpdateNow();
@@ -33,6 +38,8 @@ class OtaUpdateActivity : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return state == CHECKING_FOR_UPDATE || state == UPDATE_IN_PROGRESS; }
+  bool preventAutoSleep() override {
+    return state == CHECKING_FOR_UPDATE || state == UPDATE_IN_PROGRESS || state == LOW_BATTERY_WARNING;
+  }
   bool skipLoopDelay() override { return true; }  // Prevent power-saving mode
 };

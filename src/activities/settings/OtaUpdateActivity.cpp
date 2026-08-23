@@ -13,6 +13,7 @@
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
 #include "util/NetworkMemory.h"
+#include <HalPowerManager.h>
 #include "version.h"
 
 namespace {
@@ -161,7 +162,7 @@ void OtaUpdateActivity::render(RenderLock&&) {
 
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  } else if (state == UPDATE_IN_PROGRESS) {
+   } else if (state == UPDATE_IN_PROGRESS) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATING));
 
     int y = top + height + metrics.verticalSpacing;
@@ -178,6 +179,16 @@ void OtaUpdateActivity::render(RenderLock&&) {
                               (formatByteSizeCompact(updater.getProcessedSize()) + " / " +
                                formatByteSizeCompact(updater.getTotalSize()))
                                   .c_str());
+
+    // Show cancel hint during download phase
+    y += height + metrics.verticalSpacing;
+    renderer.drawCenteredText(UI_10_FONT_ID, y, tr(STR_PRESS_BACK_TO_CANCEL));
+  } else if (state == LOW_BATTERY_WARNING) {
+    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BATTERY_TOO_LOW), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing,
+                              tr(STR_BATTERY_UPDATE_WARNING));
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_UPDATE), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == NO_UPDATE) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing,
@@ -206,9 +217,36 @@ void OtaUpdateActivity::render(RenderLock&&) {
 }
 
 void OtaUpdateActivity::loop() {
+  if (state == LOW_BATTERY_WARNING) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      LOG_DBG("OTA", "Proceeding with update despite low battery warning");
+      {
+        RenderLock lock(*this);
+        state = WAITING_CONFIRMATION;
+        cancelRequested = false;
+      }
+      requestUpdate();
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
+  }
+
   if (state == WAITING_CONFIRMATION) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      LOG_DBG("OTA", "New update available, starting download...");
+      // Battery safety check before starting the update
+      const uint16_t batteryPct = powerManager.getBatteryPercentage();
+      if (batteryPct < OTA_MIN_BATTERY_PERCENT) {
+        LOG_INF("OTA", "Battery too low for update: %u%% (min %u%%)", batteryPct, OTA_MIN_BATTERY_PERCENT);
+        {
+          RenderLock lock(*this);
+          state = LOW_BATTERY_WARNING;
+        }
+        requestUpdate();
+        return;
+      }
+      LOG_DBG("OTA", "New update available, starting download (battery=%u%%)...", batteryPct);
       {
         RenderLock lock(*this);
         state = UPDATE_IN_PROGRESS;
@@ -223,7 +261,18 @@ void OtaUpdateActivity::loop() {
             // installUpdate() blocks this task.
             static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
           },
-          this);
+          this, &cancelRequested);
+
+      if (res == OtaUpdater::ABORTED) {
+        LOG_INF("OTA", "Update cancelled by user");
+        {
+          RenderLock lock(*this);
+          state = FAILED;
+          failedDetail = tr(STR_UPDATE_CANCELLED);
+        }
+        requestUpdate();
+        return;
+      }
 
       if (res != OtaUpdater::OK) {
         LOG_DBG("OTA", "Update failed: %d", res);
