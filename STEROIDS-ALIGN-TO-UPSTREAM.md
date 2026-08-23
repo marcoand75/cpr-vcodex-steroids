@@ -468,6 +468,16 @@ Guide Dots, EPUB render modes). **Always keep local:**
 - `lib/EpdFont/FontDecompressor.cpp/h`
 - `lib/EpdFont/builtinFonts/all.h`
 - `lib/GfxRenderer/GfxRenderer.cpp/h`
+- `lib/EpdFont/SdCardFont.h/cpp` — chunked bitmap storage (1.5.0.20 port)
+- `lib/EpdFont/SdCardFontManager.h/cpp` — standard-size detection + loadFamilyExtraSize
+- `lib/EpdFont/EpdFont.h/cpp` — added `hasCodepoint()` (preserves SMALL_CAPS=64)
+- `lib/EpdFont/EpdFontFamily.h/cpp` — added `hasCodepoint(Style)` (preserves enum)
+- `lib/EpdFont/EpdFontData.h` — added `coverageHandler` field
+- `lib/GfxRenderer/FontCacheManager.h/cpp` — `scanFontIdSet_` flag
+- `src/ReadingStatsStore.h/cpp` — pace tracking + summary.json fast path
+- `src/JsonSettingsIO.cpp/h` — settings JSON split (byte-identical to upstream)
+- `src/JsonSettingsIOSteroids.cpp/h` — Steroids-only settings serialization
+- `src/JsonSettingsIOShared.inc` — shared internal serialization helpers
 
 ---
 
@@ -1011,18 +1021,78 @@ section in `STEROIDS-ADDICTIONS.md` §8A for the full design rationale.
 
 ---
 
+## Upstream Sync Status
+
+### Current upstream base
+Steroids HEAD (`b2cdf611`) is synced through upstream **1.5.0.22** (`upstream/master` at
+`1c060a24`). The following upstream releases have been incorporated:
+
+| Release | Upstream tag | Status in Steroids | Notes |
+|---|---|---|---|
+| 1.5.0.20 | `3e46941c` | **Ported** (`72515f4f`) | SdCardFont fragmentation-resistant bitmap storage (chunked 4 KiB `miniBitmapChunks[24]`, TextGetter prewarm, CJK fallback, FrameBufferLoan) |
+| 1.5.0.21 | `723a1a4d` | **Not yet ported** | EPUB image + low-memory handling |
+| 1.5.0.22 | `1c060a24` | **Not yet ported** | docs only (auto-flash firmware sync) |
+
+The next upstream pull target is **1.5.0.21** (`723a1a4d`), which contains EPUB image
+hardening and low-memory fixes that need to be re-applied on top of the Steroids
+CrossInk engine (see §"What changed since" below for divergence details).
+
+### Completed 1.5.0.20 SdCardFont port
+
+The SdCardFont fragmentation-resistant bitmap storage from upstream 1.5.0.20
+has been fully ported (`72515f4f`):
+
+- **`lib/EpdFont/SdCardFont.h` / `SdCardFont.cpp`** — replaced single-buffer
+  `miniBitmap` with 24 × 4 KiB `miniBitmapChunks[24]` chunked storage, eliminating
+  large contiguous allocation needs on the 380 KB RAM ESP32-C3. Added `TextGetter`
+  typedef + `prewarm` overload, `loadKernLig` param, `miniGlyphBitmap()` overflow
+  fallback, `onCoverageQuery()` static callback for `coverageHandler` dispatch.
+- **`lib/EpdFont/EpdFont.h` / `EpdFont.cpp`** — added `hasCodepoint(uint32_t cp)`
+  method with coverage handler support (binary search intervals + coverageHandler fallback).
+- **`lib/EpdFont/EpdFontData.h`** — added `bool (*coverageHandler)(void* ctx, uint32_t codepoint)` field.
+- **`lib/EpdFont/EpdFontFamily.h` / `cpp`** — added `hasCodepoint(uint32_t cp, Style style)`.
+  **Steroids enum preserved:** `SMALL_CAPS=64` and `RUBY_CONTINUE=128` kept (upstream removed SMALL_CAPS and renumbered RUBY_CONTINUE to 64).
+- **`lib/EpdFont/FontDecompressor.h` / `cpp`** — replaced `std::vector<uint8_t>` with
+  raw `uint8_t*` + capacity for `hotGroup`/`hotGlyphBuf`; removed `isInitialized()`/`_initialized`.
+- **`lib/GfxRenderer/GfxRenderer.h` / `cpp`** — added `FrameBufferLoan` class (via
+  `BuildScratch.h`), `resolveTextFontId()` for CJK fallback font resolution,
+  `ensureSdGlyphsResident()`, `setFallbackFont()`/`clearFallbackFonts()`,
+  `fallbackFontMap_` member, `TextGetter` typedef + `prewarmFallbackText()`,
+  vector-based `invertMonocheBitmap`, `miniGlyphBitmap` fallback in `getGlyphBitmap`.
+  `ensureSdCardFontReady` changed from `std::vector` to `std::deque` with inline
+  backward-compat wrapper.
+- **`lib/EpdFont/SdCardFontManager.h` / `cpp`** — refactored `loadFamily` with
+  standard-size detection (prefers 12/14/16/18), `loadFile` helper,
+  `loadFamilyExtraSize` for non-standard sizes.
+- **`lib/GfxRenderer/FontCacheManager.h` / `cpp`** — added `scanFontIdSet_` flag
+  to fix negative SD font ID handling.
+- **`src/main.cpp`** — removed `isInitialized()` guards (lazy init removed upstream).
+
+**Build:** SUCCESS — RAM 16.0% (52276/327680), Flash 98.5% (6455495/6553600), 0 warnings.
+
+### Deferred: HAL crash detection (PANIC_CAPTURE_MAGIC)
+The `PANIC_CAPTURE_MAGIC` watchdog crash detection from upstream 1.5.0.20 was NOT
+ported. This is deferred pending X4 device testing (see
+`UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"HAL crash detection"). The `HalSystem.h/cpp`
+files are NOT in the protected list — they can be taken from upstream if needed.
+
+---
+
 ## What changed since `07126f2b` — align-upstream notes
 
-Base `07126f2b` (2026-08-09) → HEAD `4eaf2371` (2026-08-18). Key merge-sensitive
+Base `07126f2b` (2026-08-09) → HEAD `b2cdf611` (2026-08-23). Key merge-sensitive
 deltas to watch in the next upstream pull. Details by feature in
 `STEROIDS-ADDICTIONS.md` §21.
 
 ### Divergence that will conflict on upstream merge
-- **CrossInk EPUB engine** (`lib/Epub/epub/*`, `MiniBidi`, `miniz`, `Memory/Arena.*`)
+- **CrossInk EPUB engine** (`lib/Epub/epub/*`, `MiniBidi`, `lib/miniz`, `lib/Memory/Arena.*`)
   replaced the EPUB stack. Upstream EPUB changes must be re-applied on top of the
   CrossInk files — do **not** take upstream `lib/Epub/*` wholesale. The render
   signature is now `foregroundBlack` (bionic-mode param removed): keep the
-  `c2a65b20` fix (foreground black when bionic OFF).
+  `c2a65b20` fix (foreground black when bionic OFF). **Steroids EPUB section cache is
+  at `SECTION_FILE_VERSION=60`** (ahead of upstream v47); do **not** port the version
+  bump. The `BookmarkStore` is at Steroids v4 (`absoluteWordStart`) vs upstream v5
+  (`visibleTextOffset`); do **not** port.
 - **Reading stats:** upstream re-adding `src/ReadingStats/` binaries will conflict with
   the decision to keep vCodex JSON only. Reject binary reintroduction.
 - **PNG/screensaver:** never import upstream `patch_pngdec.py` (incompatible with
@@ -1035,7 +1105,7 @@ deltas to watch in the next upstream pull. Details by feature in
   font set and hyphenation opt-in flags (`CPR_ENABLE_*_HYPHENATION`).
 - **Boot memory:** `src/main.cpp` and the lazy-load of `*Store`s diverge (eager in
   upstream). `src/main.cpp` is a protected file (power-hold sequence, silent restart,
-  boot instrumentation, initGammaLUT).
+  boot instrumentation, initGammaLUT, power-button state machine).
 - **Home reading-stats summary.json fast path:** Steroids reads a small derived
   `/.crosspoint/summary.json` on the Home screen and keeps the full
   `reading_stats.json` store (~41 KB) out of RAM at boot; upstream loads the store
@@ -1050,20 +1120,65 @@ deltas to watch in the next upstream pull. Details by feature in
   plus cache plumbing (`HalStorage::listFiles(includeDirectories=false)`),
   `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
   Steroids string keys (keep local; see I18N workflow).
+- **Settings JSON split** (2026-08-04): `JsonSettingsIO.cpp` is byte-identical to
+  upstream; all 37 Steroids-only fields live in `JsonSettingsIOSteroids.cpp`.
+  `CrossPointSettings.h` is the only conflict zone (~20 lines of POD struct changes).
+  See §3 of this guide for the merge procedure.
+- **SdCardFont storage** is now at the Steroids-cherry-picked 1.5.0.20 version.
+  Upstream may change the `TextGetter` callback signature or `coverageHandler`
+  registration. If upstream changes `lib/EpdFont/SdCardFont.*` or
+  `lib/GfxRenderer/GfxRenderer.*`, keep local and manually re-apply.
+- **WifiCredentialStore security** (1.5.0.20–22 port): `CredentialIntegrity.h`,
+  `ObfuscationUtils.h/cpp` bounded overload, thread-safe `WifiCredentialStore` with
+  `MAX_PASSWORD_LENGTH=64`, CRC-32 password validation, `JsonSettingsIO.cpp`
+  `saveWifi`/`loadWifi` updates. `JsonSettingsIO.cpp` was already byte-identical to
+  upstream (settings split v2), so these changes applied cleanly.
+- **KOReaderSyncActivity** (`silentRestartToHome` → `goHome`): Steroids preserves its
+  own `silentRestartToHome()` for Home returns (heap defragmentation); the upstream
+  change is noted but Steroids overrides the restart call. The
+  `fromReaderExit=true` flag for `ReadingStatsDetailActivity` is Steroids-specific.
 
 ### Protected-file additions since `07126f2b`
 See the "New Additions (2026-08-09 → 2026-08-18)" table above. In particular the
 `lib/Epub/epub/*`, `lib/MiniBidi/*`, `lib/miniz`, `lib/Memory/Arena.*`, and the
 per-article Wikipedia cache files must never be replaced by upstream copies.
 
+New since 1.5.0.20 port:
+- `lib/Serialization/CredentialIntegrity.h` — new file (CRC-32 constexpr)
+- `lib/Memory/BuildScratch.h` / `BuildScratch.cpp` — already present (FrameBufferLoan
+  support for SdCardFont port)
+- `src/util/SdFatDateTime.cpp` (from 1.5.0.4) — already ported
+
 ### Suggested incremental-merge focus for this delta
-Priority order if cherry-picking the next upstream release into this base:
-1. Any updated `.yaml`/i18n keys **except** english/italian (keep local).
-2. Settings bugfixes excluding `SettingsActivity.cpp` (label) and `settingsCount`
+Priority order if cherry-picking the next upstream release (1.5.0.21) into this base:
+1. **EPUB engine fixes** (1.5.0.21) — re-apply to CrossInk files, verifying `foregroundBlack`.
+   The section cache version (v60) and BookmarkStore (v4) divergences are protected.
+2. Any updated `.yaml`/i18n keys **except** english/italian (keep local).
+3. Settings bugfixes excluding `SettingsActivity.cpp` (label) and `settingsCount`
    logic (already fixed locally).
-3. EPUB engine fixes — re-apply to CrossInk files, verifying `foregroundBlack`.
 4. Re-check `freeink-sdk` submodule pin (SDCardManager `listFiles` signature).
+5. If 1.5.0.22 has non-docs changes, review for SdCardFont/EPUB engine touch points.
+
+### Merge command sequence for 1.5.0.21
+```powershell
+# 1. Backup
+git tag backup-before-1.5.0.21-$(Get-Date -Format yyyyMMdd-HHmmss)
+
+# 2. Fetch upstream tags
+git fetch upstream --tags
+
+# 3. Show the 1.5.0.21 delta
+git diff 1.5.0.20-cpr-vcodex..1.5.0.21-cpr-vcodex --stat
+
+# 4. For each changed file that exists locally and is NOT in the protected list,
+#    apply only the specific code changes manually (edit tool), never git checkout.
+
+# 5. EPUB engine changes (if any) — re-apply to CrossInk files
+
+# 6. Build and verify
+python -X utf8 -m platformio run -e default -j 16
+```
 
 ---
 
-*Last updated: 2026-08-18 — added Home reading-stats summary.json fast path divergence (ReadingStatsStore protected + derived-artifact note), Wikipedia cache overhaul, CrossInk/EPUB, boot/perf, PNG stability, multi-device X3/X4, hyphenation opt-in, and align-upstream notes base 07126f2b→HEAD.*
+*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 ported, 1.5.0.21 next), added SdCardFont port details, WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*

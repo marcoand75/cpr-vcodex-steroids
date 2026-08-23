@@ -546,6 +546,11 @@ words from chapter start to the beginning of `page`. Bookmarks store
   Wi‑Fi (SSID/Password/Security), vCard/MeCard (name/phone/email/URL/address),
   Geo (lat/lon), Email (mailto), Phone (tel), SMS (smsto), OTP (otpauth://),
   Calendar (BEGIN:VEVENT), URL (http/https). Sanitized to printable ASCII for e-ink fonts.
+- **SdCardFont fragmentation-resistant storage** — ported from upstream 1.5.0.20:
+  4 KiB chunked bitmap storage (`miniBitmapChunks[24]`), TextGetter prewarm callback,
+  CJK fallback font resolution via `hasCodepoint()` + `coverageHandler`, FrameBufferLoan
+  for section builds, FontDecompressor raw-buffer refactor. Built: RAM 16.0%,
+  Flash 98.5%, 0 warnings. See §23.
 
 ## 8A. Grayscale Image Rendering (BMP, covers, screensaver/sleep)
 
@@ -1164,6 +1169,10 @@ anything reverted is called out under *not active*.
   without loading the full ~41 KB store at boot. BootActivity now preloads the
   summary instead of the store; the full store stays lazy (`ensureLoaded`). See
   [§22](#22-home-reading-stats-summary-json-fast-path).
+- **SdCardFont fragmentation-resistant storage** (1.5.0.20 port, `72515f4f`):
+  4 KiB chunked bitmap storage replaces single-buffer allocation, TextGetter
+  prewarm + coverageHandler for CJK fallback, FrameBufferLoan for section builds,
+  FontDecompressor raw-buffer refactor. See §23.
 - **Wikipedia overhaul** — see [§5](#5-wikipedia-app).
 - **Quick Cards** — see [§19](#19-quick-cards-app).
 - **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
@@ -1200,13 +1209,115 @@ anything reverted is called out under *not active*.
 ### 21.4 Addictions / dependency notes
 
 - Steroids now **depends** on the CrossInk engine artifacts (`lib/Epub/epub/*`,
-  `MiniBidi`, `miniz`, `Memory/Arena.*`) and on **freeink-sdk** at a **new pinned
+  `MiniBidi`, `lib/miniz`, `lib/Memory/Arena.*`) and on **freeink-sdk** at a **new pinned
   submodule commit** (`SDCardManager::listFiles(..., includeDirectories)`). Any upstream
   merge that drops or restructures these will silently regress EPUB rendering and wiki
   cache listing unless re-pinned/re-added.
 - `src/ReadingStats/` is intentionally empty at HEAD; an upstream merge that re-adds
   those binaries needs a decision (keep vCodex JSON, do not reintroduce binary).
 - PNG/screensaver path must never take upstream `patch_pngdec.py` again.
+- **`lib/Serialization/CredentialIntegrity.h`** — new dependency for WifiCredentialStore
+  CRC-32 password validation (from upstream 1.5.0.20).
+- **`lib/Memory/BuildScratch.h/cpp`** — new dependency for FrameBufferLoan during EPUB
+  section builds (from upstream alignment, `f467593a`).
+
+---
+
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §21.4 dependency notes, §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan.*
+
+---
+
+## 23. SdCardFont Fragmentation-Resistant Storage (1.5.0.20 port)
+
+Ported from upstream CPR-vCodex 1.5.0.20 (`72515f4f`) to eliminate large contiguous
+allocations for SD-card font glyphs on the ESP32-C3 (380 KB usable RAM, no PSRAM).
+
+### 23.1 Problem
+The original `SdCardFont` allocated a single contiguous buffer (`miniBitmap`) for the
+full set of mini glyphs needed for a page render. On a fragmented heap this could
+fail to find a contiguous block even when enough total free memory existed, causing
+render failures or fallback to slower direct glyph measurement.
+
+### 23.2 Solution: 4 KiB chunked storage
+Replaced the single `miniBitmap` buffer with **24 × 4 KiB chunks** (`miniBitmapChunks[24]`),
+totaling 96 KiB virtual address space backed by on-demand chunk allocation. Each chunk
+is allocated independently, so the 380 KB heap only needs a single 4 KiB block at a
+time instead of a large contiguous allocation.
+
+Key additions:
+- `miniGlyphBitmap()` — overflow-safe glyph bitmap retrieval with chunk fallback
+- `TextGetter` callback typedef + `prewarm()` overload — pre-warm font data before
+  rendering without re-allocating
+- `loadKernLig` parameter — controls kerning/ligature loading during prewarm
+- `onCoverageQuery()` static callback — dispatches to `EpdFontData::coverageHandler`
+  for CJK font family fallback resolution
+- `contentHash_` tracking — detects content changes without full re-scan
+
+### 23.3 CJK fallback font resolution
+Added `hasCodepoint()` to `EpdFont`, `EpfFontFamily`, and a `coverageHandler` field
+on `EpdFontData` to support querying whether a font family can render a given Unicode
+codepoint. `GfxRenderer::resolveTextFontId()` uses `utf8IsCjkCodepoint()` +
+`hasCodepoint()` to detect CJK text and automatically select a fallback font family
+that has coverage for those codepoints. This is wired into `getTextWidth()`,
+`drawText()`, `getTextAdvanceX()`, and `drawTextRotated90CW()`.
+
+**Note:** The Steroids font style enum preserved `SMALL_CAPS=64` and
+`RUBY_CONTINUE=128` (upstream 1.5.0.20 removed SMALL_CAPS and renumbered
+RUBY_CONTINUE to 64). These values are used in `ChapterHtmlSlimParser.cpp:610` and
+must not be changed.
+
+### 23.4 FrameBufferLoan integration
+`GfxRenderer` gained a `FrameBufferLoan` RAII class (backed by `BuildScratch.h`)
+that loans the framebuffer during EPUB section builds, allowing the inflate
+stream to get a guaranteed ~43 KB contiguous window. This prevents
+"Failed to init inflate stream" errors and the resulting render-mode fallback
+cascade. `releaseFrameBufferForBuild()` / `restoreFrameBufferAfterBuild()` manage
+the loan scope.
+
+### 23.5 FontDecompressor refactor
+Replaced `std::vector<uint8_t>` for `hotGroup`/`hotGlyphBuf` with raw `uint8_t*` +
+capacity, using `malloc`/`realloc` for in-place growth. Removed the
+`isInitialized()`/`_initialized` lazy-init guard (the decompressor now always
+initializes in `init()`), simplifying the `main.cpp` boot logic.
+
+### 23.6 SdCardFontManager refactor
+`loadFamily()` refactored with standard-size detection (prefers sizes 12/14/16/18
+in order). Added `loadFile()` helper and `loadFamilyExtraSize()` for non-standard
+font sizes. `unloadAll()` now calls `clearFallbackFonts()` to release fallback
+family references. `ensureSdCardFontReady()` in `GfxRenderer` updated to accept
+`std::deque` (backward-compatible inline wrapper for `std::vector`) and a
+codepoints overload via `fetchAdvancesForCodepoints()`.
+
+### 23.7 FontCacheManager fix
+Added `scanFontIdSet_` boolean flag to replace the `scanFontId_ < 0` sentinel check.
+SD card font IDs can legitimately be negative (they're assigned by SdCardFontManager
+at runtime), so the `< 0` sentinel was unreliable. The `scanFontIdSet_` flag
+explicitly tracks whether a scan font ID was set during `recordText()`/`recordStyle()`.
+
+### 23.8 Build safety
+- Build: SUCCESS — RAM 16.0% (52276/327680), Flash 98.5%, 0 warnings
+- `Utf8::utf8IsCjkCodepoint()` added for CJK range detection (also from 1.5.0.20)
+
+### 23.9 Protected files
+The following files are now in the protected list and must never be overwritten by
+upstream merges:
+- `lib/EpdFont/SdCardFont.h` / `SdCardFont.cpp`
+- `lib/EpdFont/SdCardFontManager.h` / `SdCardFontManager.cpp`
+- `lib/EpdFont/EpdFont.h` / `EpdFont.cpp`
+- `lib/EpdFont/EpdFontFamily.h` / `EpdFontFamily.cpp`
+- `lib/EpdFont/EpdFontData.h`
+- `lib/EpdFont/FontDecompressor.h` / `FontDecompressor.cpp`
+- `lib/GfxRenderer/FontCacheManager.h` / `FontCacheManager.cpp`
+- `lib/GfxRenderer/GfxRenderer.h` / `GfxRenderer.cpp`
+
+### 23.10 Deferred from 1.5.0.20
+
+- **HAL crash detection (`PANIC_CAPTURE_MAGIC`)**: watchdog crash detection via
+  `HalSystem.h/cpp` was not ported. It modifies boot behavior and requires X4 device
+  testing to verify the watchdog-reset-as-crash logic doesn't false-positive on
+  normal deep-sleep wake cycles. `HalSystem.h/cpp` are NOT in the protected list —
+  they can be taken from upstream if needed. See
+  `UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"HAL crash detection".
 
 ---
 
@@ -1301,4 +1412,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-18 — added §22 Home reading-stats summary.json fast path (dashboard/carousel without full store at boot), §21 Feature State & Changelog (base 07126f2b → HEAD), §5 Wikipedia cache overhaul, i18n/cache fixes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*

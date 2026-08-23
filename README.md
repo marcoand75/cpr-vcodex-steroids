@@ -67,6 +67,11 @@ On top of that, Steroids adds a substantial set of original features developed a
 >   per-book carousel badges from a lightweight `summary.json` snapshot, keeping
 >   the ~41 KB full reading-stats store out of RAM at boot (loaded lazily only
 >   when a screen actually needs it).
+> - **💾 SdCardFont fragmentation-resistant storage** — ported from upstream 1.5.0.20:
+>   4 KiB chunked bitmap storage replaces single-buffer allocation, eliminating
+>   large contiguous allocation failures on the 380 KB ESP32-C3 heap. Includes
+>   CJK fallback font resolution, TextGetter prewarm callback, FrameBufferLoan
+>   for section builds, and FontDecompressor raw-buffer refactor.
 > - **💾 Pre-migration backup** — original unified `settings.json` backed up
 >   to `/.crosspoint/settings-steroids.json.bak` before one-shot migration.
 > - **🃏 Quick Cards** — image, QR code, and barcode viewer for quick-reference
@@ -432,6 +437,7 @@ Long-press on both side and front buttons can now be configured for quick bookma
 | **Per-Language Wikipedia** | 📖 Apps | Request base URL follows the selected UI language (`it`, `fr`, `de`, `sl`, …) instead of a hardcoded `it.wikipedia.org` |
 | **Clippings Preview Panel** | ✂️ Reading | Single press on a clipping opens a readable preview (chapter, page, full text); Select again jumps to the book — lets you read a highlight without leaving your place |
 | **Grayscale Image Pipeline** | 🖼️ Rendering | Shared 2-bit gray config: gamma LUT (1.5) + empiric thresholds 50/120/200, error-diffusion dithering (`int16_t`, overflow-safe buffers), better midtone contrast on covers and screensaver/sleep images |
+| **SdCardFont Fragmented Storage** | 💾 Fonts | 4 KiB chunked bitmap storage from upstream 1.5.0.20; eliminates large contiguous allocations on 380 KB RAM heap; CJK fallback font resolution |
 | **Reader Status Bar Overlap Fix** | 📊 Reading | Centered book/chapter title reserves the battery, percentage, time-left and clock before centering — a long title can no longer overlap the battery |
 
 All CPR-vCodex upstream features (reading stats, heatmaps, achievements, dictionaries, flashcards, bookmarks, SD fonts, KOReader Sync, Bionic Reading, dark mode, sync day, etc.) are **fully included**. This fork only adds the features listed above without removing or degrading any upstream functionality.
@@ -450,8 +456,8 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 |---|---|
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current upstream base | [`1.5.0.5-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.5-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.5.0.5` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), configurable long-press, EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, boot lazy-loading of stores, settings JSON split (37 fields, zero merge conflicts) |
+| Current upstream base | [`1.5.0.20-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.20-cpr-vcodex) |
+| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), configurable long-press, EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, boot lazy-loading of stores, settings JSON split (37 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |
@@ -496,7 +502,7 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex Steroids) build | [`1.5.0.10-cpr-vcodex-steroids`](https://github.com/marcoand75/cpr-vcodex-steroids/releases/tag/1.5.0.10-cpr-vcodex-steroids) |
+| Current release (CPR-vCodex Steroids) build | [`1.5.0.11-cpr-vcodex-steroids`](https://github.com/marcoand75/cpr-vcodex-steroids/releases/tag/1.5.0.11-cpr-vcodex-steroids) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
