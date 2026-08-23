@@ -258,6 +258,34 @@ compositing, with separate configuration for general use and in-book reading.
 - Battery-minimum checks respected: below the threshold, normal deep sleep is used.
 - Outside reading, the power button behaves as normal sleep.
 
+### 4.4 Battery Safety Under High-Power Draw (#59)
+
+Under WiFi-heavy activities (File Transfer, OTA, web server), the ESP32 draws
+significantly more current than during normal reading. A battery voltage that
+reads fine at idle can sag below the brown-out threshold mid-operation, causing
+an abrupt power-off with the e-ink display frozen on the last frame.
+
+**Added safety check in `main.cpp` `loop()`:** Every 5 seconds (when no auto-sleep
+is pending), the loop checks `powerManager.getBatteryPercentage()`. If the reading
+is below 5% AND the device is not already entering deep sleep, it:
+
+1. Renders a "Battery Empty / Please charge" screen (centered text) and flushes
+   it to the e-ink display with a half-refresh.
+2. Holds the screen for 2 seconds so the user sees it.
+3. Calls `enterDeepSleep()` to gracefully shut down before power is lost.
+
+This prevents the frozen-display scenario where the device dies mid-WiFi-transfer
+without rendering a final screen.
+
+**Files:** `src/main.cpp` (battery check + shutdown screen),
+`src/activities/ActivityManager.h/.cpp` (new `isWifiActivity()` method),
+`src/activities/Activity.h` (new `isWifiActivity()` virtual),
+`src/activities/network/CrossPointWebServerActivity.h` (override `isWifiActivity()`),
+`lib/I18n/I18nKeys.h`, `lib/I18n/translations/english.yaml`,
+`lib/I18n/translations/italian.yaml`.
+
+---
+
 ### 4.3 Deep-sleep / power button handling (main.cpp)
 Steroids **differs from upstream** in how the power button is processed in
 `src/main.cpp`:
@@ -1157,6 +1185,36 @@ or `"Mercer."`). Used only by the text-search across-pages for positioning.
 
 ---
 
+## 19.5. OTA Update Safety: Battery Check + Cancel (#68)
+
+Added two safety safeguards around the OTA update flow:
+
+**Minimum battery guard:** Before the download starts, `OtaUpdater::installUpdate()`
+now checks `powerManager.getBatteryPercentage()` in `OtaUpdateActivity::loop()`
+(WAITING_CONFIRMATION → Confirm). If battery is below 30% (configurable via
+`OTA_MIN_BATTERY_PERCENT`), a `LOW_BATTERY_WARNING` state is entered instead,
+showing a warning message with "Back" (cancel) and "Update" (proceed anyway)
+buttons.
+
+**Cancellable download phase:** The `OtaUpdater::installUpdate()` method now accepts
+a `bool* cancelFlag` parameter, passed through to `HttpDownloader::downloadToFile()`
+(which already supported cancellation). The progress callback in `OtaUpdater.cpp`
+polls `gpio.isPressed(BTN_BACK)` every ~500 ms (during progress reporting) and sets
+the cancel flag, causing the download to abort cleanly (`HttpDownloader::ABORTED`).
+The downloaded partial file is removed. The render loop shows a "Press Back to
+cancel download" hint below the progress bar.
+
+**New error code:** `OtaUpdater::ABORTED` is returned on user cancellation, which
+the activity handles by transitioning to `FAILED` state with an "Update cancelled"
+message.
+
+**Files:** `src/network/OtaUpdater.h/.cpp` (cancelFlag param, ABORTED code, gpio
+check in progress callback), `src/activities/settings/OtaUpdateActivity.h/.cpp`
+(battery guard, cancel handling, LOW_BATTERY_WARNING state, cancel hint),
+`src/main.cpp` (untouched — power button logic not affected),
+`lib/I18n/I18nKeys.h`, `lib/I18n/translations/english.yaml`,
+`lib/I18n/translations/italian.yaml`.
+
 ## 21. Feature State & Changelog (base `07126f2b` → HEAD)
 
 What actually changed from commit `07126f2b` (2026-08-09) up to `4eaf2371`
@@ -1205,6 +1263,11 @@ anything reverted is called out under *not active*.
    FontDecompressor raw-buffer refactor. See §23.
 - **Status bar time-left expanded** to 5 modes — added Session Duration
   (resets per session) and Today Total (uses summary.json fast path). See §23.13.
+- **Long-press button actions expanded** to 10 options — added Dictionary,
+  Toggle Dark Mode, Force Full Refresh, Quick Settings for both side and front
+  buttons. See [§8.5](#85-expanded-long-press-button-actions).
+- **OTA update safety** — battery check before download (min 30%), cancel
+  option during download via Back button, graceful shutdown screen. See §19.5 and §4.4.
 - **Wikipedia overhaul** — see [§5](#5-wikipedia-app).
 - **Quick Cards** — see [§19](#19-quick-cards-app).
 - **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
@@ -1485,4 +1548,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), §19.5 OTA update safety (battery check + cancel #68), §4.4 battery safety under WiFi load (#59), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*

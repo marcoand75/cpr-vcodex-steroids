@@ -61,6 +61,8 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/components/LibraryIndex.cpp`** | **Incremental scan vector pre-allocation, null-terminated ZIP reads** |
 | **`src/activities/settings/StatusBarSettingsActivity.cpp`** | **Clock position, clock format, sync clock now in status bar menu** |
 | **`src/util/TimeUtils.cpp`** | **applySystemClockFromRtc: no clockHasBeenSynced guard, DS3231 time used immediately** |
+| **`src/network/OtaUpdater.h`** | **Added ABORTED error code + cancelFlag parameter to installUpdate** |
+| **`src/activities/settings/OtaUpdateActivity.h/.cpp`** | **Battery check (min 30%), LOW_BATTERY_WARNING state, Back-button cancel during download** |
 
 ### Why ReadingStatsStore is critical
 
