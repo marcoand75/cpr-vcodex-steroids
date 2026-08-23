@@ -89,7 +89,7 @@ constexpr int kProgressBadgeRadius = 4;
 constexpr int kMenuIconSize = 32;
 constexpr int kMenuIconPad = 14;
 constexpr int kHighlightPad = 12;
-constexpr int kVisibleMenuSlots = 5;
+constexpr int kVisibleMenuSlots = 7;
 
 int lastCarouselSelectorIndex = -1;
 
