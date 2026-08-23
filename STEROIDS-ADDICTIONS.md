@@ -1316,8 +1316,7 @@ upstream merges:
   `HalSystem.h/cpp` was not ported. It modifies boot behavior and requires X4 device
   testing to verify the watchdog-reset-as-crash logic doesn't false-positive on
   normal deep-sleep wake cycles. `HalSystem.h/cpp` are NOT in the protected list —
-  they can be taken from upstream if needed. See
-  `UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"HAL crash detection".
+  they can be taken from upstream if needed.
 
 ---
 

@@ -1127,14 +1127,23 @@ The following upstream 1.5.0.20–22 changes were ported in commit `669ccb1a`
 
 ### Deferred: HAL crash detection (PANIC_CAPTURE_MAGIC)
 The `PANIC_CAPTURE_MAGIC` watchdog crash detection from upstream 1.5.0.20 was NOT
-ported. This is deferred pending X4 device testing (see
-`UPSTREAM-ALIGNMENT-REMAINING-PLAN.md` §"REMAINING DEFERRED ITEMS: HAL Crash Detection").
-The `HalSystem.h/cpp` files are NOT in the protected list — they can be taken from
-upstream if needed. Also deferred: SdCardFontRegistry case-insensitive directory
-resolution (`resolveRootDirectoryIgnoreCase`) — not needed; Steroids uses a different
-approach.
+ported. This is deferred pending X4 device testing — requires hardware
+verification that watchdog-reset-as-crash logic doesn't false-positive on
+normal deep-sleep wake cycles. `HalSystem.h/cpp` are NOT in the protected list —
+they can be taken from upstream if needed. Also deferred: SdCardFontRegistry
+case-insensitive directory resolution (`resolveRootDirectoryIgnoreCase`) — not
+needed; Steroids uses a different approach.
 
 ---
+
+## Deferred Items Summary
+
+| Item | Risk | Status |
+|---|---|---|
+| HAL crash detection (`PANIC_CAPTURE_MAGIC`) | MEDIUM | DEFERRED — needs X4 device testing |
+| SdCardFontRegistry case-insensitive dirs | LOW | NOT NEEDED — Steroids uses different font management |
+| Web Server serial number | — | COMPLETED (commit `f467593a`) |
+| FirmwareFlasher chip validation | — | COMPLETED (commit `f467593a`) |
 
 ## What changed since `07126f2b` — align-upstream notes
 
