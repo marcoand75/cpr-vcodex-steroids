@@ -729,6 +729,28 @@ void EpubReaderActivity::loop() {
       adjustFontSize(nextTriggered);
       return;
     }
+    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_DICTIONARY) {
+      if (prevTriggered) {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD);
+      } else {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::DICTIONARY);
+      }
+      return;
+    }
+    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_DARK_MODE) {
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return;
+    }
+    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_FULL_REFRESH) {
+      requestCurrentPageFullRefresh();
+      return;
+    }
+    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_READER_SETTINGS) {
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::READER_SETTINGS);
+      return;
+    }
   }
 
   // ====== FRONT BUTTON long-press ======
@@ -788,6 +810,28 @@ void EpubReaderActivity::loop() {
     if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE) {
       // DOWN/Right (nextTriggered) = increase, UP/Left (prevTriggered) = decrease
       adjustFontSize(nextTriggered);
+      return;
+    }
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY) {
+      if (prevTriggered) {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD);
+      } else {
+        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::DICTIONARY);
+      }
+      return;
+    }
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE) {
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return;
+    }
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH) {
+      requestCurrentPageFullRefresh();
+      return;
+    }
+    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS) {
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::READER_SETTINGS);
       return;
     }
   }

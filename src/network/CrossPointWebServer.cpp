@@ -276,13 +276,21 @@ constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF,
                                             StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
                                             StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                             StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE};
+                                            StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
+                                            StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
+                                            StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
+                                            StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
+                                            StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS};
 constexpr StrId OPT_FRONT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                                     StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE};
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
+                                                    StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS};
 constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
                                    StrId::STR_TOGGLE_STATUS_BAR};
 constexpr StrId OPT_TILT_PAGE_TURN[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED};
@@ -2344,6 +2352,10 @@ void CrossPointWebServer::handleGetSteroidsSettings() const {
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_SKIP));
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION));
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS));
     obj["value"] = s.longPressButtonBehavior;
   }
   {
@@ -2359,6 +2371,10 @@ void CrossPointWebServer::handleGetSteroidsSettings() const {
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_SKIP));
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION));
     opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS));
     obj["value"] = s.frontLongPressBehavior;
   }
   {

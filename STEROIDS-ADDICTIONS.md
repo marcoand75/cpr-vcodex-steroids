@@ -618,6 +618,37 @@ pale result from the upstream disabled/no-adjustment pipeline.
 
 ---
 
+## 8.5. Expanded Long-Press Button Actions
+
+Added 4 new assignable actions to both side-button and front-button long-press
+settings, expanding the enum from 6 to 10 options each:
+
+| New Value | Label (EN) | Label (IT) | Effect |
+|---|---|---|---|
+| `LONG_PRESS_DICTIONARY` / `FRONT_LONG_PRESS_DICTIONARY` | Dictionary | Dizionario | Left button → "Look up word" (word selection); Right button → open Dictionary app |
+| `LONG_PRESS_DARK_MODE` / `FRONT_LONG_PRESS_DARK_MODE` | Toggle Dark Mode | Modo scuro | Toggles `SETTINGS.darkMode` and saves + refreshes |
+| `LONG_PRESS_FULL_REFRESH` / `FRONT_LONG_PRESS_FULL_REFRESH` | Force Full Refresh | Refresh completo | `requestCurrentPageFullRefresh()` — full e-ink refresh |
+| `LONG_PRESS_READER_SETTINGS` / `FRONT_LONG_PRESS_READER_SETTINGS` | Quick Settings | Impostazioni rapide | Opens the reader quick-settings overlay |
+
+**Backward compatibility:** existing saved settings values (0–5) are unchanged.
+Devices with old settings files retain their current mappings; new options only
+appear when the user cycles through or sets a new value.
+
+**Power button isolation:** these changes ONLY touch `longPressButtonBehavior` and
+`frontLongPressBehavior` — the power button's `shortPwrBtn` state machine in
+`main.cpp` (SLEEP / IGNORE / PAGE_TURN / FORCE_REFRESH / TOGGLE_STATUS_BAR) and
+the screensaver/replacement-screensaver logic (`powerBtnDownMs`,
+`powerBtnInScreensaver`, `canStartReplacementScreenSaver`) are completely untouched.
+
+**Directional semantics for DICTIONARY action:** Left (prevTriggered) = "Look up
+word" (launches word-selection overlay on the current page); Right (nextTriggered)
+= open the full Dictionary app directly. This mirrors the pattern used by the
+existing Bookmark/Clippings actions.
+
+---
+
+## 9.
+
 ## 9. Build & Merge Reference
 
 - Build: `python -X utf8 -m platformio run -e default -j 16` (release: `-e gh_release`).
@@ -1454,4 +1485,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §8 status bar time-left expanded to 5 modes (Session Duration + Today Total), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*

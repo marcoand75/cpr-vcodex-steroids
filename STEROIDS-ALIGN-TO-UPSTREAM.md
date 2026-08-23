@@ -341,6 +341,7 @@ bool isHardwareRtcAutoDayClockActive() const { return true; }
 - `LONG_PRESS_BUTTON_BEHAVIOR` (side buttons) adds `LONG_PRESS_BOOKMARK = 3`, `LONG_PRESS_CLIPPING = 4`, `LONG_PRESS_FONTSIZE = 5` — upstream only has OFF, CHAPTER_SKIP, ORIENTATION_CHANGE (0-2).
 - `FRONT_LONG_PRESS_BEHAVIOR` (front buttons) is entirely Steroids-specific. Upstream has NO separate front button long-press setting. The values are: `FRONT_LONG_PRESS_OFF = 0`, `FRONT_LONG_PRESS_BOOKMARK = 1`, `FRONT_LONG_PRESS_CLIPPING = 2`, `FRONT_LONG_PRESS_CHAPTER_SKIP = 3`, `FRONT_LONG_PRESS_ORIENTATION = 4`, `FRONT_LONG_PRESS_FONTSIZE = 5`.
 - Both enums use the **same option order**: OFF, BOOKMARK, CLIPPING, CHAPTER_SKIP, ORIENTATION, FONTSIZE.
+- **2026-08-23 expansion** (both enums): added `LONG_PRESS_DICTIONARY = 6`, `LONG_PRESS_DARK_MODE = 7`, `LONG_PRESS_FULL_REFRESH = 8`, `LONG_PRESS_READER_SETTINGS = 9`. Same values apply to `FRONT_LONG_PRESS_*` variants. These are dispatched in `EpubReaderActivity.cpp` and are backward-compatible (old saved settings 0–5 are unchanged).
 - If upstream modifies these enums, NEVER take their version — always keep the local expanded enums.
 
 ### 2. `src/main.cpp` — Add HalClock init
@@ -755,7 +756,7 @@ Select-String -Path src/CrossPointSettings.h -Pattern "FRONT_LONG_PRESS_BEHAVIOR
 | `src/activities/reader/XtcReaderActivity.cpp` | `fromFrontButton` guard on skip-pages |
 | `src/activities/reader/TxtReaderActivity.cpp` | `fromFrontButton` guard, front-button orientation handling |
 | `src/activities/settings/SettingsActivity.cpp` | Option lists with 6 entries |
-| `src/SettingsList.cpp` | Option lists with 6 entries, clock display settings |
+| `src/SettingsList.cpp` | Option lists with 10 entries (6 → 10 in 2026-08-23 expansion), clock display settings |
 | `src/network/CrossPointWebServer.cpp` | `OPT_LONG_PRESS_BEHAVIOR` and `OPT_FRONT_LONG_PRESS_BEHAVIOR` arrays |
 | `lib/I18n/translations/english.yaml` | `STR_LONG_PRESS_BEHAVIOR_FONTSIZE` key |
 | `lib/I18n/translations/italian.yaml` | `STR_LONG_PRESS_BEHAVIOR_FONTSIZE` key |
