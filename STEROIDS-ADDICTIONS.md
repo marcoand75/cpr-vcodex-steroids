@@ -1310,13 +1310,22 @@ upstream merges:
 - `lib/GfxRenderer/FontCacheManager.h` / `FontCacheManager.cpp`
 - `lib/GfxRenderer/GfxRenderer.h` / `GfxRenderer.cpp`
 
-### 23.10 Deferred from 1.5.0.20
+### 23.10 Completed: HAL crash detection (PANIC_CAPTURE_MAGIC)
 
-- **HAL crash detection (`PANIC_CAPTURE_MAGIC`)**: watchdog crash detection via
-  `HalSystem.h/cpp` was not ported. It modifies boot behavior and requires X4 device
-  testing to verify the watchdog-reset-as-crash logic doesn't false-positive on
-  normal deep-sleep wake cycles. `HalSystem.h/cpp` are NOT in the protected list —
-  they can be taken from upstream if needed.
+- **HAL crash detection (`PANIC_CAPTURE_MAGIC`)**: ported from upstream 1.5.0.20
+  (`d3e21a61`). Added `panicCaptureMarker` (RTC_NOINIT_ATTR volatile uint32_t)
+  set in `__wrap_panic_abort` and `__wrap_panic_print_backtrace`. `isRebootFromPanic()`
+  now treats watchdog resets as panic reboots ONLY when the magic marker is set,
+  preventing false-positives on normal deep-sleep wake cycles. `checkPanic()`
+  verifies write completeness and clears the marker on success. `CrashActivity`
+  no longer calls `clearPanic()` explicitly — `checkPanic()` handles it.
+  `HalSystem.h/cpp` are NOT in the protected list (they're simple enough to
+  take from upstream if needed).
+
+### 23.11 Remaining deferred from 1.5.0.20
+
+- **SdCardFontRegistry case-insensitive dirs**: NOT NEEDED — Steroids uses a
+  different font directory management approach.
 
 ---
 
@@ -1411,4 +1420,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes, §23.10/23.11 HAL crash detection completed.*

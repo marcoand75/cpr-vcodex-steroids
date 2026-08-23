@@ -1024,12 +1024,12 @@ section in `STEROIDS-ADDICTIONS.md` §8A for the full design rationale.
 ## Upstream Sync Status
 
 ### Current upstream base
-Steroids HEAD (`b2cdf611`) is synced through upstream **1.5.0.22** (`upstream/master` at
+Steroids HEAD (`d3e21a61`) is synced through upstream **1.5.0.22** (`upstream/master` at
 `1c060a24`). The following upstream releases have been incorporated:
 
 | Release | Upstream tag | Status in Steroids | Notes |
 |---|---|---|---|
-| 1.5.0.20 | `3e46941c` | **Ported** (`72515f4f`) | SdCardFont fragmentation-resistant bitmap storage (chunked 4 KiB `miniBitmapChunks[24]`, TextGetter prewarm, CJK fallback, FrameBufferLoan) |
+| 1.5.0.20 | `3e46941c` | **Fully Ported** (`72515f4f` + `d3e21a61`) | SdCardFont fragmentation-resistant storage, HAL crash detection |
 | 1.5.0.21 | `723a1a4d` | **Not yet ported** | EPUB image + low-memory handling |
 | 1.5.0.22 | `1c060a24` | **Not yet ported** | docs only (auto-flash firmware sync) |
 
@@ -1125,14 +1125,26 @@ The following upstream 1.5.0.20–22 changes were ported in commit `669ccb1a`
 
 **Build:** SUCCESS — RAM 15.9%, Flash 98.5%, 0 new warnings.
 
-### Deferred: HAL crash detection (PANIC_CAPTURE_MAGIC)
-The `PANIC_CAPTURE_MAGIC` watchdog crash detection from upstream 1.5.0.20 was NOT
-ported. This is deferred pending X4 device testing — requires hardware
-verification that watchdog-reset-as-crash logic doesn't false-positive on
-normal deep-sleep wake cycles. `HalSystem.h/cpp` are NOT in the protected list —
-they can be taken from upstream if needed. Also deferred: SdCardFontRegistry
-case-insensitive directory resolution (`resolveRootDirectoryIgnoreCase`) — not
-needed; Steroids uses a different approach.
+### HAL crash detection (PANIC_CAPTURE_MAGIC) — PORTED
+The `PANIC_CAPTURE_MAGIC` watchdog crash detection from upstream 1.5.0.20 has
+been ported (`d3e21a61`):
+
+- **`lib/hal/HalSystem.cpp`** — added `PANIC_CAPTURE_MAGIC 0x50414E49u` +
+  `RTC_NOINIT_ATTR volatile uint32_t panicCaptureMarker`. Set in
+  `__wrap_panic_abort` and `__wrap_panic_print_backtrace`. `isRebootFromPanic()`
+  now treats watchdog resets (`ESP_RST_INT_WDT`/`ESP_RST_TASK_WDT`/`ESP_RST_WDT`)
+  as panic reboots ONLY when the magic marker is set — normal deep-sleep wake
+  cycles (which use watchdog) won't false-positive. `checkPanic()` verifies
+  write completeness and clears the marker on success. `clearPanic()` clears
+  the marker. Updated `begin()` comment.
+- **`src/activities/home/CrashActivity.cpp`** — removed explicit
+  `HalSystem::clearPanic()` call; `checkPanic()` already clears the watchdog
+  marker after successful SD dump.
+
+**Build:** SUCCESS — RAM 16.0% (52292/327680), Flash 98.5% (6455663/6553600), 0 warnings.
+
+### Remaining deferred: SdCardFontRegistry case-insensitive dirs
+Not needed — Steroids uses a different font directory management approach.
 
 ---
 
@@ -1140,14 +1152,14 @@ needed; Steroids uses a different approach.
 
 | Item | Risk | Status |
 |---|---|---|
-| HAL crash detection (`PANIC_CAPTURE_MAGIC`) | MEDIUM | DEFERRED — needs X4 device testing |
 | SdCardFontRegistry case-insensitive dirs | LOW | NOT NEEDED — Steroids uses different font management |
 | Web Server serial number | — | COMPLETED (commit `f467593a`) |
 | FirmwareFlasher chip validation | — | COMPLETED (commit `f467593a`) |
+| HAL crash detection (`PANIC_CAPTURE_MAGIC`) | MEDIUM | COMPLETED (commit `d3e21a61`) |
 
 ## What changed since `07126f2b` — align-upstream notes
 
-Base `07126f2b` (2026-08-09) → HEAD `b2cdf611` (2026-08-23). Key merge-sensitive
+Base `07126f2b` (2026-08-09) → HEAD `d3e21a61` (2026-08-23). Key merge-sensitive
 deltas to watch in the next upstream pull. Details by feature in
 `STEROIDS-ADDICTIONS.md` §21.
 
@@ -1248,4 +1260,4 @@ python -X utf8 -m platformio run -e default -j 16
 
 ---
 
-*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 ported, 1.5.0.21 next), added SdCardFont port details, WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*
+*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 fully ported including HAL crash detection), added completed alignment phases summary, SdCardFont port details, WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*
