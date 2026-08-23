@@ -67,6 +67,8 @@ class CrossPointSettings {
     TIME_LEFT_HIDE = 0,
     TIME_LEFT_CHAPTER = 1,
     TIME_LEFT_BOOK = 2,
+    TIME_LEFT_SESSION = 3,   // session duration (resets on open/close)
+    TIME_LEFT_TODAY = 4,     // total today (accumulated + current session)
     STATUS_BAR_TIME_LEFT_COUNT
   };
   // STATUS_BAR_CLOCK_RIGHT = 1 matches the legacy boolean "show clock" value.

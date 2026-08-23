@@ -2378,7 +2378,7 @@ void CrossPointWebServer::handleGetSteroidsSettings() const {
     obj["category"] = "Status Bar Extras";
     obj["type"] = "enum";
     JsonArray opts = obj["options"].to<JsonArray>();
-    opts.add("Hide"); opts.add("Chapter"); opts.add("Book");
+    opts.add("Hide"); opts.add("Chapter"); opts.add("Book"); opts.add("Session Duration"); opts.add("Today Total");
     obj["value"] = s.statusBarTimeLeft;
   }
   {

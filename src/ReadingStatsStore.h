@@ -237,6 +237,7 @@ class ReadingStatsStore {
   uint32_t getBooksFinishedCount() const;
   uint64_t getTotalReadingMs() const;
   uint64_t getTodayReadingMs() const;
+  uint64_t getSessionReadingMs() const;
   uint64_t getRecentReadingMs(uint32_t days) const;
   uint32_t getCurrentStreakDays() const;
   uint32_t getMaxStreakDays() const;

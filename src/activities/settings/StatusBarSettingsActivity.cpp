@@ -185,7 +185,8 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
         } else if (item == StrId::STR_TITLE) {
           return I18N.get(titleNames[SETTINGS.statusBarTitle]);
         } else if (item == StrId::STR_TIME_LEFT) {
-          const StrId timeLeftNames[] = {StrId::STR_HIDE, StrId::STR_CHAPTER, StrId::STR_BOOK};
+          const StrId timeLeftNames[] = {StrId::STR_HIDE, StrId::STR_CHAPTER, StrId::STR_BOOK,
+                                         StrId::STR_SESSION_DURATION, StrId::STR_TODAY_TOTAL};
           return I18N.get(timeLeftNames[SETTINGS.statusBarTimeLeft]);
         } else if (item == StrId::STR_BATTERY) {
           return SETTINGS.statusBarBattery ? tr(STR_SHOW) : tr(STR_HIDE);
@@ -219,6 +220,10 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
     timeLeftPreview = "1h 20m";
   } else if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_BOOK) {
     timeLeftPreview = "3h 40m";
+  } else if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_SESSION) {
+    timeLeftPreview = "45m";
+  } else if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_TODAY) {
+    timeLeftPreview = "1h 30m";
   }
 
   GUI.drawStatusBar(renderer, 75, 8, 32, title, verticalPreviewPadding, 0, false, timeLeftPreview);

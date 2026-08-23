@@ -3067,7 +3067,48 @@ void EpubReaderActivity::renderStatusBar() const {
   const char* timeLeftLabel = nullptr;
   char timeLeftBuf[32];
   static constexpr size_t kMinSafeAllocForTimeLeft = 16384;  // 16 KB headroom
+
+  if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_SESSION) {
+    // Session duration: time read since beginSession (resets on open/close)
+    const uint64_t sessionMs = READING_STATS.getSessionReadingMs();
+    if (sessionMs > 0) {
+      const uint64_t sessionMin = sessionMs / 60000ULL;
+      if (sessionMin < 1) {
+        snprintf(timeLeftBuf, sizeof(timeLeftBuf), "0 min");
+      } else {
+        const uint64_t h = sessionMin / 60;
+        const uint64_t m = sessionMin % 60;
+        if (h > 0) {
+          snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%lluh %llum", h, m);
+        } else {
+          snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%llu min", m);
+        }
+      }
+      timeLeftLabel = timeLeftBuf;
+    }
+  } else if (SETTINGS.statusBarTimeLeft == CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_TODAY) {
+    // Today total: accumulated today reading time (includes current session)
+    const uint64_t todayMs = READING_STATS.getTodayReadingMs();
+    if (todayMs > 0) {
+      const uint64_t todayMin = todayMs / 60000ULL;
+      if (todayMin < 1) {
+        snprintf(timeLeftBuf, sizeof(timeLeftBuf), "0 min");
+      } else {
+        const uint64_t h = todayMin / 60;
+        const uint64_t m = todayMin % 60;
+        if (h > 0) {
+          snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%lluh %llum", h, m);
+        } else {
+          snprintf(timeLeftBuf, sizeof(timeLeftBuf), "%llu min", m);
+        }
+      }
+      timeLeftLabel = timeLeftBuf;
+    }
+  }
+
   if (SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_HIDE &&
+      SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_SESSION &&
+      SETTINGS.statusBarTimeLeft != CrossPointSettings::STATUS_BAR_TIME_LEFT::TIME_LEFT_TODAY &&
       ESP.getMaxAllocHeap() >= kMinSafeAllocForTimeLeft) {
     const auto* statsBook = READING_STATS.findBook(!stableBookId.empty() ? stableBookId : epub->getPath());
     if (!statsBook && !stableBookId.empty()) {

@@ -500,8 +500,7 @@ words from chapter start to the beginning of `page`. Bookmarks store
 
 ## 8. Other Enhancements & Refactoring
 
-- **Reading Time Left** in the reader status bar — pace-based estimates (Hide /
-  Chapter / Book), per-book pace learned from natural page turns, short labels.
+- **Status bar time-left display** — now 5 modes (Hide / Chapter / Book / Session Duration / Today Total). Session Duration shows accumulated time since the current reading session began (resets on book open/close); Today Total shows the total reading time for the current day (includes the current session via the existing `getTodayReadingMs()` summary fast path). The label "Time Left" (EN) / "Tempo rimanente" (IT) was renamed to "Display Time" (EN) / "Tempo visualizzato" (IT) since it now also shows elapsed time.
 - **Reading statistics & heatmap** (`ReadingStatsActivity`, `ReadingHeatmapActivity`)
   — pace fields preserved across upstream drops (`avgSecondsPerForwardPage`,
   `paceSampleCount`, `recordForwardPageRead`, mark-as-unread).
@@ -1438,4 +1437,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, updated §8 performance list and §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §8 status bar time-left expanded to 5 modes (Session Duration + Today Total), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
