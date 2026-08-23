@@ -1171,7 +1171,9 @@ anything reverted is called out under *not active*.
 - **SdCardFont fragmentation-resistant storage** (1.5.0.20 port, `72515f4f`):
   4 KiB chunked bitmap storage replaces single-buffer allocation, TextGetter
   prewarm + coverageHandler for CJK fallback, FrameBufferLoan for section builds,
-  FontDecompressor raw-buffer refactor. See §23.
+   FontDecompressor raw-buffer refactor. See §23.
+- **Status bar time-left expanded** to 5 modes — added Session Duration
+  (resets per session) and Today Total (uses summary.json fast path). See §23.13.
 - **Wikipedia overhaul** — see [§5](#5-wikipedia-app).
 - **Quick Cards** — see [§19](#19-quick-cards-app).
 - **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
@@ -1222,7 +1224,7 @@ anything reverted is called out under *not active*.
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), updated §21.4 dependency notes, §21.1 changelog for SdCardFont/TextGetter/FrameBufferLoan.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection (PANIC_CAPTURE_MAGIC), §23.12 carousel recents panel guard fix + icon count/RecentBooks expansion, §23.13 status bar time-left Session Duration + Today Total, updated §21.1 changelog and §8 enhancements.*
 
 ---
 
@@ -1343,6 +1345,21 @@ upstream merges:
 **Files:** `src/activities/home/HomeActivity.cpp` (`drawCarouselRecentsPanel`
 guard), `src/components/themes/lyra/LyraCarouselTheme.h` (`homeRecentBooksCount`),
 `src/components/themes/lyra/LyraCarouselTheme.cpp` (`kVisibleMenuSlots`).
+
+### 23.13 Status Bar Time-Left: Session Duration + Today Total
+
+Steroids added two new modes to the status bar time-left display (settings: `Settings > Customize Status Bar`), expanding the enum from 3 to 5 values:
+
+| Mode | Value | What it shows | Data source |
+|------|-------|---------------|-------------|
+| **Session Duration** | `TIME_LEFT_SESSION = 3` | Time read since the current reading session began | `ReadingStatsStore::getSessionReadingMs()` → `activeSession.accumulatedMs` (resets on every `beginSession()`/`endSession()`, i.e. book open/close) |
+| **Today Total** | `TIME_LEFT_TODAY = 4` | Total reading time for today | `ReadingStatsStore::getTodayReadingMs()` — reads from `summary.json` fast path (already includes the current session via `noteActivity()` → `recordReadingTime()`) |
+
+The existing Chapter/Book modes (pace-based estimates) are unchanged. Session/Today modes render directly without needing the page-based estimate heap check (`kMinSafeAllocForTimeLeft`).
+
+The label was renamed from "Time Left" (EN) / "Tempo rimanente" (IT) to "Display Time" (EN) / "Tempo visualizzato" (IT) since the display now includes elapsed time, not just remaining time. Italian users see "Durata sessione" and "Totale oggi" for the two new options.
+
+**Files:** `src/CrossPointSettings.h` (enum), `src/ReadingStatsStore.h/.cpp` (`getSessionReadingMs()`), `src/activities/reader/EpubReaderActivity.cpp` (rendering), `src/activities/settings/StatusBarSettingsActivity.cpp` (settings UI + preview), `src/SettingsList.cpp` (settings menu), `src/network/CrossPointWebServer.cpp` (web UI), `lib/I18n/I18nKeys.h`, `lib/I18n/translations/english.yaml`, `lib/I18n/translations/italian.yaml`.
 
 ---
 
