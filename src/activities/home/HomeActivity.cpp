@@ -1597,7 +1597,10 @@ void HomeActivity::onWikipediaOpen() {
 }
 
 void HomeActivity::drawCarouselRecentsPanel(GfxRenderer& renderer, const int totalBooks) {
-  if (!isLyraCarouselTheme() || totalBooks == 0) return;
+  // Panel shows carousel recents count + filter info only in Lyra Marcoand75 theme.
+  // Lyra Carousel has its own dedicated cover display without this overlay panel.
+  auto theme = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
+  if (theme != CrossPointSettings::UI_THEME::LYRA_MARCOAND75 || totalBooks == 0) return;
 
   const int screenW = renderer.getScreenWidth();
   // Height: progress bar panel (42px) + 8px extra = 50px
