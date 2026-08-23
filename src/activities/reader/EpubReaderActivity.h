@@ -7,7 +7,9 @@
 
 #include "BookmarkStore.h"
 #include "ClippingStore.h"
+#include "CrossPointSettings.h"
 #include "EpubReaderMenuActivity.h"
+#include "ReaderUtils.h"
 #include "activities/Activity.h"
 
 class Page;
@@ -166,8 +168,16 @@ class EpubReaderActivity final : public Activity {
   void requestCurrentPageFullRefresh();
   void toggleTemporaryStatusBar();
   void cacheCurrentPageForOverlay(const std::shared_ptr<Page>& page, int marginLeft, int marginTop);
-  void handleSelectLongPress();
-  void invalidateCurrentOverlayPageCache();
+   void handleSelectLongPress();
+   // Dispatch a BUTTON_ACTION to the appropriate reader action.
+   // Called by the loop() when a long-press is detected on any button.
+   // prevTriggered/nextTriggered indicate which button was pressed (for directional actions).
+   // dir provides the ButtonDirection for directional adjustments (font size, orientation).
+   // Returns true if the action was handled (and thus consumed).
+   bool handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                           bool prevTriggered, bool nextTriggered,
+                           ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+   void invalidateCurrentOverlayPageCache();
   std::shared_ptr<Page> loadCurrentPageForOverlay(int& outMarginLeft, int& outMarginTop);
 
   // Footnote navigation

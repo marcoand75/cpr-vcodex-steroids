@@ -49,29 +49,63 @@ struct PageTurnResult {
   bool next;
   bool fromTilt;
   bool fromFrontButton;  // true when triggered by Left/Right front buttons (not side buttons)
+  // Per-button detection for per-directional long-press configuration.
+  // These are set when the corresponding side/front button was released
+  // (for long-press purposes — short press uses the wasReleased path in
+  // detectPageTurn when longPressButtonBehavior != LONG_PRESS_OFF).
+  // At most one of {upBtn, downBtn, leftBtn, rightBtn} will be true.
+  bool upBtn;      // side Up button (PageBack when not swapped, PageForward when swapped)
+  bool downBtn;    // side Down button (PageForward when not swapped, PageBack when swapped)
+  bool leftBtn;    // front Left button (or Right when orientation-swapped)
+  bool rightBtn;   // front Right button (or Left when orientation-swapped)
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  const bool usePress = SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_OFF;
+  // usePress is true when all long-press behaviors are OFF (normal short-press page turn).
+  // With per-directional config, we check if any Up/Down button has a non-OFF action.
+  const bool sideLongPressActive =
+      SETTINGS.longPressUpBehavior != CrossPointSettings::BTN_ACTION_OFF ||
+      SETTINGS.longPressDownBehavior != CrossPointSettings::BTN_ACTION_OFF ||
+      (SETTINGS.longPressButtonBehavior != CrossPointSettings::LONG_PRESS_OFF &&
+       SETTINGS.longPressUpBehavior == CrossPointSettings::BTN_ACTION_OFF &&
+       SETTINGS.longPressDownBehavior == CrossPointSettings::BTN_ACTION_OFF);
+  const bool usePress = !sideLongPressActive;
   const bool tiltNext = SETTINGS.tiltPageTurn != CrossPointSettings::TILT_OFF && halTiltSensor.wasTiltedForward();
   const bool tiltPrev = SETTINGS.tiltPageTurn != CrossPointSettings::TILT_OFF && halTiltSensor.wasTiltedBack();
   const bool swapFront =
       SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
-                                                SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
+                                                 SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
   const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
   const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
   const bool prev = usePress ? (input.wasPressed(MappedInputManager::Button::PageBack) || input.wasPressed(prevButton))
-                              : (input.wasReleased(MappedInputManager::Button::PageBack) ||
-                                 input.wasReleased(prevButton));
+                               : (input.wasReleased(MappedInputManager::Button::PageBack) ||
+                                  input.wasReleased(prevButton));
   const bool frontPrev = !usePress && input.wasReleased(prevButton);
   const bool powerTurn = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
-                          input.wasReleased(MappedInputManager::Button::Power);
+                           input.wasReleased(MappedInputManager::Button::Power);
   const bool next = usePress ? (input.wasPressed(MappedInputManager::Button::PageForward) || powerTurn ||
-                                 input.wasPressed(nextButton))
-                              : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
-                                 input.wasReleased(nextButton));
+                                  input.wasPressed(nextButton))
+                               : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
+                                  input.wasReleased(nextButton));
   const bool frontNext = !usePress && input.wasReleased(nextButton);
-  return {tiltPrev || prev, tiltNext || next, tiltPrev || tiltNext, frontPrev || frontNext};
+
+  // Per-button detection for per-directional long-press configuration.
+  // We detect the logical button (Up/Down/Left/Right) that was released.
+  // Side buttons: Up=PageBack, Down=PageForward (or swapped via sideButtonLayout).
+  // Front buttons: Left/Right are user-remappable front buttons.
+  // The swapSide/swapFront logic mirrors detectPageTurn's orientation handling.
+  const bool swapSide = (SETTINGS.sideButtonLayout == CrossPointSettings::NEXT_PREV);
+  const bool upReleased = input.wasReleased(MappedInputManager::Button::PageBack);
+  const bool downReleased = input.wasReleased(MappedInputManager::Button::PageForward);
+  // If side layout is swapped, Up/Down meaning is reversed.
+  const bool upBtn = swapSide ? downReleased : upReleased;
+  const bool downBtn = swapSide ? upReleased : downReleased;
+  // Front buttons: detect raw Left/Right button release (logical buttons).
+  const bool leftBtn = input.wasReleased(MappedInputManager::Button::Left);
+  const bool rightBtn = input.wasReleased(MappedInputManager::Button::Right);
+
+  return {tiltPrev || prev, tiltNext || next, tiltPrev || tiltNext, frontPrev || frontNext,
+          upBtn, downBtn, leftBtn, rightBtn};
 }
 
 inline bool hasNonConfirmNavigationInput(const MappedInputManager& input) {
@@ -89,6 +123,39 @@ inline bool hasNonConfirmNavigationInput(const MappedInputManager& input) {
 
 inline bool shouldToggleStatusBar(const MappedInputManager& input) {
   return SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::TOGGLE_STATUS_BAR &&
+         input.wasReleased(MappedInputManager::Button::Power);
+}
+
+// Returns true if the short power button should trigger a reader action
+// (beyond the basic IGNORE/SLEEP/PAGE_TURN/TOGGLE_STATUS_BAR/FORCE_REFRESH).
+inline bool isPowerButtonReaderAction(const CrossPointSettings::SHORT_PWRBTN spwbtn) {
+  return spwbtn >= CrossPointSettings::SPWBTN_OFF &&
+         spwbtn != CrossPointSettings::SPWBTN_IGNORE;
+}
+
+// Returns the BUTTON_ACTION corresponding to the shortPwrBtn setting,
+// or BTN_ACTION_OFF if the power button should not trigger a reader action.
+inline CrossPointSettings::BUTTON_ACTION shortPwrBtnToReaderAction(const CrossPointSettings::SHORT_PWRBTN spwbtn) {
+  switch (spwbtn) {
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_ADD_CLIPPING:      return CrossPointSettings::BTN_ACTION_ADD_CLIPPING;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_VIEW_CLIPPINGS:    return CrossPointSettings::BTN_ACTION_VIEW_CLIPPINGS;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_TOGGLE_BOOKMARK:   return CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_VIEW_BOOKMARKS:    return CrossPointSettings::BTN_ACTION_VIEW_BOOKMARKS;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_LOOKUP_WORD:       return CrossPointSettings::BTN_ACTION_LOOKUP_WORD;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_DICTIONARY:        return CrossPointSettings::BTN_ACTION_DICTIONARY;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_CHAPTER_SKIP:      return CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_ORIENTATION:       return CrossPointSettings::BTN_ACTION_ORIENTATION;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_DARK_MODE:         return CrossPointSettings::BTN_ACTION_DARK_MODE;
+    case CrossPointSettings::SHORT_PWRBTN::SPWBTN_READER_SETTINGS:   return CrossPointSettings::BTN_ACTION_READER_SETTINGS;
+    default: return CrossPointSettings::BTN_ACTION_OFF;
+  }
+}
+
+// Detects if the power button was short-pressed with an action that
+// should be dispatched to the reader (not handled by main.cpp).
+inline bool wasPowerButtonReaderActionPressed(const MappedInputManager& input) {
+  const auto spwbtn = static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn);
+  return isPowerButtonReaderAction(spwbtn) &&
          input.wasReleased(MappedInputManager::Button::Power);
 }
 
@@ -243,4 +310,32 @@ void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
   renderer.restoreBwBuffer();
 }
 
+// Indicates which button triggered a long-press action.
+// Used for directional actions like font size (Up=increase, Down=decrease).
+// For non-directional buttons, use BTN_DIR_NEUTRAL.
+enum class ButtonDirection {
+  BTN_DIR_UP,      // side Up button — typically increase
+  BTN_DIR_DOWN,    // side Down button — typically decrease
+  BTN_DIR_LEFT,    // front Left button — typically increase
+  BTN_DIR_RIGHT,   // front Right button — typically decrease
+  BTN_DIR_NEUTRAL, // power button or select — no direction preference
+};
+
+// Returns true if the action is directional (font size, orientation).
+inline bool isDirectionalAction(const CrossPointSettings::BUTTON_ACTION action) {
+  return action == CrossPointSettings::BTN_ACTION_FONTSIZE ||
+         action == CrossPointSettings::BTN_ACTION_ORIENTATION;
+}
+
+// For directional actions, returns true if the action should "increase".
+// Up/Left = increase, Down/Right = decrease.
+inline bool isIncreaseDirection(const ButtonDirection dir) {
+  switch (dir) {
+    case ButtonDirection::BTN_DIR_UP:
+    case ButtonDirection::BTN_DIR_LEFT:
+      return true;
+    default:
+      return false;
+  }
+}
 }  // namespace ReaderUtils

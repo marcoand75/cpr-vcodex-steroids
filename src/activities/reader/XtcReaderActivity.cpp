@@ -186,6 +186,18 @@ void XtcReaderActivity::loop() {
               currentPage = std::get<PageResult>(result.data).page;
             }
           });
+      return;
+    }
+  }
+
+  // Short power button with expanded reader actions (beyond IGNORE/SLEEP/etc.)
+  if (ReaderUtils::wasPowerButtonReaderActionPressed(mappedInput)) {
+    const auto action = ReaderUtils::shortPwrBtnToReaderAction(
+        static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn));
+    if (action != CrossPointSettings::BTN_ACTION_OFF) {
+      // Power button is a single button — use nextTriggered=true for directional actions.
+      handleButtonAction(action, false, true, ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+      return;
     }
   }
 
@@ -205,8 +217,8 @@ void XtcReaderActivity::loop() {
     return;
   }
 
-  auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton] = ReaderUtils::detectPageTurn(mappedInput);
-
+  auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton,
+        upBtn, downBtn, leftBtn, rightBtn] = ReaderUtils::detectPageTurn(mappedInput);
 
   if (!prevTriggered && !nextTriggered) {
     return;
@@ -217,7 +229,7 @@ void XtcReaderActivity::loop() {
   }
 
   // At end of the book, forward button goes home and back button returns to last page
-  if (currentPage >= xtc->getPageCount()) {
+  if (currentPage >= static_cast<uint32_t>(xtc->getPageCount())) {
     if (nextTriggered) {
       exitReaderAfterOptionalCompletedMove();
     } else {
@@ -227,16 +239,60 @@ void XtcReaderActivity::loop() {
     return;
   }
 
-  const bool sideLongPress = !fromFrontButton &&
-                             mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
-  // Side button long-press: Chapter Skip (or Orientation change for side buttons only)
-  const bool skipPages = !fromTilt && sideLongPress &&
-                         SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP;
-  // Front button long-press: Chapter Skip
-  const bool frontSkipPages = !fromTilt && fromFrontButton &&
-                              mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS &&
-                              SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP;
-  const int skipAmount = (skipPages || frontSkipPages) ? 10 : 1;
+  const bool longPress = !fromTilt && mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+  const bool frontLongPress = !fromTilt && fromFrontButton && longPress;
+  const bool sideLongPress = !fromFrontButton && longPress;
+
+  // Front button long-press: dispatch per-directional
+  if (frontLongPress) {
+    CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+    ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+    if (leftBtn) {
+      act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
+      dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
+    } else if (rightBtn) {
+      act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
+      dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
+    }
+    // Fall back to legacy frontLongPressBehavior
+    if (act == CrossPointSettings::BTN_ACTION_OFF) {
+      switch (SETTINGS.frontLongPressBehavior) {
+        case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
+        default: break;
+      }
+    }
+    if (handleButtonAction(act, prevTriggered, nextTriggered, dir)) {
+      return;
+    }
+  }
+
+  // Side button long-press: dispatch per-directional
+  CrossPointSettings::BUTTON_ACTION sideAct = CrossPointSettings::BTN_ACTION_OFF;
+  ReaderUtils::ButtonDirection sideDir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+  if (sideLongPress) {
+    if (upBtn) {
+      sideAct = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
+      sideDir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
+    } else if (downBtn) {
+      sideAct = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
+      sideDir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
+    }
+    // Fall back to legacy longPressButtonBehavior
+    if (sideAct == CrossPointSettings::BTN_ACTION_OFF) {
+      switch (SETTINGS.longPressButtonBehavior) {
+        case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: sideAct = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
+        default: break;
+      }
+    }
+    if (handleButtonAction(sideAct, prevTriggered, nextTriggered, sideDir)) {
+      return;
+    }
+  }
+
+  // Default: calculate skip amount for normal page turn
+  const bool skipPages = sideLongPress &&
+                         sideAct == CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+  const int skipAmount = skipPages ? 10 : 1;
 
   if (prevTriggered) {
     READING_STATS.noteActivity();
@@ -249,7 +305,7 @@ void XtcReaderActivity::loop() {
   } else if (nextTriggered) {
     READING_STATS.noteActivity();
     currentPage += skipAmount;
-    if (currentPage >= xtc->getPageCount()) {
+    if (currentPage >= static_cast<uint32_t>(xtc->getPageCount())) {
       currentPage = xtc->getPageCount();  // Allow showing "End of book"
     }
     requestUpdate();
@@ -623,13 +679,101 @@ ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
 }
 
 void XtcReaderActivity::handleSelectLongPress() {
-  if (SETTINGS.selectLongPress != CrossPointSettings::SELECT_LONG_PRESS_READING_TIME) {
-    return;  // BOOKMARK and OFF are no-ops on XTC (no bookmark support)
+  // Migrate legacy selectLongPress enum to BUTTON_ACTION
+  CrossPointSettings::BUTTON_ACTION action;
+  const uint8_t legacy = SETTINGS.selectLongPress;
+  if (legacy != CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK) {
+    switch (legacy) {
+      case CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK:     action = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_READING_TIME: action = CrossPointSettings::BTN_ACTION_READING_TIME; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_OFF:          action = CrossPointSettings::BTN_ACTION_OFF; break;
+      default: action = CrossPointSettings::BTN_ACTION_OFF;
+    }
+  } else {
+    action = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.selectLongPressBehavior);
   }
-  const bool nowPaused = !READING_STATS.isReadingPaused();
-  READING_STATS.setReadingPaused(nowPaused);
-  GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-  renderer.displayBuffer();
-  delay(500);
-  requestUpdate();
+  // XTC only supports READING_TIME and OFF; all others are no-ops.
+  if (action == CrossPointSettings::BTN_ACTION_READING_TIME) {
+    const bool nowPaused = !READING_STATS.isReadingPaused();
+    READING_STATS.setReadingPaused(nowPaused);
+    GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
+    renderer.displayBuffer();
+    delay(500);
+    requestUpdate();
+  }
+}
+
+bool XtcReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                                           bool prevTriggered, bool nextTriggered,
+                                           ReaderUtils::ButtonDirection dir) {
+  READING_STATS.noteActivity();
+
+  switch (action) {
+    case CrossPointSettings::BTN_ACTION_CHAPTER_SKIP: {
+      const uint32_t skipAmount = 10;
+      if (prevTriggered) {
+        if (currentPage >= skipAmount) {
+          currentPage -= skipAmount;
+        } else {
+          currentPage = 0;
+        }
+        requestUpdate();
+        return true;
+      }
+      if (nextTriggered) {
+        currentPage += skipAmount;
+        if (currentPage >= static_cast<uint32_t>(xtc->getPageCount())) {
+          currentPage = xtc->getPageCount();
+        }
+        requestUpdate();
+        return true;
+      }
+      return false;
+    }
+
+    case CrossPointSettings::BTN_ACTION_ORIENTATION: {
+      const uint8_t newOrientation = nextTriggered ? (SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
+                                                        CrossPointSettings::ORIENTATION_COUNT
+                                                   : (SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT;
+      SETTINGS.orientation = newOrientation;
+      SETTINGS.saveToFile();
+      ReaderUtils::applyOrientation(renderer, newOrientation);
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_DARK_MODE:
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_FULL_REFRESH:
+      pendingForceFullRefresh = true;
+      requestUpdate();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_READING_TIME: {
+      const bool nowPaused = !READING_STATS.isReadingPaused();
+      READING_STATS.setReadingPaused(nowPaused);
+      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
+      renderer.displayBuffer();
+      delay(500);
+      requestUpdate();
+      return true;
+    }
+
+    // XTC does not support these actions
+    case CrossPointSettings::BTN_ACTION_ADD_CLIPPING:
+    case CrossPointSettings::BTN_ACTION_VIEW_CLIPPINGS:
+    case CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK:
+    case CrossPointSettings::BTN_ACTION_VIEW_BOOKMARKS:
+    case CrossPointSettings::BTN_ACTION_LOOKUP_WORD:
+    case CrossPointSettings::BTN_ACTION_DICTIONARY:
+    case CrossPointSettings::BTN_ACTION_FONTSIZE:
+    case CrossPointSettings::BTN_ACTION_READER_SETTINGS:
+    case CrossPointSettings::BTN_ACTION_OFF:
+    default:
+      return false;
+  }
 }

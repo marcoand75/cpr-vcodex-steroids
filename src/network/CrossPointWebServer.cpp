@@ -272,27 +272,31 @@ constexpr StrId OPT_IMAGES[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLA
 constexpr StrId OPT_EPUB_RENDER_MODE[] = {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT};
 constexpr StrId OPT_DOTS_SPACING[] = {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE};
 constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV};
-constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
-                                            StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS};
-constexpr StrId OPT_FRONT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
-                                                    StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS};
-constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                                   StrId::STR_TOGGLE_STATUS_BAR};
+// Button action labels (shared across long-press, short power, and select settings)
+constexpr StrId OPT_BTN_ACTIONS[] = {
+    StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+    StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+    StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+    StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+    StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+    StrId::STR_BTN_ACTION_READER_SETTINGS};
+constexpr StrId OPT_SELECT_LONG_PRESS[] = {
+    StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK, StrId::STR_BTN_ACTION_READING_TIME,
+    StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_VIEW_BOOKMARKS,
+    StrId::STR_BTN_ACTION_LOOKUP_WORD, StrId::STR_BTN_ACTION_DICTIONARY,
+    StrId::STR_BTN_ACTION_CHAPTER_SKIP, StrId::STR_BTN_ACTION_ORIENTATION,
+    StrId::STR_BTN_ACTION_FONTSIZE, StrId::STR_BTN_ACTION_DARK_MODE,
+    StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS};
+constexpr StrId OPT_SHORT_PWRBTN[] = {
+    StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
+    StrId::STR_TOGGLE_STATUS_BAR, StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+    StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+    StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+    StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_DARK_MODE,
+    StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS};
 constexpr StrId OPT_TILT_PAGE_TURN[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED};
 constexpr StrId OPT_SLEEP_TIMEOUT[] = {StrId::STR_MIN_1, StrId::STR_MIN_5, StrId::STR_MIN_10, StrId::STR_MIN_15,
                                        StrId::STR_MIN_30};
@@ -429,7 +433,7 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
              StrId::STR_CAT_CONTROLS),
     WEB_TOGGLE(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, frontButtonFollowOrientation, "frontButtonFollowOrientation",
                StrId::STR_CAT_CONTROLS),
-    WEB_ENUM(StrId::STR_SHORT_PWR_BTN, shortPwrBtn, OPT_SHORT_PWR, "shortPwrBtn", StrId::STR_CAT_CONTROLS),
+    WEB_ENUM(StrId::STR_SHORT_PWR_BTN, shortPwrBtn, OPT_SHORT_PWRBTN, "shortPwrBtn", StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_TILT_PAGE_TURN, tiltPageTurn, OPT_TILT_PAGE_TURN, "tiltPageTurn", StrId::STR_CAT_CONTROLS),
 
     WEB_ENUM(StrId::STR_TIME_TO_SLEEP, sleepTimeout, OPT_SLEEP_TIMEOUT, "sleepTimeout", StrId::STR_CAT_SYSTEM),
@@ -2338,44 +2342,121 @@ void CrossPointWebServer::handleGetSteroidsSettings() const {
     obj["value"] = s.antiGhostingExperimental;
   }
 
-  // Controls
+  // Controls — Long-press Up (side button)
   {
     JsonObject obj = arr.add<JsonObject>();
-    obj["key"] = "longPressButtonBehavior";
-    obj["name"] = I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR);
+    obj["key"] = "longPressUpBehavior";
+    obj["name"] = I18N.get(StrId::STR_LONG_PRESS_UP);
     obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
     obj["type"] = "enum";
     JsonArray opts = obj["options"].to<JsonArray>();
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_OFF));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_SKIP));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS));
-    obj["value"] = s.longPressButtonBehavior;
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.longPressUpBehavior;
   }
+  // Long-press Down (side button)
   {
     JsonObject obj = arr.add<JsonObject>();
-    obj["key"] = "frontLongPressBehavior";
-    obj["name"] = I18N.get(StrId::STR_FRONT_LONG_PRESS_BEHAVIOR);
+    obj["key"] = "longPressDownBehavior";
+    obj["name"] = I18N.get(StrId::STR_LONG_PRESS_DOWN);
     obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
     obj["type"] = "enum";
     JsonArray opts = obj["options"].to<JsonArray>();
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_OFF));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_SKIP));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH));
-    opts.add(I18N.get(StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS));
-    obj["value"] = s.frontLongPressBehavior;
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.longPressDownBehavior;
+  }
+  // Long-press Left (front button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "frontLongPressLeftBehavior";
+    obj["name"] = I18N.get(StrId::STR_FRONT_LONG_PRESS_LEFT);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.frontLongPressLeftBehavior;
+  }
+  // Long-press Right (front button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "frontLongPressRightBehavior";
+    obj["name"] = I18N.get(StrId::STR_FRONT_LONG_PRESS_RIGHT);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.frontLongPressRightBehavior;
+  }
+  // Select Long Press
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "selectLongPressBehavior";
+    obj["name"] = I18N.get(StrId::STR_SELECT_LONG_PRESS);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READING_TIME));
+    obj["value"] = s.selectLongPressBehavior;
   }
   {
     JsonObject obj = arr.add<JsonObject>();
@@ -2702,9 +2783,13 @@ void CrossPointWebServer::handlePostSteroidsSettings() {
   applyValue("imageThresholdDark", s.imageThresholdDark, 2, 254);
   applyValue("imageThresholdLight", s.imageThresholdLight, 3, 255);
   applyValue("imageGamma", s.imageGamma, 5, 30);
-  applyEnum("longPressButtonBehavior", s.longPressButtonBehavior, CrossPointSettings::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
-  applyEnum("frontLongPressBehavior", s.frontLongPressBehavior, CrossPointSettings::FRONT_LONG_PRESS_BEHAVIOR_COUNT);
-  applyToggle("cycleScreensaverOnTap", s.cycleScreensaverOnTap);
+   applyEnum("longPressUpBehavior", s.longPressUpBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("longPressDownBehavior", s.longPressDownBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("frontLongPressLeftBehavior", s.frontLongPressLeftBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("frontLongPressRightBehavior", s.frontLongPressRightBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("selectLongPressBehavior", s.selectLongPressBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("shortPwrBtn", s.shortPwrBtn, CrossPointSettings::SHORT_PWRBTN_COUNT);
+   applyToggle("cycleScreensaverOnTap", s.cycleScreensaverOnTap);
   applyEnum("statusBarTimeLeft", s.statusBarTimeLeft, CrossPointSettings::STATUS_BAR_TIME_LEFT_COUNT);
   applyEnum("clockFormat", s.clockFormat, static_cast<uint8_t>(2));
   applyEnum("libraryLayout", s.libraryLayout, CrossPointSettings::LIBRARY_LAYOUT_COUNT);

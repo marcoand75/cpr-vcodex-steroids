@@ -12,6 +12,8 @@
 #include <string>
 #include <utility>
 
+#include "CrossPointSettings.h"
+#include "ReaderUtils.h"
 #include "activities/Activity.h"
 
 class XtcReaderActivity final : public Activity {
@@ -37,8 +39,12 @@ class XtcReaderActivity final : public Activity {
   void saveProgress() const;
   void loadProgress();
   void requestCurrentPageFullRefresh();
-  void handleSelectLongPress();
-  std::string moveCompletedBookIfEnabled();
+   void handleSelectLongPress();
+   // Dispatch a BUTTON_ACTION — XTC only supports a subset (no clipping/bookmarks/dictionary).
+   bool handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                           bool prevTriggered, bool nextTriggered,
+                           ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
 
  public:

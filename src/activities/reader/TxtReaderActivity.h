@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "ReaderUtils.h"
 #include "activities/Activity.h"
 
 class TxtReaderActivity final : public Activity {
@@ -61,9 +62,13 @@ class TxtReaderActivity final : public Activity {
   void savePageIndexCache() const;
   void saveProgress() const;
   void loadProgress();
-  void requestCurrentPageFullRefresh();
-  void toggleTemporaryStatusBar();
-  void handleSelectLongPress();
+   void requestCurrentPageFullRefresh();
+   void toggleTemporaryStatusBar();
+   void handleSelectLongPress();
+   // Dispatch a BUTTON_ACTION — TXT only supports a subset (no clipping/bookmarks/dictionary).
+   bool handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                           bool prevTriggered, bool nextTriggered,
+                           ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
   std::string moveCompletedBookIfEnabled();
   void exitReaderAfterOptionalCompletedMove();
 

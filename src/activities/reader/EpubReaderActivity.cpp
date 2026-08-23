@@ -478,6 +478,16 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+  // Short power button with expanded reader actions (beyond IGNORE/SLEEP/etc.)
+  if (ReaderUtils::wasPowerButtonReaderActionPressed(mappedInput)) {
+    const auto action = ReaderUtils::shortPwrBtnToReaderAction(
+        static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn));
+    if (action != CrossPointSettings::BTN_ACTION_OFF) {
+      handleButtonAction(action, false, true, ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+      return;
+    }
+  }
+
   if (clippingModeActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!clippingStartMarkSet) {
@@ -618,7 +628,8 @@ void EpubReaderActivity::loop() {
   // consumers may reset the internal hold timer on release.
   const unsigned long capturedHeldTime = mappedInput.getHeldTime();
 
-  auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton] = ReaderUtils::detectPageTurn(mappedInput);
+   auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton,
+        upBtn, downBtn, leftBtn, rightBtn] = ReaderUtils::detectPageTurn(mappedInput);
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -652,189 +663,78 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  // Helper lambda: change font size, clamp and save
-  auto adjustFontSize = [this](bool increase) {
-    if (increase) {
-      if (SETTINGS.fontSize < CrossPointSettings::EXTRA_LARGE) {
-        SETTINGS.fontSize++;
-      }
-    } else {
-      if (SETTINGS.fontSize > CrossPointSettings::X_SMALL) {
-        SETTINGS.fontSize--;
-      }
-    }
-    ensureSdFontLoaded();
-    SETTINGS.saveToFile();
-    // Force re-render with new font size
-    section.reset();
-    requestUpdate();
-  };
+   // ====== SIDE BUTTON long-press (Up/Down) — per-directional config ======
+   // Falls back to legacy longPressButtonBehavior if per-directional not set.
+   if (longPress && !fromFrontButton) {
+      if (upBtn || downBtn) {
+        CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+        ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+        if (upBtn) {
+         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
+         dir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
+       } else {
+         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
+         dir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
+       }
+       // If per-directional behavior is OFF (0), fall back to legacy config
+       if (act == CrossPointSettings::BTN_ACTION_OFF) {
+         // Map legacy longPressButtonBehavior to BUTTON_ACTION
+         switch (SETTINGS.longPressButtonBehavior) {
+           case CrossPointSettings::LONG_PRESS_BOOKMARK:  act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
+           case CrossPointSettings::LONG_PRESS_CLIPPING:  act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
+           case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
+           case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
+           case CrossPointSettings::LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
+           case CrossPointSettings::LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
+           case CrossPointSettings::LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
+           case CrossPointSettings::LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
+           case CrossPointSettings::LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
+           default: break;
+         }
+       }
+       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+       if (handled) {
+         return;
+       }
+       // Fall through to default: normal page turn
+     }
+   }
 
-  // ====== SIDE BUTTON long-press ======
-  if (longPress && !fromFrontButton) {
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_BOOKMARK) {
-      if (prevTriggered) {
-        saveCurrentPageBookmark();
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
-      }
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CLIPPING) {
-      if (prevTriggered) {
-        enterClippingMode();
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS);
-      }
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP) {
-      READING_STATS.noteActivity();
-      lastPageTurnTime = millis();
-      if (!nextTriggered && section && section->currentPage > 0) {
-        section->currentPage = 0;
-        nextPageNumber = 0;
-        sessionProgressTouched = true;
-        requestUpdate();
-        return;
-      }
-      if (!nextTriggered && currentSpineIndex <= 0) {
-        return;
-      }
-      {
-        RenderLock lock(*this);
-        nextPageNumber = 0;
-        if (nextTriggered) {
-          currentSpineIndex++;
-        } else if (currentSpineIndex > 0) {
-          pendingPageJump = std::numeric_limits<uint16_t>::max();
-          currentSpineIndex--;
-        }
-        sessionProgressTouched = true;
-        section.reset();
-      }
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE) {
-      const uint8_t newOrientation = nextTriggered ? (SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
-                                                         CrossPointSettings::ORIENTATION_COUNT
-                                                   : (SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT;
-      applyOrientation(newOrientation);
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_FONTSIZE) {
-      // DOWN/Right (nextTriggered) = increase, UP/Left (prevTriggered) = decrease
-      adjustFontSize(nextTriggered);
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_DICTIONARY) {
-      if (prevTriggered) {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD);
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::DICTIONARY);
-      }
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_DARK_MODE) {
-      SETTINGS.darkMode = !SETTINGS.darkMode;
-      SETTINGS.saveToFile();
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_FULL_REFRESH) {
-      requestCurrentPageFullRefresh();
-      return;
-    }
-    if (SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_READER_SETTINGS) {
-      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::READER_SETTINGS);
-      return;
-    }
-  }
-
-  // ====== FRONT BUTTON long-press ======
-  if (frontLongPress) {
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK) {
-      if (prevTriggered) {
-        saveCurrentPageBookmark();
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
-      }
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_CLIPPING) {
-      if (prevTriggered) {
-        enterClippingMode();
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS);
-      }
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP) {
-      READING_STATS.noteActivity();
-      lastPageTurnTime = millis();
-      if (!nextTriggered && section && section->currentPage > 0) {
-        section->currentPage = 0;
-        nextPageNumber = 0;
-        sessionProgressTouched = true;
-        requestUpdate();
-        return;
-      }
-      if (!nextTriggered && currentSpineIndex <= 0) {
-        return;
-      }
-      {
-        RenderLock lock(*this);
-        nextPageNumber = 0;
-        if (nextTriggered) {
-          currentSpineIndex++;
-        } else if (currentSpineIndex > 0) {
-          pendingPageJump = std::numeric_limits<uint16_t>::max();
-          currentSpineIndex--;
-        }
-        sessionProgressTouched = true;
-        section.reset();
-      }
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION) {
-      const uint8_t newOrientation = nextTriggered ? (SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
-                                                         CrossPointSettings::ORIENTATION_COUNT
-                                                   : (SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT;
-      applyOrientation(newOrientation);
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE) {
-      // DOWN/Right (nextTriggered) = increase, UP/Left (prevTriggered) = decrease
-      adjustFontSize(nextTriggered);
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY) {
-      if (prevTriggered) {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD);
-      } else {
-        onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::DICTIONARY);
-      }
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE) {
-      SETTINGS.darkMode = !SETTINGS.darkMode;
-      SETTINGS.saveToFile();
-      requestUpdate();
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH) {
-      requestCurrentPageFullRefresh();
-      return;
-    }
-    if (SETTINGS.frontLongPressBehavior == CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS) {
-      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::READER_SETTINGS);
-      return;
-    }
-  }
+   // ====== FRONT BUTTON long-press (Left/Right) — per-directional config ======
+   // Falls back to legacy frontLongPressBehavior if per-directional not set.
+   if (frontLongPress) {
+     if (leftBtn || rightBtn) {
+       CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+        ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+       if (leftBtn) {
+         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
+         dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
+       } else {
+         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
+         dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
+       }
+       // If per-directional behavior is OFF (0), fall back to legacy config
+       if (act == CrossPointSettings::BTN_ACTION_OFF) {
+         switch (SETTINGS.frontLongPressBehavior) {
+           case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK: act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING: act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
+           case CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
+           default: break;
+         }
+       }
+       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+       if (handled) {
+         return;
+       }
+       // Fall through to default: normal page turn
+     }
+   }
 
   // No current section, attempt to rerender the book
   if (!section) {
@@ -871,10 +771,48 @@ void EpubReaderActivity::toggleTemporaryStatusBar() {
 }
 
 void EpubReaderActivity::handleSelectLongPress() {
-  switch (SETTINGS.selectLongPress) {
-    case CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK: {
+  // The selectLongPress setting has been expanded to use BUTTON_ACTION.
+  // For backward compatibility, if selectLongPressBehavior has not been
+  // explicitly set (still at default), we use the legacy selectLongPress enum.
+  CrossPointSettings::BUTTON_ACTION action;
+  const uint8_t legacy = SETTINGS.selectLongPress;
+  if (legacy != CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK) {
+    // Old setting was changed from the default — migrate it.
+    switch (legacy) {
+      case CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK:   action = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_READING_TIME: action = CrossPointSettings::BTN_ACTION_READING_TIME; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_OFF:         action = CrossPointSettings::BTN_ACTION_OFF; break;
+      default: action = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    }
+  } else {
+    action = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.selectLongPressBehavior);
+  }
+  // Dispatch through the same handler as other long-press actions.
+  // For select long-press, prevTriggered=true ensures TOGGLE_BOOKMARK toggles
+  // rather than viewing the bookmark store.
+  handleButtonAction(action, true, false, ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+}
+
+bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                                             bool prevTriggered, bool nextTriggered,
+                                             ReaderUtils::ButtonDirection dir) {
+  READING_STATS.noteActivity();
+
+  switch (action) {
+    case CrossPointSettings::BTN_ACTION_OFF:
+      return false;  // not handled, falls through to default behavior
+
+    case CrossPointSettings::BTN_ACTION_ADD_CLIPPING:
+      enterClippingMode();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_VIEW_CLIPPINGS:
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_CLIPPINGS);
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK: {
       if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
-        return;
+        return false;
       }
       READING_STATS.noteActivity();
       const uint16_t spineIndex = static_cast<uint16_t>(currentSpineIndex);
@@ -894,22 +832,100 @@ void EpubReaderActivity::handleSelectLongPress() {
         delay(500);
       }
       requestUpdate();
-      return;
+      return true;
     }
 
-    case CrossPointSettings::SELECT_LONG_PRESS_READING_TIME: {
+    case CrossPointSettings::BTN_ACTION_VIEW_BOOKMARKS:
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::VIEW_BOOKMARKS);
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_LOOKUP_WORD:
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD);
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_DICTIONARY:
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::DICTIONARY);
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_CHAPTER_SKIP: {
+      lastPageTurnTime = millis();
+      if (!nextTriggered && section && section->currentPage > 0) {
+        section->currentPage = 0;
+        nextPageNumber = 0;
+        sessionProgressTouched = true;
+        requestUpdate();
+        return true;
+      }
+      if (!nextTriggered && currentSpineIndex <= 0) {
+        return true;
+      }
+      {
+        RenderLock lock(*this);
+        nextPageNumber = 0;
+        if (nextTriggered) {
+          currentSpineIndex++;
+        } else if (currentSpineIndex > 0) {
+          pendingPageJump = std::numeric_limits<uint16_t>::max();
+          currentSpineIndex--;
+        }
+        sessionProgressTouched = true;
+        section.reset();
+      }
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_ORIENTATION: {
+      const uint8_t newOrientation = nextTriggered ? (SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
+                                                        CrossPointSettings::ORIENTATION_COUNT
+                                                   : (SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT;
+      applyOrientation(newOrientation);
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_FONTSIZE: {
+      const bool increase = ReaderUtils::isIncreaseDirection(dir);
+      if (SETTINGS.fontSize < CrossPointSettings::EXTRA_LARGE && increase) {
+        SETTINGS.fontSize++;
+      } else if (SETTINGS.fontSize > CrossPointSettings::X_SMALL && !increase) {
+        SETTINGS.fontSize--;
+      }
+      ensureSdFontLoaded();
+      SETTINGS.saveToFile();
+      section.reset();
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_DARK_MODE:
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_FULL_REFRESH:
+      requestCurrentPageFullRefresh();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_READER_SETTINGS:
+      onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::READER_SETTINGS);
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_READING_TIME:
+      // Reading timer toggle (same as existing select long-press behavior)
+    {
       const bool nowPaused = !READING_STATS.isReadingPaused();
       READING_STATS.setReadingPaused(nowPaused);
       GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
       renderer.displayBuffer();
       delay(500);
       requestUpdate();
-      return;
+      return true;
     }
 
-    case CrossPointSettings::SELECT_LONG_PRESS_OFF:
     default:
-      return;
+      return false;
   }
 }
 

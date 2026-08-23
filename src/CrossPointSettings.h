@@ -179,49 +179,91 @@ class CrossPointSettings {
   };
 
   // Short power button press actions
+  // KEEP existing values for backward compatibility with settings files.
+  // New extended values are appended at the end.
   enum SHORT_PWRBTN {
-    IGNORE = 0,
-    SLEEP = 1,
-    PAGE_TURN = 2,
-    FORCE_REFRESH = 3,
-    TOGGLE_STATUS_BAR = 4,
+    IGNORE = 0,               // backward-compat alias for SPWBTN_IGNORE
+    SLEEP = 1,                // backward-compat alias for SPWBTN_SLEEP
+    PAGE_TURN = 2,            // backward-compat alias for SPWBTN_PAGE_TURN
+    FORCE_REFRESH = 3,        // backward-compat alias for SPWBTN_FORCE_REFRESH
+    TOGGLE_STATUS_BAR = 4,    // backward-compat alias for SPWBTN_TOGGLE_STATUS_BAR
+    SPWBTN_IGNORE = 0,
+    SPWBTN_SLEEP = 1,
+    SPWBTN_PAGE_TURN = 2,
+    SPWBTN_FORCE_REFRESH = 3,
+    SPWBTN_TOGGLE_STATUS_BAR = 4,
+    SPWBTN_OFF = 5,               // no action
+    SPWBTN_ADD_CLIPPING = 6,
+    SPWBTN_VIEW_CLIPPINGS = 7,
+    SPWBTN_TOGGLE_BOOKMARK = 8,
+    SPWBTN_VIEW_BOOKMARKS = 9,
+    SPWBTN_LOOKUP_WORD = 10,
+    SPWBTN_DICTIONARY = 11,
+    SPWBTN_CHAPTER_SKIP = 12,
+    SPWBTN_ORIENTATION = 13,
+    SPWBTN_DARK_MODE = 14,
+    SPWBTN_READER_SETTINGS = 15,
     SHORT_PWRBTN_COUNT
+  };
+
+  // Unified button action enum — used by all long-press and per-directional settings.
+  // Values are intentionally non-overlapping with legacy enums to avoid
+  // confusion during migration.
+  enum BUTTON_ACTION {
+    BTN_ACTION_OFF = 0,
+    BTN_ACTION_ADD_CLIPPING = 1,
+    BTN_ACTION_VIEW_CLIPPINGS = 2,
+    BTN_ACTION_TOGGLE_BOOKMARK = 3,
+    BTN_ACTION_VIEW_BOOKMARKS = 4,
+    BTN_ACTION_LOOKUP_WORD = 5,
+    BTN_ACTION_DICTIONARY = 6,
+    BTN_ACTION_CHAPTER_SKIP = 7,
+    BTN_ACTION_ORIENTATION = 8,
+    BTN_ACTION_FONTSIZE = 9,
+    BTN_ACTION_DARK_MODE = 10,
+    BTN_ACTION_FULL_REFRESH = 11,
+     BTN_ACTION_READER_SETTINGS = 12,
+     BTN_ACTION_READING_TIME = 13,  // select long-press only: toggle reading timer
+     BTN_ACTION_COUNT
   };
   enum TILT_PAGE_TURN { TILT_OFF = 0, TILT_NORMAL = 1, TILT_INVERTED = 2, TILT_PAGE_TURN_COUNT };
 
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
-  // Page turn button long-press behavior (side buttons)
-  enum LONG_PRESS_BUTTON_BEHAVIOR {
-    LONG_PRESS_OFF = 0,
-    LONG_PRESS_BOOKMARK = 1,
-    LONG_PRESS_CLIPPING = 2,
-    LONG_PRESS_CHAPTER_SKIP = 3,
-    LONG_PRESS_ORIENTATION_CHANGE = 4,
-    LONG_PRESS_FONTSIZE = 5,
-    LONG_PRESS_DICTIONARY = 6,
-    LONG_PRESS_DARK_MODE = 7,
-    LONG_PRESS_FULL_REFRESH = 8,
-    LONG_PRESS_READER_SETTINGS = 9,
-    LONG_PRESS_BUTTON_BEHAVIOR_COUNT
-  };
+   // Page turn button long-press behavior (side buttons) — legacy, kept for
+   // backward compatibility. Migrated to longPressUpBehavior / longPressDownBehavior.
+   enum LONG_PRESS_BUTTON_BEHAVIOR {
+     LONG_PRESS_OFF = 0,
+     LONG_PRESS_BOOKMARK = 1,
+     LONG_PRESS_CLIPPING = 2,
+     LONG_PRESS_CHAPTER_SKIP = 3,
+     LONG_PRESS_ORIENTATION_CHANGE = 4,
+     LONG_PRESS_FONTSIZE = 5,
+     LONG_PRESS_DICTIONARY = 6,
+     LONG_PRESS_DARK_MODE = 7,
+     LONG_PRESS_FULL_REFRESH = 8,
+     LONG_PRESS_READER_SETTINGS = 9,
+     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
+   };
 
-  // Front button long-press behavior (Left/Right front buttons)
-  enum FRONT_LONG_PRESS_BEHAVIOR {
-    FRONT_LONG_PRESS_OFF = 0,
-    FRONT_LONG_PRESS_BOOKMARK = 1,
-    FRONT_LONG_PRESS_CLIPPING = 2,
-    FRONT_LONG_PRESS_CHAPTER_SKIP = 3,
-    FRONT_LONG_PRESS_ORIENTATION = 4,
-    FRONT_LONG_PRESS_FONTSIZE = 5,
-    FRONT_LONG_PRESS_DICTIONARY = 6,
-    FRONT_LONG_PRESS_DARK_MODE = 7,
-    FRONT_LONG_PRESS_FULL_REFRESH = 8,
-    FRONT_LONG_PRESS_READER_SETTINGS = 9,
-    FRONT_LONG_PRESS_BEHAVIOR_COUNT
-  };
-
+   // Front button long-press behavior (Left/Right front buttons) — legacy, kept
+   // for backward compatibility. Migrated to frontLongPressLeftBehavior /
+   // frontLongPressRightBehavior.
+   enum FRONT_LONG_PRESS_BEHAVIOR {
+     FRONT_LONG_PRESS_OFF = 0,
+     FRONT_LONG_PRESS_BOOKMARK = 1,
+     FRONT_LONG_PRESS_CLIPPING = 2,
+     FRONT_LONG_PRESS_CHAPTER_SKIP = 3,
+     FRONT_LONG_PRESS_ORIENTATION = 4,
+     FRONT_LONG_PRESS_FONTSIZE = 5,
+     FRONT_LONG_PRESS_DICTIONARY = 6,
+     FRONT_LONG_PRESS_DARK_MODE = 7,
+     FRONT_LONG_PRESS_FULL_REFRESH = 8,
+     FRONT_LONG_PRESS_READER_SETTINGS = 9,
+     FRONT_LONG_PRESS_BEHAVIOR_COUNT
+    };
+  
   // UI Theme
   enum UI_THEME { LYRA = 0, LYRA_CUSTOM = 1, LYRA_CAROUSEL = 2, LYRA_MARCOAND75 = 3, UI_THEME_COUNT };
   enum DATE_FORMAT { DATE_DD_MM_YYYY = 0, DATE_MM_DD_YYYY = 1, DATE_YYYY_MM_DD = 2, DATE_FORMAT_COUNT };
@@ -383,8 +425,8 @@ class CrossPointSettings {
   uint8_t forceParagraphIndents = 0;
   uint8_t textAntiAliasing = 1;
   uint8_t textDarkness = TEXT_DARKNESS_NORMAL;
-  // Short power button click behaviour
-  uint8_t shortPwrBtn = IGNORE;
+  // Short power button click behaviour — expanded with extended actions.
+  // Declared below along with per-directional button behavior settings.
   // Tilt-based page turning (X3 only, requires QMI8658 IMU)
   uint8_t tiltPageTurn = TILT_OFF;
   // EPUB reading orientation settings
@@ -439,18 +481,33 @@ class CrossPointSettings {
   uint8_t koSyncAutoPushOnClose = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
-  // Page turn button long-press behavior (side buttons)
+  // Legacy long-press behavior (side buttons) — kept for backward compat.
+  // Migrated to longPressUpBehavior / longPressDownBehavior on first load.
   uint8_t longPressButtonBehavior = LONG_PRESS_CHAPTER_SKIP;
-  // Front button long-press behavior (Left/Right front buttons)
+  // Legacy long-press behavior (front Left/Right buttons) — kept for backward compat.
+  // Migrated to frontLongPressLeftBehavior / frontLongPressRightBehavior.
   uint8_t frontLongPressBehavior = FRONT_LONG_PRESS_OFF;
-  // Select button long-press behavior during reading
-  enum SELECT_LONG_PRESS {
+  // Per-directional long-press behavior (reader only).
+  // These take priority over the legacy fields when loaded.
+  uint8_t longPressUpBehavior = BTN_ACTION_CHAPTER_SKIP;         // long-press Up side button
+  uint8_t longPressDownBehavior = BTN_ACTION_CHAPTER_SKIP;       // long-press Down side button
+  uint8_t frontLongPressLeftBehavior = BTN_ACTION_OFF;           // long-press Left front button
+  uint8_t frontLongPressRightBehavior = BTN_ACTION_OFF;          // long-press Right front button
+  // Short press power button — expanded with extended actions.
+  uint8_t shortPwrBtn = SPWBTN_IGNORE;
+  // Select button long-press behavior during reading.
+  // Expanded to use BUTTON_ACTION enum (backward-compatible migration from
+  // legacy SELECT_LONG_PRESS values on settings load).
+  enum SELECT_LONG_PRESS_LEGACY {
     SELECT_LONG_PRESS_BOOKMARK = 0,
     SELECT_LONG_PRESS_READING_TIME = 1,
     SELECT_LONG_PRESS_OFF = 2,
     SELECT_LONG_PRESS_COUNT
   };
+  // Legacy field — replaced by selectLongPressBehavior (BUTTON_ACTION).
   uint8_t selectLongPress = SELECT_LONG_PRESS_BOOKMARK;
+  // New field for expanded select long-press behavior.
+  uint8_t selectLongPressBehavior = BTN_ACTION_TOGGLE_BOOKMARK;
   // UI Theme
   uint8_t uiTheme = LYRA_CUSTOM;
   // Experimental global dark mode for the device UI and supported readers.

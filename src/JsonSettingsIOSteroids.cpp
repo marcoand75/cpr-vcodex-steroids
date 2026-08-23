@@ -15,7 +15,42 @@
 // Shared internal helpers (saveJsonDocumentToFile, migrateStoredUiTheme, etc.)
 #include "JsonSettingsIOShared.inc"
 
+using S = CrossPointSettings;
+
 namespace {
+
+// Migration helpers: map legacy long-press enums to unified BUTTON_ACTION.
+CrossPointSettings::BUTTON_ACTION legacyLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case S::LONG_PRESS_OFF:               return S::BTN_ACTION_OFF;
+    case S::LONG_PRESS_BOOKMARK:          return S::BTN_ACTION_TOGGLE_BOOKMARK;
+    case S::LONG_PRESS_CLIPPING:          return S::BTN_ACTION_ADD_CLIPPING;
+    case S::LONG_PRESS_CHAPTER_SKIP:      return S::BTN_ACTION_CHAPTER_SKIP;
+    case S::LONG_PRESS_ORIENTATION_CHANGE:return S::BTN_ACTION_ORIENTATION;
+    case S::LONG_PRESS_FONTSIZE:          return S::BTN_ACTION_FONTSIZE;
+    case S::LONG_PRESS_DICTIONARY:        return S::BTN_ACTION_DICTIONARY;
+    case S::LONG_PRESS_DARK_MODE:         return S::BTN_ACTION_DARK_MODE;
+    case S::LONG_PRESS_FULL_REFRESH:      return S::BTN_ACTION_FULL_REFRESH;
+    case S::LONG_PRESS_READER_SETTINGS:   return S::BTN_ACTION_READER_SETTINGS;
+    default: return S::BTN_ACTION_OFF;
+  }
+}
+
+CrossPointSettings::BUTTON_ACTION legacyFrontLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case S::FRONT_LONG_PRESS_OFF:         return S::BTN_ACTION_OFF;
+    case S::FRONT_LONG_PRESS_BOOKMARK:    return S::BTN_ACTION_TOGGLE_BOOKMARK;
+    case S::FRONT_LONG_PRESS_CLIPPING:    return S::BTN_ACTION_ADD_CLIPPING;
+    case S::FRONT_LONG_PRESS_CHAPTER_SKIP:return S::BTN_ACTION_CHAPTER_SKIP;
+    case S::FRONT_LONG_PRESS_ORIENTATION: return S::BTN_ACTION_ORIENTATION;
+    case S::FRONT_LONG_PRESS_FONTSIZE:    return S::BTN_ACTION_FONTSIZE;
+    case S::FRONT_LONG_PRESS_DICTIONARY:  return S::BTN_ACTION_DICTIONARY;
+    case S::FRONT_LONG_PRESS_DARK_MODE:   return S::BTN_ACTION_DARK_MODE;
+    case S::FRONT_LONG_PRESS_FULL_REFRESH:return S::BTN_ACTION_FULL_REFRESH;
+    case S::FRONT_LONG_PRESS_READER_SETTINGS: return S::BTN_ACTION_READER_SETTINGS;
+    default: return S::BTN_ACTION_OFF;
+  }
+}
 
 void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   doc["formatVersion"] = 1;
@@ -28,6 +63,14 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
 
   doc["frontLongPressBehavior"] = s.frontLongPressBehavior;
   doc["selectLongPress"] = s.selectLongPress;
+
+  // New per-directional button behavior settings
+  doc["longPressUpBehavior"] = s.longPressUpBehavior;
+  doc["longPressDownBehavior"] = s.longPressDownBehavior;
+  doc["frontLongPressLeftBehavior"] = s.frontLongPressLeftBehavior;
+  doc["frontLongPressRightBehavior"] = s.frontLongPressRightBehavior;
+  doc["shortPwrBtn"] = s.shortPwrBtn;
+  doc["selectLongPressBehavior"] = s.selectLongPressBehavior;
 
   doc["uiTheme"] = s.uiTheme;
   doc["uiThemeSchemaVersion"] = UI_THEME_SCHEMA_VERSION;
@@ -155,14 +198,50 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
       s.fontFamily = rawFontFamily;
     }
   }
-  loadString("sdFontFamilyName", s.sdFontFamilyName, sizeof(s.sdFontFamilyName));
-  if (!doc["longPressButtonBehavior"].isNull()) {
-    loadEnum("longPressButtonBehavior", s.longPressButtonBehavior, S::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
-  } else {
-    s.longPressButtonBehavior = (doc["longPressChapterSkip"] | true) ? S::LONG_PRESS_CHAPTER_SKIP : S::LONG_PRESS_OFF;
-  }
-  s.displayDay = clamp(doc["displayDay"] | s.displayDay, S::DISPLAY_HEADER_MODE_COUNT, s.displayDay);
-  s.clockFormat = clamp(doc["clockFormat"] | s.clockFormat, static_cast<uint8_t>(2), s.clockFormat);
+   loadString("sdFontFamilyName", s.sdFontFamilyName, sizeof(s.sdFontFamilyName));
+   // Legacy long-press behavior (for backward compat)
+   if (!doc["longPressButtonBehavior"].isNull()) {
+     loadEnum("longPressButtonBehavior", s.longPressButtonBehavior, S::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
+   } else {
+     s.longPressButtonBehavior = (doc["longPressChapterSkip"] | true) ? S::LONG_PRESS_CHAPTER_SKIP : S::LONG_PRESS_OFF;
+   }
+   // New per-directional long-press settings — load if present
+   loadEnum("longPressUpBehavior", s.longPressUpBehavior, S::BTN_ACTION_COUNT);
+   loadEnum("longPressDownBehavior", s.longPressDownBehavior, S::BTN_ACTION_COUNT);
+   loadEnum("frontLongPressLeftBehavior", s.frontLongPressLeftBehavior, S::BTN_ACTION_COUNT);
+   loadEnum("frontLongPressRightBehavior", s.frontLongPressRightBehavior, S::BTN_ACTION_COUNT);
+   // Migrate legacy longPressButtonBehavior to per-directional if new fields at default
+   if (s.longPressUpBehavior == S::BTN_ACTION_OFF && s.longPressDownBehavior == S::BTN_ACTION_OFF &&
+       s.longPressButtonBehavior != S::LONG_PRESS_OFF) {
+     const auto legacyAct = legacyLongPressToButtonAction(s.longPressButtonBehavior);
+     s.longPressUpBehavior = legacyAct;
+     s.longPressDownBehavior = legacyAct;
+     if (needsResave) *needsResave = true;
+   }
+   loadEnum("frontLongPressBehavior", s.frontLongPressBehavior, S::FRONT_LONG_PRESS_BEHAVIOR_COUNT);
+   // Migrate legacy frontLongPressBehavior to per-directional if new fields at default
+   if (s.frontLongPressLeftBehavior == S::BTN_ACTION_OFF && s.frontLongPressRightBehavior == S::BTN_ACTION_OFF &&
+       s.frontLongPressBehavior != S::FRONT_LONG_PRESS_OFF) {
+     const auto legacyAct = legacyFrontLongPressToButtonAction(s.frontLongPressBehavior);
+     s.frontLongPressLeftBehavior = legacyAct;
+     s.frontLongPressRightBehavior = legacyAct;
+     if (needsResave) *needsResave = true;
+   }
+   loadEnum("selectLongPress", s.selectLongPress, S::SELECT_LONG_PRESS_COUNT);
+   loadEnum("selectLongPressBehavior", s.selectLongPressBehavior, S::BTN_ACTION_COUNT);
+   // Migrate legacy selectLongPress to selectLongPressBehavior if at default
+   if (s.selectLongPressBehavior == S::BTN_ACTION_TOGGLE_BOOKMARK &&
+       s.selectLongPress != S::SELECT_LONG_PRESS_BOOKMARK) {
+     if (s.selectLongPress == S::SELECT_LONG_PRESS_READING_TIME) {
+       s.selectLongPressBehavior = S::BTN_ACTION_READING_TIME;
+     } else if (s.selectLongPress == S::SELECT_LONG_PRESS_OFF) {
+       s.selectLongPressBehavior = S::BTN_ACTION_OFF;
+     }
+     if (needsResave) *needsResave = true;
+   }
+   loadEnum("shortPwrBtn", s.shortPwrBtn, S::SHORT_PWRBTN_COUNT);
+   s.displayDay = clamp(doc["displayDay"] | s.displayDay, S::DISPLAY_HEADER_MODE_COUNT, s.displayDay);
+   s.clockFormat = clamp(doc["clockFormat"] | s.clockFormat, static_cast<uint8_t>(2), s.clockFormat);
 
   loadEnum("libraryLayout", s.libraryLayout, S::LIBRARY_LAYOUT_COUNT);
   loadEnum("libraryFilter", s.libraryFilter, S::LIBRARY_FILTER_COUNT);
@@ -221,7 +300,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   s.quickCardsShortcutOrder = clamp(doc["quickCardsShortcutOrder"] | s.quickCardsShortcutOrder, shortcutOrderCount, s.quickCardsShortcutOrder);
   s.quickCardsShortcutVisible = clamp(doc["quickCardsShortcutVisible"] | s.quickCardsShortcutVisible, static_cast<uint8_t>(2), s.quickCardsShortcutVisible);
 }
-}  // namespace
+}
 
 bool JsonSettingsIO::saveSettingsSteroids(const CrossPointSettings& s, const char* path) {
   JsonDocument doc;

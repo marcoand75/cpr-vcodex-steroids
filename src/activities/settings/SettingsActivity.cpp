@@ -15,6 +15,7 @@
 #include <ctime>
 
 #include "AchievementsStore.h"
+#include "ButtonActionSelectorActivity.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "CrossPointSettings.h"
@@ -168,32 +169,57 @@ const std::vector<SettingInfo>& getDeviceControlsSettings() {
         SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV}),
         SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, &CrossPointSettings::frontButtonFollowOrientation),
-        SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
-                          {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS}),
-        SettingInfo::Enum(StrId::STR_FRONT_LONG_PRESS_BEHAVIOR, &CrossPointSettings::frontLongPressBehavior,
-                          {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_BOOKMARK,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_CLIPPING,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_FONTSIZE,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_DICTIONARY,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_DARK_MODE,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_FULL_REFRESH,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_READER_SETTINGS}),
+        // Legacy long-press settings (kept for backward compat, hidden from UI)
+        // New per-directional settings below
+        SettingInfo::Enum(StrId::STR_LONG_PRESS_UP, &CrossPointSettings::longPressUpBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_LONG_PRESS_DOWN, &CrossPointSettings::longPressDownBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_FRONT_LONG_PRESS_LEFT, &CrossPointSettings::frontLongPressLeftBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_FRONT_LONG_PRESS_RIGHT, &CrossPointSettings::frontLongPressRightBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
         SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                           StrId::STR_TOGGLE_STATUS_BAR}),
-        SettingInfo::Enum(StrId::STR_SELECT_LONG_PRESS, &CrossPointSettings::selectLongPress,
-                          {StrId::STR_SELECT_LONG_PRESS_BOOKMARK, StrId::STR_SELECT_LONG_PRESS_READING_TIME,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_OFF}),
+                           StrId::STR_TOGGLE_STATUS_BAR,
+                           StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_DARK_MODE,
+                           StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_SELECT_LONG_PRESS, &CrossPointSettings::selectLongPressBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS, StrId::STR_BTN_ACTION_READING_TIME}),
     };
     if (halTiltSensor.isAvailable()) {
       result.push_back(SettingInfo::Section(StrId::STR_SECTION_SENSORS));
@@ -752,8 +778,35 @@ void SettingsActivity::toggleCurrentSetting() {
                              });
       return;
     }
+    // Button action settings — open the popup list selector
+    const bool isShortPwrBtn = (setting.nameId == StrId::STR_SHORT_PWR_BTN);
+    if (setting.nameId == StrId::STR_LONG_PRESS_UP ||
+        setting.nameId == StrId::STR_LONG_PRESS_DOWN ||
+        setting.nameId == StrId::STR_FRONT_LONG_PRESS_LEFT ||
+        setting.nameId == StrId::STR_FRONT_LONG_PRESS_RIGHT ||
+        isShortPwrBtn ||
+        setting.nameId == StrId::STR_SELECT_LONG_PRESS) {
+      const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+      startActivityForResult(
+          std::make_unique<ButtonActionSelectorActivity>(renderer, mappedInput, currentValue,
+                                                         isShortPwrBtn
+                                                             ? ButtonActionSelectorActivity::Mode::SHORT_PWRBTN
+                                                             : ButtonActionSelectorActivity::Mode::BUTTON_ACTION),
+          [this, setting](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              SETTINGS.*(setting.valuePtr) =
+                  static_cast<uint8_t>(std::get<PageResult>(result.data).page);
+              SETTINGS.saveToFile();
+            }
+            requestUpdate(true);
+          });
+       return;
+    }
+    // Fallback: cycle enum values for any other enum settings not handled above
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    SETTINGS.saveToFile();
+    requestUpdate(true);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
     enterValueEditMode(setting);
     return;

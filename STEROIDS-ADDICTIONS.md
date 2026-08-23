@@ -673,6 +673,51 @@ word" (launches word-selection overlay on the current page); Right (nextTriggere
 = open the full Dictionary app directly. This mirrors the pattern used by the
 existing Bookmark/Clippings actions.
 
+### 8.5.2. Per-Directional Long-Press Configuration
+
+Replaces the single `longPressButtonBehavior` (side buttons) /
+`frontLongPressBehavior` (front buttons) with independently configurable
+per-button actions:
+
+- **Long-press Up** — side button Up (default: Chapter Skip)
+- **Long-press Down** — side button Down (default: Chapter Skip)
+- **Long-press Left** — front button Left (default: Off)
+- **Long-press Right** — front button Right (default: Off)
+
+Each button now supports the full `BUTTON_ACTION` enum (14 actions):
+
+| Action | Label (EN) | Label (IT) | Reader support |
+|---|---|---|---|
+| `BTN_ACTION_OFF` | Off | Off | All |
+| `BTN_ACTION_ADD_CLIPPING` | Add Clipping | Aggiungi clipping | EPUB only |
+| `BTN_ACTION_VIEW_CLIPPINGS` | Clipping Store | Store clipping | EPUB only |
+| `BTN_ACTION_TOGGLE_BOOKMARK` | Toggle Bookmark | Attiva/disattiva segnalibro | EPUB only |
+| `BTN_ACTION_VIEW_BOOKMARKS` | Bookmark Store | Store segnalibri | EPUB only |
+| `BTN_ACTION_LOOKUP_WORD` | Lookup Word | Cerca parola | EPUB only |
+| `BTN_ACTION_DICTIONARY` | Dictionary | Dizionario | EPUB only |
+| `BTN_ACTION_CHAPTER_SKIP` | Chapter Skip | Salta capitolo | All |
+| `BTN_ACTION_ORIENTATION` | Orientation | Orientamento | All |
+| `BTN_ACTION_FONTSIZE` | Font Size | Dimensione font | EPUB/TXT |
+| `BTN_ACTION_DARK_MODE` | Toggle Dark Mode | Modo scuro | All |
+| `BTN_ACTION_FULL_REFRESH` | Force Full Refresh | Refresh completo | All |
+| `BTN_ACTION_READER_SETTINGS` | Quick Settings | Impostazioni rapide | All |
+| `BTN_ACTION_READING_TIME` | Reading Timer | Timer lettura | All |
+
+**Short power button** is also expanded to 16 options (the original 5 plus all
+`BUTTON_ACTION` values except `READING_TIME`), enabling actions like adding a
+clipping or toggling a bookmark directly from the power button during reading.
+
+**Select long-press** is expanded from 3 to 14 options, using the same
+`BUTTON_ACTION` enum. TXT/XTC readers restrict this to `READING_TIME` and
+`OFF` only (no bookmark/clipping/dictionary support).
+
+**Backward compatibility:** legacy `longPressButtonBehavior` and
+`frontLongPressBehavior` fields are migrated to per-directional settings on
+first load. If a per-directional setting is `OFF` and the legacy field is
+non-default, the legacy value is used as fallback for both Up+Down (side) or
+Left+Right (front) buttons. The `selectLongPress` legacy enum is similarly
+migrated to `selectLongPressBehavior`.
+
 ---
 
 ## 9.
@@ -1548,4 +1593,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), §19.5 OTA update safety (battery check + cancel #68), §4.4 battery safety under WiFi load (#59), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), §8.5.2 per-directional long-press configuration (Up/Down side buttons, Left/Right front buttons, expanded power button + select long-press), §19.5 OTA update safety (battery check + cancel #68), §4.4 battery safety under WiFi load (#59), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
