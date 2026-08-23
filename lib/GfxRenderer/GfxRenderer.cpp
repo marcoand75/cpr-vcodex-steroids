@@ -1,5 +1,6 @@
 #include "GfxRenderer.h"
 
+#include <BuildScratch.h>
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
 #include <Logging.h>
@@ -9,26 +10,18 @@
 #include <algorithm>
 #include <cassert>
 #include <climits>
+#include <vector>
 
 #include "FontCacheManager.h"
 
 namespace {
 
-// All 32×32 1‑bpp icons use exactly 128 bytes; 24×24 use 72 bytes.
-// kMaxIconBytes is the stack buffer for dark-mode bitmap inversion and must
-// be ≥ the largest icon byte count.  Derived from a known max and checked
-// at build time via an included icon reference in LibraryActivity.cpp.
-static constexpr size_t kMaxIconBytes = 128;
-
-/// Invert a monochrome icon bitmap into a caller-provided fixed-size buffer.
-/// Returns false if `size` exceeds the buffer capacity.
-bool invertMonochromeBitmap(const uint8_t* bitmap, size_t size,
-                            uint8_t (&out)[kMaxIconBytes]) {
-  if (size > kMaxIconBytes) return false;
+std::vector<uint8_t> invertMonochromeBitmap(const uint8_t* bitmap, size_t size) {
+  std::vector<uint8_t> inverted(size);
   for (size_t i = 0; i < size; ++i) {
-    out[i] = static_cast<uint8_t>(~bitmap[i]);
+    inverted[i] = static_cast<uint8_t>(~bitmap[i]);
   }
-  return true;
+  return inverted;
 }
 
 /**
@@ -54,12 +47,13 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
     // must consume it (draw the glyph) before requesting another bitmap.
     return fd->getBitmap(fontData, glyph, glyphIndex);
   }
-  if (fontData->glyphMissCtx) {
-    auto* sdFont = SdCardFont::fromMissCtx(fontData->glyphMissCtx);
-    if (sdFont->isOverflowGlyph(glyph)) {
-      return sdFont->getOverflowBitmap(glyph);
-    }
-  }
+   if (fontData->glyphMissCtx) {
+     auto* sdFont = SdCardFont::fromMissCtx(fontData->glyphMissCtx);
+     if (sdFont->isOverflowGlyph(glyph)) {
+       return sdFont->getOverflowBitmap(glyph);
+     }
+     return sdFont->miniGlyphBitmap(fontData->glyphMissCtx, glyph->dataOffset);
+   }
   return &fontData->bitmap[glyph->dataOffset];
 }
 
@@ -75,17 +69,24 @@ void GfxRenderer::ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_
   }
 }
 
-void GfxRenderer::ensureSdCardFontReady(int fontId, const std::vector<std::string>& words, bool includeHyphen,
-                                        uint8_t styleMask) const {
-  auto it = sdCardFonts_.find(fontId);
-  if (it == sdCardFonts_.end()) {
-    return;
-  }
+  void GfxRenderer::ensureSdCardFontReady(int fontId, const std::deque<std::string>& words, bool includeHyphen,
+                                         uint8_t styleMask) const {
+   auto it = sdCardFonts_.find(fontId);
+   if (it == sdCardFonts_.end()) {
+     return;
+   }
 
   const int missed = it->second->buildAdvanceTable(words, includeHyphen, styleMask);
   if (missed > 0) {
     LOG_DBG("GFX", "ensureSdCardFontReady: %d glyph(s) not found", missed);
   }
+}
+
+void GfxRenderer::ensureSdCardFontReady(int fontId, const uint32_t* codepoints, uint32_t cpCount,
+                                         bool /*includeSpace*/, bool /*includeHyphen*/, uint8_t styleMask) const {
+  auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return;
+  it->second->fetchAdvancesForCodepoints(const_cast<uint32_t*>(codepoints), cpCount, styleMask);
 }
 
 bool GfxRenderer::releaseSdCardFontForLowMemory(int fontId) const {
@@ -111,6 +112,34 @@ void GfxRenderer::begin() {
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
 }
 
+void GfxRenderer::releaseFrameBufferForBuild() {
+  if (!frameBuffer) return;
+  buildscratch::lend(frameBuffer, frameBufferSize);
+  frameBuffer = nullptr;
+}
+
+bool GfxRenderer::restoreFrameBufferAfterBuild() {
+  buildscratch::reclaim();
+  frameBuffer = display.getFrameBuffer();
+  if (frameBuffer) memset(frameBuffer, 0xFF, frameBufferSize);
+  return frameBuffer != nullptr;
+}
+
+GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
+  if (!renderer_.hasFrameBuffer()) return;
+  renderer_.releaseFrameBufferForBuild();
+  active_ = true;
+}
+
+void GfxRenderer::FrameBufferLoan::end() {
+  if (!active_) return;
+  active_ = false;
+  if (!renderer_.restoreFrameBufferAfterBuild()) {
+    LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+    ESP.restart();
+  }
+}
+
 bool GfxRenderer::isFontCacheScanning() const { return fontCacheManager_ && fontCacheManager_->isScanning(); }
 
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
@@ -124,6 +153,46 @@ void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
   if (fontCacheManager_) {
     fontCacheManager_->clearCache();
   }
+}
+
+int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+  if (!text || !*text) return fontId;
+  const auto fallbackId = fallbackFontMap_.find(fontId);
+  if (fallbackId == fallbackFontMap_.end()) return fontId;
+  const auto primary = fontMap.find(fontId);
+  const auto fallback = fontMap.find(fallbackId->second);
+  if (primary == fontMap.end() || fallback == fontMap.end()) return fontId;
+
+  const char* cursor = text;
+  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor))) {
+    if (utf8IsCjkCodepoint(cp) && !primary->second.hasCodepoint(cp, style) &&
+        fallback->second.hasCodepoint(cp, style)) {
+      return fallbackId->second;
+    }
+  }
+  return fontId;
+}
+
+void GfxRenderer::ensureSdGlyphsResident(const int fontId, const char* text, const EpdFontFamily::Style style,
+                                         const bool metadataOnly) const {
+  const auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return;
+  const uint8_t styleMask = static_cast<uint8_t>(1u << (static_cast<uint8_t>(style) & 0x03));
+  it->second->prewarm(text, styleMask, metadataOnly, /*loadKernLig=*/false);
+}
+
+void GfxRenderer::prewarmFallbackText(const int fontId, const TextGetter getter, const void* ctx,
+                                      const uint32_t textCount, const EpdFontFamily::Style style) const {
+  if (!getter || textCount == 0) return;
+  int fallbackFontId = fontId;
+  for (uint32_t i = 0; i < textCount && fallbackFontId == fontId; i++) {
+    const char* text = getter(ctx, i);
+    if (text && *text) fallbackFontId = resolveTextFontId(fontId, text, style);
+  }
+  const auto it = sdCardFonts_.find(fallbackFontId);
+  if (fallbackFontId == fontId || it == sdCardFonts_.end()) return;
+  const uint8_t styleMask = static_cast<uint8_t>(1u << (static_cast<uint8_t>(style) & 0x03));
+  it->second->prewarm(getter, ctx, textCount, styleMask, /*metadataOnly=*/false, /*loadKernLig=*/false);
 }
 
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
@@ -396,9 +465,11 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
                                const BidiUtils::BidiBaseDir /*baseDir*/) const {
-  const auto fontIt = fontMap.find(fontId);
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  if (resolvedFontId != fontId) ensureSdGlyphsResident(resolvedFontId, text, style, true);
+  const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
-    LOG_ERR("GFX", "Font %d not found", fontId);
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
     return 0;
   }
 
@@ -415,26 +486,29 @@ void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* te
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
                            const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir /*baseDir*/) const {
-  const int yPos = y + getFontAscenderSize(fontId);
+  // cannot draw a NULL / empty string
+  if (text == nullptr || *text == '\0') {
+    return;
+  }
+
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  if (resolvedFontId != fontId) ensureSdGlyphsResident(resolvedFontId, text, style, false);
+  int yPos = y + getFontAscenderSize(resolvedFontId);
+  if (resolvedFontId != fontId) yPos += (getLineHeight(fontId) - getLineHeight(resolvedFontId)) / 2;
   int lastBaseX = x;
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;
   int lastBaseTop = 0;
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
 
-  // cannot draw a NULL / empty string
-  if (text == nullptr || *text == '\0') {
-    return;
-  }
-
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
-    fontCacheManager_->recordText(text, fontId, style);
+    fontCacheManager_->recordText(text, resolvedFontId, style);
     return;
   }
 
-  const auto fontIt = fontMap.find(fontId);
+  const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
-    LOG_ERR("GFX", "Font %d not found", fontId);
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
     return;
   }
   const auto& font = fontIt->second;
@@ -1020,18 +1094,8 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
 
   // Dark mode + BW: icons are black-on-white; invert them to show as white-on-black.
   const size_t imageWidthBytes = (static_cast<size_t>(height) + 7U) / 8U;
-  const size_t totalBytes = imageWidthBytes * static_cast<size_t>(width);
-  if (totalBytes > kMaxIconBytes) {
-    // Fallback: draw as-is (rare; all current icons fit in kMaxIconBytes).
-    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
-    return;
-  }
-  uint8_t inverted[kMaxIconBytes] = {0};
-  if (!invertMonochromeBitmap(bitmap, totalBytes, inverted)) {
-    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
-    return;
-  }
-  display.drawImage(inverted, destX, destY, height, width);
+  auto invertedBitmap = invertMonochromeBitmap(bitmap, imageWidthBytes * width);
+  display.drawImage(invertedBitmap.data(), destX, destY, height, width);
 }
 
 void GfxRenderer::drawIconBlack(const uint8_t bitmap[], const int x, const int y, const int width,
@@ -1500,22 +1564,16 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
       return lines;
     }
 
-    // Skip any leading spaces (collapse consecutive spaces to the single
-    // separator used between words, so we never emit empty words or trailing
-    // spaces on a line).
-    size_t start = remaining.find_first_not_of(' ');
-    if (start == std::string::npos) {
-      break;  // only spaces left
-    }
-
+    // Find next word
+    size_t spacePos = remaining.find(' ');
     std::string word;
-    size_t spacePos = remaining.find(' ', start);
+
     if (spacePos == std::string::npos) {
-      word = remaining.substr(start);
+      word = remaining;
       remaining.clear();
     } else {
-      word = remaining.substr(start, spacePos - start);
-      remaining.erase(0, spacePos);
+      word = remaining.substr(0, spacePos);
+      remaining.erase(0, spacePos + 1);
     }
 
     std::string testLine = currentLine.empty() ? word : currentLine + " " + word;
@@ -1720,7 +1778,9 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style,
                                   const uint32_t /*followingCp*/) const {
-  auto sdIt = sdCardFonts_.find(fontId);
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  if (resolvedFontId != fontId) ensureSdGlyphsResident(resolvedFontId, text, style, true);
+  auto sdIt = sdCardFonts_.find(resolvedFontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
     int32_t widthFP = 0;
     const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
@@ -1741,9 +1801,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
     }
   }
 
-  const auto fontIt = fontMap.find(fontId);
+  const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
-    LOG_ERR("GFX", "Font %d not found", fontId);
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
     return 0;
   }
 
@@ -1812,9 +1872,11 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     return;
   }
 
-  const auto fontIt = fontMap.find(fontId);
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  if (resolvedFontId != fontId) ensureSdGlyphsResident(resolvedFontId, text, style, false);
+  const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
-    LOG_ERR("GFX", "Font %d not found", fontId);
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
     return;
   }
 

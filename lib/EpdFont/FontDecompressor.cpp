@@ -10,7 +10,6 @@ FontDecompressor::~FontDecompressor() { deinit(); }
 
 bool FontDecompressor::init() {
   clearCache();
-  _initialized = true;
   return true;
 }
 
@@ -34,12 +33,14 @@ void FontDecompressor::freePageBuffer() {
 }
 
 void FontDecompressor::freeHotGroup() {
-  hotGroup.clear();
-  hotGroup.shrink_to_fit();
+  free(hotGroup);
+  hotGroup = nullptr;
+  hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
-  hotGlyphBuf.clear();
-  hotGlyphBuf.shrink_to_fit();
+  free(hotGlyphBuf);
+  hotGlyphBuf = nullptr;
+  hotGlyphBufCapacity = 0;
 }
 
 uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex) {
@@ -60,15 +61,6 @@ uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t g
 
 bool FontDecompressor::decompressGroup(const EpdFontData* fontData, uint16_t groupIndex, uint8_t* outBuf,
                                        uint32_t outSize) {
-  // Lazy init — defer the 48 KB heap allocation (page buffers + inflate ring buffer)
-  // until the first font group is actually decompressed.  Most fonts on this device
-  // are loaded from SD card (pre-decompressed), so the FontDecompressor may never
-  // be needed at all.
-  if (!_initialized && !init()) {
-    LOG_ERR("FDC", "Lazy init failed");
-    return false;
-  }
-
   const EpdFontGroup& group = fontData->groups[groupIndex];
 
   const uint32_t tDecomp = millis();
@@ -180,24 +172,32 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Check if hot group already has this group decompressed — if not, decompress it
-  if (!(!hotGroup.empty() && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
+  if (!hotGroup && hotGroupFont == fontData && hotGroupIndex == groupIndex) {
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
-    hotGroup.resize(group.uncompressedSize);
-    if (hotGroup.empty()) {
-      LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
-      hotGroupFont = nullptr;
-      hotGroupIndex = UINT16_MAX;
-      stats.getBitmapTimeUs += micros() - tStart;
-      return nullptr;
+    hotGroupFont = nullptr;
+    hotGroupIndex = UINT16_MAX;
+    if (group.uncompressedSize > hotGroupCapacity) {
+      free(hotGroup);
+      hotGroup = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+      hotGroupCapacity = hotGroup ? group.uncompressedSize : 0;
+      if (!hotGroup && pageSlotCount > 0) {
+        LOG_DBG("FDC", "Releasing page font cache to retry %u-byte hot group", group.uncompressedSize);
+        freePageBuffer();
+        hotGroup = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+        hotGroupCapacity = hotGroup ? group.uncompressedSize : 0;
+      }
+      if (!hotGroup) {
+        LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u (free=%u maxAlloc=%u)", group.uncompressedSize,
+                groupIndex, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        stats.getBitmapTimeUs += micros() - tStart;
+        return nullptr;
+      }
     }
 
-    if (!decompressGroup(fontData, groupIndex, hotGroup.data(), group.uncompressedSize)) {
-      hotGroup.clear();
-      hotGroup.shrink_to_fit();
-      hotGroupFont = nullptr;
-      hotGroupIndex = UINT16_MAX;
+    if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
+      freeHotGroup();
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -210,18 +210,22 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Compact just the requested glyph from byte-aligned data into scratch buffer
-  if (glyph->dataLength > hotGlyphBuf.size()) {
-    hotGlyphBuf.resize(glyph->dataLength);
-  }
-  if (hotGlyphBuf.empty()) {
-    stats.getBitmapTimeUs += micros() - tStart;
-    return nullptr;
+  if (glyph->dataLength > hotGlyphBufCapacity) {
+    auto* resized = static_cast<uint8_t*>(realloc(hotGlyphBuf, glyph->dataLength));
+    if (!resized) {
+      LOG_ERR("FDC", "Failed to allocate %u-byte hot glyph buffer (free=%u maxAlloc=%u)", glyph->dataLength,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      stats.getBitmapTimeUs += micros() - tStart;
+      return nullptr;
+    }
+    hotGlyphBuf = resized;
+    hotGlyphBufCapacity = glyph->dataLength;
   }
 
   uint32_t alignedOff = getAlignedOffset(fontData, groupIndex, glyphIndex);
-  compactSingleGlyph(&hotGroup[alignedOff], hotGlyphBuf.data(), glyph->width, glyph->height);
+  compactSingleGlyph(&hotGroup[alignedOff], hotGlyphBuf, glyph->width, glyph->height);
   stats.getBitmapTimeUs += micros() - tStart;
-  return hotGlyphBuf.data();
+  return hotGlyphBuf;
 }
 
 // --- Prewarm: pre-decompress glyph bitmaps for a page of text ---
