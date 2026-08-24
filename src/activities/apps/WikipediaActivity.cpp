@@ -17,6 +17,7 @@
 
 #include "CrossPointSettings.h"
 #include "SdCardFontGlobals.h"
+#include "SilentRestart.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "activities/util/ListLayout.h"
 #include "activities/util/ListRenderHelper.h"
@@ -361,10 +362,15 @@ void WikipediaActivity::loop() {
       case State::SEARCH_INPUT:
       case State::ERROR:
         // Wikipedia uses WiFi (HTTP/HTTPS) which fragments the heap.
-        // Clean it up before returning to Home.
-        LOG_DBG("WIKI", "Back to Home: requesting seamless silent restart (free=%d maxA=%d)",
+        // Perform a seamless silent restart to clear the heap, routing
+        // back to the correct destination (Apps or Home) after reboot.
+        LOG_DBG("WIKI", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        silentRestartToHome();
+        if (launchFromApps) {
+          silentRestartToApps();
+        } else {
+          silentRestartToHome();
+        }
         // Unreachable: ESP.restart() above resets the CPU.
         finish(); break;
       case State::SEARCH_HISTORY:

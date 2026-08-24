@@ -40,6 +40,7 @@ class WikipediaActivity final : public Activity {
   size_t textLength = 0; // Lunghezza totale del testo (se in RAM) o dimensione file (se su SD)
   
   bool fromCache = false;
+  bool launchFromApps = false;
 
   std::vector<std::string> historyQueries;
   static constexpr const char* HISTORY_FILE = "/.crosspoint/wikipedia-history.txt";
@@ -102,9 +103,9 @@ class WikipediaActivity final : public Activity {
   void goBackToResults();
   void showError(const std::string& message);
 
- public:
-  explicit WikipediaActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Wikipedia", renderer, mappedInput) {}
+   public:
+  explicit WikipediaActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
+      : Activity("Wikipedia", renderer, mappedInput), launchFromApps(launchFromApps) {}
 
   void onEnter() override;
   void onExit() override;

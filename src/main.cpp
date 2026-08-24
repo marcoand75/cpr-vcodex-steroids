@@ -203,6 +203,7 @@ RTC_NOINIT_ATTR uint32_t silentRebootTarget;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
 
 // Latched once deep sleep is committed. WiFi activities also restart silently
 // from onExit(), but deep sleep already gives us a clean heap on wake.
@@ -240,6 +241,18 @@ void silentRestartToHome() {
   // The display.begin(true) in setup() will skip the white flash,
   // and the boot activity is skipped, so the user sees a brief
   // dark frame then Home appears — visually cleaner than the popup.
+   delay(20);
+  ESP.restart();
+}
+
+void silentRestartToApps() {
+  if (deepSleepInProgress) {
+    LOG_DBG("MAIN", "Silent restart to apps skipped: deepSleepInProgress");
+    return;
+  }
+  silentRebootTarget = SILENT_REBOOT_TARGET_APPS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=apps, seamless — no popup)");
   delay(20);
   ESP.restart();
 }
@@ -556,7 +569,7 @@ void setup() {
 
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_APPS) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
@@ -774,14 +787,16 @@ void setup() {
   const uint8_t syncDayReminderThreshold = SETTINGS.getSyncDayReminderStartThreshold();
   BootRecovery::enterStage(BootRecovery::BootStage::RouteDecision);
 
-  if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
-    // If we rebooted from a panic, go to crash report screen to show the panic info
-    activityManager.goToCrashReport();
-  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
-    activityManager.goToReader(APP_STATE.openEpubPath);
-  } else if (isSilentReboot) {
-    activityManager.goHome();
-  } else {
+   if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
+     // If we rebooted from a panic, go to crash report screen to show the panic info
+     activityManager.goToCrashReport();
+   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
+     activityManager.goToReader(APP_STATE.openEpubPath);
+   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
+     activityManager.goToApps();
+   } else if (isSilentReboot) {
+     activityManager.goHome();
+   } else {
     const bool bootToHome = forceHomeBoot || APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
                             mappedInputManager.isPressed(MappedInputManager::Button::Back) ||
                             APP_STATE.readerActivityLoadCount > 0;
