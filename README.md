@@ -51,18 +51,18 @@ On top of that, Steroids adds a substantial set of original features developed a
 >   own per-article folder for instant offline reopen and crash-safe recovery.
 > - **🟢 Guide dots & 📐 EPUB render modes** — optional word guides and
 >   Default/Balanced/Light rendering with isolated caches.
-> - **🕹️ Configurable long-press** — side and front buttons for bookmark/
->   clipping/chapter/orientation/font actions.
+> - **🕹️ Configurable Long-Press** — independent per-button actions for Up/Down (side) and Left/Right (front) long-press, plus expanded short power-button and Select long-press. Each button can be set to one of 14 `BUTTON_ACTION` values (Bookmark, Clipping, Chapter Skip, Orientation, Font Size, Dictionary, Dark Mode, Full Refresh, Quick Settings, Lookup Word, Bookmark Store, Clipping Store, Reading Timer, Off) via a reusable popup selector — replacing the old single legacy enum.
 > - **🌐 Web portal & OTA** — split device/app/steroids settings, dynamic fonts, Steroids
 >   branding, fork OTA manifest.
 > - **⚙️ System & i18n** — on-device STRING settings, clock/DS3231 X3 support,
 >   Italian translation overhaul, safety/memory optimizations.
-> - **🧹 Settings JSON split** — 37 Steroids-only settings in dedicated
+> - **🧹 Settings JSON split** — 43 Steroids-only settings in dedicated
 >   `settings-steroids.json`, leaving upstream `settings.json` byte-identical
 >   (zero merge conflicts). Dedicated `JsonSettingsIOSteroids.cpp` code file.
 > - **🔄 Silent restart** — seamless `ESP.restart()` on Back-to-Home from
->   Library/Wikipedia reclaims fragmented heap; `maxAlloc` rises from ~70 KB
->   to ~105 KB. Boot skips 4 stages (~1088ms saved) on silent reboot.
+>   Library/Wikipedia/Apps hub reclaims fragmented heap; `maxAlloc` rises from ~70 KB
+>   to ~105 KB. Boot skips 4 stages (~1088ms saved) on silent reboot. Context-aware
+>   routing: Library/Wikipedia launched from Apps return to Apps; others return to Home.
 > - **🏠 Home memory fast path** — the Home renders its global stats panel and
 >   per-book carousel badges from a lightweight `summary.json` snapshot, keeping
 >   the ~41 KB full reading-stats store out of RAM at boot (loaded lazily only
@@ -78,9 +78,8 @@ On top of that, Steroids adds a substantial set of original features developed a
 >   cards stored in `/cards/` on SD. BMP/JPEG/PNG images with auto-scaling and
 >   caching, structured QR field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone,
 >   SMS, OTP, calendar, URL), and Code‑128 barcodes. Cyberpunk panel UI.
-> - **🕹️ Select Long Press** — configurable Select button long-press during reading:
->   Bookmark (default), Reading Timer (pause/resume tracking), Off. Status bar
->   `|| PAUSED` indicator.
+> - **🕹️ Select Long Press** — expanded to 14 `BUTTON_ACTION` options (was 3). During reading, the Select button long-press can toggle bookmark, add/view clippings, lookup word, open dictionary, change orientation/font size, toggle dark mode, force refresh, open quick settings, toggle reading timer, or off. TXT/XTC readers restrict to Reading Timer and Off only. Status bar `|| PAUSED` indicator for reading timer mode.
+> - **⚡ Power Button Actions** — short power-button press expanded from 5 to 16 options, covering the same `BUTTON_ACTION` values plus legacy IGNORE/SLEEP/PAGE_TURN/FORCE_REFRESH/TOGGLE_STATUS_BAR. Enables actions like adding a bookmark or toggling dark mode directly from the power button during reading.
 > - **📐 Settings dividers** — thin separators group related settings within each
 >   tab (Display, Reader, Controls, System).
 > - **🖥️ Multi-device (X3/X4)** — freeink-sdk replacing open-x4-sdk; runtime
@@ -373,13 +372,20 @@ A dedicated app for browsing saved clippings across all books, accessible from t
 - **Configurable**: registered in `ShortcutRegistry` with location, order, and visibility settable via Settings → Shortcuts.
 - **Icon**: 32×32 paperclip icon (`ClipIcon32`) rendered in the LyraMarcoand75 home theme and Apps Hub.
 
-### 🕹️ Configurable Long-Press (Side + Front Buttons)
+### 🕹️ Configurable Long-Press (Side + Front Buttons, Power Button, Select Button)
 
-Long-press on both side and front buttons can now be configured for quick bookmark/clipping access.
+Replaces the single `longPressButtonBehavior` (side buttons) and `frontLongPressBehavior` (front buttons) with independently configurable per-button actions. Each button now supports the full `BUTTON_ACTION` enum (14 actions):
 
-- **Side buttons** (renamed "Long-press side buttons"): two new options added: **Bookmarks** (long-press UP=toggle bookmark, DOWN=View Bookmarks) and **Clippings** (UP=enter clipping mode, DOWN=View Clippings). Existing Chapter Skip and Orientation Change options unchanged.
-- **Front buttons** (new setting "Long-press front buttons"): controls long-press of Left/Right front buttons while reading. Options: Off, Bookmarks, Clippings. Left=toggle/enter, Right=open list.
-- `ReaderUtils::PageTurnResult` now carries a `fromFrontButton` flag so the reader can distinguish front-button holds from side-button holds.
+- **Long-press Up** — side button Up (default: Chapter Skip)
+- **Long-press Down** — side button Down (default: Chapter Skip)
+- **Long-press Left** — front button Left (default: Off)
+- **Long-press Right** — front button Right (default: Off)
+- **Short power button** — expanded from 5 to 16 options (original 5 plus all `BUTTON_ACTION` values except `READING_TIME`)
+- **Select long-press** — expanded from 3 to 14 `BUTTON_ACTION` options (TXT/XTC readers restrict to `READING_TIME` and `OFF` only)
+
+A reusable `ButtonActionSelectorActivity` popup (with circular wrap-around navigation) fires from Settings → Controls for all 6 settings.
+
+**Backward compatibility:** legacy `longPressButtonBehavior` and `frontLongPressBehavior` fields are migrated to per-directional settings on first load. If a per-directional setting is `OFF` and the legacy field is non-default, the legacy value is used as fallback for both Up+Down (side) or Left+Right (front) buttons. The `selectLongPress` legacy enum is similarly migrated to `selectLongPressBehavior`.
 
 ### 🇮🇹 Italian Translation Overhaul
 
@@ -425,7 +431,7 @@ Long-press on both side and front buttons can now be configured for quick bookma
 | **EPUB Render Modes** | 📐 Reading | Default / Balanced / Light modes with isolated caches per mode; automatic fallback chain |
 | **Section Cache v44** | 🌐 System | EPUB format bump with magic header, new cache-busting fields, offset calculation fix |
 | **Clippings App** | 📱 Apps | Standalone app for browsing clippings per book; configurable Home/Apps Hub shortcut |
-| **Configurable Long-Press** | 🕹️ Controls | Side and front button long-press for bookmarks/clippings toggle and navigation |
+| **Configurable Long-Press** | 🕹️ Controls | Independent per-button actions for Up/Down (side) and Left/Right (front) long-press, plus expanded short power-button (16 options) and Select long-press (14 options). All use the unified `BUTTON_ACTION` enum via a popup selector. Backward-compatible migration from legacy enums. |
 | **Italian Translations** | 🇮🇹 i18n | 924 keys aligned with English; 84 new + 14 corrected translations; long strings shortened |
 | **Reader Menu Icons Fixed** | 🎯 UI | All 32×32 menu icons replaced with proper 24×24 versions; 4 blank icons regenerated from SVGs (QR, percent, screenshot, delete cache); 2 new clipping icons |
 | **Screensaver Font Sizes** | 🛡️ Screensaver | X-Small and X-Large font sizes added using Bookerly for the reading dashboard overlay |
@@ -457,7 +463,7 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
 | Current upstream base | [`1.5.0.20-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.20-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), configurable long-press, EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, boot lazy-loading of stores, settings JSON split (37 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening |
+| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), per-directional configurable long-press (Up/Down/Left/Right, 14 `BUTTON_ACTION` options, popup selector), expanded short power-button (16 options) and Select long-press (14 options), EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, boot lazy-loading of stores, settings JSON split (43 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |

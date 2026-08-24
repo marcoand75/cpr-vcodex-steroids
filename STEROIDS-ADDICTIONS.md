@@ -554,9 +554,7 @@ words from chapter start to the beginning of `page`. Bookmarks store
   upgrade path that generates it once from the existing store. Detail in [§22](#22-home-reading-stats-summary-json-fast-path).
 - **Power button / deep-sleep state machine** (see §4.3).
 
-- **Select Long Press configuration** (`CrossPointSettings::selectLongPress`) — 3 modes:
-  Bookmark (default, toggle bookmark on current page), Reading Timer (toggle reading
-  time tracking pause/resume), Off. Popup feedback and `|| PAUSED` status bar indicator.
+- **Select Long Press configuration** (`CrossPointSettings::selectLongPressBehavior`) — expanded from 3 to 14 `BUTTON_ACTION` options. Default is Toggle Bookmark; also supports Add/View Clippings, Lookup Word, Dictionary, Chapter Skip, Orientation, Font Size, Dark Mode, Full Refresh, Quick Settings, Reading Timer (pause/resume tracking), and Off. A `|| PAUSED` status bar indicator appears when reading timer is paused. TXT/XTC readers restrict to `READING_TIME` and `OFF` only.
 - **Status bar clock hidden on X4** (device without DS3231 RTC) — Status Bar
   customization menu filters out Clock/Clock Format/Sync Clock Now on X4 hardware.
 - **Settings dividers** — thin horizontal separator lines group related settings within
@@ -646,10 +644,20 @@ pale result from the upstream disabled/no-adjustment pipeline.
 
 ---
 
-## 8.5. Expanded Long-Press Button Actions
+## 8.5. Expanded Long-Press Button Actions (Superseded by §8.5.2)
 
-Added 4 new assignable actions to both side-button and front-button long-press
-settings, expanding the enum from 6 to 10 options each:
+> **Note:** Section 8.5 described an intermediate expansion that added 4 new
+> assignable actions to the legacy `LONG_PRESS_BUTTON_BEHAVIOR` and
+> `FRONT_LONG_PRESS_BEHAVIOR` enums (Dictionary, Dark Mode, Full Refresh, Quick
+> Settings), expanding them from 6 to 10 values. This approach has been
+> **superseded** by the §8.5.2 per-directional `BUTTON_ACTION` enum (14 values)
+> architecture. The legacy enums and their 10-value expansion are now kept only
+> for backward compatibility and migration; all new code uses `BUTTON_ACTION`
+> with the per-directional fields described in §8.5.2.
+
+The intermediate expansion added 4 new assignable actions to both side-button
+and front-button long-press settings, expanding the legacy enum from 6 to 10
+options each:
 
 | New Value | Label (EN) | Label (IT) | Effect |
 |---|---|---|---|
@@ -746,7 +754,7 @@ reintroduce standalone `STEROIDS-LIBRARY.md` or `STEROIDS-APP-ICON-THEME.md`:
 
 Since 2026-08-04, Steroids-only settings are stored in a separate JSON file
 (`/.crosspoint/settings-steroids.json`) rather than being mixed into the
-upstream `/.crosspoint/settings.json`. This isolates the 37 Steroids-specific
+upstream `/.crosspoint/settings.json`. This isolates the 43 Steroids-specific
 fields from the ~107 upstream fields, making `JsonSettingsIO.cpp` save/load
 functions byte-identical to upstream — zero merge conflicts on future upstream
 releases.
@@ -761,10 +769,10 @@ dead code (~230 lines of unreachable generic settings loader) was removed.
 | File | Contents |
 |------|----------|
 | `/.crosspoint/settings.json` | ~107 upstream CrossPoint settings (byte-identical to upstream) |
-| `/.crosspoint/settings-steroids.json` | 37 Steroids-only settings with `formatVersion: 1` |
+| `/.crosspoint/settings-steroids.json` | 43 Steroids-only settings with `formatVersion: 1` |
 | `/.crosspoint/settings-steroids.json.bak` | **Pre-migration backup** of the original unified `settings.json`, created once during migration. Keep for manual rollback if needed. |
 
-### Steroids-only fields (37 fields, 5 diverged from upstream)
+### Steroids-only fields (43 fields, 5 diverged from upstream)
 
 Fields with diverging enum values/counts/defaults from upstream:
 | Field | Divergence |
@@ -779,12 +787,12 @@ All other fields are unique to Steroids (not present in upstream at all):
 | Category | Fields |
 |---|---|
 | **Display/Theme** | `darkMode`, `antiGhostingExperimental`, `displayDay`, `clockFormat` |
-| **Font/Rendering** | `guideReadingEnabled`, `dotsSpacing`, `epubRenderMode` |
-| **Controls** | `frontLongPressBehavior`, `cycleScreensaverOnTap` |
+| **Font/Rendering** | `fontFamily`, `guideReadingEnabled`, `dotsSpacing`, `epubRenderMode` |
+| **Controls** | `longPressButtonBehavior` (legacy), `frontLongPressBehavior` (legacy), `longPressUpBehavior`, `longPressDownBehavior`, `frontLongPressLeftBehavior`, `frontLongPressRightBehavior`, `shortPwrBtn`, `selectLongPressBehavior`, `selectLongPress` (legacy), `cycleScreensaverOnTap` |
 | **Status bar** | `statusBarTimeLeft` |
 | **Library** | `libraryLayout`, `libraryFilter`, `librarySort`, `librarySearchText`, `libraryRootDir`, `libraryUpdateMode`, `libraryLastCleanupDay` |
 | **Screensaver** | `screenSaverDirectory`, `screenSaverOrder`, `screenSaverInterval`, `screenSaverWakeButton`, `screenSaverReaderDir`, `screenSaverReaderOrder`, `screenSaverText`, `screenSaverFontSize`, `screenSaverTextPosition`, `screenSaverTextStyle`, `screenSaverShowPanel`, `screenSaverPanelColor`, `screenSaverPanelOpacity`, `screenSaverMinBattery`, `screenSaverReplaceSleep` |
-| **Shortcuts** | `libraryShortcut*`, `screenSaverShortcut*`, `clippingsShortcut*`, `wikipediaShortcut*` |
+| **Shortcuts** | `libraryShortcut*`, `screenSaverShortcut*`, `clippingsShortcut*`, `wikipediaShortcut*`, `quickCardsShortcut*` |
 
 ### Migration
 
@@ -807,7 +815,7 @@ the old file is preserved and migration retries on next boot.
 Three web pages with clean separation:
 - `/settings` — upstream-only device settings (~50 fields from WEB_SETTINGS)
 - `/app-settings` — upstream app settings (SyncDay, Reading Stats, Achievements, Flashcards, Shortcuts, KOReader, Status Bar)
-- `/steroids-settings` — all 37 Steroids fields via dedicated `/api/steroids-settings` endpoints
+- `/steroids-settings` — all 43 Steroids fields via dedicated `/api/steroids-settings` endpoints
 
 ### Rollback safety
 
@@ -835,6 +843,10 @@ The reboot is visually seamless: no "Loading..." popup, no white flash
 **Activities that trigger silent restart on Back-to-Home:**
 - `LibraryActivity` — library cache, thumbnail parser, book index vectors
 - `WikipediaActivity` — WiFi socket buffers, TLS session, HTTP response chunks
+- Context-aware routing: when Library or Wikipedia (or other apps) are launched
+  from the **Apps hub**, Back returns to Apps instead of Home; otherwise Back
+  returns to Home. The `launchFromApps` flag on each activity controls this, and
+  `silentRestartToApps()` / `silentRestartToHome()` route accordingly.
 
 **Silent reboot boot optimizations (saving ~1088ms):**
 - KOReader credential profiles skipped (unchanged mid-session)

@@ -48,12 +48,14 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | `src/icons/*` (various .h files) | Steroids custom icons |
 | `agent-docs/*` | Steroids documentation |
 | `README.md` (sections marked "Steroids") | Steroids feature documentation |
-| **`src/JsonSettingsIO.cpp`** | **ALL Steroids settings serialization (shortcuts, library, screensaver, clippings, longPress, etc.)** |
-| **`src/JsonSettingsIO.h`** | **Steroids-specific function declarations** |
+| **`src/JsonSettingsIO.cpp/h`** | **Upstream-only (byte-identical to upstream); zero merge conflicts** |
+| **`src/JsonSettingsIOSteroids.cpp/h`** | **ALL Steroids-only settings serialization (per-directional buttons, shortPwrBtn, selectLongPressBehavior, library, screensaver, clippings, etc. — 43 fields)** |
+| **`src/JsonSettingsIOShared.inc`** | **Shared internal serialization helpers (saveJsonDocumentToFile, loadJsonDocumentFromFile, migration functions)** |
+| **`src/activities/settings/ButtonActionSelectorActivity.cpp/h`** | **Reusable popup selector for all BUTTON_ACTION settings (14 options, SHORT_PWRBTN mode with 16 options, circular wrap-around)** |
 | **`src/network/CrossPointWebServer.cpp`** | **App Settings page route, logo endpoint, Steroids routes** |
 | **`src/network/CrossPointWebServer.h`** | **Steroids-specific handler declarations** |
 | **`src/network/html/AppSettingsPage.html`** | **Browser stats/settings editor (deleted by upstream!)** |
-| **`src/SettingsList.cpp`** | **Steroids menu items (library, screensaver, frontLongPress, clippingsShortcut, etc.)** |
+| **`src/SettingsList.cpp`** | **Steroids menu items (library, screensaver, per-directional longPress, clippingsShortcut, etc.)** |
 | **`src/activities/ActivityManager.cpp/h`** | **goToLibrary, goToScreensaver, goToClippings methods** |
 | **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary)** |
 | **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot)** |
@@ -141,14 +143,14 @@ found missing in Steroids and have been restored:
 ### 2026-08-04: Steroids Settings JSON Split (v2 — complete separation)
 
 **Key architectural change:** Steroids settings are now stored in a separate JSON file
-(`/.crosspoint/settings-steroids.json`) instead of being mixed into
-`/.crosspoint/settings.json`. All steroids I/O code is also extracted to
-`JsonSettingsIOSteroids.cpp` so that `JsonSettingsIO.cpp` stays **byte-identical
-to upstream** — zero merge conflicts in the entire file.
+  (`/.crosspoint/settings-steroids.json`) instead of being mixed into
+  `/.crosspoint/settings.json`. All steroids I/O code is also extracted to
+  `JsonSettingsIOSteroids.cpp` so that `JsonSettingsIO.cpp` stays **byte-identical
+  to upstream** — zero merge conflicts in the entire file.
 
 **How it works:**
-- `settings.json` (~122 fields): upstream-only, byte-identical to upstream
-- `settings-steroids.json` (~37 fields): Steroids-only with `formatVersion: 1`
+- `settings.json` (~107 fields): upstream-only, byte-identical to upstream
+- `settings-steroids.json` (~43 fields): Steroids-only with `formatVersion: 1`
 - `CrossPointSettings::saveToFile()` saves to BOTH files transparently
 - `CrossPointSettings::loadFromFile()` loads upstream first, then Steroids
 - One-shot migration: on first boot after upgrade, if `settings-steroids.json` doesn't
@@ -159,18 +161,19 @@ to upstream** — zero merge conflicts in the entire file.
 These fields exist in upstream but have been moved to `settings-steroids.json`
 because Steroids uses different enum values, counts, or defaults:
 
+
 | Field | Reason for move |
 |---|---|
-| `longPressButtonBehavior` | Steroids adds BOOKMARK=1, CLIPPING=2, FONTSIZE=5 (6 values vs upstream's 3) |
+| `longPressButtonBehavior` | Steroids adds BOOKMARK=1, CLIPPING=2, FONTSIZE=5 + extended to 10 values (Dictionary=6, Dark Mode=7, Full Refresh=8, Quick Settings=9) vs upstream's 3 |
 | `clockFormat` | Steroids inverts meaning: 0=24h/1=12h (upstream had 0=12h/1=24h → now aligned) |
 | `fontFamily` | Steroids adds LEXEND=2 (upstream has 2 values, Steroids has 3) |
 | `uiTheme` | Steroids adds LYRA_MARCOAND75=3 (upstream has 3 values, Steroids has 4) |
 | `displayDay` | Steroids changes default from 1 (DATE_ONLY) to 2 (TIME_ONLY) |
 
-**All Steroids-only fields in `settings-steroids.json`:**
+**All Steroids-only fields in `settings-steroids.json` (43 fields):**
 - Display/Theme: `uiTheme`, `darkMode`, `antiGhostingExperimental`, `displayDay`, `clockFormat`
 - Font/Rendering: `fontFamily`, `guideReadingEnabled`, `dotsSpacing`, `epubRenderMode`
-- Controls: `longPressButtonBehavior`, `frontLongPressBehavior`, `cycleScreensaverOnTap`
+- Controls: `longPressButtonBehavior` (legacy), `frontLongPressBehavior` (legacy), `cycleScreensaverOnTap`, **`longPressUpBehavior`**, **`longPressDownBehavior`**, **`frontLongPressLeftBehavior`**, **`frontLongPressRightBehavior`**, **`shortPwrBtn`**, **`selectLongPressBehavior`**
 - Status bar: `statusBarTimeLeft`
 - Library: `libraryLayout`, `libraryFilter`, `librarySort`, `librarySearchText`,
   `libraryRootDir`, `libraryUpdateMode`, `libraryLastCleanupDay`
@@ -210,7 +213,7 @@ Steroids settings revert to struct defaults — upstream settings are unaffected
 ### Why JsonSettingsIO.cpp is NO LONGER critical (v2 split)
 
 As of the 2026-08-04 settings split, `JsonSettingsIO.cpp` is **byte-identical to
-upstream**. All 37 Steroids-only fields are now serialized in
+upstream**. All 43 Steroids-only fields are now serialized in
 `src/JsonSettingsIOSteroids.cpp` which upstream never touches. This means:
 
 - **Zero merge conflicts** in `JsonSettingsIO.cpp` on any future upstream release
@@ -253,18 +256,24 @@ migration had issues. It is safe to delete after confirming everything works.
 
 ### Silent restart mechanism
 
-When returning to Home from Library or Wikipedia, the system uses
-`silentRestartToHome()` — a `ESP.restart()` variant that skips the
-"Loading..." popup and the panel white flash. The boot sequence skips
-KOReader, Flashcard, OPDS loads and ReadingStats backup (~1088ms saved).
-This provides a clean heap on return to Home with `maxAlloc` rising from
+When returning to Home from memory-intensive activities, the system uses
+`silentRestartToHome()` (or `silentRestartToApps()` when returning to the Apps hub)
+— a `ESP.restart()` variant that skips the "Loading..." popup and the panel white flash.
+The boot sequence skips KOReader, Flashcard, OPDS loads and ReadingStats backup
+(~1088ms saved). This provides a clean heap on return with `maxAlloc` rising from
 ~70 KB to ~105 KB.
+
+**Context-aware routing:** Activities launched from the Apps hub (Library, Wikipedia,
+etc.) return to Apps on Back via `silentRestartToApps()`; all others return to Home
+via `silentRestartToHome()`. Each activity carries a `launchFromApps` flag
+(see `WikipediaActivity`, `LibraryActivity`, `AppsActivity`).
 
 The `SilentRestart.h` API:
 ```cpp
 void silentRestart();          // Home, with "Loading..." popup (WiFi exit)
 void silentRestartToReader();  // Currently-open EPUB (WiFi exit)
 void silentRestartToHome();    // Home, seamless — no popup (Library/Wikipedia exit)
+void silentRestartToApps();    // Apps hub, seamless — no popup (when launched from Apps)
 ```
 
 ---
@@ -338,13 +347,38 @@ void normalizeDisplayDay() {
 bool isHardwareRtcAutoDayClockActive() const { return true; }
 ```
 
-**Steroids also expands the long-press behavior enums beyond upstream:**
+**Steroids replaces the legacy long-press enums with a unified `BUTTON_ACTION` enum:**
 
-- `LONG_PRESS_BUTTON_BEHAVIOR` (side buttons) adds `LONG_PRESS_BOOKMARK = 3`, `LONG_PRESS_CLIPPING = 4`, `LONG_PRESS_FONTSIZE = 5` — upstream only has OFF, CHAPTER_SKIP, ORIENTATION_CHANGE (0-2).
-- `FRONT_LONG_PRESS_BEHAVIOR` (front buttons) is entirely Steroids-specific. Upstream has NO separate front button long-press setting. The values are: `FRONT_LONG_PRESS_OFF = 0`, `FRONT_LONG_PRESS_BOOKMARK = 1`, `FRONT_LONG_PRESS_CLIPPING = 2`, `FRONT_LONG_PRESS_CHAPTER_SKIP = 3`, `FRONT_LONG_PRESS_ORIENTATION = 4`, `FRONT_LONG_PRESS_FONTSIZE = 5`.
-- Both enums use the **same option order**: OFF, BOOKMARK, CLIPPING, CHAPTER_SKIP, ORIENTATION, FONTSIZE.
-- **2026-08-23 expansion** (both enums): added `LONG_PRESS_DICTIONARY = 6`, `LONG_PRESS_DARK_MODE = 7`, `LONG_PRESS_FULL_REFRESH = 8`, `LONG_PRESS_READER_SETTINGS = 9`. Same values apply to `FRONT_LONG_PRESS_*` variants. These are dispatched in `EpubReaderActivity.cpp` and are backward-compatible (old saved settings 0–5 are unchanged).
-- If upstream modifies these enums, NEVER take their version — always keep the local expanded enums.
+- **`BUTTON_ACTION`** (14 values): `BTN_ACTION_OFF`, `BTN_ACTION_ADD_CLIPPING`,
+  `BTN_ACTION_VIEW_CLIPPINGS`, `BTN_ACTION_TOGGLE_BOOKMARK`,
+  `BTN_ACTION_VIEW_BOOKMARKS`, `BTN_ACTION_LOOKUP_WORD`, `BTN_ACTION_DICTIONARY`,
+  `BTN_ACTION_CHAPTER_SKIP`, `BTN_ACTION_ORIENTATION`, `BTN_ACTION_FONTSIZE`,
+  `BTN_ACTION_DARK_MODE`, `BTN_ACTION_FULL_REFRESH`,
+  `BTN_ACTION_READER_SETTINGS`, `BTN_ACTION_READING_TIME`.
+- **Per-directional settings** replace the single `longPressButtonBehavior` (side)
+  and `frontLongPressBehavior` (front):
+  - `longPressUpBehavior`, `longPressDownBehavior` (side buttons Up/Down)
+  - `frontLongPressLeftBehavior`, `frontLongPressRightBehavior` (front buttons Left/Right)
+  - `shortPwrBtn` (expanded from 5 to 16 options — legacy `IGNORE`/`SLEEP`/
+    `PAGE_TURN`/`FORCE_REFRESH`/`TOGGLE_STATUS_BAR` plus all `BUTTON_ACTION`
+    values except `READING_TIME`)
+  - `selectLongPressBehavior` (expanded from 3 to 14 `BUTTON_ACTION` options;
+    TXT/XTC readers restrict to `READING_TIME` and `OFF`)
+- **Legacy enums preserved** for backward compatibility:
+  `LONG_PRESS_BUTTON_BEHAVIOR` (10 values, 0–9), `FRONT_LONG_PRESS_BEHAVIOR`
+  (10 values, 0–9), `SELECT_LONG_PRESS_LEGACY` (3 values, 0–2). Migration
+  functions in `JsonSettingsIOSteroids.cpp` (`legacyLongPressToButtonAction`,
+  `legacyFrontLongPressToButtonAction`) convert these to per-directional fields
+  on first load if the new fields are at their `OFF`/`BTN_ACTION_OFF` defaults.
+- **Never take upstream's versions** of `LONG_PRESS_BUTTON_BEHAVIOR`,
+  `FRONT_LONG_PRESS_BEHAVIOR`, or `SELECT_LONG_PRESS_LEGACY` — always keep the
+  local expanded enums. The `SHORT_PWRBTN` enum is entirely Steroids-specific
+  with backward-compat aliases.
+- `ButtonActionSelectorActivity` (popup selector with circular wrap-around)
+  is the settings UI entry point for all 6 new settings; dispatched from
+  `SettingsActivity.cpp`.
+- Readers dispatch via `ReaderUtils::ButtonDirection` (UP/DOWN/LEFT/RIGHT/NEUTRAL)
+  and `handleButtonAction(action, prevTriggered, nextTriggered, direction)`.
 
 ### 2. `src/main.cpp` — Add HalClock init
 
@@ -431,6 +465,17 @@ These files were added in the 2026-08-10 Steroids development round and must nev
 | `freeink-sdk/` | Replaces `open-x4-sdk` — multi-device SDK |
 | `platformio.ini` | Added `BoardConfig`, `XteinkDetect`, `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1` |
 
+### New Additions (2026-08-23 → 2026-08-24, per-directional button actions (#55))
+
+These files were added/expanded for the per-directional long-press, power button, and
+select long-press configuration. Must never be overwritten:
+
+| File | Steroids Feature |
+|---|---|
+| `src/activities/settings/ButtonActionSelectorActivity.cpp/h` | Reusable popup selector for all `BUTTON_ACTION` settings with circular wrap-around navigation |
+| `src/JsonSettingsIOSteroids.cpp/h` | Steroids-only settings serialization (43 fields, including per-directional button actions) |
+| `src/JsonSettingsIOShared.inc` | Shared internal serialization helpers (saveJsonDocumentToFile, migration functions) |
+
 ### New Additions (2026-08-09 → 2026-08-18, base `07126f2b` → HEAD)
 
 Added/restructured between `07126f2b` and `4eaf2371`. Some of these are brand-new
@@ -476,11 +521,12 @@ Guide Dots, EPUB render modes). **Always keep local:**
 - `lib/EpdFont/EpdFont.h/cpp` — added `hasCodepoint()` (preserves SMALL_CAPS=64)
 - `lib/EpdFont/EpdFontFamily.h/cpp` — added `hasCodepoint(Style)` (preserves enum)
 - `lib/EpdFont/EpdFontData.h` — added `coverageHandler` field
-- `lib/GfxRenderer/FontCacheManager.h/cpp` — `scanFontIdSet_` flag
-- `src/ReadingStatsStore.h/cpp` — pace tracking + summary.json fast path
-- `src/JsonSettingsIO.cpp/h` — settings JSON split (byte-identical to upstream)
-- `src/JsonSettingsIOSteroids.cpp/h` — Steroids-only settings serialization
-- `src/JsonSettingsIOShared.inc` — shared internal serialization helpers
+ - `lib/GfxRenderer/FontCacheManager.h/cpp` — `scanFontIdSet_` flag
+ - `src/ReadingStatsStore.h/cpp` — pace tracking + summary.json fast path
+ - `src/JsonSettingsIO.cpp/h` — settings JSON split (byte-identical to upstream)
+ - `src/JsonSettingsIOSteroids.cpp/h` — Steroids-only settings serialization (43 fields)
+ - `src/JsonSettingsIOShared.inc` — shared internal serialization helpers
+ - `src/activities/settings/ButtonActionSelectorActivity.cpp/h` — per-directional button action popup selector
 
 ---
 
@@ -684,7 +730,7 @@ After completing a merge, verify these items ON DEVICE (not just build):
 
 | # | Check | Expected result |
 |---|---|---|
-| 1 | Open Settings → Controls → Front Long Press | Should show OFF/Bookmark/Clipping options |
+| 1 | Open Settings → Controls → Long-press Left / Long-press Right | Should show all 14 BUTTON_ACTION options via ButtonActionSelectorActivity popup |
 | 2 | Open Settings → Apps → Clippings Shortcut | Should show location picker |
 | 3 | Open Settings → Apps → Library Shortcut | Should show location picker |
 | 4 | Open Settings → Apps → Screensaver Shortcut | Should show location picker |
@@ -692,13 +738,15 @@ After completing a merge, verify these items ON DEVICE (not just build):
 | 6 | Open Web Browser → Settings | Device settings visible |
 | 7 | Open Web Browser → App Settings | App settings visible with Steroids sections |
 | 8 | Open Web Browser → Home | Logo.png visible, About card with Author + GitHub link |
-| 9 | Long press left/right side buttons in reader | Should trigger configured action (chapter skip, bookmark, clipping, orientation, font size) |
-| 10 | Long press front buttons in reader | Should trigger configured action (bookmark, clipping, chapter skip, orientation, font size) |
+| 9 | Long press side buttons (Up/Down) in reader | Should trigger configured action (chapter skip, bookmark, clipping, orientation, font size, dictionary, dark mode, full refresh, quick settings) |
+| 10 | Long press front buttons (Left/Right) in reader | Should trigger configured action (chapter skip, bookmark, clipping, orientation, dark mode, full refresh, quick settings) |
 | 10b | Long press UP/DOWN side button (font size mode) | Font size increases on DOWN, decreases on UP |
-| 10c | Open Settings > Controls > Long-press side buttons | All 6 options present: OFF, Bookmarks, Clippings, Chapter skip, Orientation change, Font size |
-| 10d | Open Settings > Controls > Long-press front buttons | Same 6 options as side buttons |
-| 10e | Open Settings > Customize Status Bar | 11 items including Clock position, Clock format, Sync clock now |
-| 10f | Open Home screen (top header) on X3 with DS3231 | Date/time visible even without prior NTP sync |
+| 10c | Open Settings > Controls > Long-press Up / Long-press Down | All 14 BUTTON_ACTION options present: Off, Add Clipping, View Clippings, Toggle Bookmark, View Bookmarks, Lookup Word, Dictionary, Chapter Skip, Orientation, Font Size, Dark Mode, Full Refresh, Quick Settings, Reading Timer |
+| 10d | Open Settings > Controls > Long-press Left / Long-press Right | Same 14 BUTTON_ACTION options as Up/Down |
+| 10e | Open Settings > Controls > Short Power Button | All 16 SHORT_PWRBTN options: Ignore, Sleep, Page Turn, Force Refresh, Toggle Status Bar, Off, Add Clipping, View Clippings, Toggle Bookmark, View Bookmarks, Lookup Word, Dictionary, Chapter Skip, Orientation, Dark Mode, Full Refresh |
+| 10f | Open Settings > Controls > Select Long Press | All 14 BUTTON_ACTION options (TXT/XTC restricted to Reading Timer + Off) |
+| 10g | Open Settings > Customize Status Bar | 11 items including Clock position, Clock format, Sync clock now |
+| 10h | Open Home screen (top header) on X3 with DS3231 | Date/time visible even without prior NTP sync |
 | 11 | Open Reading Stats | Should show pace info and book stats |
 | 12 | Library cover generation | Should not crash on corrupt EPUBs |
 
@@ -1209,7 +1257,7 @@ deltas to watch in the next upstream pull. Details by feature in
   `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
   Steroids string keys (keep local; see I18N workflow).
 - **Settings JSON split** (2026-08-04): `JsonSettingsIO.cpp` is byte-identical to
-  upstream; all 37 Steroids-only fields live in `JsonSettingsIOSteroids.cpp`.
+  upstream; all 43 Steroids-only fields live in `JsonSettingsIOSteroids.cpp`.
   `CrossPointSettings.h` is the only conflict zone (~20 lines of POD struct changes).
   See §3 of this guide for the merge procedure.
 - **SdCardFont storage** is now at the Steroids-cherry-picked 1.5.0.20 version.
