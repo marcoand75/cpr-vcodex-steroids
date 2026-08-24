@@ -173,13 +173,7 @@ void ClippingsActivity::render(RenderLock&&) {
 
 void ClippingsActivity::renderList() {
   const int totalItems = static_cast<int>(clippings.size());
-  if (totalItems == 0) {
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_NO_CLIPPINGS), true, EpdFontFamily::BOLD);
-    renderer.displayBuffer();
-    return;
-  }
-
-  const auto pageWidth = renderer.getScreenWidth();
+  const int pageWidth = renderer.getScreenWidth();
   const auto orientation = renderer.getOrientation();
   const bool isLandscapeCw = orientation == GfxRenderer::Orientation::LandscapeClockwise;
   const bool isLandscapeCcw = orientation == GfxRenderer::Orientation::LandscapeCounterClockwise;
@@ -190,11 +184,21 @@ void ClippingsActivity::renderList() {
   const int hintGutterHeight = isPortraitInverted ? 50 : 0;
   const int contentY = hintGutterHeight;
 
+  // Header title (same as populated list)
   const char* rawTitle = tr(STR_VIEW_CLIPPINGS);
   const std::string title = renderer.truncatedText(UI_12_FONT_ID, rawTitle, contentWidth - 20);
   const int titleX =
       contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, title.c_str(), EpdFontFamily::BOLD)) / 2;
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, title.c_str(), true, EpdFontFamily::BOLD);
+
+  if (totalItems == 0) {
+    // Empty state: centered message + button hints
+    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_NO_CLIPPINGS), true, EpdFontFamily::BOLD);
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
 
   const int startY = 60 + contentY;
   constexpr int lineHeight = 30;

@@ -151,12 +151,6 @@ void BookmarksActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   const int totalItems = static_cast<int>(bookmarks.size());
-  if (totalItems == 0) {
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_NO_BOOKMARKS), true, EpdFontFamily::BOLD);
-    renderer.displayBuffer();
-    return;
-  }
-
   const auto pageWidth = renderer.getScreenWidth();
   const auto orientation = renderer.getOrientation();
   const bool isLandscapeCw = orientation == GfxRenderer::Orientation::LandscapeClockwise;
@@ -167,13 +161,24 @@ void BookmarksActivity::render(RenderLock&&) {
   const int contentWidth = pageWidth - hintGutterWidth;
   const int hintGutterHeight = isPortraitInverted ? 50 : 0;
   const int contentY = hintGutterHeight;
-  const int pageItems = getPageItems();
 
+  // Header title (same as populated list)
   const char* rawTitle = headerTitle.empty() ? tr(STR_BOOKMARKS) : headerTitle.c_str();
   const std::string title = renderer.truncatedText(UI_12_FONT_ID, rawTitle, contentWidth - 20);
   const int titleX =
       contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, title.c_str(), EpdFontFamily::BOLD)) / 2;
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, title.c_str(), true, EpdFontFamily::BOLD);
+
+  if (totalItems == 0) {
+    // Empty state: centered message + button hints
+    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_NO_BOOKMARKS), true, EpdFontFamily::BOLD);
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
+  const int pageItems = getPageItems();
 
   const auto pageStartIndex = selectorIndex / pageItems * pageItems;
   renderer.fillRect(contentX, 60 + contentY + (selectorIndex % pageItems) * 30 - 2, contentWidth - 1, 30);
