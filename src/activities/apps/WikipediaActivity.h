@@ -37,10 +37,10 @@ class WikipediaActivity final : public Activity {
   // Buffer fisso di 16KB per la lettura sicura
   static constexpr size_t TEXT_BUF_SIZE = 16384;
   std::unique_ptr<char[]> textBuffer;
-  size_t textLength = 0; // Lunghezza totale del testo (se in RAM) o dimensione file (se su SD)
-  
-  bool fromCache = false;
-  bool launchFromApps = false;
+   size_t textLength = 0; // Lunghezza totale del testo (se in RAM) o dimensione file (se su SD)
+   
+   bool fromCache = false;
+   bool launchFromApps = false;
 
   std::vector<std::string> historyQueries;
   static constexpr const char* HISTORY_FILE = "/.crosspoint/wikipedia-history.txt";
