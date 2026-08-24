@@ -397,7 +397,8 @@ void drawCoverStatsFooter(const GfxRenderer& renderer, const Rect& rect) {
                   EpdFontFamily::BOLD);
   drawRightText(renderer, SMALL_FONT_ID, goalValueRight, rect.y + 20, dailyGoal);
   drawCheckBox(renderer, goalCheckX, rect.y + 12, dailyGoalMet);
-  drawTextWithRightValue(renderer, SMALL_FONT_ID, globalX, globalRight, rect.y + 51, tr(STR_STREAK), streak,
+  // Align Streak value to the same right edge as Daily Goal value (before the checkbox)
+  drawTextWithRightValue(renderer, SMALL_FONT_ID, globalX, goalValueRight, rect.y + 51, tr(STR_STREAK), streak,
                          EpdFontFamily::BOLD);
 }
 
