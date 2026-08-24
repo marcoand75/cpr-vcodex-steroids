@@ -248,8 +248,8 @@ void ActivityManager::goToRecentBooks() {
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToLibrary() {
-  replaceActivity(std::make_unique<LibraryActivity>(renderer, mappedInput));
+void ActivityManager::goToLibrary(bool launchFromApps) {
+  replaceActivity(std::make_unique<LibraryActivity>(renderer, mappedInput, launchFromApps));
 }
 
 void ActivityManager::goToBrowser() {

@@ -223,7 +223,7 @@ void AppsActivity::openSelectedApp() {
         startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) { requestUpdate(); });
       } else {
-        activityManager.goToLibrary();
+        activityManager.goToLibrary(true);
       }
       return;
     case ShortcutId::ScreenClean:

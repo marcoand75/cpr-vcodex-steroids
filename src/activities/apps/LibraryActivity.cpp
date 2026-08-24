@@ -24,6 +24,7 @@
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "SilentRestart.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
 #include <Epub.h>
@@ -825,12 +826,16 @@ void LibraryActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       upHeld_ = false; downHeld_ = false;
       upLongTriggered_ = false; downLongTriggered_ = false;
-      // Silent restart to reclaim fragmented heap before returning Home.
+      // Silent restart to reclaim fragmented heap before returning.
       // Library browsing fragments the heap significantly (cache, thumbnails,
       // book index vectors). A full ESP.restart gives the system a clean slate.
-      LOG_DBG("LIB", "Back to Home: requesting seamless silent restart (free=%d maxA=%d)",
+      LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      silentRestartToHome();
+      if (launchFromApps) {
+        silentRestartToApps();
+      } else {
+        silentRestartToHome();
+      }
       // Unreachable: ESP.restart() above resets the CPU.
       onGoHome();
     }
@@ -1024,9 +1029,13 @@ void LibraryActivity::loop() {
       leftHeld_ = false; rightHeld_ = false;
       leftLongTriggered_ = false; rightLongTriggered_ = false;
     } else {
-      LOG_DBG("LIB", "Back to Home: requesting seamless silent restart (free=%d maxA=%d)",
+      LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      silentRestartToHome();
+      if (launchFromApps) {
+        silentRestartToApps();
+      } else {
+        silentRestartToHome();
+      }
       // Unreachable: ESP.restart() above resets the CPU.
       onGoHome();
     }

@@ -68,16 +68,18 @@ class LibraryActivity final : public Activity {
   PopupMode popupMode_ = PopupMode::None;
   LibraryPopupOverlay popupOverlay_;
 
-  bool upHeld_ = false;
-  bool upLongTriggered_ = false;
-  bool downHeld_ = false;
-  bool downLongTriggered_ = false;
-  bool leftHeld_ = false;
-  bool leftLongTriggered_ = false;
-  bool rightHeld_ = false;
-  bool rightLongTriggered_ = false;
-  int popupSpawnButton_ = -1;
-  static constexpr unsigned long kLongPressMs = 800;
+   bool upHeld_ = false;
+   bool upLongTriggered_ = false;
+   bool downHeld_ = false;
+   bool downLongTriggered_ = false;
+   bool leftHeld_ = false;
+   bool leftLongTriggered_ = false;
+   bool rightHeld_ = false;
+   bool rightLongTriggered_ = false;
+   int popupSpawnButton_ = -1;
+   bool launchFromApps = false;
+
+   static constexpr unsigned long kLongPressMs = 800;
 
   void applyLayoutFromSettings();
   void ensureLayoutUpToDate();
@@ -105,8 +107,8 @@ class LibraryActivity final : public Activity {
   // in manual update mode. Set by LibraryContextMenuActivity ("Update & Open").
   static bool forceScanOnNextOpen_;
 
-  explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Library", renderer, mappedInput) {}
+  explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
+      : Activity("Library", renderer, mappedInput), launchFromApps(launchFromApps) {}
   void onEnter() override;
   void loop() override;
   void onExit() override;
