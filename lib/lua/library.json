@@ -1,0 +1,9 @@
+{
+  "name": "lua",
+  "version": "5.4.7",
+  "description": "Lua 5.4.7 minimal build for CPR-vCodex Steroids plugin VM (stripped: no lio, los, lua CLI; includes base, coroutine, package, string, math, utf8, table, debug)",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src"
+  }
+}
