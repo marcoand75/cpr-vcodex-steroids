@@ -40,6 +40,8 @@
 #include "UiFontSelection.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/apps/LuaPluginActivity.h"
+#include "activities/apps/PluginBrowserActivity.h"
 #include "activities/apps/ScreenSaverActivity.h"
 #include "activities/boot_sleep/SleepActivity.h"
 #include "components/UITheme.h"
@@ -58,38 +60,76 @@ SdCardFontSystem sdFontSystem;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 
 // Fonts
+#ifndef OMIT_BOOKERLY
 EpdFont bookerly14RegularFont(&bookerly_14_regular);
 EpdFont bookerly14BoldFont(&bookerly_14_bold);
 EpdFont bookerly14ItalicFont(&bookerly_14_italic);
 EpdFont bookerly14BoldItalicFont(&bookerly_14_bolditalic);
 EpdFontFamily bookerly14FontFamily(&bookerly14RegularFont, &bookerly14BoldFont, &bookerly14ItalicFont,
-                                   &bookerly14BoldItalicFont);
+                                    &bookerly14BoldItalicFont);
 #ifndef OMIT_FONTS
 EpdFont bookerly10RegularFont(&bookerly_10_regular);
 EpdFont bookerly10BoldFont(&bookerly_10_bold);
 EpdFont bookerly10ItalicFont(&bookerly_10_italic);
 EpdFont bookerly10BoldItalicFont(&bookerly_10_bolditalic);
 EpdFontFamily bookerly10FontFamily(&bookerly10RegularFont, &bookerly10BoldFont, &bookerly10ItalicFont,
-                                   &bookerly10BoldItalicFont);
+                                    &bookerly10BoldItalicFont);
 EpdFont bookerly12RegularFont(&bookerly_12_regular);
 EpdFont bookerly12BoldFont(&bookerly_12_bold);
 EpdFont bookerly12ItalicFont(&bookerly_12_italic);
 EpdFont bookerly12BoldItalicFont(&bookerly_12_bolditalic);
 EpdFontFamily bookerly12FontFamily(&bookerly12RegularFont, &bookerly12BoldFont, &bookerly12ItalicFont,
-                                   &bookerly12BoldItalicFont);
+                                    &bookerly12BoldItalicFont);
 EpdFont bookerly16RegularFont(&bookerly_16_regular);
 EpdFont bookerly16BoldFont(&bookerly_16_bold);
 EpdFont bookerly16ItalicFont(&bookerly_16_italic);
 EpdFont bookerly16BoldItalicFont(&bookerly_16_bolditalic);
 EpdFontFamily bookerly16FontFamily(&bookerly16RegularFont, &bookerly16BoldFont, &bookerly16ItalicFont,
-                                   &bookerly16BoldItalicFont);
+                                    &bookerly16BoldItalicFont);
 EpdFont bookerly18RegularFont(&bookerly_18_regular);
 EpdFont bookerly18BoldFont(&bookerly_18_bold);
 EpdFont bookerly18ItalicFont(&bookerly_18_italic);
 EpdFont bookerly18BoldItalicFont(&bookerly_18_bolditalic);
 EpdFontFamily bookerly18FontFamily(&bookerly18RegularFont, &bookerly18BoldFont, &bookerly18ItalicFont,
-                                    &bookerly18BoldItalicFont);
+                                     &bookerly18BoldItalicFont);
+#endif
+#else
+// Bookerly omitted to save flash — use NotoSans font data at the same IDs
+EpdFont bookerly14RegularFont(&notosans_14_regular);
+EpdFont bookerly14BoldFont(&notosans_14_bold);
+EpdFont bookerly14ItalicFont(&notosans_14_italic);
+EpdFont bookerly14BoldItalicFont(&notosans_14_bolditalic);
+EpdFontFamily bookerly14FontFamily(&bookerly14RegularFont, &bookerly14BoldFont, &bookerly14ItalicFont,
+                                    &bookerly14BoldItalicFont);
+#ifndef OMIT_FONTS
+EpdFont bookerly10RegularFont(&notosans_10_regular);
+EpdFont bookerly10BoldFont(&notosans_10_bold);
+EpdFont bookerly10ItalicFont(&notosans_10_italic);
+EpdFont bookerly10BoldItalicFont(&notosans_10_bolditalic);
+EpdFontFamily bookerly10FontFamily(&bookerly10RegularFont, &bookerly10BoldFont, &bookerly10ItalicFont,
+                                    &bookerly10BoldItalicFont);
+EpdFont bookerly12RegularFont(&notosans_12_regular);
+EpdFont bookerly12BoldFont(&notosans_12_bold);
+EpdFont bookerly12ItalicFont(&notosans_12_italic);
+EpdFont bookerly12BoldItalicFont(&notosans_12_bolditalic);
+EpdFontFamily bookerly12FontFamily(&bookerly12RegularFont, &bookerly12BoldFont, &bookerly12ItalicFont,
+                                    &bookerly12BoldItalicFont);
+EpdFont bookerly16RegularFont(&notosans_16_regular);
+EpdFont bookerly16BoldFont(&notosans_16_bold);
+EpdFont bookerly16ItalicFont(&notosans_16_italic);
+EpdFont bookerly16BoldItalicFont(&notosans_16_bolditalic);
+EpdFontFamily bookerly16FontFamily(&bookerly16RegularFont, &bookerly16BoldFont, &bookerly16ItalicFont,
+                                    &bookerly16BoldItalicFont);
+EpdFont bookerly18RegularFont(&notosans_18_regular);
+EpdFont bookerly18BoldFont(&notosans_18_bold);
+EpdFont bookerly18ItalicFont(&notosans_18_italic);
+EpdFont bookerly18BoldItalicFont(&notosans_18_bolditalic);
+EpdFontFamily bookerly18FontFamily(&bookerly18RegularFont, &bookerly18BoldFont, &bookerly18ItalicFont,
+                                     &bookerly18BoldItalicFont);
+#endif
+#endif
 
+#ifndef OMIT_FONTS
 #ifndef OMIT_LEXEND
 // Lexend is bundled with regular and bold only. Italic falls back to regular,
 // and bold italic falls back to bold to keep the family complete for EPUB styling.
@@ -145,6 +185,7 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
+#ifndef OMIT_UBUNTU
 EpdFont ui10RegularFont(&ubuntu_10_regular);
 EpdFont ui10BoldFont(&ubuntu_10_bold);
 EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
@@ -152,6 +193,16 @@ EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
 EpdFont ui12RegularFont(&ubuntu_12_regular);
 EpdFont ui12BoldFont(&ubuntu_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
+#else
+// Ubuntu omitted to save flash — use NotoSans (already included for Vietnamese fallback)
+EpdFont ui10RegularFont(&notosans_10_regular);
+EpdFont ui10BoldFont(&notosans_10_bold);
+EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
+
+EpdFont ui12RegularFont(&notosans_12_regular);
+EpdFont ui12BoldFont(&notosans_12_bold);
+EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
+#endif
 
 namespace {
 
@@ -200,10 +251,15 @@ unsigned long t2 = 0;
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
+RTC_NOINIT_ATTR char silentRebootPluginName[32];
+RTC_NOINIT_ATTR uint32_t silentRebootCaller;  // 0=unknown, 1=apps, 2=home, 3=plugin_browser
+RTC_NOINIT_ATTR bool silentRebootReturnToPluginBrowser;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
 
 // Latched once deep sleep is committed. WiFi activities also restart silently
 // from onExit(), but deep sleep already gives us a clean heap on wake.
@@ -253,6 +309,35 @@ void silentRestartToApps() {
   silentRebootTarget = SILENT_REBOOT_TARGET_APPS;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=apps, seamless — no popup)");
+   delay(20);
+   ESP.restart();
+}
+
+void silentRestartToPluginBrowser() {
+   if (deepSleepInProgress) {
+     LOG_DBG("MAIN", "Silent restart to plugin browser skipped: deepSleepInProgress");
+     return;
+   }
+   silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN_BROWSER;
+   silentRebootMagic = SILENT_REBOOT_MAGIC;
+   LOG_DBG("MAIN", "Silent restart (target=plugin_browser, seamless — no popup)");
+    delay(20);
+    ESP.restart();
+}
+
+void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
+  if (deepSleepInProgress) {
+    LOG_DBG("MAIN", "silentRestartToPlugin skipped: deepSleepInProgress");
+    return;
+  }
+  strncpy(silentRebootPluginName, pluginName, sizeof(silentRebootPluginName) - 1);
+  silentRebootPluginName[sizeof(silentRebootPluginName) - 1] = '\0';
+  silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN;
+  silentRebootCaller = fromApps ? 1 : 2;  // 1=apps, 2=home
+  silentRebootReturnToPluginBrowser = returnToPluginBrowser;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_INF("MAIN", "Silent restart (target=%u plugin:%s, caller=%u, retPB=%d)",
+          silentRebootTarget, pluginName, silentRebootCaller, returnToPluginBrowser);
   delay(20);
   ESP.restart();
 }
@@ -569,9 +654,26 @@ void setup() {
 
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_APPS) ? silentRebootTarget : 0;
+       (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_PLUGIN_BROWSER) ? silentRebootTarget : 0;
+  LOG_INF("MAIN", "RTC: magic=0x%08x target=%u caller=%u retPB=%d snapshotTarget=%u",
+          silentRebootMagic, silentRebootTarget, silentRebootCaller, silentRebootReturnToPluginBrowser, snapshotTarget);
+
+  // Snapshot plugin name/caller before zeroing RTC_NOINIT vars
+  char snapshotPluginName[32] = {0};
+  bool snapshotCallerFromApps = false;
+  bool snapshotReturnToPluginBrowser = false;
+  if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
+    strncpy(snapshotPluginName, silentRebootPluginName, sizeof(snapshotPluginName) - 1);
+    snapshotPluginName[sizeof(snapshotPluginName) - 1] = '\0';
+    snapshotCallerFromApps = (silentRebootCaller == 1);
+    snapshotReturnToPluginBrowser = silentRebootReturnToPluginBrowser;
+  }
+
   silentRebootMagic = 0;
   silentRebootTarget = 0;
+  silentRebootPluginName[0] = '\0';
+  silentRebootCaller = 0;
+  silentRebootReturnToPluginBrowser = false;
 
   gpio.begin();
   powerManager.begin();
@@ -791,10 +893,14 @@ void setup() {
      // If we rebooted from a panic, go to crash report screen to show the panic info
      activityManager.goToCrashReport();
    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
-     activityManager.goToReader(APP_STATE.openEpubPath);
-   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
-     activityManager.goToApps();
-   } else if (isSilentReboot) {
+      activityManager.goToReader(APP_STATE.openEpubPath);
+    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
+      activityManager.goToApps();
+    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN_BROWSER) {
+       activityManager.goToPluginBrowser();
+    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
+       activityManager.goToPlugin(snapshotPluginName, snapshotCallerFromApps, snapshotReturnToPluginBrowser);
+    } else if (isSilentReboot) {
      activityManager.goHome();
    } else {
     const bool bootToHome = forceHomeBoot || APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||

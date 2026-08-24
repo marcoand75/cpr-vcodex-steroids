@@ -257,7 +257,10 @@ void AppsActivity::openSelectedApp() {
     case ShortcutId::QuickCards:
       activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
       break;
-  }
+    case ShortcutId::Plugins:
+      activityManager.goToPluginBrowser();
+      return;
+   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
     appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);

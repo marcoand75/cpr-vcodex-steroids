@@ -271,10 +271,22 @@ via `silentRestartToHome()`. Each activity carries a `launchFromApps` flag
 The `SilentRestart.h` API:
 ```cpp
 void silentRestart();          // Home, with "Loading..." popup (WiFi exit)
-void silentRestartToReader();  // Currently-open EPUB (WiFi exit)
-void silentRestartToHome();    // Home, seamless — no popup (Library/Wikipedia exit)
-void silentRestartToApps();    // Apps hub, seamless — no popup (when launched from Apps)
+void silentRestartToReader();  // Currently-open EPUB (shows "Loading..." popup)
+void silentRestartToHome();    // Home, seamless — NO popup, no screen flash
+void silentRestartToApps();    // Apps hub, seamless — NO popup, no screen flash
+void silentRestartToPluginBrowser();  // Plugin Browser, seamless — NO popup, no screen flash
+void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);  // Lua plugin
 ```
+
+**Silent restart routing for Lua plugins:** `silentRestartToPlugin()` sets an RTC_NOINIT
+target of `SILENT_REBOOT_TARGET_PLUGIN` (3) and stashes the plugin name, caller flag, and
+a `returnToPluginBrowser` flag. In `setup()`, the snapshot logic checks
+`silentRebootTarget <= SILENT_REBOOT_TARGET_PLUGIN_BROWSER` (4). The five new RTC_NOINIT
+variables — `silentRebootPluginName[32]`, `silentRebootCaller`, `silentRebootReturnToPluginBrowser`,
+`SILENT_REBOOT_TARGET_PLUGIN`, `SILENT_REBOOT_TARGET_PLUGIN_BROWSER` — must ALL be present
+in `src/main.cpp`. If `silentRebootTarget` is not assigned in `silentRestartToPlugin()`,
+the device silently routes to Home instead of the plugin. See `STEROIDS-LUA.md` for the
+full plugin lifecycle.
 
 ---
 
@@ -469,6 +481,23 @@ These files were added in the 2026-08-10 Steroids development round and must nev
 
 These files were added/expanded for the per-directional long-press, power button, and
 select long-press configuration. Must never be overwritten:
+
+### New Additions (2026-08-24, Lua Plugin System)
+
+These files implement the sandboxed Lua 5.4.7 plugin runtime. Must never be overwritten:
+
+| File | Steroids Feature |
+|---|---|
+| `src/SilentRestart.h` | Added `silentRestartToPluginBrowser()` + `silentRestartToPlugin(name, fromApps, returnToPluginBrowser)` declarations |
+| `src/main.cpp` (RTC_NOINIT vars + routing) | Added `silentRebootPluginName[32]`, `silentRebootCaller`, `silentRebootReturnToPluginBrowser`, `SILENT_REBOOT_TARGET_PLUGIN` (3), `SILENT_REBOOT_TARGET_PLUGIN_BROWSER` (4); extended snapshot logic + routing to `goToPlugin()` / `goToPluginBrowser()` |
+| `src/activities/ActivityManager.cpp/h` | Added `goToPlugin()` and `goToPluginBrowser()` methods |
+| `src/activities/apps/LuaPluginActivity.cpp/h` | Lua plugin activity lifecycle (VM init, script load, `init()`/`onKey()` dispatch, VM shutdown, silent restart on exit) |
+| `src/activities/apps/PluginBrowserActivity.cpp/h` | SD card `/custom/*.lua` scanner, header parser, plugin list UI |
+| `src/LuaPluginVM.h/cpp` | 40 KB-capped VM, instruction hook, callback dispatcher |
+| `src/LuaPluginAPI.cpp` | `lcd.*`, `fs.*`, `input.*`, `sys.*`, `plugin_str.*` C bindings; `lua_plugin_register_libs()` |
+| `lib/lua/` | Lua 5.4.7 source tree (standard + custom `linit.c` registering 8 libraries) |
+| `plugins/*.lua` | Example plugin scripts (hello_world, snake, breakout, sudoku, todo_list) |
+| `STEROIDS-LUA.md` | Complete Lua plugin development reference (not in upstream) |
 
 | File | Steroids Feature |
 |---|---|

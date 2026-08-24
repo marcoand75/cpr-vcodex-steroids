@@ -67,6 +67,8 @@ icon/theme checklist at the end of this file).
 | **Sync Day** | `SyncDayActivity`, `ManualDateActivity` | Daily goal sync / manual reading date. |
 | **Reading date selection** | `ReadingDateSelectionActivity`, `ReadingDayDetailActivity`, `BookReadingAdjustmentActivity`, `BookStatsActionsActivity` | Manual reading-time corrections and per-day detail. |
 | **Apps hub** | `AppsActivity` | Grid of all installed apps. |
+| **Lua Plugin Browser** | `PluginBrowserActivity` | Scans `/custom/*.lua` on the SD card, parses `-- NAME:`, `-- DESC:`, `-- ICON:` headers, and lists available plugins. When the user confirms a plugin, triggers a silent restart to launch it via `LuaPluginActivity` with `returnToPluginBrowser=true` so the plugin browser is restored on exit. |
+| **Lua Plugins** | `LuaPluginActivity` | Sandboxed Lua 5.4.7 interpreter running a single `.lua` script from `/custom/`. A 40 KB heap cap is enforced by a custom allocator; an instruction-count hook aborts runaway loops (100 000 limit per callback). Standard Lua libs (base, string, table, utf8, debug) plus a custom `lcd.*`, `fs.*`, `input.*`, `sys.*`, `plugin_str.*` API surface are registered. `init()` runs at launch; `onKey()` is dispatched every 10 ms loop frame. On exit, the VM is shut down and a silent restart routes back to the Plugin Browser (or Apps/Home caller). Full reference in `[STEROIDS-LUA.md](STEROIDS-LUA.md)`. |
 
 ---
 
@@ -574,8 +576,22 @@ words from chapter start to the beginning of `page`. Bookmarks store
 - **SdCardFont fragmentation-resistant storage** — ported from upstream 1.5.0.20:
   4 KiB chunked bitmap storage (`miniBitmapChunks[24]`), TextGetter prewarm callback,
   CJK fallback font resolution via `hasCodepoint()` + `coverageHandler`, FrameBufferLoan
-  for section builds, FontDecompressor raw-buffer refactor. Built: RAM 16.0%,
-  Flash 98.5%, 0 warnings. See §23.
+   for section builds, FontDecompressor raw-buffer refactor. Built: RAM 16.0%,
+   Flash 98.5%, 0 warnings. See §23.
+- **Lua Plugin System** — a sandboxed Lua 5.4.7 plugin runtime for user-authored
+  apps. Plugins are `.lua` files placed in `/custom/` on the SD card; the
+  `PluginBrowserActivity` scans and lists them by parsing `-- NAME:`, `-- DESC:`,
+  `-- ICON:` header comments. A `LuaPluginActivity` loads each script into a
+  40 KB-capped Lua VM with a custom `heap_caps_realloc` allocator, a 100 000-instruction
+  per-callback safety hook, and a custom API surface (`lcd.*`, `fs.*`,
+  `input.*`, `sys.*`, `plugin_str.*`). Standard Lua libraries (base, string, table,
+  utf8, debug) are available. `init()` is called once at launch; `onKey()` is
+  dispatched every loop frame (~10 ms) for continuous updates (games, animations).
+  File I/O is sandboxed to `/custom/<plugin_name>_data/` with path-traversal
+  protection. On exit, the VM is shut down and a silent restart routes back to
+  the Plugin Browser (or Apps/Home, depending on the caller). Plugin source
+  files must be ≤ 40 KB; scripts exceeding the VM's 40 KB allocation cap will
+  error out. See `STEROIDS-LUA.md` for the complete API reference.
 
 ## 8A. Grayscale Image Rendering (BMP, covers, screensaver/sleep)
 

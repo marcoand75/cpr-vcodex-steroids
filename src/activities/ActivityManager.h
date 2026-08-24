@@ -89,14 +89,16 @@ class ActivityManager {
   void goToRecentBooks();
    void goToLibrary(bool launchFromApps = false);
   void goToBrowser();
-  void goToReader(std::string path);
-  void goToKOReaderSync();
-  void goToEpubBookmark(std::string path, int spineIndex, uint32_t page);
-  void goToSleep();
-  void goToBoot();
-  void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
-  void goToCrashReport();
-  void goHome();
+   void goToReader(std::string path);
+   void goToKOReaderSync();
+   void goToEpubBookmark(std::string path, int spineIndex, uint32_t page);
+   void goToSleep();
+   void goToBoot();
+   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
+   void goToCrashReport();
+   void goHome();
+   void goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);
+   void goToPluginBrowser();
 
   // This will move current activity to stack instead of deleting it
   void pushActivity(std::unique_ptr<Activity>&& activity);

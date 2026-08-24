@@ -155,9 +155,12 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   doc["wikipediaShortcut"] = s.wikipediaShortcut;
   doc["wikipediaShortcutOrder"] = s.wikipediaShortcutOrder;
   doc["wikipediaShortcutVisible"] = s.wikipediaShortcutVisible;
-  doc["quickCardsShortcut"] = s.quickCardsShortcut;
-  doc["quickCardsShortcutOrder"] = s.quickCardsShortcutOrder;
-  doc["quickCardsShortcutVisible"] = s.quickCardsShortcutVisible;
+   doc["quickCardsShortcut"] = s.quickCardsShortcut;
+   doc["quickCardsShortcutOrder"] = s.quickCardsShortcutOrder;
+   doc["quickCardsShortcutVisible"] = s.quickCardsShortcutVisible;
+   doc["pluginsShortcut"] = s.pluginsShortcut;
+   doc["pluginsShortcutOrder"] = s.pluginsShortcutOrder;
+   doc["pluginsShortcutVisible"] = s.pluginsShortcutVisible;
 }
 
 void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, bool* needsResave) {
@@ -298,7 +301,10 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   s.wikipediaShortcutVisible = clamp(doc["wikipediaShortcutVisible"] | s.wikipediaShortcutVisible, static_cast<uint8_t>(2), s.wikipediaShortcutVisible);
   s.quickCardsShortcut = clamp(doc["quickCardsShortcut"] | s.quickCardsShortcut, shortcutLocationCount, s.quickCardsShortcut);
   s.quickCardsShortcutOrder = clamp(doc["quickCardsShortcutOrder"] | s.quickCardsShortcutOrder, shortcutOrderCount, s.quickCardsShortcutOrder);
-  s.quickCardsShortcutVisible = clamp(doc["quickCardsShortcutVisible"] | s.quickCardsShortcutVisible, static_cast<uint8_t>(2), s.quickCardsShortcutVisible);
+   s.quickCardsShortcutVisible = clamp(doc["quickCardsShortcutVisible"] | s.quickCardsShortcutVisible, static_cast<uint8_t>(2), s.quickCardsShortcutVisible);
+   s.pluginsShortcut = clamp(doc["pluginsShortcut"] | s.pluginsShortcut, shortcutLocationCount, s.pluginsShortcut);
+   s.pluginsShortcutOrder = clamp(doc["pluginsShortcutOrder"] | s.pluginsShortcutOrder, shortcutOrderCount, s.pluginsShortcutOrder);
+   s.pluginsShortcutVisible = clamp(doc["pluginsShortcutVisible"] | s.pluginsShortcutVisible, static_cast<uint8_t>(2), s.pluginsShortcutVisible);
 }
 }
 

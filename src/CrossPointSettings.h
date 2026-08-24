@@ -602,9 +602,12 @@ class CrossPointSettings {
   uint8_t screenSaverShortcutVisible = 1;
   uint8_t clippingsShortcutVisible = 1;
   uint8_t wikipediaShortcutVisible = 1;
-  uint8_t quickCardsShortcut = SHORTCUT_APPS;
-  uint8_t quickCardsShortcutOrder = 23;
-  uint8_t quickCardsShortcutVisible = 1;
+   uint8_t quickCardsShortcut = SHORTCUT_APPS;
+   uint8_t quickCardsShortcutOrder = 23;
+   uint8_t quickCardsShortcutVisible = 1;
+   uint8_t pluginsShortcut = SHORTCUT_APPS;
+   uint8_t pluginsShortcutOrder = 24;
+   uint8_t pluginsShortcutVisible = 1;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

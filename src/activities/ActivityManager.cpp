@@ -17,6 +17,8 @@
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "apps/LibraryActivity.h"
+#include "apps/LuaPluginActivity.h"
+#include "apps/PluginBrowserActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/KOReaderSyncActivity.h"
 #include "reader/ReaderActivity.h"
@@ -239,6 +241,15 @@ void ActivityManager::goToFileTransfer() {
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToApps() { replaceActivity(std::make_unique<AppsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
+  replaceActivity(std::make_unique<LuaPluginActivity>(
+      std::string(pluginName), renderer, mappedInput, fromApps, returnToPluginBrowser));
+}
+
+void ActivityManager::goToPluginBrowser() {
+  replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));

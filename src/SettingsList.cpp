@@ -328,6 +328,8 @@ const std::vector<SettingInfo>& getSettingsList() {
                           StrId::STR_SHORTCUTS_SECTION),
         SettingInfo::Enum(StrId::STR_SLEEP, &CrossPointSettings::sleepShortcut,
                           {StrId::STR_HOME_LOCATION, StrId::STR_APPS}, "sleepShortcut", StrId::STR_SHORTCUTS_SECTION),
+        SettingInfo::Enum(StrId::STR_PLUGINS, &CrossPointSettings::pluginsShortcut,
+                          {StrId::STR_HOME_LOCATION, StrId::STR_APPS}, "pluginsShortcut", StrId::STR_SHORTCUTS_SECTION),
 
         // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
         SettingInfo::DynamicString(
