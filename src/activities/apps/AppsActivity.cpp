@@ -24,6 +24,8 @@
 #include "ClippingsAppActivity.h"
 #include "SleepAppActivity.h"
 #include "SyncDayActivity.h"
+#include "../home/FileBrowserActivity.h"
+#include "../home/RecentBooksActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "OpdsServerStore.h"
@@ -164,9 +166,14 @@ void AppsActivity::openSelectedApp() {
 
   std::unique_ptr<Activity> activity;
   switch (appShortcuts[selectedIndex]->id) {
-    case ShortcutId::BrowseFiles:
-      activityManager.goToFileBrowser();
-      return;
+     case ShortcutId::BrowseFiles:
+       startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                requestUpdate();
+                              });
+       return;
     case ShortcutId::ReadingStats:
       activity = std::make_unique<ReadingStatsActivity>(renderer, mappedInput);
       break;
@@ -188,9 +195,14 @@ void AppsActivity::openSelectedApp() {
     case ShortcutId::IfFound:
       activity = std::make_unique<IfFoundActivity>(renderer, mappedInput);
       break;
-    case ShortcutId::RecentBooks:
-      activityManager.goToRecentBooks();
-      return;
+     case ShortcutId::RecentBooks:
+       startActivityForResult(std::make_unique<RecentBooksActivity>(renderer, mappedInput),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                requestUpdate();
+                              });
+       return;
     case ShortcutId::Bookmarks:
       activity = std::make_unique<BookmarksAppActivity>(renderer, mappedInput);
       break;

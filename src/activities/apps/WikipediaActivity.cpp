@@ -361,11 +361,10 @@ void WikipediaActivity::loop() {
       case State::SEARCH_INPUT:
       case State::ERROR:
         // Wikipedia uses WiFi (HTTP/HTTPS) which fragments the heap.
-        // Clean it up before returning to Home.
-        LOG_DBG("WIKI", "Back to Home: requesting seamless silent restart (free=%d maxA=%d)",
+        // onExit() handles WiFi disconnection and buffer cleanup; finish()
+        // will pop back to the calling activity (Apps menu or Home).
+        LOG_DBG("WIKI", "Back key at root: returning to caller (free=%d maxA=%d)",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        silentRestartToHome();
-        // Unreachable: ESP.restart() above resets the CPU.
         finish(); break;
       case State::SEARCH_HISTORY:
       case State::CACHED_PAGES:

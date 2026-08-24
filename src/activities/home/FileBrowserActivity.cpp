@@ -335,8 +335,8 @@ void FileBrowserActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    // Short press: go up one directory, or go home if at root
+   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    // Short press: go up one directory, or return to caller if at root
     if (mappedInput.getHeldTime() < GO_HOME_MS) {
       if (basepath != "/") {
         const std::string oldPath = basepath;
@@ -351,7 +351,7 @@ void FileBrowserActivity::loop() {
 
         requestUpdate();
       } else {
-        onGoHome();
+        finish();
       }
     }
   }
@@ -459,7 +459,7 @@ void FileBrowserActivity::render(RenderLock&&) {
 
   // Help text
   const auto labels =
-      mappedInput.mapLabels(basepath == "/" ? tr(STR_HOME) : tr(STR_BACK), files.empty() ? "" : tr(STR_OPEN),
+      mappedInput.mapLabels(tr(STR_BACK), files.empty() ? "" : tr(STR_OPEN),
                             files.empty() ? "" : tr(STR_DIR_UP), files.empty() ? "" : tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
