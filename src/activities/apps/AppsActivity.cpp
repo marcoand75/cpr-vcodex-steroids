@@ -166,15 +166,15 @@ void AppsActivity::openSelectedApp() {
 
   std::unique_ptr<Activity> activity;
   switch (appShortcuts[selectedIndex]->id) {
-     case ShortcutId::BrowseFiles:
-       startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput),
+   case ShortcutId::BrowseFiles:
+     startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput),
                               [this](const ActivityResult&) {
                                 appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
                                 rebuildShortcutSubtitles();
                                 requestUpdate();
                               });
-       return;
-    case ShortcutId::ReadingStats:
+     return;
+   case ShortcutId::ReadingStats:
       activity = std::make_unique<ReadingStatsActivity>(renderer, mappedInput);
       break;
     case ShortcutId::SyncDay:
@@ -203,7 +203,7 @@ void AppsActivity::openSelectedApp() {
                                 requestUpdate();
                               });
        return;
-    case ShortcutId::Bookmarks:
+     case ShortcutId::Bookmarks:
       activity = std::make_unique<BookmarksAppActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Favorites:
@@ -241,9 +241,19 @@ void AppsActivity::openSelectedApp() {
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();
       return;
-    case ShortcutId::Wikipedia:
-      activity = std::make_unique<WikipediaActivity>(renderer, mappedInput);
-      break;
+     case ShortcutId::Wikipedia:
+       startActivityForResult(std::make_unique<WikipediaActivity>(renderer, mappedInput, true),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                if (!appShortcuts.empty()) {
+                                  selectedIndex = std::min(selectedIndex, static_cast<int>(appShortcuts.size()) - 1);
+                                } else {
+                                  selectedIndex = 0;
+                                }
+                                requestUpdate();
+                              });
+       return;
     case ShortcutId::QuickCards:
       activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
       break;

@@ -7,3 +7,4 @@
 void silentRestart();          // home screen (shows "Loading..." popup)
 void silentRestartToReader();  // currently-open EPUB (shows "Loading..." popup)
 void silentRestartToHome();    // home screen, seamless — NO popup, no screen flash
+void silentRestartToApps();    // apps menu, seamless — NO popup, no screen flash
