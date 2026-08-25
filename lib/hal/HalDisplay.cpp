@@ -1,5 +1,6 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
+#include <Logging.h>
 
 // Global HalDisplay instance
 HalDisplay display;
@@ -11,24 +12,39 @@ HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_R
 HalDisplay::~HalDisplay() {}
 
 void HalDisplay::begin(bool seamless) {
+  LOG_INF("HW", "HalDisplay::begin(seamless=%d) start", seamless);
+
   // Set X3-specific panel mode before initializing.
   if (gpio.deviceIsX3()) {
+    LOG_INF("HW", "X3 detected -> einkDisplay.setDisplayX3()");
     einkDisplay.setDisplayX3();
   }
 
+  LOG_DBG("HW", "Calling einkDisplay.begin()");
   einkDisplay.begin();
 
+  uint16_t w = einkDisplay.getDisplayWidth();
+  uint16_t h = einkDisplay.getDisplayHeight();
+  uint32_t bufSize = einkDisplay.getBufferSize();
+  LOG_INF("HW", "Display init done: %dx%d, buf=%u bytes", w, h, bufSize);
+
   if (seamless) {
+    LOG_DBG("HW", "Seamless boot -> skipInitialResync()");
     einkDisplay.skipInitialResync();
+    LOG_INF("HW", "HalDisplay::begin() done (seamless)");
     return;
   }
 
   // Request resync after specific wakeup events to ensure clean display state
   const auto wakeupReason = gpio.getWakeupReason();
+  LOG_DBG("HW", "Wakeup reason: %d", static_cast<int>(wakeupReason));
   if (wakeupReason == HalGPIO::WakeupReason::PowerButton || wakeupReason == HalGPIO::WakeupReason::AfterFlash ||
       wakeupReason == HalGPIO::WakeupReason::Other) {
+    LOG_INF("HW", "Wakeup reason %d -> requestResync()", static_cast<int>(wakeupReason));
     einkDisplay.requestResync();
   }
+
+  LOG_INF("HW", "HalDisplay::begin() done");
 }
 
 void HalDisplay::clearScreen(uint8_t color) const { einkDisplay.clearScreen(color); }

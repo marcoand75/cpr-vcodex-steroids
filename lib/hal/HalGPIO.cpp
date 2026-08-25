@@ -193,25 +193,34 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
 
 void HalGPIO::begin() {
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  LOG_INF("HW", "HalGPIO::begin() start");
+
   // Device fingerprint (I2C probe — safe to run before SPI claims pins)
   _deviceType = detectDeviceTypeWithFingerprint();
+  LOG_INF("HW", "Device detected: %s", _deviceType == DeviceType::X3 ? "X3" : "X4");
 
   // X3 panel-controller fingerprint: bit-bangs EPD pins to distinguish
   // UC8253 from UC8279d. MUST run BEFORE SPI.begin() claims those pins.
   const bool x3IsUc8279 = deviceIsX3() && detectX3DisplayIsUc8279();
+  if (deviceIsX3()) {
+    LOG_INF("HW", "X3 EPD controller: %s", x3IsUc8279 ? "UC8279" : "UC8253");
+  }
 
   // Register the detected board with freeink-sdk's BoardConfig.
   // This SDK version has Board::XteinkX3 / XteinkX4 only, but the
   // uc8279 flag is stored for use by setDisplayX3() downstream.
   BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3
                                          : BoardConfig::Board::XteinkX4);
+  LOG_DBG("HW", "BoardConfig::selectDevice(%s)", deviceIsX3() ? "XteinkX3" : "XteinkX4");
 
   // Store the uc8279 verdict where the display driver can see it.
   // On X3 we set uc8279Panel before SPI.begin(), so the EInkDisplay
   // constructor already has the pins in their pre-SPI state.
   x3IsUc8279Panel = x3IsUc8279;
+  LOG_DBG("HW", "x3IsUc8279Panel=%d", x3IsUc8279Panel);
 
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
+  LOG_DBG("HW", "SPI.begin() done");
 
   if (deviceIsX4()) {
     pinMode(BAT_GPIO0, INPUT);
@@ -219,11 +228,14 @@ void HalGPIO::begin() {
   }
 #endif
   inputMgr.begin();
+  LOG_INF("HW", "HalGPIO::begin() done");
 }
 
 // ── X3 panel-controller fingerprint (UC8253 vs UC8279d) ──────────────────
 
 bool HalGPIO::detectX3DisplayIsUc8279() {
+  LOG_DBG("HW", "detectX3DisplayIsUc8279() start");
+
   // NVS override/cache layer — same pattern as device fingerprint.
   constexpr char NVS_KEY_EPD_OVERRIDE[] = "epd_ovr";
 
@@ -263,14 +275,19 @@ bool HalGPIO::detectX3DisplayIsUc8279() {
       if (verdict == freeink::X3DisplayVerdict::Uc8279Confirmed) {
         prefs.putUChar(NVS_KEY_EPD_CACHED, 2);
         prefs.end();
+        LOG_DBG("HW", "detectX3DisplayIsUc8279() done: UC8279");
         return true;
       }
       if (verdict == freeink::X3DisplayVerdict::Uc8253Assumed) {
         prefs.putUChar(NVS_KEY_EPD_CACHED, 1);
+        prefs.end();
+        LOG_DBG("HW", "detectX3DisplayIsUc8279() done: UC8253");
+        return false;
       }
       prefs.end();
     }
   }
+  LOG_DBG("HW", "detectX3DisplayIsUc8279() done: inconclusive (default false)");
   return false;
 }
 
