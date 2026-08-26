@@ -739,12 +739,8 @@ void setup() {
     I18N.loadSettings();
   }
 
-  if (BootRecovery::shouldSkipKOReader() || isSilentReboot) {
-    if (isSilentReboot) {
-      logSkip("Skipping KOReader credential load on silent reboot (profiles unchanged)");
-    } else {
-      logSkip("Skipping KOReader credential load due to recovery mode");
-    }
+  if (BootRecovery::shouldSkipKOReader()) {
+    logSkip("Skipping KOReader credential load due to recovery mode");
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::KOReader);
     KOREADER_STORE.loadFromFile();

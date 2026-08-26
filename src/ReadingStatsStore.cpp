@@ -2026,6 +2026,24 @@ bool ReadingStatsStore::loadFromFile() {
     return false;
   }
 
+  // OOM guard: parsing summary.json builds a dynamic ArduinoJson document
+  // (~1.5-2x the file size) plus per-book objects, reading days and the session
+  // log. When free heap is too low (e.g. immediately after a WiFi/TLS session)
+  // the parse aborts mid-way and crashes the device. Return false instead so
+  // callers can defer; Home keeps working through the lightweight summary.json
+  // fallback and ensureLoaded()/the next boot retries with more heap.
+  FsFile sizeFile;
+  if (Storage.openFileForRead("RST", READING_STATS_FILE_JSON, sizeFile)) {
+    const uint32_t fileSize = static_cast<uint32_t>(sizeFile.size());
+    sizeFile.close();
+    const uint32_t neededHeap = fileSize * 2 + 32768u;
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < neededHeap) {
+      LOG_ERR("RST", "Deferring stats load: free=%u need~%u (file=%u)", freeHeap, neededHeap, fileSize);
+      return false;
+    }
+  }
+
   auto loadMainFile = [this]() -> bool {
     const int ls0Free = static_cast<int>(ESP.getFreeHeap());
     const int ls0Max = static_cast<int>(ESP.getMaxAllocHeap());

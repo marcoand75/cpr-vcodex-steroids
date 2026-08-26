@@ -44,6 +44,11 @@ static void s_onNav(void* ctx, int delta) {
 void KOReaderSettingsActivity::onEnter() {
   Activity::onEnter();
 
+  // Ensure the credential store reflects the persisted profiles before the
+  // values are rendered. RAM does not survive a reboot and the boot-time KOReader
+  // load is skipped in recovery mode, so reload here to avoid showing blanks.
+  KOREADER_STORE.loadFromFile();
+
   selectedIndex = 0;
 
   listInputMapper.setBackHandler(s_onBack, this, false);

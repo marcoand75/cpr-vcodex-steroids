@@ -8,7 +8,6 @@
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncClient.h"
 #include "MappedInputManager.h"
-#include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -63,6 +62,18 @@ void KOReaderAuthActivity::performAuthentication() {
                                 profile.username, KOReaderCredentialStore::hashPassword(profile.password),
                                 KOReaderCredentialStore::resolveBaseUrl(profile.serverUrl))
                           : KOReaderSyncClient::authenticate();
+
+  // Release the WiFi stack (LwIP/TLS buffers) BEFORE restoring memory: the
+  // reading-stats reload re-parses summary.json and needs the largest possible
+  // contiguous heap. Reloading while the stack is still connected can OOM and
+  // crash the device (free heap drops to near zero mid-parse).
+  TimeUtils::stopNtp();
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(100);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
+  }
   restoreMemoryAfterAuthNetwork(renderer, "after_authenticate_restore");
 
   {
@@ -107,10 +118,17 @@ void KOReaderAuthActivity::onEnter() {
 void KOReaderAuthActivity::onExit() {
   Activity::onExit();
 
+  // Cleanly shut down WiFi instead of a silent reboot. A silent restart here
+  // drops the user at the Home screen (breaking back-navigation to the KOReader
+  // settings menu) and, because RAM does not survive the reboot while the
+  // boot-time credential load is skipped on silent restarts, would also leave
+  // the KOReader settings blank on the next boot.
+  TimeUtils::stopNtp();
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    delay(100);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
   }
 }
 
