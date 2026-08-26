@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <I18n.h>
+#include <esp_task_wdt.h>
 
 #include <algorithm>
 #include <climits>
@@ -58,7 +59,16 @@ void DictionaryWordSelectActivity::extractWords() {
 
     const uint16_t count = block->wordCount();
     for (uint16_t i = 0; i < count; ++i) {
+      // Feed the task watchdog: on dense pages with an SD reader font the
+      // per-word measurement below (getTextAdvanceX + cleanWord) can take long
+      // enough to trip the 5s reset on the main loop task.
+      esp_task_wdt_reset();
+
       const char* wordText = block->wordText(i);
+      // Defensive guard: a bad/corrupt word pointer must never reach the
+      // std::string constructor (that would hard-fault with no recoverable
+      // panic message). Skip the word instead.
+      if (!wordText || !wordText[0]) continue;
       const std::string cleaned = DictionaryStore::cleanWord(wordText);
       if (cleaned.empty()) continue;
       const int16_t x = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
@@ -106,6 +116,7 @@ void DictionaryWordSelectActivity::prepareReaderFontMetrics() {
 
   if (!pageText.empty()) {
     renderer.ensureSdCardFontReady(readerFontId, pageText.c_str(), 0x01);
+    esp_task_wdt_reset();
   }
 }
 
@@ -410,6 +421,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
     // on demand here and stay cached for subsequent selection moves, making
     // them fast once the first render warms the cache.
     page->render(renderer, readerFontId, marginLeft, marginTop, foregroundBlack);
+    esp_task_wdt_reset();
   }
 
   if (rows.empty()) {
