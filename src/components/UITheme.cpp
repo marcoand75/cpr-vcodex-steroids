@@ -6,6 +6,8 @@
 
 #include <memory>
 
+#include <cstdint>
+
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraCustomTheme.h"
 #include "components/themes/lyra/LyraMarcoand75Theme.h"
@@ -68,7 +70,15 @@ int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader
 }
 
 std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
+  // Also resolve [WIDTH] so EPUB's "thumb_[WIDTH]x[HEIGHT].bmp" template maps to
+  // the same file that Epub::generateThumbBmp(coverHeight) produces. The width is
+  // derived from the standard 2:3 thumb aspect ratio used by normalizeThumbDimensions.
+  const size_t widthPos = coverBmpPath.find("[WIDTH]", 0);
+  if (widthPos != std::string::npos) {
+    const int width = static_cast<int>((static_cast<int64_t>(coverHeight) * 2 + 1) / 3);
+    coverBmpPath.replace(widthPos, 7, std::to_string(width));
+  }
+  const size_t pos = coverBmpPath.find("[HEIGHT]", 0);
   if (pos != std::string::npos) {
     coverBmpPath.replace(pos, 8, std::to_string(coverHeight));
   }
