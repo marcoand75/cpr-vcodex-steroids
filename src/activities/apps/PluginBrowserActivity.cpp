@@ -74,16 +74,18 @@ void PluginBrowserActivity::scanPlugins() {
 }
 
 void PluginBrowserActivity::parsePluginHeaders(PluginEntry& entry) {
-  char buffer[1025];
+  char buffer[4096];
   const size_t len = Storage.readFileToBuffer(entry.path.c_str(), buffer, sizeof(buffer) - 1, 0);
   if (len == 0) return;
   buffer[len] = '\0';
 
-  // Parse first 20 lines for headers
+  // Parse the first 50 lines for headers (long explanatory comment blocks at
+  // the top of a script must not push the -- NAME:/DESC:/ICON:/RESTART: lines
+  // past the scan window).
   char lineBuf[256];
   const char* p = buffer;
   int lineNum = 0;
-  while (*p && lineNum < 20) {
+  while (*p && lineNum < 50) {
     // Extract one line
     const char* lineStart = p;
     while (*p && *p != '\n' && *p != '\r' && (p - buffer) < (int)len) p++;
@@ -282,9 +284,22 @@ void PluginBrowserActivity::render(RenderLock&&) {
 
       const bool tb = !sel;  // black text on white panel, white on selected black panel
 
-      // Name — bold, truncated to fit
-      const std::string nameText = renderer.truncatedText(UI_12_FONT_ID, plugin.name.c_str(), maxTW);
+      // Name — bold, truncated to fit (leaves room for the reboot badge)
+      const int nameTW = maxTW - 52;
+      const std::string nameText = renderer.truncatedText(UI_12_FONT_ID, plugin.name.c_str(), nameTW);
       renderer.drawText(UI_12_FONT_ID, textX, py + padTop, nameText.c_str(), tb, EpdFontFamily::BOLD);
+
+      // Reboot indicator (top-right of the panel): a filled "RST" badge for
+      // plugins that launch with a silent reboot, plain "LIVE" for in-process.
+      constexpr int badgeW = 30;
+      const int badgeX = px + usablePanelW - 10 - badgeW;
+      if (plugin.fastReboot) {
+        renderer.fillRect(badgeX, py + padTop - 1, badgeW, 14, sel ? 0 : 1);
+        renderer.drawText(UI_10_FONT_ID, badgeX + 2, py + padTop, "RST", sel ? true : false,
+                          EpdFontFamily::BOLD);
+      } else {
+        renderer.drawText(UI_10_FONT_ID, badgeX + 2, py + padTop, "LIVE", tb, EpdFontFamily::BOLD);
+      }
 
       // Description — the wrapped lines drawn inside this panel's own height
       int descY = py + padTop + lh12 + padMid;

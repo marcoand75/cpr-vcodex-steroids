@@ -3,11 +3,29 @@
 This directory contains example Lua plugins for the CPR-vCodex Steroids
 Lua plugin VM system.
 
+## Included examples
+
+| Plugin | What it demonstrates |
+|---|---|
+| `hello_world.lua` | Minimal plugin template (headers, `init`/`onKey`, exit) |
+| `snake.lua` | Game loop, delimited play area, held-input latch, high score on SD |
+| `breakout.lua` | Time-based physics, sub-stepped collisions, e-ink fast-loop pattern |
+| `sudoku_full.lua` | Pre-generated puzzle, non-blocking state-machine number pad |
+| `todo_list.lua` | Sandboxed file persistence, wrapped multi-line text |
+| `doom_like.lua` | First-person maze **raycaster** (Lode's DDA, BSD-2-Clause), **4:3 viewport** (160×120 cells, 3×3 px) with **precomputed dithered wall textures** (brick/stone/door) world-anchored with distance shading, top panel with a **2D map + HUD**, black status bar, precomputed **demon sprites** (horns/eyes/mouth), persistent muzzle flash, **batch rendering** and **external data**: optional `/custom/doom_like_data/map.txt` level, persisted `highscore.txt` |
+
+The `doom_like_data/` folder contains the example `map.txt` (copy it to
+`/custom/doom_like_data/map.txt` on the SD card to override the built-in
+level). Map format: `#` brick, `S` stone, `D` metal door, `.` floor, `P`
+player start, `E` demon spawn.
+
+Copy the `.lua` files to `/custom/` on the SD card and open **Apps → Plugins**.
+
 ## Requirements
 
 - A plugin is a single `.lua` file placed in `/custom/` on the SD card.
 - The script is loaded and executed in a sandboxed Lua 5.4.7 VM with a
-  40 KB memory cap.
+  64 KB memory cap.
 - File I/O is restricted to `/custom/<plugin_name>_data/`.
 
 ## Plugin Lifecycle

@@ -18,7 +18,7 @@ The system is built around three C++ components:
 
 | Component | File(s) | Role |
 |---|---|---|
-| **`LuaPluginVM`** | `src/LuaPluginVM.h`, `src/LuaPluginVM.cpp` | Manages the `lua_State`, custom 40 KB memory allocator, instruction-count safety hook, and callback dispatch. |
+| **`LuaPluginVM`** | `src/LuaPluginVM.h`, `src/LuaPluginVM.cpp` | Manages the `lua_State`, custom 64 KB memory allocator, instruction-count safety hook, and callback dispatch. |
 | **`LuaPluginAPI`** | `src/LuaPluginAPI.cpp` (headers: `LuaPluginAPI.h`, `SilentRestart.h`) | Registers the custom `lcd`, `fs`, `input`, `sys`, and `plugin_str` modules into the Lua globals. |
 | **Activities** | `src/activities/apps/PluginBrowserActivity.{cpp,h}`, `src/activities/apps/LuaPluginActivity.{cpp,h}` | Browser UI that scans `/custom/` and the activity that hosts the Lua runtime. |
 
@@ -94,7 +94,7 @@ exit just pops back — no `ESP.restart()` at all. All other lifecycle steps
 | Limit | Value | Notes |
 |---|---|---|
 | Lua source file size | 40 KB | `MAX_LUA_SOURCE_SIZE` |
-| VM heap cap | 40 KB | `PLUGIN_MEM_CAP`, enforced by custom allocator |
+| VM heap cap | 64 KB | `PLUGIN_MEM_CAP`, enforced by custom allocator |
 | Instructions per callback | 100,000 | `MAX_INSTRUCTIONS_PER_CALLBACK`, aborts with error |
 | Free heap required to start | > 100 KB free, > 75 KB maxAlloc | `checkMemoryAvailable()` |
 | Plugin directory | `/custom/` | All `.lua` files are scanned |
@@ -502,7 +502,7 @@ when the screen has actually changed.
 
 ### 8.6 Memory awareness
 
-The Lua VM has a 40 KB allocation cap. Complex games or large data structures
+The Lua VM has a 64 KB allocation cap. Complex games or large data structures
 may hit this limit. Monitor with `sys.log()` — the VM logs allocation stats
 at startup.
 

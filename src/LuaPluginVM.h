@@ -7,10 +7,14 @@ struct lua_State;
 
 namespace lua_plugin {
 
-// Hard memory cap for a single plugin VM (matches SUMI's 40 KB limit).
-// This includes the Lua state, string table, table slots, and any buffers
-// the plugin allocates via the API. The VM allocator enforces this.
-static constexpr size_t PLUGIN_MEM_CAP = 40 * 1024;
+// Hard memory cap for a single plugin VM. This includes the Lua state,
+// string table, table slots, and any buffers the plugin allocates via the
+// API. The VM allocator enforces this. 80 KB keeps the small example plugins
+// comfortably small while allowing richer ones (e.g. the Doom-like raycaster,
+// a 24 KB source that needs ~60 KB of VM heap just to compile/load) — the
+// device has ~90-114 KB of contiguous heap available on the silent-reboot
+// launch path, and the largest single VM allocation is well under that.
+static constexpr size_t PLUGIN_MEM_CAP = 80 * 1024;
 
 // Maximum Lua instructions per callback before the instruction hook
 // aborts execution (matches SUMI's 100,000 limit). Prevents infinite loops.

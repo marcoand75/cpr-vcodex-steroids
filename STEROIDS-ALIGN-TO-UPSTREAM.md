@@ -493,7 +493,7 @@ These files implement the sandboxed Lua 5.4.7 plugin runtime. Must never be over
 | `src/activities/ActivityManager.cpp/h` | Added `goToPlugin()` and `goToPluginBrowser()` methods |
 | `src/activities/apps/LuaPluginActivity.cpp/h` | Lua plugin activity lifecycle (VM init, script load, `init()`/`onKey()` dispatch, VM shutdown, silent restart on exit) |
 | `src/activities/apps/PluginBrowserActivity.cpp/h` | SD card `/custom/*.lua` scanner, header parser, plugin list UI |
-| `src/LuaPluginVM.h/cpp` | 40 KB-capped VM, instruction hook, callback dispatcher |
+| `src/LuaPluginVM.h/cpp` | 64 KB-capped VM, instruction hook, callback dispatcher |
 | `src/LuaPluginAPI.cpp` | `lcd.*`, `fs.*`, `input.*`, `sys.*`, `plugin_str.*` C bindings; `lua_plugin_register_libs()` |
 | `lib/lua/` | Lua 5.4.7 source tree (standard + custom `linit.c` registering 8 libraries) |
 | `plugins/*.lua` | Example plugin scripts (hello_world, snake, breakout, sudoku, todo_list) |
