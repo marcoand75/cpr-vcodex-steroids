@@ -247,6 +247,8 @@ void SyncDayActivity::openManualDateSelection() {
                          [this, previousValidTimestamp](const ActivityResult&) {
                            if (APP_STATE.lastKnownValidTimestamp != previousValidTimestamp) {
                              createDueReadingStatsBackupWithFeedback();
+                             createSyncDateBackupIfDayChanged(previousValidTimestamp,
+                                                              APP_STATE.lastKnownValidTimestamp);
                            }
                            requestUpdate();
                          });
@@ -274,6 +276,7 @@ void SyncDayActivity::syncTime() {
   requestUpdate(true);
 
   const bool hadValidTimeBefore = TimeUtils::isClockValid();
+  const uint32_t previousValidTimestamp = hadValidTimeBefore ? TimeUtils::getCurrentValidTimestamp() : 0;
   const bool ntpSuccess = TimeUtils::syncTimeWithNtp();
   const uint32_t currentValidTimestamp = TimeUtils::getCurrentValidTimestamp();
   const bool effectiveSuccess = ntpSuccess || (!hadValidTimeBefore && currentValidTimestamp > 0);
@@ -288,6 +291,7 @@ void SyncDayActivity::syncTime() {
   requestUpdate(true);
   if (effectiveSuccess) {
     createDueReadingStatsBackupWithFeedback();
+    createSyncDateBackupIfDayChanged(previousValidTimestamp, currentValidTimestamp);
     requestUpdate(true);
   }
 }
@@ -317,4 +321,23 @@ void SyncDayActivity::createDueReadingStatsBackupWithFeedback() {
   const bool backupReady = READING_STATS.createDueAutoBackup();
   showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                      backupReady ? 100 : -1, backupReady ? 350 : 700);
+}
+
+void SyncDayActivity::createSyncDateBackupIfDayChanged(const uint32_t previousTimestamp,
+                                                       const uint32_t currentTimestamp) {
+  // New convenience backup (separate from the interval auto-backup): whenever
+  // a date update changes the calendar day, export the reading stats to a
+  // file named after the newly synced date (/exports/stats_syncdate_YYYY-MM-DD.json).
+  if (!TimeUtils::isClockValid(previousTimestamp) || !TimeUtils::isClockValid(currentTimestamp)) {
+    return;
+  }
+  const uint32_t prevDay = TimeUtils::getLocalDayOrdinal(previousTimestamp);
+  const uint32_t curDay = TimeUtils::getLocalDayOrdinal(currentTimestamp);
+  if (prevDay == 0 || curDay == 0 || prevDay == curDay) {
+    return;  // no day change (or invalid)
+  }
+
+  if (READING_STATS.createSyncDateBackup(currentTimestamp)) {
+    LOG_DBG("SYNC", "Day changed (%u -> %u): created syncdate backup", prevDay, curDay);
+  }
 }

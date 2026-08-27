@@ -1914,6 +1914,33 @@ bool ReadingStatsStore::exportToFile(const std::string& path) const {
   return JsonSettingsIO::saveReadingStats(*this, path.c_str());
 }
 
+bool ReadingStatsStore::createSyncDateBackup(const uint32_t epochSeconds) const {
+  // Format the newly synced date as a stable, sortable YYYY-MM-DD name.
+  const uint32_t dayOrdinal = TimeUtils::getLocalDayOrdinal(epochSeconds);
+  if (dayOrdinal == 0) {
+    return false;
+  }
+  int year = 0;
+  unsigned month = 0;
+  unsigned day = 0;
+  if (!TimeUtils::getDateFromDayOrdinal(dayOrdinal, year, month, day)) {
+    return false;
+  }
+  char dateBuf[16];
+  snprintf(dateBuf, sizeof(dateBuf), "%04u-%02u-%02u", year, month, day);
+
+  const std::string path = std::string("/exports/stats_syncdate_") + dateBuf + ".json";
+  Storage.mkdir(READING_STATS_EXPORT_DIR);
+  // exportToFile overwrites an existing file with the same name.
+  const bool saved = exportToFile(path);
+  if (saved) {
+    LOG_DBG("RST", "SyncDay backup created: %s", path.c_str());
+  } else {
+    LOG_ERR("RST", "SyncDay backup failed: %s", path.c_str());
+  }
+  return saved;
+}
+
 bool ReadingStatsStore::importFromFile(const std::string& path) {
   if (path.empty()) {
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats import rejected an empty path");

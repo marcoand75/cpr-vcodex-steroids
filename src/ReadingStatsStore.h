@@ -249,6 +249,17 @@ class ReadingStatsStore {
   bool exportToFile(const std::string& path) const;
   bool importFromFile(const std::string& path);
   bool saveToFile() const;
+
+  /**
+   * Creates a one-off reading-stats export backup named after the given
+   * (newly synced) date: /exports/stats_syncdate_YYYY-MM-DD.json. Called by
+   * the SyncDay flow when the calendar day changes after a date update. It is
+   * a NEW, separate convenience backup — it does NOT touch the interval-based
+   * auto-backup (stats_backup_*, createDueAutoBackup). If the file already
+   * exists it is overwritten. Returns true on success.
+   */
+  bool createSyncDateBackup(uint32_t epochSeconds) const;
+
   bool isAutoBackupDue() const;
   bool createDueAutoBackup() const;
   bool hasAutoBackups() const;

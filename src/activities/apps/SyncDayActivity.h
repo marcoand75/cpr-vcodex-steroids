@@ -18,6 +18,7 @@ class SyncDayActivity final : public Activity {
   void syncTime();
   void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void createDueReadingStatsBackupWithFeedback();
+  void createSyncDateBackupIfDayChanged(uint32_t previousTimestamp, uint32_t currentTimestamp);
   bool isWifiConnected() const;
   std::string getStatusMessage() const;
 
