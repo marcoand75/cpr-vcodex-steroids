@@ -14,8 +14,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <esp_log.h>
-
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -42,6 +40,7 @@ extern "C" {
 
 #include "LuaPluginAPI.h"
 #include "LuaPluginVM.h"
+#include "Logging.h"
 
 static const char* TAG = "LUA_API";
 
@@ -84,6 +83,26 @@ bool lua_plugin_wants_exit() { return g_wantsExit; }
 // Sandbox helpers — all file I/O is restricted to /custom/<plugin_name>_data/
 // ---------------------------------------------------------------------------
 
+// Tolerant + SAFE integer argument readers: accept any number (Lua's "/"
+// operator produces floats like 4.5) and round to the nearest int. NaN and
+// ±Inf are clamped to 0 so a plugin computation gone wrong can never produce
+// garbage pixel coordinates (which would flood the serial with GFX
+// "Outside range" errors).
+static int lua_check_int(lua_State* L, int index) {
+  double n = luaL_checknumber(L, index);
+  if (!std::isfinite(n)) return 0;  // NaN / ±Inf → 0
+  if (n >= 2147483000.0) return 2147483000;
+  if (n <= -2147483000.0) return -2147483000;
+  return static_cast<int>(std::lround(n));
+}
+static int lua_opt_int(lua_State* L, int index, int def) {
+  double n = luaL_optnumber(L, index, static_cast<lua_Number>(def));
+  if (!std::isfinite(n)) return def;
+  if (n >= 2147483000.0) return 2147483000;
+  if (n <= -2147483000.0) return -2147483000;
+  return static_cast<int>(std::lround(n));
+}
+
 static std::string getSandboxDir() {
   return "/custom/" + g_pluginName + "_data/";
 }
@@ -109,9 +128,16 @@ static bool ensureSandboxDir() {
 // Drawing API (lcd.*) — 16 functions
 // ---------------------------------------------------------------------------
 
+// Shape color convention (matches lcd.setTextColor): 0 = black, 1 = white.
+// Returns true when the optional arg at `index` is white. Default: black.
+static bool lua_color_is_white(lua_State* L, int index) {
+  if (lua_gettop(L) < index) return false;
+  return lua_opt_int(L, index, 0) != 0;
+}
+
 static int l_lcd_fillScreen(lua_State* L) {
   if (!g_renderer) return 0;
-  const int color = (int)luaL_optinteger(L, 1, 1);  // 1=white, 0=black
+  const int color = lua_opt_int(L, 1, 1);  // 1=white, 0=black
   g_renderer->clearScreen(color ? 0xFF : 0x00);
   return 0;
 }
@@ -125,7 +151,7 @@ static int l_lcd_display(lua_State* L) {
 static int l_lcd_setTextSize(lua_State* L) {
   // We use fixed-size fonts in the renderer; textSize is a conceptual scaling.
   // Store the multiplier as a Lua global for use by drawText.
-  const int size = (int)luaL_optinteger(L, 1, 1);
+  const int size = lua_opt_int(L, 1, 1);
   lua_pushinteger(L, size);
   lua_setglobal(L, "_lcd_text_size");
   lua_settop(L, 0);
@@ -134,7 +160,7 @@ static int l_lcd_setTextSize(lua_State* L) {
 
 static int l_lcd_setTextColor(lua_State* L) {
   // 1=white text on black bg, 0=black text on white bg
-  const int color = (int)luaL_optinteger(L, 1, 1);
+  const int color = lua_opt_int(L, 1, 1);
   lua_pushboolean(L, color ? false : true);
   lua_setglobal(L, "_lcd_black_text");
   lua_settop(L, 0);
@@ -142,8 +168,8 @@ static int l_lcd_setTextColor(lua_State* L) {
 }
 
 static int l_lcd_setCursor(lua_State* L) {
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
   lua_pushinteger(L, x);
   lua_setglobal(L, "_lcd_cursor_x");
   lua_pushinteger(L, y);
@@ -169,8 +195,8 @@ static int l_lcd_print(lua_State* L) {
 static int l_lcd_drawText(lua_State* L) {
   if (!g_renderer) return 0;
   const char* text = luaL_checkstring(L, 1);
-  const int x = (int)luaL_checkinteger(L, 2);
-  const int y = (int)luaL_checkinteger(L, 3);
+  const int x = lua_check_int(L, 2);
+  const int y = lua_check_int(L, 3);
   lua_getglobal(L, "_lcd_black_text");
   const bool black = lua_toboolean(L, -1);
   lua_pop(L, 1);
@@ -180,81 +206,87 @@ static int l_lcd_drawText(lua_State* L) {
 
 static int l_lcd_drawRect(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const int w = (int)luaL_checkinteger(L, 3);
-  const int h = (int)luaL_checkinteger(L, 4);
-   const bool filled = (bool)luaL_opt(L, lua_toboolean, 5, 0);
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
+  const int w = lua_check_int(L, 3);
+  const int h = lua_check_int(L, 4);
+  const bool filled = (lua_gettop(L) >= 5) ? (lua_toboolean(L, 5) != 0) : false;
+  const bool white = lua_color_is_white(L, 6);  // 0=black (default), 1=white
   if (filled) {
-    g_renderer->fillRect(x, y, w, h, true);
+    g_renderer->fillRect(x, y, w, h, !white);
   } else {
-    g_renderer->drawRect(x, y, w, h, true);
+    g_renderer->drawRect(x, y, w, h, !white);
   }
   return 0;
 }
 
 static int l_lcd_fillRect(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const int w = (int)luaL_checkinteger(L, 3);
-  const int h = (int)luaL_checkinteger(L, 4);
-  g_renderer->fillRect(x, y, w, h, true);
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
+  const int w = lua_check_int(L, 3);
+  const int h = lua_check_int(L, 4);
+  const bool white = lua_color_is_white(L, 5);  // 0=black (default), 1=white
+  g_renderer->fillRect(x, y, w, h, !white);
   return 0;
 }
 
 static int l_lcd_drawLine(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x1 = (int)luaL_checkinteger(L, 1);
-  const int y1 = (int)luaL_checkinteger(L, 2);
-  const int x2 = (int)luaL_checkinteger(L, 3);
-  const int y2 = (int)luaL_checkinteger(L, 4);
-  g_renderer->drawLine(x1, y1, x2, y2, true);
+  const int x1 = lua_check_int(L, 1);
+  const int y1 = lua_check_int(L, 2);
+  const int x2 = lua_check_int(L, 3);
+  const int y2 = lua_check_int(L, 4);
+  const bool white = lua_color_is_white(L, 5);  // 0=black (default), 1=white
+  g_renderer->drawLine(x1, y1, x2, y2, !white);
   return 0;
 }
 
 static int l_lcd_drawLineH(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const int w = (int)luaL_checkinteger(L, 3);
-  g_renderer->drawLine(x, y, x + w - 1, y, true);
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
+  const int w = lua_check_int(L, 3);
+  const bool white = lua_color_is_white(L, 4);  // 0=black (default), 1=white
+  g_renderer->drawLine(x, y, x + w - 1, y, !white);
   return 0;
 }
 
 static int l_lcd_drawLineV(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const int h = (int)luaL_checkinteger(L, 3);
-  g_renderer->drawLine(x, y, x, y + h - 1, true);
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
+  const int h = lua_check_int(L, 3);
+  const bool white = lua_color_is_white(L, 4);  // 0=black (default), 1=white
+  g_renderer->drawLine(x, y, x, y + h - 1, !white);
   return 0;
 }
 
 static int l_lcd_drawCircle(lua_State* L) {
   if (!g_renderer) return 0;
-  const int cx = (int)luaL_checkinteger(L, 1);
-  const int cy = (int)luaL_checkinteger(L, 2);
-  const int r = (int)luaL_checkinteger(L, 3);
-   const bool filled = (bool)luaL_opt(L, lua_toboolean, 4, 0);
+  const int cx = lua_check_int(L, 1);
+  const int cy = lua_check_int(L, 2);
+  const int r = lua_check_int(L, 3);
+  const bool filled = (lua_gettop(L) >= 4) ? (lua_toboolean(L, 4) != 0) : false;
+  const bool white = lua_color_is_white(L, 5);  // 0=black (default), 1=white
   if (filled) {
     for (int y = -r; y <= r; y++) {
       int dx = (int)(sqrtf((float)(r * r - y * y)));
-      g_renderer->drawLine(cx - dx, cy + y, cx + dx, cy + y, true);
+      g_renderer->drawLine(cx - dx, cy + y, cx + dx, cy + y, !white);
     }
   } else {
     int dx = r;
     int dy = 0;
     int err = 0;
     while (dx >= dy) {
-      g_renderer->drawPixel(cx + dx, cy + dy, true);
-      g_renderer->drawPixel(cx + dy, cy + dx, true);
-      g_renderer->drawPixel(cx - dy, cy + dx, true);
-      g_renderer->drawPixel(cx - dx, cy + dy, true);
-      g_renderer->drawPixel(cx - dx, cy - dy, true);
-      g_renderer->drawPixel(cx - dy, cy - dx, true);
-      g_renderer->drawPixel(cx + dy, cy - dx, true);
-      g_renderer->drawPixel(cx + dx, cy - dy, true);
+      g_renderer->drawPixel(cx + dx, cy + dy, !white);
+      g_renderer->drawPixel(cx + dy, cy + dx, !white);
+      g_renderer->drawPixel(cx - dy, cy + dx, !white);
+      g_renderer->drawPixel(cx - dx, cy + dy, !white);
+      g_renderer->drawPixel(cx - dx, cy - dy, !white);
+      g_renderer->drawPixel(cx - dy, cy - dx, !white);
+      g_renderer->drawPixel(cx + dy, cy - dx, !white);
+      g_renderer->drawPixel(cx + dx, cy - dy, !white);
       dy++;
       if (err <= 0) {
         err += 2 * dy + 1;
@@ -269,21 +301,30 @@ static int l_lcd_drawCircle(lua_State* L) {
 
 static int l_lcd_fillCircle(lua_State* L) {
   if (!g_renderer) return 0;
-  const int cx = (int)luaL_checkinteger(L, 1);
-  const int cy = (int)luaL_checkinteger(L, 2);
-  const int r = (int)luaL_checkinteger(L, 3);
+  const int cx = lua_check_int(L, 1);
+  const int cy = lua_check_int(L, 2);
+  const int r = lua_check_int(L, 3);
+  const bool white = lua_color_is_white(L, 4);  // 0=black (default), 1=white
   for (int y = -r; y <= r; y++) {
     int dx = (int)(sqrtf((float)(r * r - y * y)));
-    g_renderer->drawLine(cx - dx, cy + y, cx + dx, cy + y, true);
+    g_renderer->drawLine(cx - dx, cy + y, cx + dx, cy + y, !white);
   }
   return 0;
 }
 
 static int l_lcd_drawPixel(lua_State* L) {
   if (!g_renderer) return 0;
-  const int x = (int)luaL_checkinteger(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const bool state = (lua_gettop(L) >= 3) ? ((int)luaL_optinteger(L, 3, 1) != 0) : true;
+  const int x = lua_check_int(L, 1);
+  const int y = lua_check_int(L, 2);
+  // 3rd arg: true/1 = black pixel (default), false/0 = white pixel.
+  bool state = true;
+  if (lua_gettop(L) >= 3) {
+    if (lua_isboolean(L, 3)) {
+      state = lua_toboolean(L, 3);
+    } else {
+      state = lua_opt_int(L, 3, 1) != 0;
+    }
+  }
   g_renderer->drawPixel(x, y, state);
   return 0;
 }
@@ -291,8 +332,17 @@ static int l_lcd_drawPixel(lua_State* L) {
 static int l_lcd_drawCenteredText(lua_State* L) {
   if (!g_renderer) return 0;
   const char* text = luaL_checkstring(L, 1);
-  const int y = (int)luaL_checkinteger(L, 2);
-  const bool black = (lua_gettop(L) >= 3) ? ((int)luaL_optinteger(L, 3, 1) != 0) : true;
+  const int y = lua_check_int(L, 2);
+  bool black = true;
+  if (lua_gettop(L) >= 3) {
+    // Optional explicit color: 1=white, 0=black (same convention as shapes).
+    black = (lua_opt_int(L, 3, 0) == 0);
+  } else {
+    // Default: follow the current setTextColor() state (like drawText/print).
+    lua_getglobal(L, "_lcd_black_text");
+    black = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+  }
   g_renderer->drawCenteredText(UI_10_FONT_ID, y, text, black);
   return 0;
 }
@@ -322,6 +372,33 @@ static int l_lcd_getLineHeight(lua_State* L) {
   return 1;
 }
 
+// drawWrappedText(text, x, y, maxWidth, maxLines?) — word-wraps text into at
+// most maxLines lines (excess truncated with an ellipsis) and draws each line
+// below the previous one. Uses the current setTextColor() setting. Prevents
+// text from ever overflowing the screen edge.
+static int l_lcd_drawWrappedText(lua_State* L) {
+  if (!g_renderer) return 0;
+  const char* text = luaL_checkstring(L, 1);
+  const int x = lua_check_int(L, 2);
+  const int y = lua_check_int(L, 3);
+  const int maxWidth = lua_check_int(L, 4);
+  const int maxLines = lua_opt_int(L, 5, 10);
+
+  lua_getglobal(L, "_lcd_black_text");
+  const bool black = lua_toboolean(L, -1);
+  lua_pop(L, 1);
+
+  const std::vector<std::string> lines =
+      g_renderer->wrappedText(UI_10_FONT_ID, text, maxWidth, maxLines);
+  const int lh = g_renderer->getLineHeight(UI_10_FONT_ID);
+  int dy = y;
+  for (const auto& line : lines) {
+    g_renderer->drawText(UI_10_FONT_ID, x, dy, line.c_str(), black);
+    dy += lh;
+  }
+  return 0;
+}
+
 static int l_lcd_clear(lua_State* L) {
   if (!g_renderer) return 0;
   g_renderer->clearScreen(0xFF);
@@ -330,7 +407,7 @@ static int l_lcd_clear(lua_State* L) {
 
 static int l_lcd_fillScreenColor(lua_State* L) {
   if (!g_renderer) return 0;
-  const int color = (int)luaL_optinteger(L, 1, 1);
+  const int color = lua_opt_int(L, 1, 1);
   g_renderer->clearScreen(color ? 0xFF : 0x00);
   return 0;
 }
@@ -557,6 +634,13 @@ static int l_sys_getTime(lua_State* L) {
   return 1;
 }
 
+static int l_sys_getUptimeMs(lua_State* L) {
+  // Milliseconds since boot — the millisecond clock for game timers/speeds
+  // (sys.getTime() only returns whole seconds from the RTC).
+  lua_pushinteger(L, static_cast<lua_Integer>(millis()));
+  return 1;
+}
+
 static int l_sys_getBattery(lua_State* L) {
   const uint16_t pct = powerManager.getBatteryPercentage();
   lua_pushinteger(L, static_cast<lua_Integer>(pct));
@@ -585,7 +669,12 @@ static int l_sys_getSetting(lua_State* L) {
 
 static int l_sys_log(lua_State* L) {
   const char* msg = luaL_checkstring(L, 1);
-  ESP_LOGI(TAG, "[PLUGIN] %s", msg);
+  const char* name = lua_plugin_get_plugin_name();
+  if (name != nullptr && name[0] != '\0') {
+    LOG_INF(TAG, "[PLUGIN:%s] %s", name, msg);
+  } else {
+    LOG_INF(TAG, "[PLUGIN] %s", msg);
+  }
   return 0;
 }
 
@@ -595,8 +684,8 @@ static int l_sys_finish(lua_State* L) {
 }
 
 static int l_sys_random(lua_State* L) {
-  const int min_val = (int)luaL_optinteger(L, 1, 0);
-  const int max_val = (int)luaL_optinteger(L, 2, 32767);
+  const int min_val = lua_opt_int(L, 1, 0);
+  const int max_val = lua_opt_int(L, 2, 32767);
   lua_pushinteger(L, static_cast<lua_Integer>(min_val + random(max_val - min_val + 1)));
   return 1;
 }
@@ -616,8 +705,8 @@ static int l_str_wrapText(lua_State* L) {
     return 1;
   }
   const char* text = luaL_checkstring(L, 1);
-  const int maxWidth = (int)luaL_checkinteger(L, 2);
-  const int maxLines = (int)luaL_optinteger(L, 3, 10);
+  const int maxWidth = lua_check_int(L, 2);
+  const int maxLines = lua_opt_int(L, 3, 10);
   std::vector<std::string> lines = g_renderer->wrappedText(UI_10_FONT_ID, text, maxWidth, maxLines);
   lua_newtable(L);
   for (size_t i = 0; i < lines.size(); i++) {
@@ -634,7 +723,7 @@ static int l_str_truncate(lua_State* L) {
     return 1;
   }
   const char* text = luaL_checkstring(L, 1);
-  const int maxWidth = (int)luaL_checkinteger(L, 2);
+  const int maxWidth = lua_check_int(L, 2);
   std::string truncated = g_renderer->truncatedText(UI_10_FONT_ID, text, maxWidth);
   lua_pushstring(L, truncated.c_str());
   return 1;
@@ -675,7 +764,7 @@ static int l_str_format(lua_State* L) {
       result += luaL_checkstring(L, argIdx++);
       p++;
     } else if (*p == '%' && *(p + 1) == 'd' && argIdx <= lua_gettop(L)) {
-      result += std::to_string((long)luaL_checkinteger(L, argIdx++));
+      result += std::to_string((long)lua_check_int(L, argIdx++));
       p++;
     } else {
       result += *p;
@@ -708,6 +797,7 @@ static luaL_Reg lcd_funcs[] = {
   {"print", l_lcd_print},
   {"drawText", l_lcd_drawText},
   {"drawCenteredText", l_lcd_drawCenteredText},
+  {"drawWrappedText", l_lcd_drawWrappedText},
   {"drawRect", l_lcd_drawRect},
   {"fillRect", l_lcd_fillRect},
   {"drawLine", l_lcd_drawLine},
@@ -747,6 +837,7 @@ static luaL_Reg input_funcs[] = {
 
 static luaL_Reg sys_funcs[] = {
   {"getTime", l_sys_getTime},
+  {"getUptimeMs", l_sys_getUptimeMs},
   {"getBattery", l_sys_getBattery},
   {"getBatteryVoltage", l_sys_getBatteryVoltage},
   {"getSetting", l_sys_getSetting},
@@ -799,5 +890,5 @@ void lua_plugin_register_libs(lua_State* L) {
   lua_pop(L, 1);  // remove sys table
   lua_setglobal(L, "plugin");
 
-  ESP_LOGI(TAG, "API registered: lcd(22) fs(9) input(4) sys(8) plugin_str(6) = 49 total");
+  LOG_INF(TAG, "API registered: lcd(23) fs(9) input(4) sys(9) plugin_str(6) = 51 total");
 }

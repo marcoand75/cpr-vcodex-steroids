@@ -117,7 +117,7 @@ inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
         ShortcutDefinition{ShortcutId::QuickCards, StrId::STR_QUICK_CARDS, StrId::STR_QUICK_CARDS_DESC, UIIcon::QuickCards,
                            &CrossPointSettings::quickCardsShortcut, &CrossPointSettings::quickCardsShortcutOrder,
                            &CrossPointSettings::quickCardsShortcutVisible},
-    ShortcutDefinition{ShortcutId::Plugins, StrId::STR_PLUGINS, StrId::STR_PLUGINS_DESC, UIIcon::AppsHub,
+    ShortcutDefinition{ShortcutId::Plugins, StrId::STR_PLUGINS, StrId::STR_PLUGINS_DESC, UIIcon::Pageview,
                            &CrossPointSettings::pluginsShortcut, &CrossPointSettings::pluginsShortcutOrder,
                            &CrossPointSettings::pluginsShortcutVisible},
    };

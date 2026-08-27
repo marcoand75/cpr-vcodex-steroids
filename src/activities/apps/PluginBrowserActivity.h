@@ -19,6 +19,7 @@ class PluginBrowserActivity final : public Activity {
     std::string name;       // e.g. "Hello World"
     std::string description;
     std::string icon;       // icon name from header (for future use)
+    bool fastReboot = true; // "-- RESTART: no" → launch in-process, no silent reboot
   };
 
   std::vector<PluginEntry> pluginList_;

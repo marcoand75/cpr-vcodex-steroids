@@ -63,22 +63,31 @@ Boot (cold or silent)
   │   ├─ vmRunMain() → calls init()
   │   └─ renderer.displayBuffer() → flush initial frame
   │
-  ├─ LuaPluginActivity::loop()  [every ~10 ms]
-  │   ├─ mappedInput.update()
+  ├─ LuaPluginActivity::loop()  [every ~10 ms; input updated by the main loop]
+  │   ├─ Back SHORT press → delivered to onKey() first (plugin decides)
+  │   ├─ Back held ≥ 1.5 s (LONG press) → exitRequested_ = true
   │   ├─ Check lua_plugin_wants_exit() → finish()
   │   ├─ vmCallCallback("onKey", 0) if onKey exists
+  │   │   └─ error → log traceback to serial, show error screen, finish()
   │   └─ delay(10)
   │
-  ├─ User calls sys.finish() OR presses Back
+  ├─ User calls sys.finish() OR long-presses Back
   │   └─ exitRequested_ = true
   │
   ├─ LuaPluginActivity::onExit()
+  │   ├─ vmCallCallback("finish", 0) if the plugin defines finish()  ← persist state here
   │   ├─ vmShutdown() → lua_close (reclaims all Lua heap)
+  │   ├─ "-- RESTART: no" → return (ActivityManager pops back to browser, no reboot)
   │   ├─ silentRestartToPluginBrowser() OR silentRestartToHome() OR silentRestartToApps()
   │   └─ ESP.restart()
   │
   └─ Boot again → route to PluginBrowser / Home / Apps
 ```
+
+**In-process mode:** Plugins that declare `-- RESTART: no` skip the silent
+restart entirely. The browser pushes the plugin activity onto the stack, and
+exit just pops back — no `ESP.restart()` at all. All other lifecycle steps
+(file check, VM init, `init()`/`onKey()` dispatch) are identical.
 
 ### Key Constraints
 
@@ -137,12 +146,14 @@ tolerant).
 | `-- NAME: <string>` | No | Display name in the browser. Falls back to filename if omitted. |
 | `-- DESC: <string>` | No | Short description shown below the name in the browser. |
 | `-- ICON: <string>` | No | Icon name (currently unused; reserved for future icon mapping). |
+| `-- RESTART: <yes\|no>` | No | `yes` (default): launch + exit use the silent fast reboot. `no`: run in-process without any reboot. |
 
 Example:
 ```lua
 -- NAME: Snake Game
 -- DESC: Classic Snake game for CPR-vCodex
 -- ICON: AppsHub
+-- RESTART: no
 ```
 
 ---
@@ -169,14 +180,25 @@ end
 
 ### `onKey()` — optional
 
-Called **every loop iteration** (~10 ms, after `input.update()`). This is the
-main game/animation loop. Use `input.wasPressed()` for edge-triggered actions
-and `input.isPressed()` for continuous input.
+Called **every loop iteration** (~10 ms). This is the main game/animation loop.
+Use `input.wasPressed()` for edge-triggered actions and `input.isPressed()` for
+continuous input. Note: on e-ink the refresh blocks the loop for ~500 ms, so a
+**short tap can fall between two input samples and be missed** — prefer
+`input.isPressed()` plus a "held latch" (see the games in `plugins/`).
+
+**Back button has two roles** (the device has very few buttons):
+
+- **Short press** → delivered to `onKey()` first. The plugin decides what to
+  do (e.g. cancel a sub-screen, go back one level). The plugin must call
+  `sys.finish()` itself if it wants to exit on a short Back.
+- **Long press (hold ≥ 1.5 s)** → always exits the plugin, regardless of what
+  the script does. This is the guaranteed way out.
 
 ```lua
 function onKey()
   if input.wasPressed("back") then
-    sys.finish()
+    -- short Back: cancel an in-plugin screen, or sys.finish() to exit
+    cancelCurrentScreen()
     return
   end
 
@@ -191,11 +213,11 @@ end
 
 ### `finish()` — optional
 
-Called during VM shutdown. Use for any cleanup. Most plugins can omit this.
-
+Called on **every exit path** (just before the VM is shut down) — after
+`sys.finish()`, a long-press Back, or a load error. Use it to persist state.
 ```lua
 function finish()
-  -- Cleanup if needed
+  fs.writeFile("save.txt", tostring(score))
 end
 ```
 
@@ -203,7 +225,7 @@ end
 
 ## 6. API Reference
 
-### 6.1 `lcd.*` — Drawing (19 functions)
+### 6.1 `lcd.*` — Drawing (23 functions)
 
 All drawing is done through the `GfxRenderer` singleton, which writes to the
 e-ink framebuffer in 4-level grayscale. Colors are 1-bit: `1` = white, `0` = black.
@@ -217,15 +239,16 @@ e-ink framebuffer in 4-level grayscale. Colors are 1-bit: `1` = white, `0` = bla
 | `lcd.setTextColor(color)` | `color: 1=white text (default), 0=black text` | Set text foreground; `1` → black text on white, `0` → white text on black |
 | `lcd.setCursor(x, y)` | `x, y: int` | Set cursor position for subsequent `print()` calls |
 | `lcd.print(text)` | `text: string` | Draw text at current cursor position using `UI_10_FONT_ID` |
-| `lcd.drawText(text, x, y)` | `text: string, x, y: int` | Draw text at (x, y) |
-| `lcd.drawCenteredText(text, y, color?)` | `text, y, color: 1=black(default),0=white` | Centered text at top of screen at y-coordinate |
-| `lcd.drawRect(x, y, w, h, filled?)` | `x, y, w, h: int, filled: bool` | Draw rectangle outline or filled rect |
-| `lcd.fillRect(x, y, w, h)` | `x, y, w, h: int` | Fill a rectangle |
-| `lcd.drawLine(x1, y1, x2, y2)` | `x1, y1, x2, y2: int` | Draw a line |
-| `lcd.drawLineH(x, y, w)` | `x, y, w: int` | Horizontal line |
-| `lcd.drawLineV(x, y, h)` | `x, y, h: int` | Vertical line |
-| `lcd.drawCircle(cx, cy, r, filled?)` | `cx, cy, r: int, filled: bool` | Draw circle outline or filled |
-| `lcd.fillCircle(cx, cy, r)` | `cx, cy, r: int` | Fill a circle |
+| `lcd.drawText(text, x, y)` | `text: string, x, y: int` | Draw text at (x, y) using the current `setTextColor()` |
+| `lcd.drawCenteredText(text, y, color?)` | `text, y: int; color?: 0=black, 1=white` | Horizontally centered text. Defaults to the current `setTextColor()` |
+| `lcd.drawWrappedText(text, x, y, maxWidth, maxLines?)` | `text, x, y, maxWidth: int; maxLines?: int (default 10)` | Word-wraps text into ≤ maxLines lines (ellipsis on excess) and draws each line below the previous one, using the current `setTextColor()`. Prevents text overflowing the screen edge |
+| `lcd.drawRect(x, y, w, h, filled?, color?)` | `filled: bool; color?: 0=black (default), 1=white` | Draw rectangle outline or filled rect |
+| `lcd.fillRect(x, y, w, h, color?)` | `color?: 0=black (default), 1=white` | Fill a rectangle |
+| `lcd.drawLine(x1, y1, x2, y2, color?)` | `color?: 0=black (default), 1=white` | Draw a line |
+| `lcd.drawLineH(x, y, w, color?)` | `color?: 0=black (default), 1=white` | Horizontal line |
+| `lcd.drawLineV(x, y, h, color?)` | `color?: 0=black (default), 1=white` | Vertical line |
+| `lcd.drawCircle(cx, cy, r, filled?, color?)` | `filled: bool; color?: 0=black (default), 1=white` | Draw circle outline or filled |
+| `lcd.fillCircle(cx, cy, r, color?)` | `color?: 0=black (default), 1=white` | Fill a circle |
 | `lcd.drawPixel(x, y, on?)` | `x, y: int, on: true (default)` | Draw a single pixel (black by default) |
 | `lcd.fillScreenColor(color)` | `color: 1=white, 0=black` | Alias of `fillScreen` |
 | `lcd.getWidth()` | — | Returns display width (480 for X4) |
@@ -307,15 +330,16 @@ end
 
 ---
 
-### 6.4 `sys.*` — System (8 functions)
+### 6.4 `sys.*` — System (9 functions)
 
 | Function | Parameters | Returns | Description |
 |---|---|---|---|
 | `sys.getTime()` | — | `int` | Unix epoch time (seconds) |
+| `sys.getUptimeMs()` | — | `int` | Milliseconds since boot — the millisecond clock for game timers/speeds |
 | `sys.getBattery()` | — | `int` | Battery percentage (0–100) |
 | `sys.getBatteryVoltage()` | — | `int` | Battery voltage in millivolts |
 | `sys.getSetting(key)` | `key: string` | `bool\|int\|nil` | Read a device setting (`"darkMode"`, `"orientation"`) |
-| `sys.log(msg)` | `msg: string` | — | Log to ESP32 serial (tagged `[PLUGIN]`) |
+| `sys.log(msg)` | `msg: string` | — | Log to ESP32 serial, tagged `[PLUGIN:<name>]` (e.g. `[PLUGIN:hello_world]`) |
 | `sys.finish()` | — | — | Request plugin exit (sets `wantsExit` flag) |
 | `sys.random(min, max)` | `min: int (default 0), max: int (default 32767)` | `int` | Random integer in `[min, max]` |
 | `sys.getDisplayWidth()` | — | `int` | Display width in pixels |
@@ -503,8 +527,22 @@ errors (the error will surface when the script is actually loaded).
 | `-- NAME: <text>` | Text after the colon | No | Filename without `.lua` |
 | `-- DESC: <text>` | Text after the colon | No | (empty string) |
 | `-- ICON: <text>` | Icon name | No | (none — no icon drawn yet) |
+| `-- RESTART: <yes\|no>` | `no`/`false`/`0`/`off` disable the fast reboot | No | `yes` (fast reboot) |
 
 The parser trims leading/trailing whitespace from all header values.
+
+### Fast reboot vs in-process (`-- RESTART: no`)
+
+By default launching a plugin uses a **silent fast reboot**
+(`silentRestartToPlugin()` → `ESP.restart()`), and exiting does the same to get
+back to the browser. This guarantees a clean, unfragmented heap.
+
+A plugin can opt out with `-- RESTART: no`. It is then launched **in-process**:
+the Plugin Browser is pushed onto the activity stack, the plugin runs without
+any reboot, and when it exits (`sys.finish()`, Back, or a runtime error) the
+device simply pops straight back to the browser. This makes plugin development
+much faster (no reboots per test cycle). Use the reboot mode for plugins that
+need a pristine heap or after WiFi has fragmented memory.
 
 ---
 
@@ -512,14 +550,35 @@ The parser trims leading/trailing whitespace from all header values.
 
 ### Serial log tags
 
+The plugin system logs through the project's `LOG_*` macros (`lib/Logging`),
+so everything — including Lua errors — appears on the USB serial console in
+the standard `[timestamp] [level] [tag]` format, and `ERR` lines are also kept
+in the RTC ring buffer for crash reports.
+
 | Tag | Source |
 |---|---|
-| `[LuaPlugin]` | `LuaPluginActivity.cpp` — lifecycle, file loading, errors |
-| `[LUA_VM]` | `LuaPluginVM.cpp` — VM init, memory cap, instruction limit |
-| `[LUA_API]` | `LuaPluginAPI.cpp` — API registration |
+| `[LuaPlugin]` | `LuaPluginActivity.cpp` — lifecycle, file loading, errors, input trace |
+| `[LUA_VM]` | `LuaPluginVM.cpp` — VM init, memory cap, instruction limit, Lua error tracebacks |
+| `[LUA_API]` | `LuaPluginAPI.cpp` — API registration, `sys.log()` |
 | `[PluginBrowser]` | `PluginBrowserActivity.cpp` — scanning, launching |
 | `[MAIN]` | `main.cpp` — silent restart target/caller logging |
-| `[PLUGIN]` | Lua `sys.log()` output |
+| `[PLUGIN:<name>]` | Lua `sys.log()` / `plugin.log()` output (INFO level) |
+
+### Error messages include stack tracebacks
+
+Every load/callback error is written to serial **one line at a time** (so the
+project's 256-byte log line never truncates the trace) with the exact line in
+the plugin source, e.g.:
+
+```
+[12345] [ERR] [LUA_VM] Lua error:
+[12345] [ERR] [LUA_VM]   callback onKey: /custom/hello_world.lua:15: attempt to index a nil value (global 'foo')
+[12345] [ERR] [LUA_VM]   stack traceback:
+[12345] [ERR] [LUA_VM]   	/custom/hello_world.lua:15: in function 'onKey'
+```
+
+The same message is shown on the device screen (up to 6 lines) and the plugin
+then exits gracefully instead of spamming the loop.
 
 ### Common error messages
 

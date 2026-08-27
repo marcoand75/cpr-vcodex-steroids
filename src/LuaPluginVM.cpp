@@ -4,7 +4,6 @@
 #include <freertos/task.h>
 
 #include <esp_heap_caps.h>
-#include <esp_log.h>
 
 #include <cstring>
 
@@ -17,6 +16,7 @@ extern "C" {
 }
 
 #include "LuaPluginAPI.h"
+#include "Logging.h"
 
 namespace lua_plugin {
 
@@ -60,8 +60,8 @@ static void* luaAlloc(void* ud, void* ptr, size_t osize, size_t nsize) {
   if (nsize > osize) {
     const uint32_t growth = static_cast<uint32_t>(nsize - osize);
     if (s_luaAllocated + growth > PLUGIN_MEM_CAP) {
-      ESP_LOGW(TAG, "Memory cap reached: allocated=%u cap=%u growth=%u",
-               s_luaAllocated, static_cast<uint32_t>(PLUGIN_MEM_CAP), growth);
+      LOG_INF(TAG, "Memory cap reached: allocated=%u cap=%u growth=%u",
+              s_luaAllocated, static_cast<uint32_t>(PLUGIN_MEM_CAP), growth);
       return nullptr;  // Signal OOM to Lua — it will error out
     }
   }
@@ -71,7 +71,7 @@ static void* luaAlloc(void* ud, void* ptr, size_t osize, size_t nsize) {
     const int32_t delta = static_cast<int32_t>(nsize) - static_cast<int32_t>(osize);
     s_luaAllocated += static_cast<uint32_t>(delta);
   } else {
-    ESP_LOGE(TAG, "heap_caps_realloc failed for %u bytes", static_cast<uint32_t>(nsize));
+    LOG_ERR(TAG, "heap_caps_realloc failed for %u bytes", static_cast<uint32_t>(nsize));
   }
   return newPtr;
 }
@@ -90,6 +90,52 @@ static void luaInstructionHook(lua_State* L, lua_Debug* ar) {
 }
 
 // ---------------------------------------------------------------------------
+// Error capture — stores "<prefix>: <message>\n<stack traceback>" so plugin
+// errors can be traced to the exact line in the .lua source.
+// Consumes the error value on top of the Lua stack.
+// The full message is ALSO written to the serial console one line at a time
+// (the project log buffer is 256 bytes, so a multi-line traceback would
+// otherwise be truncated) and lands in the RTC ring buffer for crash reports.
+// ---------------------------------------------------------------------------
+
+static void captureError(lua_State* L, const char* prefix) {
+  const char* err = lua_tostring(L, -1);
+  if (err == nullptr) {
+    err = "(non-string error)";
+  }
+  // Build a traceback (allocates a small string in the Lua heap). If the 40 KB
+  // cap is already exhausted this can fail; lua_tostring then returns nullptr
+  // and we fall back to the plain error message.
+  luaL_traceback(L, L, err, 1);
+  const char* trace = lua_tostring(L, -1);
+  if (trace != nullptr) {
+    snprintf(s_lastError, sizeof(s_lastError), "%s: %s", prefix, trace);
+  } else {
+    snprintf(s_lastError, sizeof(s_lastError), "%s: %s", prefix, err);
+  }
+  lua_pop(L, 2);  // original error + traceback
+
+  // Serial trace: one LOG_ERR per line so nothing gets truncated.
+  LOG_ERR(TAG, "Lua error:");
+  const char* line = s_lastError;
+  while (line != nullptr && *line != '\0') {
+    const char* nl = strchr(line, '\n');
+    if (nl == nullptr) {
+      LOG_ERR(TAG, "  %s", line);
+      break;
+    }
+    char buf[256];
+    const size_t n = (static_cast<size_t>(nl - line) < sizeof(buf) - 1)
+                         ? static_cast<size_t>(nl - line)
+                         : sizeof(buf) - 1;
+    memcpy(buf, line, n);
+    buf[n] = '\0';
+    LOG_ERR(TAG, "  %s", buf);
+    line = nl + 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
@@ -99,11 +145,11 @@ bool checkMemoryAvailable() {
 
   // Need at least 100 KB free and 75 KB contiguous for Lua state + script
   if (freeHeap < 100000 || maxAlloc < 75000) {
-    ESP_LOGE(TAG, "Insufficient memory: free=%u maxAlloc=%u", freeHeap, maxAlloc);
+    LOG_ERR(TAG, "Insufficient memory: free=%u maxAlloc=%u", freeHeap, maxAlloc);
     return false;
   }
 
-  ESP_LOGI(TAG, "Memory check OK: free=%u maxAlloc=%u", freeHeap, maxAlloc);
+  LOG_INF(TAG, "Memory check OK: free=%u maxAlloc=%u", freeHeap, maxAlloc);
   return true;
 }
 
@@ -126,7 +172,7 @@ void vmShutdown() {
 
 bool vmInit() {
   if (s_L != nullptr) {
-    ESP_LOGW(TAG, "VM already initialised");
+    LOG_INF(TAG, "VM already initialised");
     return false;
   }
 
@@ -138,7 +184,7 @@ bool vmInit() {
   // Create Lua state with our custom allocator
   s_L = lua_newstate(luaAlloc, nullptr);
   if (s_L == nullptr) {
-    ESP_LOGE(TAG, "Failed to create Lua state");
+    LOG_ERR(TAG, "Failed to create Lua state");
     return false;
   }
 
@@ -148,36 +194,30 @@ bool vmInit() {
   // Set instruction hook (count hook, every instruction)
   lua_sethook(s_L, luaInstructionHook, LUA_MASKCOUNT, 1);
 
-  ESP_LOGI(TAG, "VM initialised: free=%u maxAlloc=%u", getFreeHeap(), getMaxAlloc());
+  LOG_INF(TAG, "VM initialised: free=%u maxAlloc=%u", getFreeHeap(), getMaxAlloc());
   return true;
 }
 
 bool vmLoad(const char* source, size_t size, const char* pluginName) {
   if (s_L == nullptr) {
-    ESP_LOGE(TAG, "VM not initialised");
+    LOG_ERR(TAG, "VM not initialised");
     return false;
   }
 
   // Compile the source buffer
   if (luaL_loadbuffer(s_L, source, size, pluginName) != LUA_OK) {
-    const char* err = lua_tostring(s_L, -1);
-    snprintf(s_lastError, sizeof(s_lastError), "load error: %s", err ? err : "(nil)");
-    ESP_LOGE(TAG, "luaL_loadbuffer failed: %s", s_lastError);
-    lua_pop(s_L, 1);
+    captureError(s_L, "load error");
     return false;
   }
 
   // Execute the chunk to define functions (main, onButton, etc.)
   s_instrCount = 0;
   if (lua_pcall(s_L, 0, LUA_MULTRET, 0) != LUA_OK) {
-    const char* err = lua_tostring(s_L, -1);
-    snprintf(s_lastError, sizeof(s_lastError), "init error: %s", err ? err : "(nil)");
-    ESP_LOGE(TAG, "lua_pcall (init) failed: %s", s_lastError);
-    lua_pop(s_L, 1);
+    captureError(s_L, "load error");
     return false;
   }
 
-  ESP_LOGI(TAG, "Script loaded: %s (allocated=%u bytes)", pluginName, s_luaAllocated);
+  LOG_INF(TAG, "Script loaded: %s (allocated=%u bytes)", pluginName, s_luaAllocated);
   return true;
 }
 
@@ -191,7 +231,7 @@ bool vmHasFunction(const char* funcName) {
 
 bool vmCallCallback(const char* funcName, int nargs) {
   if (s_L == nullptr) {
-    ESP_LOGE(TAG, "VM not initialised");
+    LOG_ERR(TAG, "VM not initialised");
     return false;
   }
 
@@ -213,11 +253,9 @@ bool vmCallCallback(const char* funcName, int nargs) {
   // Call the function with pcall
   const int errfunc = 0;  // no error handler for now
   if (lua_pcall(s_L, nargs, 0, errfunc) != LUA_OK) {
-    const char* err = lua_tostring(s_L, -1);
-    snprintf(s_lastError, sizeof(s_lastError), "callback %s: %s",
-             funcName, err ? err : "(nil)");
-    ESP_LOGE(TAG, "lua_pcall failed for '%s': %s", funcName, s_lastError);
-    lua_pop(s_L, 1);
+    char prefix[64];
+    snprintf(prefix, sizeof(prefix), "callback %s", funcName);
+    captureError(s_L, prefix);
     return false;
   }
 
@@ -226,12 +264,12 @@ bool vmCallCallback(const char* funcName, int nargs) {
 
 bool vmRunMain() {
   if (s_L == nullptr) {
-    ESP_LOGE(TAG, "VM not initialised");
+    LOG_ERR(TAG, "VM not initialised");
     return false;
   }
 
   if (!vmHasFunction("init")) {
-    ESP_LOGW(TAG, "No init() function in plugin — skipping");
+    LOG_INF(TAG, "No init() function in plugin — skipping");
     return true;
   }
 

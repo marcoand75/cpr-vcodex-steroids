@@ -34,15 +34,6 @@ void lua_plugin_set_settings(const CrossPointSettings* s);
 // ---------------------------------------------------------------------------
 
 /**
- * Called once per loop iteration with the latest button state.
- * Dispatches to Lua's onKey(btn) if registered.
- * @param backPressed Was the Back button pressed this frame
- * @param confirmPressed Was the Confirm button pressed this frame
- * @return true if the plugin requested exit (called sumi.finish())
- */
-bool lua_plugin_handle_input(bool backPressed, bool confirmPressed);
-
-/**
  * Returns true if the plugin called finish() during the last callback.
  */
 bool lua_plugin_wants_exit();

@@ -14,10 +14,29 @@ Lua plugin VM system.
 
 1. **`init()`** — Called once after the script is loaded. Draw the initial
    screen and call `lcd.display()` when done.
-2. **`onKey()`** — Called on every button press. Check `input.wasPressed()`
-   inside this function.
-3. **`finish()`** — When the plugin calls `sys.finish()` or the user holds
-   BACK, the VM shuts down and the device silently restarts.
+2. **`onKey()`** — Called every ~10 ms. Check `input.wasPressed()` /
+   `input.isPressed()` inside this function.
+3. **`finish()`** — Called on **every exit path** (after `sys.finish()`, a
+   long-press Back, or a load error). Use it to persist state.
+
+**Back button has two roles** (few buttons on the device):
+- **Short press** → delivered to `onKey()` first — the plugin decides what to
+  do with it (e.g. cancel a sub-screen). Call `sys.finish()` to exit on it.
+- **Long press (hold ≥ 1.5 s)** → always exits the plugin.
+
+Exit: `sys.finish()` / `plugin.finish()`, or a long-press Back. The VM then
+shuts down and the device silently restarts (unless the plugin declares
+`-- RESTART: no`, in which case it returns to the browser with no reboot).
+
+> **E-ink note:** the display refresh blocks the loop ~505 ms, so a quick tap
+> can fall between two input samples and be missed. Prefer `input.isPressed()`
+> plus a "held latch" (see the games in this folder) for reliable controls.
+>
+> **Game pattern:** run the game logic on the fast loop (~10 ms) and flush the
+> panel only every `DISPLAY_INTERVAL_MS` via `maybeFlush()` (reset the timer
+> *after* `lcd.display()` so the fast input window is a full interval long).
+> This keeps controls responsive while the panel updates as fast as e-ink
+> physically allows.
 
 ## API Reference
 
@@ -33,12 +52,14 @@ Lua plugin VM system.
 | `lcd.print(text)` | Draw text at current cursor |
 | `lcd.drawText(text, x, y)` | Draw text at (x, y) |
 | `lcd.drawCenteredText(text, y)` | Centered text at y |
-| `lcd.drawRect(x, y, w, h, filled)` | Draw/fill rectangle |
-| `lcd.fillRect(x, y, w, h)` | Fill rectangle |
-| `lcd.drawLine(x1, y1, x2, y2)` | Draw line |
-| `lcd.drawLineH(x, y, w)` | Horizontal line |
-| `lcd.drawLineV(x, y, h)` | Vertical line |
-| `lcd.drawCircle(cx, cy, r, filled)` | Draw/fill circle |
+| `lcd.drawWrappedText(text, x, y, maxWidth, maxLines?)` | Word-wrapped multi-line text (ellipsis on excess) — prevents overflow |
+| `lcd.drawRect(x, y, w, h, filled?, color?)` | Draw/fill rectangle (color: 0=black default, 1=white) |
+| `lcd.fillRect(x, y, w, h, color?)` | Fill rectangle |
+| `lcd.drawLine(x1, y1, x2, y2, color?)` | Draw line |
+| `lcd.drawLineH(x, y, w, color?)` | Horizontal line |
+| `lcd.drawLineV(x, y, h, color?)` | Vertical line |
+| `lcd.drawCircle(cx, cy, r, filled?, color?)` | Draw/fill circle |
+| `lcd.fillCircle(cx, cy, r, color?)` | Fill circle |
 | `lcd.fillScreenColor(color)` | Alias for fillScreen |
 | `lcd.getWidth()` | Screen width in pixels |
 | `lcd.getHeight()` | Screen height in pixels |
@@ -74,7 +95,8 @@ Button names: `"back"`, `"ok"`, `"left"`, `"right"`, `"up"`, `"down"`, `"power"`
 
 | Function | Description |
 |---|---|
-| `sys.getTime()` | Unix timestamp |
+| `sys.getTime()` | Unix timestamp (seconds) |
+| `sys.getUptimeMs()` | Milliseconds since boot — millisecond clock for timers |
 | `sys.getBattery()` | Battery percentage (0-100) |
 | `sys.getBatteryVoltage()` | Battery voltage in mV |
 | `sys.getSetting(key)` | Get a reader setting |
@@ -109,4 +131,11 @@ Place these at the top of your `.lua` file:
 -- NAME: My Plugin
 -- DESC: A brief description
 -- ICON: AppsHub
+-- RESTART: no
 ```
+
+`-- RESTART: yes` (default) launches the plugin with a silent fast reboot.
+`-- RESTART: no` runs it in-process (no reboot on launch or exit) — much
+faster to iterate during development. `sys.log()` / `plugin.log()` output
+appears on the serial console tagged `[PLUGIN:<plugin_name>]`, and Lua errors
+are logged with a line-numbered stack traceback.

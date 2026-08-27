@@ -98,6 +98,7 @@ class ActivityManager {
    void goToCrashReport();
    void goHome();
    void goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);
+   void goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser);
    void goToPluginBrowser();
 
   // This will move current activity to stack instead of deleting it

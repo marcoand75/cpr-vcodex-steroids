@@ -247,6 +247,15 @@ void ActivityManager::goToPlugin(const char* pluginName, bool fromApps, bool ret
       std::string(pluginName), renderer, mappedInput, fromApps, returnToPluginBrowser));
 }
 
+// Launches a plugin WITHOUT the silent reboot: the current activity (Plugin
+// Browser) is pushed onto the stack so a normal popActivity() returns to it.
+// The plugin exits in-process (LuaPluginActivity::onExit() must NOT restart).
+void ActivityManager::goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser) {
+  pushActivity(std::make_unique<LuaPluginActivity>(
+      std::string(pluginName), renderer, mappedInput, /*launchFromApps=*/false, returnToPluginBrowser,
+      /*launchInProcess=*/true));
+}
+
 void ActivityManager::goToPluginBrowser() {
   replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
 }
