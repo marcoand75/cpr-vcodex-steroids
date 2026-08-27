@@ -1929,7 +1929,11 @@ bool ReadingStatsStore::createSyncDateBackup(const uint32_t epochSeconds) const 
   char dateBuf[16];
   snprintf(dateBuf, sizeof(dateBuf), "%04u-%02u-%02u", year, month, day);
 
-  const std::string path = std::string("/exports/stats_syncdate_") + dateBuf + ".json";
+  // Same naming convention as the interval auto-backups (stats_backup_YYYY-MM-DD,
+  // NO extension — content is JSON). The import screen in Settings lists
+  // exactly these "stats_*_YYYY-MM-DD" files, so a ".json" suffix would make
+  // this backup invisible to the import procedure.
+  const std::string path = std::string("/exports/stats_syncdate_") + dateBuf;
   Storage.mkdir(READING_STATS_EXPORT_DIR);
   // exportToFile overwrites an existing file with the same name.
   const bool saved = exportToFile(path);

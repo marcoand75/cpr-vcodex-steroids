@@ -242,13 +242,13 @@ void SyncDayActivity::openTimeZoneSelection() {
 }
 
 void SyncDayActivity::openManualDateSelection() {
-  const uint32_t previousValidTimestamp = APP_STATE.lastKnownValidTimestamp;
+  const uint32_t previousValidTimestamp = TimeUtils::getCurrentValidTimestamp();
   startActivityForResult(std::make_unique<ManualDateActivity>(renderer, mappedInput),
                          [this, previousValidTimestamp](const ActivityResult&) {
-                           if (APP_STATE.lastKnownValidTimestamp != previousValidTimestamp) {
+                           const uint32_t currentValidTimestamp = TimeUtils::getCurrentValidTimestamp();
+                           if (currentValidTimestamp != previousValidTimestamp) {
                              createDueReadingStatsBackupWithFeedback();
-                             createSyncDateBackupIfDayChanged(previousValidTimestamp,
-                                                              APP_STATE.lastKnownValidTimestamp);
+                             createSyncDateBackupIfDayChanged(previousValidTimestamp, currentValidTimestamp);
                            }
                            requestUpdate();
                          });

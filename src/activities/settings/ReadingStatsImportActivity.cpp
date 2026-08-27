@@ -19,14 +19,17 @@ constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_EXPORTED_FILE[] = "stats_exported";
 constexpr char READING_STATS_EXPORTED_PATH[] = "/exports/stats_exported";
 constexpr char READING_STATS_BACKUP_PREFIX[] = "stats_backup_";
+constexpr char READING_STATS_SYNCDATE_PREFIX[] = "stats_syncdate_";
 
 std::string fileNameFromPath(const std::string& path) {
   const size_t pos = path.find_last_of('/');
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
-bool isReadingStatsBackupName(const char* name) {
-  if (!name || std::strncmp(name, READING_STATS_BACKUP_PREFIX, std::strlen(READING_STATS_BACKUP_PREFIX)) != 0) {
+// Files are named stats_backup_YYYY-MM-DD / stats_syncdate_YYYY-MM-DD with NO
+// extension (content is JSON), so a ".json" suffix would not be listed here.
+bool isValidDateBackupName(const char* prefix, const char* name) {
+  if (!name || std::strncmp(name, prefix, std::strlen(prefix)) != 0) {
     return false;
   }
 
@@ -34,11 +37,20 @@ bool isReadingStatsBackupName(const char* name) {
   unsigned month = 0;
   unsigned day = 0;
   int consumed = 0;
-  if (std::sscanf(name, "stats_backup_%4d-%2u-%2u%n", &year, &month, &day, &consumed) != 3 || name[consumed] != '\0') {
+  if (std::sscanf(name, "%*[^_]_%*[^_]_%4d-%2u-%2u%n", &year, &month, &day, &consumed) != 3 ||
+      name[consumed] != '\0') {
     return false;
   }
 
   return year >= 2024 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+bool isReadingStatsBackupName(const char* name) {
+  return isValidDateBackupName(READING_STATS_BACKUP_PREFIX, name);
+}
+
+bool isSyncDateBackupName(const char* name) {
+  return isValidDateBackupName(READING_STATS_SYNCDATE_PREFIX, name);
 }
 }  // namespace
 
@@ -63,7 +75,7 @@ std::vector<std::string> ReadingStatsImportActivity::getImportPaths() {
       if (std::strcmp(name, READING_STATS_EXPORTED_FILE) == 0) {
         continue;
       }
-      if (isReadingStatsBackupName(name)) {
+      if (isReadingStatsBackupName(name) || isSyncDateBackupName(name)) {
         backupPaths.emplace_back(std::string(READING_STATS_EXPORT_DIR) + "/" + name);
       }
     }
