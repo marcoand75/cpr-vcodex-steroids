@@ -38,6 +38,7 @@
 #include "ReaderMenuVisibilityActivity.h"
 #include "StatusBarSettingsActivity.h"
 #include "TimeZoneSelectActivity.h"
+#include "EnumSelectorActivity.h"
 #include "activities/apps/AchievementsActivity.h"
 #include "activities/apps/BookmarksAppActivity.h"
 #include "activities/apps/FavoritesAppActivity.h"
@@ -782,35 +783,51 @@ void SettingsActivity::toggleCurrentSetting() {
                              });
       return;
     }
-    // Button action settings — open the popup list selector
-    const bool isShortPwrBtn = (setting.nameId == StrId::STR_SHORT_PWR_BTN);
-    if (setting.nameId == StrId::STR_LONG_PRESS_UP ||
-        setting.nameId == StrId::STR_LONG_PRESS_DOWN ||
-        setting.nameId == StrId::STR_FRONT_LONG_PRESS_LEFT ||
-        setting.nameId == StrId::STR_FRONT_LONG_PRESS_RIGHT ||
-        isShortPwrBtn ||
-        setting.nameId == StrId::STR_SELECT_LONG_PRESS) {
-      const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
-      startActivityForResult(
-          std::make_unique<ButtonActionSelectorActivity>(renderer, mappedInput, currentValue,
-                                                         isShortPwrBtn
-                                                             ? ButtonActionSelectorActivity::Mode::SHORT_PWRBTN
-                                                             : ButtonActionSelectorActivity::Mode::BUTTON_ACTION),
-          [this, setting](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              SETTINGS.*(setting.valuePtr) =
-                  static_cast<uint8_t>(std::get<PageResult>(result.data).page);
-              SETTINGS.saveToFile();
-            }
-            requestUpdate(true);
-          });
-       return;
-    }
-    // Fallback: cycle enum values for any other enum settings not handled above
-    const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
-    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
-    SETTINGS.saveToFile();
-    requestUpdate(true);
+// Button action settings — open the popup list selector
+     const bool isShortPwrBtn = (setting.nameId == StrId::STR_SHORT_PWR_BTN);
+     if (setting.nameId == StrId::STR_LONG_PRESS_UP ||
+         setting.nameId == StrId::STR_LONG_PRESS_DOWN ||
+         setting.nameId == StrId::STR_FRONT_LONG_PRESS_LEFT ||
+         setting.nameId == StrId::STR_FRONT_LONG_PRESS_RIGHT ||
+         isShortPwrBtn ||
+         setting.nameId == StrId::STR_SELECT_LONG_PRESS) {
+       const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+       startActivityForResult(
+           std::make_unique<ButtonActionSelectorActivity>(renderer, mappedInput, currentValue,
+                                                          isShortPwrBtn
+                                                              ? ButtonActionSelectorActivity::Mode::SHORT_PWRBTN
+                                                              : ButtonActionSelectorActivity::Mode::BUTTON_ACTION),
+           [this, setting](const ActivityResult& result) {
+             if (!result.isCancelled) {
+               SETTINGS.*(setting.valuePtr) =
+                   static_cast<uint8_t>(std::get<PageResult>(result.data).page);
+               SETTINGS.saveToFile();
+             }
+             requestUpdate(true);
+           });
+        return;
+     }
+     // For enum settings not handled above:
+     if (setting.enumValues.size() > 2) {
+         // Use popup selector for enums with more than 2 options
+         const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+         startActivityForResult(
+             std::make_unique<EnumSelectorActivity>(renderer, mappedInput, currentValue, setting.enumValues),
+             [this, setting](const ActivityResult& result) {
+                 if (!result.isCancelled) {
+                     SETTINGS.*(setting.valuePtr) =
+                         static_cast<uint8_t>(std::get<PageResult>(result.data).page);
+                     SETTINGS.saveToFile();
+                 }
+                 requestUpdate(true);
+             });
+         return;
+     }
+     // Fallback: cycle enum values for any other enum settings not handled above (2 or fewer options)
+     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+     SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
+     SETTINGS.saveToFile();
+     requestUpdate(true);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
     enterValueEditMode(setting);
     return;
