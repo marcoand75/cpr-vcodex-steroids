@@ -74,7 +74,7 @@ void DictionarySuggestionsActivity::render(RenderLock&&) {
   std::optional<FontCacheManager::PrewarmScope> pageFontPrewarm;
   if (page) {
     if (auto* fcm = renderer.getFontCacheManager()) {
-      pageFontPrewarm.emplace(fcm->createPrewarmScope());
+      pageFontPrewarm.emplace(fcm->createPrewarmScope(false));
     }
     page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
     if (pageFontPrewarm) pageFontPrewarm->endScanAndPrewarm();

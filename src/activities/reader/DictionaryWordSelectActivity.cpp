@@ -311,10 +311,7 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
   if (rows.empty()) return;
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   const std::string query = words[wordIndex].lookupText.empty() ? DictionaryStore::cleanWord(words[wordIndex].text)
-                                                                : words[wordIndex].lookupText;
-  if (auto* fcm = renderer.getFontCacheManager()) {
-    fcm->clearCache();
-  }
+                                                                 : words[wordIndex].lookupText;
   if (query.empty()) {
     GUI.drawPopup(renderer, tr(STR_LOOKUP_EMPTY_PAGE));
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);

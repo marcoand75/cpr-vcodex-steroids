@@ -31,7 +31,7 @@ class FontCacheManager {
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
    public:
-    explicit PrewarmScope(FontCacheManager& manager);
+    explicit PrewarmScope(FontCacheManager& manager, bool clearOnDestroy = true);
     ~PrewarmScope();
     void endScanAndPrewarm();
     PrewarmScope(PrewarmScope&& other) noexcept;
@@ -42,8 +42,9 @@ class FontCacheManager {
    private:
     FontCacheManager* manager_;
     bool active_ = true;
+    bool clearOnDestroy_ = true;
   };
-  PrewarmScope createPrewarmScope();
+  PrewarmScope createPrewarmScope(bool clearOnDestroy = true);
 
  private:
   const std::map<int, EpdFontFamily>& fontMap_;

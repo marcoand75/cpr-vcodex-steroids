@@ -88,7 +88,8 @@ void FontCacheManager::recordStyle(int fontId, EpdFontFamily::Style style) {
 
 // --- PrewarmScope implementation ---
 
-FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
+FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager, bool clearOnDestroy)
+    : manager_(&manager), clearOnDestroy_(clearOnDestroy) {
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
@@ -118,15 +119,14 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
-  if (active_) {
-    endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
-    manager_->clearCache();
-  }
+  if (!active_) return;
+  endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
+  if (clearOnDestroy_) manager_->clearCache();
 }
 
 FontCacheManager::PrewarmScope::PrewarmScope(PrewarmScope&& other) noexcept
-    : manager_(other.manager_), active_(other.active_) {
+    : manager_(other.manager_), active_(other.active_), clearOnDestroy_(other.clearOnDestroy_) {
   other.active_ = false;
 }
 
-FontCacheManager::PrewarmScope FontCacheManager::createPrewarmScope() { return PrewarmScope(*this); }
+FontCacheManager::PrewarmScope FontCacheManager::createPrewarmScope(bool clearOnDestroy) { return PrewarmScope(*this, clearOnDestroy); }
