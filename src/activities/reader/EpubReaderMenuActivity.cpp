@@ -43,6 +43,7 @@
 #include "components/icons/ClipIcon.h"
 #include "components/icons/ClippingListIcon.h"
 #include "fontIds.h"
+#include "util/ReaderMenuRegistry.h"
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
@@ -57,30 +58,49 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       bookProgressPercent(bookProgressPercent) {}
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes) {
-  std::vector<MenuItem> items;
-  items.reserve(17);
-  items.push_back({MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS, Settings224Icon, 24, 24});
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER, Book24Icon, 24, 24});
-  if (hasFootnotes) {
-    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES, Bookmark24Icon, 24, 24});
-  }
-  items.push_back({MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, Search24Icon, 24, 24});
-  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, Recent24Icon, 24, 24});
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary224Icon, 24, 24});
-  items.push_back({MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, Bookmark24Icon, 24, 24});
-  items.push_back({MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, Bookmark24Icon, 24, 24});
-  items.push_back({MenuAction::CREATE_CLIPPING, StrId::STR_CREATE_CLIPPING, ClipIcon, 24, 24});
-  items.push_back({MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS, ClippingListIcon, 24, 24});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, Rotation24Icon, 24, 24});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, Pageview24Icon, 24, 24});
-  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT, ProgressIcon, 24, 24});
-  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON, CameraIcon, 24, 24});
-  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR, QrCodeIcon, 24, 24});
-  items.push_back({MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, Trophy24Icon, 24, 24});
-  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, Bookshelf24Icon, 24, 24});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, Wifi24Icon, 24, 24});
-  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitor24Icon, 24, 24});
-  return items;
+   struct MenuItemInfo {
+      MenuAction action;
+      StrId nameId;
+      const uint8_t* iconPixels;
+      int iconW;
+      int iconH;
+   };
+   static const std::array<MenuItemInfo, static_cast<size_t>(ReaderMenuItemId::COUNT)> menuInfo = {{
+      {MenuAction::READER_SETTINGS, StrId::STR_READING_QUICK_SETTINGS, Settings224Icon, 24, 24},
+      {MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER, Book24Icon, 24, 24},
+      {MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES, Bookmark24Icon, 24, 24},
+      {MenuAction::LOOK_UP_WORD, StrId::STR_LOOK_UP_WORD, Search24Icon, 24, 24},
+      {MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY, Recent24Icon, 24, 24},
+      {MenuAction::DICTIONARY, StrId::STR_DICTIONARY, Dictionary224Icon, 24, 24},
+      {MenuAction::VIEW_BOOKMARKS, StrId::STR_VIEW_BOOKMARKS, Bookmark24Icon, 24, 24},
+      {MenuAction::SAVE_BOOKMARK, StrId::STR_SAVE_BOOKMARK, Bookmark24Icon, 24, 24},
+      {MenuAction::CREATE_CLIPPING, StrId::STR_CREATE_CLIPPING, ClipIcon, 24, 24},
+      {MenuAction::VIEW_CLIPPINGS, StrId::STR_VIEW_CLIPPINGS, ClippingListIcon, 24, 24},
+      {MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT, ProgressIcon, 24, 24},
+      {MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN, Pageview24Icon, 24, 24},
+      {MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION, Rotation24Icon, 24, 24},
+      {MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON, CameraIcon, 24, 24},
+      {MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR, QrCodeIcon, 24, 24},
+      {MenuAction::MARK_AS_FINISHED, StrId::STR_MARK_AS_FINISHED, Trophy24Icon, 24, 24},
+      {MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON, Bookshelf24Icon, 24, 24},
+      {MenuAction::SYNC, StrId::STR_SYNC_PROGRESS, Wifi24Icon, 24, 24},
+      {MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE, CleanMonitor24Icon, 24, 24}
+   }};
+
+std::vector<MenuItem> items;
+    items.reserve(static_cast<size_t>(ReaderMenuItemId::COUNT));
+    const auto& orderedDefinitions = getReaderMenuItemsInOrder(SETTINGS);
+    for (const auto* def : orderedDefinitions) {
+       if (!isReaderMenuItemAlwaysVisible(def->id) && !getReaderMenuItemVisibility(def->id, SETTINGS)) {
+          continue;
+       }
+       if (def->id == ReaderMenuItemId::Footnotes && !hasFootnotes) {
+          continue;
+       }
+       const MenuItemInfo& info = menuInfo[static_cast<size_t>(def->id)];
+       items.push_back({info.action, info.nameId, info.iconPixels, info.iconW, info.iconH});
+    }
+    return items;
 }
 
 void EpubReaderMenuActivity::onEnter() {

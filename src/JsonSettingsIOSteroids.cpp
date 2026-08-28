@@ -161,6 +161,12 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
    doc["pluginsShortcut"] = s.pluginsShortcut;
    doc["pluginsShortcutOrder"] = s.pluginsShortcutOrder;
    doc["pluginsShortcutVisible"] = s.pluginsShortcutVisible;
+
+doc["readerMenuVisibilityMask"] = s.readerMenuVisibilityMask;
+    JsonArray readerMenuOrder = doc["readerMenuOrder"].to<JsonArray>();
+    for (size_t i = 0; i < 19; i++) {
+      readerMenuOrder.add(s.readerMenuOrderMask[i]);
+    }
 }
 
 void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, bool* needsResave) {
@@ -305,16 +311,33 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
    s.pluginsShortcut = clamp(doc["pluginsShortcut"] | s.pluginsShortcut, shortcutLocationCount, s.pluginsShortcut);
    s.pluginsShortcutOrder = clamp(doc["pluginsShortcutOrder"] | s.pluginsShortcutOrder, shortcutOrderCount, s.pluginsShortcutOrder);
    s.pluginsShortcutVisible = clamp(doc["pluginsShortcutVisible"] | s.pluginsShortcutVisible, static_cast<uint8_t>(2), s.pluginsShortcutVisible);
-}
-}
 
-bool JsonSettingsIO::saveSettingsSteroids(const CrossPointSettings& s, const char* path) {
+s.readerMenuVisibilityMask = doc["readerMenuVisibilityMask"] | s.readerMenuVisibilityMask;
+    {
+      JsonArrayConst arr = doc["readerMenuOrder"];
+      if (!arr.isNull()) {
+        const size_t count = std::min<size_t>(arr.size(), 19);
+        uint8_t defaults[19];
+        for (size_t i = 0; i < 19; i++) {
+          defaults[i] = s.readerMenuOrderMask[i];
+        }
+for (size_t i = 0; i < count; i++) {
+            s.readerMenuOrderMask[i] = arr[i] | defaults[i];
+        }
+        if (needsResave) *needsResave = true;
+    }
+}
+}
+}  // namespace
+
+namespace JsonSettingsIO {
+bool saveSettingsSteroids(const CrossPointSettings& s, const char* path) {
   JsonDocument doc;
   writeSteroidsSettingsDoc(doc, s);
   return saveJsonDocumentToFile("STZ", path, doc);
 }
 
-bool JsonSettingsIO::loadSettingsSteroids(CrossPointSettings& s, const char* json, bool* needsResave) {
+bool loadSettingsSteroids(CrossPointSettings& s, const char* json, bool* needsResave) {
   if (needsResave) *needsResave = false;
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
@@ -326,3 +349,4 @@ bool JsonSettingsIO::loadSettingsSteroids(CrossPointSettings& s, const char* jso
   LOG_DBG("STZ", "Steroids settings loaded from file");
   return true;
 }
+}  // namespace JsonSettingsIO

@@ -27,6 +27,7 @@
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
 #include "ReadingStatsImportActivity.h"
+#include "ReaderMenuOrderActivity.h"
 #include "ReadingStatsStore.h"
 #include "SdCardFontGlobals.h"
 #include "SdFirmwareUpdateActivity.h"
@@ -34,6 +35,7 @@
 #include "ShortcutLocationActivity.h"
 #include "ShortcutOrderActivity.h"
 #include "ShortcutVisibilityActivity.h"
+#include "ReaderMenuVisibilityActivity.h"
 #include "StatusBarSettingsActivity.h"
 #include "TimeZoneSelectActivity.h"
 #include "activities/apps/AchievementsActivity.h"
@@ -147,16 +149,18 @@ const std::vector<SettingInfo>& getDeviceReaderSettings() {
       SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing),
       SettingInfo::Enum(StrId::STR_TEXT_DARKNESS, &CrossPointSettings::textDarkness,
                         {StrId::STR_NORMAL, StrId::STR_LEGACY_BW, StrId::STR_DARK, StrId::STR_EXTRA_DARK}),
-      SettingInfo::Enum(StrId::STR_READER_REFRESH_MODE, &CrossPointSettings::readerRefreshMode,
-                        {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_REFRESH_MODE_FAST, StrId::STR_REFRESH_MODE_HALF,
-                         StrId::STR_REFRESH_MODE_FULL}),
-      SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
-                        {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
-      SettingInfo::Enum(StrId::STR_EPUB_RENDER_MODE, &CrossPointSettings::epubRenderMode,
-                        {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}),
-
-      SettingInfo::Section(StrId::STR_CUSTOMISE_STATUS_BAR),
-      SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar),
+SettingInfo::Enum(StrId::STR_READER_REFRESH_MODE, &CrossPointSettings::readerRefreshMode,
+                          {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_REFRESH_MODE_FAST, StrId::STR_REFRESH_MODE_HALF,
+                           StrId::STR_REFRESH_MODE_FULL}),
+        SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
+                          {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
+        SettingInfo::Enum(StrId::STR_EPUB_RENDER_MODE, &CrossPointSettings::epubRenderMode,
+                          {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}),
+        SettingInfo::Section(StrId::STR_SECTION_READER_MENU),
+        SettingInfo::Action(StrId::STR_READER_MENU_VISIBILITY, SettingAction::ReaderMenuVisibility),
+        SettingInfo::Action(StrId::STR_READER_MENU_ORDER, SettingAction::ReaderMenuOrder),
+        SettingInfo::Section(StrId::STR_CUSTOMISE_STATUS_BAR),
+        SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar),
   };
   return settings;
 }
@@ -855,9 +859,15 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::TimeZone:
         startActivityForResult(std::make_unique<TimeZoneSelectActivity>(renderer, mappedInput), resultHandler);
         break;
-      case SettingAction::ReadingStats:
-        startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), resultHandler);
-        break;
+case SettingAction::ReaderMenuVisibility:
+          startActivityForResult(std::make_unique<ReaderMenuVisibilityActivity>(renderer, mappedInput), resultHandler);
+          break;
+        case SettingAction::ReaderMenuOrder:
+          startActivityForResult(std::make_unique<ReaderMenuOrderActivity>(renderer, mappedInput), resultHandler);
+          break;
+        case SettingAction::ReadingStats:
+         startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), resultHandler);
+         break;
       case SettingAction::ResetReadingStats:
         startActivityForResult(
             std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_READING_STATS_CONFIRM), ""),

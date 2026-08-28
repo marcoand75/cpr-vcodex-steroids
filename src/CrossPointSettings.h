@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <iosfwd>
 
+// Forward declaration to break circular dependency with ReaderMenuRegistry.h
+enum class ReaderMenuItemId : uint8_t;
+
 class CrossPointSettings {
  private:
   // Private constructor for singleton
@@ -660,10 +663,13 @@ class CrossPointSettings {
   uint8_t screenSaverMinBattery = 0;   // 0=10%, 1=20%, 2=30%, ..., 8=90%
   uint8_t screenSaverReplaceSleep = 0; // 0=off, 1=use screensaver instead of sleep when battery is above minimum
   // Separate settings for screensaver from reading activity
-  char screenSaverReaderDir[128] = "";
-  uint8_t screenSaverReaderOrder = SCREENSAVER_SHUFFLE;  // 0=shuffle, 1=sequential
+char screenSaverReaderDir[128] = "";
+   uint8_t screenSaverReaderOrder = SCREENSAVER_SHUFFLE;  // 0=shuffle, 1=sequential
+    uint32_t readerMenuVisibilityMask = 0xFFFFFFFF; // all items visible by default
+    uint8_t readerMenuOrderMask[19] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
 
-  ~CrossPointSettings() = default;
+    ~CrossPointSettings() = default;
 
   // Get singleton instance
   static CrossPointSettings& getInstance() { return instance; }
