@@ -52,6 +52,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/JsonSettingsIOSteroids.cpp/h`** | **ALL Steroids-only settings serialization (per-directional buttons, shortPwrBtn, selectLongPressBehavior, library, screensaver, clippings, etc. — 43 fields)** |
 | **`src/JsonSettingsIOShared.inc`** | **Shared internal serialization helpers (saveJsonDocumentToFile, loadJsonDocumentFromFile, migration functions)** |
 | **`src/activities/settings/ButtonActionSelectorActivity.cpp/h`** | **Reusable popup selector for all BUTTON_ACTION settings (14 options, SHORT_PWRBTN mode with 16 options, circular wrap-around)** |
+| **`src/activities/settings/EnumSelectorActivity.cpp/h`** | **Reusable popup selector for enum settings with >2 options**
 | **`src/network/CrossPointWebServer.cpp`** | **App Settings page route, logo endpoint, Steroids routes** |
 | **`src/network/CrossPointWebServer.h`** | **Steroids-specific handler declarations** |
 | **`src/network/html/AppSettingsPage.html`** | **Browser stats/settings editor (deleted by upstream!)** |

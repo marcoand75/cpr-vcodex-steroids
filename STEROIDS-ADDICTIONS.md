@@ -833,6 +833,10 @@ Three web pages with clean separation:
 - `/app-settings` — upstream app settings (SyncDay, Reading Stats, Achievements, Flashcards, Shortcuts, KOReader, Status Bar)
 - `/steroids-settings` — all 43 Steroids fields via dedicated `/api/steroids-settings` endpoints
 
+### Enum Selector UI
+
+For Steroids enum settings that have more than two options (such as `longPressUpBehavior`, `shortPwrBtn`, etc.), a reusable popup selector (`EnumSelectorActivity`) is used instead of cycling through options. This provides a more efficient way to select enum values, especially for those with many options.
+
 ### Rollback safety
 
 If `settings-steroids.json` is corrupted or deleted, all Steroids fields revert
