@@ -1416,6 +1416,9 @@ void HomeActivity::loop() {
             startActivityForResult(std::make_unique<QuickCardsActivity>(renderer, mappedInput),
                                    [this](const ActivityResult&) { requestFreshHomeRender(true); });
             break;
+          case ShortcutId::Plugins:
+            activityManager.goToPluginBrowser();
+            break;
           case ShortcutId::OpdsBrowser:
            onOpdsBrowserOpen();
           break;

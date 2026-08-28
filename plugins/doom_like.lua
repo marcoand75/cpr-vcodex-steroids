@@ -42,7 +42,7 @@
 -- NAME: Doom-Like
 -- DESC: First-person maze raycaster (Wolfenstein-style)
 -- ICON: AppsHub
--- RESTART: no
+-- RESTART: yes
 
 -- ---------------------------------------------------------------------------
 -- 4:3 viewport (480 x 360) rendered at 160 x 120 cells (3 x 3 px each).
