@@ -58,7 +58,7 @@ inline Result parse(const std::string& text) {
     Result r;
     if (text.empty()) { r.success = true; r.format = "EMPTY"; return r; }
 
-    // ── Wi‑Fi ───────────────────────────────────────────────────────────────
+    // ── Wi-Fi ───────────────────────────────────────────────────────────────
     if (text.size() >= 5 &&
         (text[0] == 'W' || text[0] == 'w') &&
         (text[1] == 'I' || text[1] == 'i') &&
@@ -198,6 +198,55 @@ inline Result parse(const std::string& text) {
         if (!tel.empty()) r.fields.push_back({"Phone", tel});
         if (!email.empty()) r.fields.push_back({"Email", email});
         for (const auto& u : urls) r.fields.push_back({"URL", u});
+        if (!adr.empty()) r.fields.push_back({"Address", adr});
+        return r;
+    }
+
+    // ── MeCard ──────────────────────────────────────────────────────────────
+    if (text.size() >= 7 && text.compare(0, 7, "MECARD:") == 0) {
+        r.format = "MECARD";
+        r.success = true;
+        std::string name, phone, email, note, url, adr;
+        const char* p = text.c_str() + 7;
+        const char* end = text.c_str() + text.size();
+
+        while (p < end) {
+            if (*p == ';' || *p == '\0') { ++p; continue; }
+            if (p + 2 < end && p[1] == ':') {
+                char field = *p;
+                p += 2;
+                std::string val;
+                while (p < end && *p != ';') {
+                    if (*p == '\\' && p + 1 < end) { ++p; }
+                    val += *p++;
+                }
+                switch (field) {
+                    case 'N': case 'n': name = val; break;
+                    case 'T': case 't': phone = val; break;
+                    case 'E': case 'e': email = val; break;
+                    case 'O': case 'o': note = val; break;
+                    case 'U': case 'u': url = val; break;
+                    case 'A': case 'a': adr = val; break;
+                }
+            } else {
+                ++p;
+            }
+        }
+
+        // Convert "Last,First" to "First Last"
+        std::string displayName = name;
+        auto comma = displayName.find(',');
+        if (comma != std::string::npos) {
+            displayName = displayName.substr(comma + 1) + " " + displayName.substr(0, comma);
+            while (!displayName.empty() && displayName.front() == ' ') displayName.erase(displayName.begin());
+            while (!displayName.empty() && displayName.back() == ' ') displayName.pop_back();
+        }
+        r.displayTitle = displayName.empty() ? "Contact" : displayName;
+        if (!name.empty()) r.fields.push_back({"Name", displayName});
+        if (!phone.empty()) r.fields.push_back({"Phone", phone});
+        if (!email.empty()) r.fields.push_back({"Email", email});
+        if (!note.empty()) r.fields.push_back({"Note", note});
+        if (!url.empty()) r.fields.push_back({"URL", url});
         if (!adr.empty()) r.fields.push_back({"Address", adr});
         return r;
     }
@@ -351,185 +400,46 @@ inline Result parse(const std::string& text) {
     }
 
     // ── iCal Event ──────────────────────────────────────────────────────────
+    // Handles: BEGIN:VEVENT … END:VEVENT (possibly embedded in VCALENDAR)
     if (text.find("BEGIN:VEVENT") != std::string::npos) {
         r.format = "EVENT";
+        // Extract property value: field may be "PROPERTY:value" or "PROPERTY;PARAM=val:value"
         auto extract = [&](const std::string& field) -> std::string {
-            auto pos = text.find(field + ":");
+            // Search case-insensitively
+            std::string upper = field;
+            for (auto& c : upper) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            std::string upperText = text;
+            for (auto& c : upperText) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            auto pos = upperText.find(upper);
             if (pos == std::string::npos) return "";
-            pos += field.length() + 1;
+            // Skip past the field name, then skip any parameters (;…:) until ':'
+            pos += field.length();
+            while (pos < text.size() && text[pos] == ';') {
+              // skip parameter name and value until next ';' or ':'
+              pos = text.find_first_of(";:", pos);
+              if (pos == std::string::npos || text[pos] == ':') break;
+              ++pos; // skip ';'
+            }
+            if (pos == std::string::npos || text[pos] != ':') return "";
+            ++pos; // skip ':'
+            // Value until end of line (handle \r\n, \n, or folding: \r\n space)
             auto end = text.find_first_of("\r\n", pos);
-            return (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
+            std::string value = (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
+            return value;
         };
         std::string summary = extract("SUMMARY");
         std::string dtstart = extract("DTSTART");
+        std::string dtend = extract("DTEND");
         std::string location = extract("LOCATION");
-        std::string desc = extract("DESCRIPTION");
+        std::string description = extract("DESCRIPTION");
         r.displayTitle = summary.empty() ? "Event" : summary;
         if (!summary.empty()) r.fields.push_back({"Summary", summary});
-        if (!dtstart.empty()) r.fields.push_back({"Date", dtstart});
+        if (!dtstart.empty()) r.fields.push_back({"Start", dtstart});
+        if (!dtend.empty()) r.fields.push_back({"End", dtend});
         if (!location.empty()) r.fields.push_back({"Location", location});
-        if (!desc.empty()) r.fields.push_back({"Description", desc});
+        if (!description.empty()) r.fields.push_back({"Description", description});
         r.success = true;
         return r;
-    }
-
-    // ── MECARD ──────────────────────────────────────────────────────────────
-    if (text.size() >= 7 && text.compare(0, 7, "MECARD:") == 0) {
-        r.format = "MECARD";
-        r.success = true;
-        std::string name, phone, email, note, url, adr;
-        const char* p = text.c_str() + 7;
-        const char* end = text.c_str() + text.size();
-
-        while (p < end) {
-            if (*p == ';' || *p == '\0') { ++p; continue; }
-            if (p + 2 < end && p[1] == ':') {
-                char field = *p;
-                p += 2;
-                std::string val;
-                while (p < end && *p != ';') {
-                    if (*p == '\\' && p + 1 < end) { ++p; }
-                    val += *p++;
-                }
-                switch (field) {
-                    case 'N': case 'n': name = val; break;
-                    case 'T': case 't': phone = val; break;
-                    case 'E': case 'e': email = val; break;
-                    case 'O': case 'o': note = val; break;
-                    case 'U': case 'u': url = val; break;
-                    case 'A': case 'a': adr = val; break;
-                }
-            } else {
-                ++p;
-            }
-        }
-
-        // Convert "Last,First" to "First Last"
-        std::string displayName = name;
-        auto comma = displayName.find(',');
-        if (comma != std::string::npos) {
-            displayName = displayName.substr(comma + 1) + " " + displayName.substr(0, comma);
-            while (!displayName.empty() && displayName.front() == ' ') displayName.erase(displayName.begin());
-            while (!displayName.empty() && displayName.back() == ' ') displayName.pop_back();
-        }
-        r.displayTitle = displayName.empty() ? "Contact" : displayName;
-        if (!name.empty()) r.fields.push_back({"Name", displayName});
-        if (!phone.empty()) r.fields.push_back({"Phone", phone});
-        if (!email.empty()) r.fields.push_back({"Email", email});
-        if (!note.empty()) r.fields.push_back({"Note", note});
-        if (!url.empty()) r.fields.push_back({"URL", url});
-        if (!adr.empty()) r.fields.push_back({"Address", adr});
-        return r;
-    }
-
-    // ── Mailto ──────────────────────────────────────────────────────────
-    if (text.size() >= 7 && (text.compare(0, 7, "mailto:") == 0 || text.compare(0, 7, "MAILTO:") == 0)) {
-      r.format = "EMAIL";
-      std::string addr = text.substr(7);
-      auto qPos = addr.find('?');
-      std::string emailAddr = (qPos != std::string::npos) ? addr.substr(0, qPos) : addr;
-      r.displayTitle = emailAddr;
-      r.fields.push_back({"Email", emailAddr});
-      if (qPos != std::string::npos) {
-        auto subPos = addr.find("subject=", qPos);
-        if (subPos != std::string::npos) {
-          subPos += 8;
-          auto end = addr.find('&', subPos);
-          std::string subj = (end != std::string::npos) ? addr.substr(subPos, end - subPos) : addr.substr(subPos);
-          if (!subj.empty()) r.fields.push_back({"Subject", subj});
-        }
-      }
-      r.success = true;
-      return r;
-    }
-
-    // ── Telephone ────────────────────────────────────────────────────────
-    if (text.size() >= 4 && (text.compare(0, 4, "tel:") == 0 || text.compare(0, 4, "TEL:") == 0)) {
-      r.format = "PHONE";
-      r.displayTitle = text.substr(4);
-      r.fields.push_back({"Phone", text.substr(4)});
-      r.success = true;
-      return r;
-    }
-
-    // ── SMS ──────────────────────────────────────────────────────────────
-    if ((text.size() >= 4 && (text.compare(0, 4, "sms:") == 0 || text.compare(0, 4, "SMS:") == 0)) ||
-        (text.size() >= 6 && (text.compare(0, 6, "smsto:") == 0 || text.compare(0, 6, "SMSTO:") == 0))) {
-      r.format = "SMS";
-      auto colon = text.find(':');
-      std::string body = text.substr(colon + 1);
-      auto c2 = body.find(':');
-      std::string number = (c2 != std::string::npos) ? body.substr(0, c2) : body;
-      r.displayTitle = number;
-      r.fields.push_back({"Number", number});
-      if (c2 != std::string::npos) r.fields.push_back({"Message", body.substr(c2 + 1)});
-      r.success = true;
-      return r;
-    }
-
-    // ── OTP Auth (2FA) ───────────────────────────────────────────────────
-    if (text.size() >= 10 && (text.compare(0, 10, "otpauth://") == 0 || text.compare(0, 10, "OTPAUTH://") == 0)) {
-      r.format = "OTPAUTH";
-      auto labelStart = text.find('/', 10);
-      std::string label = (labelStart != std::string::npos) ? text.substr(labelStart + 1) : "2FA";
-      size_t p = 0;
-      while ((p = label.find("%20", p)) != std::string::npos) { label.replace(p, 3, " "); ++p; }
-      auto colon = label.find(':');
-      if (colon != std::string::npos) {
-        std::string issuer = label.substr(0, colon);
-        std::string user = label.substr(colon + 1);
-        r.displayTitle = user;
-        r.fields.push_back({"Account", user});
-        r.fields.push_back({"Issuer", issuer});
-      } else {
-        r.displayTitle = label;
-        r.fields.push_back({"Token", label});
-      }
-      r.success = true;
-      return r;
-    }
-
-    // ── iCal Event ───────────────────────────────────────────────────────
-    // Handles: BEGIN:VEVENT … END:VEVENT (possibly embedded in VCALENDAR)
-    if (text.find("BEGIN:VEVENT") != std::string::npos) {
-      r.format = "EVENT";
-      // Extract property value: field may be "PROPERTY:value" or "PROPERTY;PARAM=val:value"
-      auto extract = [&](const std::string& field) -> std::string {
-        // Search case-insensitively
-        std::string upper = field;
-        for (auto& c : upper) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-        std::string upperText = text;
-        for (auto& c : upperText) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-        auto pos = upperText.find(upper);
-        if (pos == std::string::npos) return "";
-        // Skip past the field name, then skip any parameters (;…:) until ':'
-        pos += field.length();
-        while (pos < text.size() && text[pos] == ';') {
-          // skip parameter name and value until next ';' or ':'
-          pos = text.find_first_of(";:", pos);
-          if (pos == std::string::npos || text[pos] == ':') break;
-          ++pos; // skip ';'
-        }
-        if (pos == std::string::npos || text[pos] != ':') return "";
-        ++pos; // skip ':'
-        // Value until end of line (handle \r\n, \n, or folding: \r\n space)
-        auto end = text.find_first_of("\r\n", pos);
-        std::string value = (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
-        return value;
-      };
-      std::string summary = extract("SUMMARY");
-      std::string dtstart = extract("DTSTART");
-      std::string dtend = extract("DTEND");
-      std::string location = extract("LOCATION");
-      std::string description = extract("DESCRIPTION");
-      r.displayTitle = summary.empty() ? "Event" : summary;
-      if (!summary.empty()) r.fields.push_back({"Summary", summary});
-      if (!dtstart.empty()) r.fields.push_back({"Start", dtstart});
-      if (!dtend.empty()) r.fields.push_back({"End", dtend});
-      if (!location.empty()) r.fields.push_back({"Location", location});
-      if (!description.empty()) r.fields.push_back({"Description", description});
-      r.success = true;
-      return r;
     }
 
     // ── URL ─────────────────────────────────────────────────────────────────

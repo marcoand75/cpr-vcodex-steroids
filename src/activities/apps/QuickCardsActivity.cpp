@@ -65,19 +65,23 @@ void QuickCardsActivity::drawBarcode(const char* digits, int x, int y, int maxW,
     auto len = strlen(digits);
     if (len == 0 || len > 40) return;
 
+    // Validate: Code-128C requires even number of digits
+    bool allDigits = true;
+    for (size_t i = 0; i < len; ++i) {
+        if (digits[i] < '0' || digits[i] > '9') { allDigits = false; break; }
+    }
+    if (!allDigits || (len % 2) != 0) {
+        renderer.drawCenteredText(UI_10_FONT_ID, y + maxH / 2 - 10, "Invalid barcode");
+        renderer.drawCenteredText(UI_10_FONT_ID, y + maxH / 2 + 4, "digits only, even length");
+        return;
+    }
+
     std::vector<uint8_t> sym;
-    sym.reserve((len + 1) / 2 + 3);
+    sym.reserve(len / 2 + 3);
     sym.push_back(105);
 
-    bool odd = (len % 2) != 0;
-    if (odd) {
-        sym.push_back(static_cast<uint8_t>(digits[0] - '0'));
-        for (size_t i = 1; i < len; i += 2)
-            sym.push_back(static_cast<uint8_t>((digits[i] - '0') * 10 + (digits[i + 1] - '0')));
-    } else {
-        for (size_t i = 0; i < len; i += 2)
-            sym.push_back(static_cast<uint8_t>((digits[i] - '0') * 10 + (digits[i + 1] - '0')));
-    }
+    for (size_t i = 0; i < len; i += 2)
+        sym.push_back(static_cast<uint8_t>((digits[i] - '0') * 10 + (digits[i + 1] - '0')));
 
     sym.push_back(barcodeChecksum(sym.data() + 1, sym.size() - 1));
     sym.push_back(106);
@@ -164,6 +168,27 @@ void QuickCardsActivity::scanDirectory() {
 }
 
 void QuickCardsActivity::splitCardText(const std::string& fullText, std::string& primary, std::string& description) {
+    // First try double-newline separator (preserves multi-line QR payloads like vCard/iCal)
+    auto dnl = fullText.find("\n\n");
+    if (dnl != std::string::npos) {
+        primary = fullText.substr(0, dnl);
+        description = fullText.substr(dnl + 2);
+        while (!primary.empty() && (primary.back() == '\n' || primary.back() == '\r')) primary.pop_back();
+        while (!description.empty() && (description.back() == '\n' || description.back() == '\r')) description.pop_back();
+        return;
+    }
+    // No double newline: for multi-line known formats keep the whole text as primary
+    if (fullText.size() >= 11 && fullText.compare(0, 11, "BEGIN:VCARD") == 0) {
+        primary = fullText;
+        description.clear();
+        return;
+    }
+    if (fullText.size() >= 12 && fullText.compare(0, 12, "BEGIN:VEVENT") == 0) {
+        primary = fullText;
+        description.clear();
+        return;
+    }
+    // Fallback: split at first newline (backward compatible with single-line QR + description)
     auto nl = fullText.find('\n');
     if (nl != std::string::npos) {
         primary = fullText.substr(0, nl);
