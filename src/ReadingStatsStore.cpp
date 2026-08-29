@@ -1217,6 +1217,22 @@ void ReadingStatsStore::rebuildSummaryCache() const {
         }
       }
     }
+
+    // Daily average over all past days present in stats, excluding today.
+    {
+      uint64_t totalPastDaysMs = 0;
+      uint32_t pastDaysCount = 0;
+      for (const auto& day : readingDays) {
+        if (day.dayOrdinal == cache.referenceDayOrdinal) continue;
+        totalPastDaysMs += day.readingMs;
+        ++pastDaysCount;
+      }
+      if (pastDaysCount > 0) {
+        cache.dailyAverageMs = totalPastDaysMs / pastDaysCount;
+      } else {
+        cache.dailyAverageMs = 0;
+      }
+    }
   }
 
   cache.valid = true;
@@ -1644,6 +1660,7 @@ SummaryJSON::Global ReadingStatsStore::getGlobalSummary() const {
   result.maxStreakDays = summaryCache.maxStreakDays;
   result.booksFinishedCount = summaryCache.booksFinishedCount;
   result.goalReadingMs = summaryCache.goalReadingMs;
+  result.dailyAverageMs = summaryCache.dailyAverageMs;
   return result;
 }
 
@@ -2163,6 +2180,7 @@ bool ReadingStatsStore::saveSummaryJSON() const {
   json.global.maxStreakDays = summaryCache.maxStreakDays;
   json.global.booksFinishedCount = summaryCache.booksFinishedCount;
   json.global.goalReadingMs = summaryCache.goalReadingMs;
+  json.global.dailyAverageMs = summaryCache.dailyAverageMs;
   json.global.referenceDayOrdinal = summaryCache.referenceDayOrdinal;
 
   // Only books that have any progress (or are completed) need a home badge.
@@ -2192,6 +2210,7 @@ bool ReadingStatsStore::saveSummaryJSON() const {
   summary["maxStreakDays"] = json.global.maxStreakDays;
   summary["booksFinishedCount"] = json.global.booksFinishedCount;
   summary["goalReadingMs"] = json.global.goalReadingMs;
+  summary["dailyAverageMs"] = json.global.dailyAverageMs;
   summary["referenceDayOrdinal"] = json.global.referenceDayOrdinal;
 
   JsonArray badges = doc["bookBadges"].to<JsonArray>();
@@ -2245,6 +2264,7 @@ bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
     out.global.maxStreakDays = summary["maxStreakDays"] | 0U;
     out.global.booksFinishedCount = summary["booksFinishedCount"] | 0U;
     out.global.goalReadingMs = summary["goalReadingMs"] | 0ULL;
+    out.global.dailyAverageMs = summary["dailyAverageMs"] | 0ULL;
     out.global.referenceDayOrdinal = summary["referenceDayOrdinal"] | 0U;
   }
 

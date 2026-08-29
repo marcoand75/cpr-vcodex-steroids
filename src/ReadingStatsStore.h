@@ -78,6 +78,7 @@ struct SummaryJSON {
     uint32_t maxStreakDays = 0;
     uint32_t booksFinishedCount = 0;
     uint64_t goalReadingMs = 0;
+    uint64_t dailyAverageMs = 0;
     // Day ordinal the snapshot was computed for. Lets getTodayReadingMs()
     // return 0 after a day rollover instead of a stale "yesterday" value.
     uint32_t referenceDayOrdinal = 0;
@@ -114,6 +115,7 @@ class ReadingStatsStore {
     uint32_t currentStreakDays = 0;
     uint32_t maxStreakDays = 0;
     uint64_t goalReadingMs = 0;
+    uint64_t dailyAverageMs = 0;
   };
 
   struct SessionState {

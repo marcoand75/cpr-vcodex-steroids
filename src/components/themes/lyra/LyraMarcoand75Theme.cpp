@@ -67,6 +67,35 @@
 #include "fontIds.h"
 
 namespace {
+
+enum class TrendSymbol : uint8_t { Down, Up, Equal };
+
+TrendSymbol getTrendSymbol(uint64_t todayMs, uint64_t dailyAverageMs) {
+  if (dailyAverageMs == 0) {
+    return todayMs > 0 ? TrendSymbol::Up : TrendSymbol::Equal;
+  }
+  const uint64_t tolerance = (dailyAverageMs * 3ULL) / 100ULL;
+  if (todayMs < dailyAverageMs - tolerance) return TrendSymbol::Down;
+  if (todayMs > dailyAverageMs + tolerance) return TrendSymbol::Up;
+  return TrendSymbol::Equal;
+}
+
+void drawTrendSymbol(const GfxRenderer& r, int x, int y, TrendSymbol symbol) {
+  switch (symbol) {
+    case TrendSymbol::Down:
+      r.drawLine(x, y, x + 5, y + 5, 2, true);
+      r.drawLine(x + 5, y + 5, x + 10, y, 2, true);
+      break;
+    case TrendSymbol::Up:
+      r.drawLine(x, y + 5, x + 5, y, 2, true);
+      r.drawLine(x + 5, y, x + 10, y + 5, 2, true);
+      break;
+    case TrendSymbol::Equal:
+      r.drawLine(x, y, x + 10, y, 2, true);
+      break;
+  }
+}
+
 constexpr int kOverlap = 35;
 constexpr int kCoverTopPad = 0;
 constexpr int kDotSize = 8;
@@ -237,13 +266,14 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
   } else {
     snprintf(etaBuf, sizeof(etaBuf), "...");
   }
-  char timeVal[32], sessVal[16], daysVal[16], streakVal[16], goalVal[32], dayVal[32], booksFinished[16];
+  char timeVal[32], sessVal[16], daysVal[16], streakVal[16], goalVal[32], dayVal[32], avgVal[32], booksFinished[16];
   fmtDuration(tMs, timeVal, sizeof(timeVal));
   snprintf(sessVal, sizeof(sessVal), "%u", sess);
   // Days: number of distinct reading days for this book
   snprintf(daysVal, sizeof(daysVal), "%u", stats ? static_cast<uint32_t>(stats->readingDays.size()) : 0u);
   fmtDuration(getDailyReadingGoalMs(), goalVal, sizeof(goalVal));
   fmtDuration(READING_STATS.getTodayReadingMs(), dayVal, sizeof(dayVal));
+  fmtDuration(READING_STATS.getGlobalSummary().dailyAverageMs, avgVal, sizeof(avgVal));
   snprintf(streakVal, sizeof(streakVal), "%dd", READING_STATS.getCurrentStreakDays());
   snprintf(booksFinished, sizeof(booksFinished), "%d", READING_STATS.getBooksFinishedCount());
 
@@ -300,18 +330,27 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     int ry = curY + pad;
     r.drawText(dataFont, rightX + textLeft, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
     ry += lh + 2;
-    snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_TODAY), dayVal);
+    snprintf(buf, sizeof(buf), "%s: %s (%s)", tr(STR_HOME_PANEL_TODAY), dayVal, avgVal);
     r.drawText(dataFont, rightX + textLeft, ry, buf, true);
+    // Trend symbol vs daily average
+    {
+      const int todayTextWidth = r.getTextWidth(dataFont, buf, EpdFontFamily::REGULAR);
+      const int iconX = rightX + textLeft + todayTextWidth + 6;
+      const int iconY = ry + lh / 2;
+      const TrendSymbol trend = getTrendSymbol(READING_STATS.getTodayReadingMs(), READING_STATS.getGlobalSummary().dailyAverageMs);
+      drawTrendSymbol(r, iconX, iconY, trend);
+    }
     ry += lh + 2;
     snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_GOAL), goalVal);
     r.drawText(dataFont, rightX + textLeft, ry, buf, true);
-    // Mini-checkmark when daily goal is reached (drawn geometrically – safe on all fonts)
-    if (READING_STATS.getTodayReadingMs() >= getDailyReadingGoalMs() && getDailyReadingGoalMs() > 0) {
+    // Mini-checkmark when daily goal is reached
+    {
       const int chkX = rightX + textLeft + r.getTextWidth(dataFont, buf, EpdFontFamily::REGULAR) + 6;
       const int chkY = ry + lh / 2;
-      // Thicker mini-checkmark (2-pixel wide strokes)
-      r.drawLine(chkX, chkY, chkX + 4, chkY + 5, 2, true);
-      r.drawLine(chkX + 4, chkY + 5, chkX + 11, chkY - 3, 2, true);
+      if (getDailyReadingGoalMs() > 0 && READING_STATS.getTodayReadingMs() >= getDailyReadingGoalMs()) {
+        r.drawLine(chkX, chkY, chkX + 4, chkY + 5, 2, true);
+        r.drawLine(chkX + 4, chkY + 5, chkX + 11, chkY - 3, 2, true);
+      }
     }
     ry += lh + 2;
     snprintf(buf, sizeof(buf), "%s: %s", tr(STR_HOME_PANEL_STREAK), streakVal);
@@ -374,6 +413,7 @@ void drawReadRibbon(GfxRenderer& renderer, int coverX, int coverY, int coverW, i
     renderer.drawLine(cx - 1, cy + 4, cx + 6, cy - 4, 2, false);
   }
 }
+
 }  // namespace
 
 void LyraMarcoand75Theme::setPreRenderIndex(int index) { lastCarouselSelectorIndex = index; }
