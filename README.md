@@ -77,7 +77,8 @@ On top of that, Steroids adds a substantial set of original features developed a
 > - **🃏 Quick Cards** — image, QR code, and barcode viewer for quick-reference
 >   cards stored in `/cards/` on SD. BMP/JPEG/PNG images with auto-scaling and
 >   caching, structured QR field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone,
->   SMS, OTP, calendar, URL), and Code‑128 barcodes. Cyberpunk panel UI.
+>   SMS, OTP, calendar, URL), and Code‑128 barcodes. Multi-line QR payloads are
+>   preserved correctly; barcodes require even-length digit input. Cyberpunk panel UI.
 > - **🕹️ Select Long Press** — expanded to 14 `BUTTON_ACTION` options (was 3). During reading, the Select button long-press can toggle bookmark, add/view clippings, lookup word, open dictionary, change orientation/font size, toggle dark mode, force refresh, open quick settings, toggle reading timer, or off. TXT/XTC readers restrict to Reading Timer and Off only. Status bar `|| PAUSED` indicator for reading timer mode.
 > - **⚡ Power Button Actions** — short power-button press expanded from 5 to 16 options, covering the same `BUTTON_ACTION` values plus legacy IGNORE/SLEEP/PAGE_TURN/FORCE_REFRESH/TOGGLE_STATUS_BAR. Enables actions like adding a bookmark or toggling dark mode directly from the power button during reading.
 > - **📐 Settings dividers** — thin separators group related settings within each

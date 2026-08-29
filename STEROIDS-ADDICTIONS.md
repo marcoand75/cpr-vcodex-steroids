@@ -1160,30 +1160,37 @@ deletes (cache for images, file for QR/barcode), Back exits.
 
 ### 19.4 QR Cards (.qr files)
 
-- First line: QR code payload (parsed by `QrCardParser`).
-- Remaining lines: optional free-text description, displayed below parsed fields.
+- Plain text file. The **QR payload** is everything before the description.
+- The description separator is a **blank line** (`\n\n`). Multi-line QR formats
+  such as vCard and calendar events should be kept intact as the payload, with a
+  blank line before any optional description.
+- Backward compatibility: for single-line payloads, the first line is still used
+  as the QR code and the remaining lines are treated as description.
 - `QrCardParser` extracts structured fields for 10 formats:
 
-| Format | Prefix | Extracted fields |
-|--------|--------|-----------------|
-| Wi‑Fi | `WIFI:...;;` | SSID, Password, Security, Hidden |
+| Format | Prefix / marker | Extracted fields |
+|--------|-----------------|-----------------|
+| Wi‑Fi | `WIFI:...` | SSID, Password, Security, Hidden |
 | vCard | `BEGIN:VCARD` | Name, Full Name, Organization, Phone, Email, URL, Address |
 | MeCard | `MECARD:` | Name, Phone, Email, Note, URL, Address |
-| Geo | `geo:lat,lon` | Latitude, Longitude, Altitude |
-| Email | `mailto:` | Email, Subject |
+| Geo | `geo:` | Latitude, Longitude, Altitude |
+| Email | `mailto:` | Email, Subject, Body |
 | Phone | `tel:` | Phone |
-| SMS | `sms:`/`smsto:` | Number, Message |
-| OTP | `otpauth://` | Account, Issuer |
-| Event | `BEGIN:VEVENT` | Summary, Start, End, Location, Description |
-| URL | `http(s)://` | URL, Domain |
+| SMS | `sms:` / `smsto:` | Number, Message |
+| OTP / 2FA | `otpauth://` | Account, Issuer, Type |
+| Calendar event | `BEGIN:VEVENT` | Summary, Start, End, Location, Description |
+| URL | `http://` or `https://` | URL, Domain |
 
 - All values sanitized to printable ASCII (`0x20`–`0x7E`) for e-ink font compatibility.
-- QR code rendered at 45% of available height, parsed fields below with `UI_12_FONT_ID`.
+- QR code rendered at 40% of available height, parsed fields below with `UI_12_FONT_ID`.
 - Filename shown as title (without extension, bold).
 
 ### 19.5 Barcode Cards (.barcode / .bc files)
 
-- First line: numeric digits (Code-128, max 40 chars).
+- Plain text file.
+- **First line:** numeric digits only, **even count**, Code-128C encoded pairs (max 40 chars).
+- If the first line contains non-digit characters or an odd number of digits, the
+  viewer shows an error message instead of rendering bars.
 - Remaining lines: optional free-text description.
 - Barcode height: 1/3 of screen, centered vertically. Fullscreen: centered on screen.
 - Digits rendered below the bars. Description wrapped in `UI_12_FONT_ID` below.
