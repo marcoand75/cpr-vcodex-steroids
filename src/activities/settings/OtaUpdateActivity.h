@@ -31,6 +31,11 @@ class OtaUpdateActivity : public Activity {
   void onWifiSelectionComplete(bool success);
   void checkForUpdateNow();
 
+  TaskHandle_t otaTaskHandle = nullptr;
+  volatile bool otaTaskDone = false;
+  OtaUpdater::OtaUpdaterError otaResult = OtaUpdater::OK;
+  static void otaTaskFunction(void* param);
+
  public:
   explicit OtaUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("OtaUpdate", renderer, mappedInput), updater() {}
