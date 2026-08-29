@@ -46,6 +46,17 @@ std::string buildNewVersionLine(const OtaUpdater& updater) {
 }
 }  // namespace
 
+void OtaUpdateActivity::otaTaskFunction(void* param) {
+  auto* activity = static_cast<OtaUpdateActivity*>(param);
+  activity->otaResult = activity->updater.installUpdate(
+      [](void* ctx) {
+        static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
+      },
+      param, &activity->cancelRequested);
+  activity->otaTaskDone = true;
+  vTaskDelete(nullptr);
+}
+
 void OtaUpdateActivity::checkForUpdateNow() {
   LOG_DBG("OTA", "WiFi connected, checking for update");
 
@@ -118,6 +129,19 @@ void OtaUpdateActivity::onEnter() {
 
 void OtaUpdateActivity::onExit() {
   Activity::onExit();
+
+  if (otaTaskHandle != nullptr) {
+    cancelRequested = true;
+    const TickType_t start = xTaskGetTickCount();
+    while (!otaTaskDone) {
+      if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(30000)) {
+        LOG_ERR("OTA", "OTA task did not finish within timeout");
+        break;
+      }
+      vTaskDelay(10);
+    }
+    otaTaskHandle = nullptr;
+  }
 
   // Success path reboots via SHUTTING_DOWN, so the new firmware boots
   // normally. Back-out/failure paths land here with WiFi still active.
@@ -201,8 +225,11 @@ void OtaUpdateActivity::render(RenderLock&&) {
                               (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
     if (failedDetail) {
       renderer.drawCenteredText(UI_10_FONT_ID, top + height * 2 + metrics.verticalSpacing, failedDetail);
-    }
-    if (!updater.getLatestVersion().empty()) {
+      if (!updater.getLatestVersion().empty()) {
+        renderer.drawCenteredText(UI_10_FONT_ID, top + height * 3 + metrics.verticalSpacing * 2,
+                                  buildNewVersionLine(updater).c_str());
+      }
+    } else if (!updater.getLatestVersion().empty()) {
       renderer.drawCenteredText(UI_10_FONT_ID, top + height * 2 + metrics.verticalSpacing * 2,
                                 buildNewVersionLine(updater).c_str());
     }
@@ -252,18 +279,39 @@ void OtaUpdateActivity::loop() {
         state = UPDATE_IN_PROGRESS;
         lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
       }
+      requestUpdate();
+      return;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      finish();
+    }
+
+    return;
+  }
+
+  if (state == UPDATE_IN_PROGRESS) {
+    if (otaTaskHandle == nullptr && !otaTaskDone) {
       requestUpdateAndWait();
       NetworkMemory::prepareBeforeNetwork(renderer, "OTA", "pre-install");
-      const auto res = updater.installUpdate(
-          [](void* ctx) {
-            // immediate=true notifies the render task directly. The default deferred path only
-            // sets a flag consumed at the end of ActivityManager::loop(), which never runs while
-            // installUpdate() blocks this task.
-            static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
-          },
-          this, &cancelRequested);
-
-      if (res == OtaUpdater::ABORTED) {
+      if (xTaskCreate(otaTaskFunction, "OTATask", 8192, this, 1, &otaTaskHandle) != pdTRUE) {
+        LOG_ERR("OTA", "Failed to create OTA task, falling back to blocking");
+        const auto res = updater.installUpdate(
+            [](void* ctx) {
+              static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
+            },
+            this, &cancelRequested);
+        otaTaskDone = true;
+        otaResult = res;
+      }
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      cancelRequested = true;
+      LOG_INF("OTA", "Cancel requested (Back button in loop)");
+    }
+    if (otaTaskDone) {
+      otaTaskHandle = nullptr;
+      if (otaResult == OtaUpdater::ABORTED) {
         LOG_INF("OTA", "Update cancelled by user");
         {
           RenderLock lock(*this);
@@ -273,35 +321,27 @@ void OtaUpdateActivity::loop() {
         requestUpdate();
         return;
       }
-
-      if (res != OtaUpdater::OK) {
-        LOG_DBG("OTA", "Update failed: %d", res);
+      if (otaResult != OtaUpdater::OK) {
+        LOG_DBG("OTA", "Update failed: %d", otaResult);
         {
           RenderLock lock(*this);
-          failedDetail = res == OtaUpdater::WRONG_DEVICE_ERROR ? tr(STR_FIRMWARE_WRONG_DEVICE) : nullptr;
+          failedDetail = otaResult == OtaUpdater::WRONG_DEVICE_ERROR ? tr(STR_FIRMWARE_WRONG_DEVICE) : nullptr;
           state = FAILED;
         }
         requestUpdate();
         return;
       }
-
       {
         RenderLock lock(*this);
         state = FINISHED;
       }
       requestUpdateAndWait();
-      // Hold the completion screen briefly so the user sees it, then restart.
       delay(3000);
       {
         RenderLock lock(*this);
         state = SHUTTING_DOWN;
       }
     }
-
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      finish();
-    }
-
     return;
   }
 
