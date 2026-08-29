@@ -790,7 +790,7 @@ void WikipediaActivity::performSearch(const std::string& query) {
 
   if (WiFi.status() != WL_CONNECTED) {
     NetworkMemory::restoreAfterNetwork(renderer, "WIKI", "search_wifi_check");
-    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, true, false),
+    startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/false),
                            [this](const ActivityResult& r) { onWifiSelectionComplete(!r.isCancelled); });
     return;
   }
@@ -872,7 +872,7 @@ void WikipediaActivity::fetchArticleSummary() {
 
   if (WiFi.status() != WL_CONNECTED) {
     NetworkMemory::restoreAfterNetwork(renderer, "WIKI", "summary_wifi_check");
-    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, true, false),
+    startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/false),
                            [this](const ActivityResult& r) {
                              if (!r.isCancelled && !currentQuery.empty()) fetchArticleSummary();
                              else showError(tr(STR_WIFI_CONN_FAILED));
@@ -918,7 +918,7 @@ void WikipediaActivity::fetchFullArticle() {
   NetworkMemory::prepareBeforeNetwork(renderer, "WIKI", "before_full");
   if (WiFi.status() != WL_CONNECTED) {
     NetworkMemory::restoreAfterNetwork(renderer, "WIKI", "full_wifi_check");
-    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, true, false),
+    startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/false),
                            [this](const ActivityResult& r) { if (!r.isCancelled) fetchFullArticle(); else showError(tr(STR_WIFI_CONN_FAILED)); });
     return;
   }

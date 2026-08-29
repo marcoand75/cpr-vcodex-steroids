@@ -32,6 +32,23 @@ bool hasBssidBytes(const uint8_t bssid[WIFI_BSSID_LEN]) {
 }
 }  // namespace
 
+std::unique_ptr<WifiSelectionActivity> WifiSelectionActivity::createNetworkOperation(
+    GfxRenderer& renderer, MappedInputManager& mappedInput, const bool syncRtcOnConnect,
+    const bool autoConnectOnly) {
+  // The global Wi-Fi connection policy: auto-connect to a saved in-range network
+  // unless the user explicitly opted into manual selection in Settings. This is
+  // the single source of truth shared by every network-enabled feature so they
+  // behave consistently (issue #90).
+  const bool autoConnect = SETTINGS.syncDayWifiChoice != CrossPointSettings::SYNC_DAY_WIFI_MANUAL;
+  return std::make_unique<WifiSelectionActivity>(renderer, mappedInput, autoConnect, syncRtcOnConnect,
+                                                 autoConnectOnly);
+}
+
+std::unique_ptr<WifiSelectionActivity> WifiSelectionActivity::createForWifiManagement(
+    GfxRenderer& renderer, MappedInputManager& mappedInput) {
+  return std::make_unique<WifiSelectionActivity>(renderer, mappedInput, /*autoConnect=*/false);
+}
+
 void WifiSelectionActivity::onEnter() {
   Activity::onEnter();
 

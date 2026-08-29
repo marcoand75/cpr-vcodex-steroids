@@ -126,11 +126,33 @@ class WifiSelectionActivity final : public Activity {
 
  public:
   explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = false,
-                                 bool syncRtcOnConnect = true, bool autoConnectOnly = false)
+                                  bool syncRtcOnConnect = true, bool autoConnectOnly = false)
       : Activity("WifiSelection", renderer, mappedInput),
         allowAutoConnect(autoConnect),
         autoConnectOnly(autoConnectOnly),
         syncRtcOnConnect(syncRtcOnConnect) {}
+
+  // Unified Wi-Fi entry point for every network operation (KOReader Sync, OPDS,
+  // OTA updates, Calibre, font download, web server, time sync, Wikipedia,
+  // sync-day). It auto-connects to an in-range saved network - preferring the
+  // last connected SSID, then the strongest saved signal - and only falls back
+  // to the manual picker when no saved network is reachable (issue #90). The
+  // single/multiple/no-saved policy lives in onEnter/processWifiScanResults;
+  // this factory is the single place that decides whether auto-connect is
+  // allowed, driven by the global STR_CHOOSE_WIFI / syncDayWifiChoice setting.
+  // `syncRtcOnConnect` should be false only when the caller performs its own RTC
+  // sync (e.g. ClockSync, Wikipedia). `autoConnectOnly` cancels instead of
+  // showing the picker when no saved network is in range (used by automatic,
+  // non-interactive syncs).
+  static std::unique_ptr<WifiSelectionActivity> createNetworkOperation(
+      GfxRenderer& renderer, MappedInputManager& mappedInput, bool syncRtcOnConnect = true,
+      bool autoConnectOnly = false);
+
+  // Manual Wi-Fi management screen (Settings > Wi-Fi). Always shows the picker
+  // so the user can add, connect to, or forget networks.
+  static std::unique_ptr<WifiSelectionActivity> createForWifiManagement(GfxRenderer& renderer,
+                                                                       MappedInputManager& mappedInput);
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

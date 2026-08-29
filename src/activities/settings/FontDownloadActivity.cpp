@@ -73,7 +73,7 @@ void FontDownloadActivity::onEnter() {
   Activity::onEnter();
   READING_STATS.releaseMemoryForNetwork();
   WiFi.mode(WIFI_STA);
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+  startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 

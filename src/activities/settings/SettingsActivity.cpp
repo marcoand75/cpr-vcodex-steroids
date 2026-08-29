@@ -250,6 +250,10 @@ const std::vector<SettingInfo>& getDeviceSystemSettings() {
       SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
                         {StrId::STR_AUTHOR_TITLE, StrId::STR_TITLE_AUTHOR}),
       SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser),
+      // Global Wi-Fi connection policy (issue #90): Auto = network operations auto-connect to a
+      // saved in-range network; Manual = always show the selectable network list.
+      SettingInfo::Enum(StrId::STR_CHOOSE_WIFI, &CrossPointSettings::syncDayWifiChoice,
+                        {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_MANUAL}),
 
       SettingInfo::Section(StrId::STR_SECTION_MAINTENANCE),
       SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache),
@@ -265,8 +269,6 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Action(StrId::STR_SYNC_DAY, SettingAction::SyncDay),
       SettingInfo::Action(StrId::STR_TIME_ZONE, SettingAction::TimeZone),
       SettingInfo::Toggle(StrId::STR_DISPLAY_DAY, &CrossPointSettings::displayDay),
-      SettingInfo::Enum(StrId::STR_CHOOSE_WIFI, &CrossPointSettings::syncDayWifiChoice,
-                        {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_MANUAL}),
       SettingInfo::Enum(StrId::STR_SYNC_DAY_REMINDER_EVERY, &CrossPointSettings::syncDayReminderStarts,
                         {StrId::STR_STATE_OFF, StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30,
                          StrId::STR_NUM_40, StrId::STR_NUM_50, StrId::STR_NUM_60}),
@@ -848,7 +850,7 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::Network:
-        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        startActivityForResult(WifiSelectionActivity::createForWifiManagement(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);

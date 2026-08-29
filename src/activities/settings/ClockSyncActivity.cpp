@@ -51,7 +51,7 @@ void ClockSyncActivity::onExit() {
 }
 
 void ClockSyncActivity::openWifiSelection() {
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, true, false),
+  startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/false),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 

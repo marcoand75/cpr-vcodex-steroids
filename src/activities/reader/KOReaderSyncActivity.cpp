@@ -513,12 +513,11 @@ void KOReaderSyncActivity::onEnter() {
   }
 
   const bool automaticSync = isAutomaticSyncIntent(syncIntent);
-  const bool chooseWifiManually =
-      !automaticSync && SETTINGS.syncDayWifiChoice == CrossPointSettings::SYNC_DAY_WIFI_MANUAL;
   LOG_DBG("KOSync", "Launching WifiSelectionActivity...");
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, !chooseWifiManually, true,
-                                                                 automaticSync),
-                         [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
+  startActivityForResult(
+      WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/true,
+                                                    /*autoConnectOnly=*/automaticSync),
+      [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
 void KOReaderSyncActivity::onExit() {
