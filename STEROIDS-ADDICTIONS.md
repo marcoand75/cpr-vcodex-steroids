@@ -1350,7 +1350,8 @@ anything reverted is called out under *not active*.
 - **Clipping navigation & highlight fix** — see [§20](#20-clipping-navigation-and-highlighting-fix).
 - **X3/X4 multi-device** migration to **freeink-sdk** + `XteinkDetectExt`, hold power
   rails, HalSpiBus mutex, boot-sequence fixes.
-
+  - **Unified auto-connect Wi-Fi (issue #90)**: Auto-connect to a saved in-range network (preferring last-connected, then strongest signal); only falls back to the manual network list when no saved network is reachable.
+  - **Scrollbar normalization (#71)**: Added scrollbars to Achievements, Reading Stats, Reading Profile, and Home activities for improved navigation.
 ### 21.2 Not active (introduced then reverted / removed)
 
 - **Arena "optimizations" in `EpubReaderActivity` render hot path** — introduced in

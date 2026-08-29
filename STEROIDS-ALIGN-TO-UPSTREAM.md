@@ -51,6 +51,8 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/JsonSettingsIO.cpp/h`** | **Upstream-only (byte-identical to upstream); zero merge conflicts** |
 | **`src/JsonSettingsIOSteroids.cpp/h`** | **ALL Steroids-only settings serialization (per-directional buttons, shortPwrBtn, selectLongPressBehavior, library, screensaver, clippings, etc. — 43 fields)** |
 | **`src/JsonSettingsIOShared.inc`** | **Shared internal serialization helpers (saveJsonDocumentToFile, loadJsonDocumentFromFile, migration functions)** |
+| **`src/activities/network/WifiSelectionActivity.cpp/h`** | **Unified auto-connect Wi-Fi (issue #90)**: Global Wi-Fi connection policy (Auto/Manual); `syncDayWifiChoice` setting drives `createNetworkOperation()` factory; files modified include `src/activities/network/WifiSelectionActivity.cpp`, `src/activities/settings/ClockSyncActivity.cpp`, `src/activities/settings/KOReaderAuthActivity.cpp`, `src/activities/settings/OtaUpdateActivity.cpp`, `src/activities/settings/FontDownloadActivity.cpp`, `src/activities/network/CrossPointWebServer.cpp`, `src/activities/network/CrossPointWebServerActivity.cpp`. |
+| **`src/activities/apps/AchievementsActivity.cpp/h`** | **Scrollbar normalization (#71, commit 91b3084d)**: Added scrollbars to Achievements activity for improved navigation. |
 | **`src/activities/settings/ButtonActionSelectorActivity.cpp/h`** | **Reusable popup selector for all BUTTON_ACTION settings (14 options, SHORT_PWRBTN mode with 16 options, circular wrap-around)** |
 | **`src/activities/settings/EnumSelectorActivity.cpp/h`** | **Reusable popup selector for enum settings with >2 options**
 | **`src/network/CrossPointWebServer.cpp`** | **App Settings page route, logo endpoint, Steroids routes** |
