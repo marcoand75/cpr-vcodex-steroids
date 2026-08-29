@@ -67,6 +67,11 @@ On top of that, Steroids adds a substantial set of original features developed a
 >   per-book carousel badges from a lightweight `summary.json` snapshot, keeping
 >   the ~41 KB full reading-stats store out of RAM at boot (loaded lazily only
 >   when a screen actually needs it).
+> - **📈 Home daily average & trend** — the Home global stats panel shows today's
+>   reading time alongside the historical daily average in parentheses, with a
+>   trend symbol indicating whether today is below, above, or within ±3% of the
+>   average. The average is computed from all stored reading days except today and
+>   updates after the first reading of any book.
 > - **💾 SdCardFont fragmentation-resistant storage** — ported from upstream 1.5.0.20:
 >   4 KiB chunked bitmap storage replaces single-buffer allocation, eliminating
 >   large contiguous allocation failures on the 380 KB ESP32-C3 heap. Includes
@@ -446,6 +451,7 @@ A reusable `ButtonActionSelectorActivity` popup (with circular wrap-around navig
 | **Grayscale Image Pipeline** | 🖼️ Rendering | Shared 2-bit gray config: gamma LUT (1.5) + empiric thresholds 50/120/200, error-diffusion dithering (`int16_t`, overflow-safe buffers), better midtone contrast on covers and screensaver/sleep images |
 | **SdCardFont Fragmented Storage** | 💾 Fonts | 4 KiB chunked bitmap storage from upstream 1.5.0.20; eliminates large contiguous allocations on 380 KB RAM heap; CJK fallback font resolution |
 | **Reader Status Bar Overlap Fix** | 📊 Reading | Centered book/chapter title reserves the battery, percentage, time-left and clock before centering — a long title can no longer overlap the battery |
+| **Home Daily Average & Trend** | 📊 Reading | Global stats panel shows today's reading time with the historical daily average in parentheses and a trend symbol: down arrow when below average, up arrow when above, equal sign when within ±3% of the average; average updates after the first reading of any book |
 
 All CPR-vCodex upstream features (reading stats, heatmaps, achievements, dictionaries, flashcards, bookmarks, SD fonts, KOReader Sync, Bionic Reading, dark mode, sync day, etc.) are **fully included**. This fork only adds the features listed above without removing or degrading any upstream functionality.
 
@@ -464,7 +470,7 @@ The development and feature discussion for CPR-vCodex Steroids takes place in th
 | Project | `CPR-vCodex Steroids` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
 | Current upstream base | [`1.5.0.20-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.20-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), per-directional configurable long-press (Up/Down/Left/Right, 14 `BUTTON_ACTION` options, popup selector), expanded short power-button (16 options) and Select long-press (14 options), EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, boot lazy-loading of stores, settings JSON split (43 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening |
+| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), per-directional configurable long-press (Up/Down/Left/Right, 14 `BUTTON_ACTION` options, popup selector), expanded short power-button (16 options) and Select long-press (14 options), EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, Home daily average & trend indicator, boot lazy-loading of stores, settings JSON split (43 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |

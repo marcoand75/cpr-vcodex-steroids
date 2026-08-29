@@ -60,8 +60,8 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/network/html/AppSettingsPage.html`** | **Browser stats/settings editor (deleted by upstream!)** |
 | **`src/SettingsList.cpp`** | **Steroids menu items (library, screensaver, per-directional longPress, clippingsShortcut, etc.)** |
 | **`src/activities/ActivityManager.cpp/h`** | **goToLibrary, goToScreensaver, goToClippings methods** |
-| **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary)** |
-| **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot)** |
+| **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary) + dailyAverageMs for Home trend indicator** |
+| **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot) + daily average computation from all stored reading days except today** |
 | **`src/ReadingStatsActivity.cpp/h`** | **selectedBookPath constructor param (pre-select book in stats)** |
 | **`src/components/LibraryIndex.cpp`** | **Incremental scan vector pre-allocation, null-terminated ZIP reads** |
 | **`src/activities/settings/StatusBarSettingsActivity.cpp`** | **Clock position, clock format, sync clock now in status bar menu** |

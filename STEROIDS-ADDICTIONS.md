@@ -534,6 +534,12 @@ words from chapter start to the beginning of `page`. Bookmarks store
 - **Reading statistics & heatmap** (`ReadingStatsActivity`, `ReadingHeatmapActivity`)
   — pace fields preserved across upstream drops (`avgSecondsPerForwardPage`,
   `paceSampleCount`, `recordForwardPageRead`, mark-as-unread).
+- **Home daily average & trend indicator** — the Home global stats panel now shows
+  today's reading time together with the historical daily average in parentheses,
+  plus a small trend symbol beside it: down arrow when today is below average,
+  up arrow when above, and an equal sign when today is within ±3% of the average.
+  The average is computed from all stored reading days except today, so it updates
+  after the first reading of any book.
 - **Flashcards** — spaced-repetition decks, review sessions, per-deck stats,
   recents, settings.
 - **Dictionary** — on-device dictionary lookup.
@@ -1566,7 +1572,8 @@ stats change:
   "summary": {
     "totalReadingMs": 0, "todayReadingMs": 0, "recent7ReadingMs": 0,
     "recent30ReadingMs": 0, "currentStreakDays": 0, "maxStreakDays": 0,
-    "booksFinishedCount": 0, "goalReadingMs": 0, "referenceDayOrdinal": 0
+    "booksFinishedCount": 0, "goalReadingMs": 0, "dailyAverageMs": 0,
+    "referenceDayOrdinal": 0
   },
   "bookBadges": [
     { "bookId": "", "path": "", "progressPercent": 0, "totalReadingMs": 0,
@@ -1574,6 +1581,10 @@ stats change:
   ]
 }
 ```
+
+`dailyAverageMs` is the historical daily reading average, computed from all
+stored reading days except today. It is refreshed into `summary.json` on every
+stats change and is used by the Home trend indicator.
 
 Badges are written only for books that have progress / are completed / have read
 time, keeping the file small (tens of bytes per entry). Each badge carries the
@@ -1639,4 +1650,4 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 
 ---
 
-*Last updated: 2026-08-23 — added §23 SdCardFont fragmentation-resistant storage (1.5.0.20 port), §23.10 HAL crash detection completed, §23.12 carousel recents panel fix, §23.13 status bar time-left Session Duration + Today Total, §8 status bar time-left expanded to 5 modes, §8.5 expanded long-press button actions (Dictionary / Dark Mode / Full Refresh / Quick Settings), §8.5.2 per-directional long-press configuration (Up/Down side buttons, Left/Right front buttons, expanded power button + select long-press), §19.5 OTA update safety (battery check + cancel #68), §4.4 battery safety under WiFi load (#59), SdCardFont/TextGetter/FrameBufferLoan, §21.4 dependency notes.*
+*Last updated: 2026-08-29 — added daily average to Home summary.json + trend indicator in LyraMarcoand75 global stats panel (§8, §22), issue #56.*
