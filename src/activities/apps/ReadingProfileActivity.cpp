@@ -531,7 +531,16 @@ void ReadingProfileActivity::loop() {
   }
 
   const auto scrollBy = [&](const int delta) {
-    const int nextOffset = std::clamp(scrollOffset + delta, 0, maxScrollOffset);
+    if (maxScrollOffset <= 0) {
+      return;
+    }
+    int nextOffset = scrollOffset + delta;
+    while (nextOffset < 0) {
+      nextOffset += maxScrollOffset + 1;
+    }
+    while (nextOffset > maxScrollOffset) {
+      nextOffset -= maxScrollOffset + 1;
+    }
     if (nextOffset != scrollOffset) {
       scrollOffset = nextOffset;
       requestUpdate();
@@ -695,6 +704,20 @@ void ReadingProfileActivity::render(RenderLock&&) {
   renderer.fillRect(0, 0, pageWidth, contentTop, false);
   if (viewportBottom < renderer.getScreenHeight()) {
     renderer.fillRect(0, viewportBottom, pageWidth, renderer.getScreenHeight() - viewportBottom, false);
+  }
+
+  // Draw scrollbar if content overflows viewport
+  if (maxScrollOffset > 0) {
+    constexpr int scrollBarWidth = 4;
+    constexpr int scrollBarGap = 6;
+    const int scrollTrackX = pageWidth - sidePadding;
+    const int totalHeight = cachedContentBottom - contentTop;
+    const int viewportHeight = viewportBottom - viewportTop;
+    const int scrollBarHeight = std::max(18, (viewportHeight * viewportHeight) / totalHeight);
+    const int scrollBarY =
+        viewportTop + ((viewportHeight - scrollBarHeight) * std::min(scrollOffset, maxScrollOffset)) / maxScrollOffset;
+    renderer.drawLine(scrollTrackX, viewportTop, scrollTrackX, viewportBottom, true);
+    renderer.fillRect(scrollTrackX - scrollBarWidth + 1, scrollBarY, scrollBarWidth, scrollBarHeight, true);
   }
 
   HeaderDateUtils::drawHeaderWithDate(renderer, cachedTitle.c_str());

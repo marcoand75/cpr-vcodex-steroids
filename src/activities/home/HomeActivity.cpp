@@ -1545,6 +1545,17 @@ void HomeActivity::render(RenderLock&&) {
         [&homeEntries, pageStart](const int index) {
           return showHomeShortcutAccessory(homeEntries[pageStart + index]);
         });
+
+    // Draw scrollbar for shortcuts pagination
+    if (totalPages > 1) {
+      constexpr int scrollBarWidth = 4;
+      constexpr int scrollBarGap = 6;
+      const int scrollTrackX = pageWidth - metrics.contentSidePadding;
+      const int scrollBarHeight = std::max(18, (listHeight * listHeight) / (shortcutDisplayCount * listHeight / totalPages));
+      const int scrollBarY = listTop + ((listHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
+      renderer.drawLine(scrollTrackX, listTop, scrollTrackX, listTop + listHeight, true);
+      renderer.fillRect(scrollTrackX - scrollBarWidth + 1, scrollBarY, scrollBarWidth, scrollBarHeight, true);
+    }
   }
   LOG_DBG("HCR", "render drawButtonMenu/icons: %ums", static_cast<int>(millis() - dbgMenu0));
 

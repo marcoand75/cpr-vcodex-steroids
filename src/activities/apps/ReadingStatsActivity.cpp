@@ -26,7 +26,7 @@ constexpr int LIST_HEADER_HEIGHT = 34;
 constexpr int LIST_HEADER_BOTTOM_GAP = 10;
 constexpr int BOOK_ROW_HEIGHT = 80;
 constexpr int BOOK_ROW_GAP = 10;
-constexpr int BOOKS_PER_PAGE = 3;
+// constexpr int BOOKS_PER_PAGE = 3; // Removed, now using viewport-based calculation
 
 std::string getBookTitle(const ReadingBookStats& book) { return book.title.empty() ? book.path : book.title; }
 
@@ -134,77 +134,123 @@ void ReadingStatsActivity::onExit() {
 }
 
 void ReadingStatsActivity::loop() {
-  const int bookCount = static_cast<int>(READING_STATS.getBooks().size());
-  const int selectableCount = bookCount + 1;
-  const int pageItems = BOOKS_PER_PAGE;
+    const int bookCount = static_cast<int>(READING_STATS.getBooks().size());
+    const int selectableCount = bookCount + 1; // 0 for details, 1+ for books
 
-  if (waitForBackRelease) {
-    if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
-        !mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      waitForBackRelease = false;
-    }
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (waitForConfirmRelease) {
-    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-      waitForConfirmRelease = false;
-    }
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (selectedIndex > 0 && mappedInput.getHeldTime() >= BOOK_LONG_PRESS_MS) {
-      confirmRemoveSelectedBook();
-      return;
+    if (waitForBackRelease) {
+        if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
+            !mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+            waitForBackRelease = false;
+        }
+        return;
     }
 
-    openSelectedEntry();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this, selectableCount] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, selectableCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this, selectableCount] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, selectableCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, selectableCount, pageItems] {
-    if (selectableCount <= 1) {
-      return;
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        finish();
+        return;
     }
 
-    if (selectedIndex == 0) {
-      selectedIndex = 1;
+    if (waitForConfirmRelease) {
+        if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+            waitForConfirmRelease = false;
+        }
+        return;
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        if (selectedIndex > 0 && mappedInput.getHeldTime() >= BOOK_LONG_PRESS_MS) {
+            confirmRemoveSelectedBook();
+            return;
+        }
+
+        openSelectedEntry();
+        return;
+    }
+
+    // Calculate visible book count for continuous scrolling (based on current viewport)
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int pageWidth = renderer.getScreenWidth();
+    const int pageHeight = renderer.getScreenHeight();
+    const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int detailsTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
+    const int listHeaderTop = detailsTop + DETAILS_BUTTON_HEIGHT + metrics.verticalSpacing;
+    const int listTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
+    const int listBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int listHeight = listBottom - listTop;
+
+    int visibleBookCount = 0;
+    if (listHeight > 0 && bookCount > 0) {
+        int currentHeight = 0;
+        for (int i = 0; i < bookCount; ++i) {
+            if (currentHeight + BOOK_ROW_HEIGHT > listHeight) {
+                break;
+            }
+            currentHeight += BOOK_ROW_HEIGHT;
+            visibleBookCount++;
+            if (i < bookCount - 1) {
+                currentHeight += BOOK_ROW_GAP;
+            }
+        }
+        if (visibleBookCount == 0) {
+            visibleBookCount = 1;
+        }
     } else {
-      const int bookIndex = selectedIndex - 1;
-      selectedIndex = ButtonNavigator::nextPageIndex(bookIndex, selectableCount - 1, pageItems) + 1;
-    }
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, selectableCount, pageItems] {
-    if (selectableCount <= 1) {
-      return;
+        visibleBookCount = 1; // fallback
     }
 
-    if (selectedIndex == 0) {
-      selectedIndex = ((selectableCount - 2) / pageItems) * pageItems + 1;
-    } else {
-      const int bookIndex = selectedIndex - 1;
-      selectedIndex = ButtonNavigator::previousPageIndex(bookIndex, selectableCount - 1, pageItems) + 1;
-    }
-    requestUpdate();
-  });
+    buttonNavigator.onNextRelease([this, selectableCount] {
+        selectedIndex = ButtonNavigator::nextIndex(selectedIndex, selectableCount);
+        requestUpdate();
+    });
+
+    buttonNavigator.onPreviousRelease([this, selectableCount] {
+        selectedIndex = ButtonNavigator::previousIndex(selectedIndex, selectableCount);
+        requestUpdate();
+    });
+
+    buttonNavigator.onNextContinuous([this, selectableCount, visibleBookCount, bookCount] {
+        if (selectableCount <= 1) {
+            return;
+        }
+
+        // If we are on the details button (selectedIndex == 0), move to the first book
+        if (selectedIndex == 0) {
+            selectedIndex = 1;
+        } else {
+            // We are in the book list, move by visibleBookCount books (page down)
+            const int bookIndex = selectedIndex - 1;
+            const int nextBookIndex = bookIndex + visibleBookCount;
+            if (nextBookIndex >= bookCount) {
+                // Clamp to last book
+                selectedIndex = bookCount;
+            } else {
+                selectedIndex = nextBookIndex + 1; // because selectedIndex = bookIndex + 1
+            }
+        }
+        requestUpdate();
+    });
+
+    buttonNavigator.onPreviousContinuous([this, selectableCount, visibleBookCount, bookCount] {
+        if (selectableCount <= 1) {
+            return;
+        }
+
+        // If we are on the first book (selectedIndex == 1), move to the details button
+        if (selectedIndex == 1) {
+            selectedIndex = 0;
+        } else {
+            // We are in the book list, move by visibleBookCount books (page up)
+            const int bookIndex = selectedIndex - 1;
+            int prevBookIndex = bookIndex - visibleBookCount;
+            if (prevBookIndex < 0) {
+                // Clamp to first book
+                selectedIndex = 1;
+            } else {
+                selectedIndex = prevBookIndex + 1;
+            }
+        }
+        requestUpdate();
+    });
 }
 
 void ReadingStatsActivity::openSelectedEntry() {
@@ -288,70 +334,148 @@ void ReadingStatsActivity::createDueAutoBackupWithFeedback() {
 }
 
 void ReadingStatsActivity::render(RenderLock&&) {
-  renderer.clearScreen();
+    renderer.clearScreen();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  const int sidePadding = metrics.contentSidePadding;
-  const int cardWidth = (pageWidth - sidePadding * 2 - SUMMARY_GAP) / 2;
-  const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int detailsTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
-  const uint64_t todayReadingMs = READING_STATS.getTodayReadingMs();
-  const std::string dailyGoalValue = ReadingStatsAnalytics::formatDurationHm(todayReadingMs) + " / " +
-                                     ReadingStatsAnalytics::formatDurationHm(getDailyReadingGoalMs());
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int pageWidth = renderer.getScreenWidth();
+    const int pageHeight = renderer.getScreenHeight();
+    const int sidePadding = metrics.contentSidePadding;
+    const int cardWidth = (pageWidth - sidePadding * 2 - SUMMARY_GAP) / 2;
+    const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int detailsTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
+    const uint64_t todayReadingMs = READING_STATS.getTodayReadingMs();
+    const std::string dailyGoalValue = ReadingStatsAnalytics::formatDurationHm(todayReadingMs) + " / " +
+                                      ReadingStatsAnalytics::formatDurationHm(getDailyReadingGoalMs());
 
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_STATS));
+    HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_STATS));
 
-  drawMetricCard(renderer, Rect{sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_STREAK),
-                 std::to_string(READING_STATS.getCurrentStreakDays()));
-  drawMetricCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_MAX_STREAK), std::to_string(READING_STATS.getMaxStreakDays()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_DAILY_GOAL), dailyGoalValue, todayReadingMs >= getDailyReadingGoalMs());
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth,
-                      SUMMARY_CARD_HEIGHT},
-                 tr(STR_READING_TIME), ReadingStatsAnalytics::formatDurationHm(READING_STATS.getTotalReadingMs()));
-  drawMetricCard(
-      renderer, Rect{sidePadding, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2, cardWidth, SUMMARY_CARD_HEIGHT},
-      tr(STR_BOOKS_FINISHED), std::to_string(READING_STATS.getBooksFinishedCount()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2,
-                      cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_BOOKS_STARTED), std::to_string(READING_STATS.getBooksStartedCount()));
+    drawMetricCard(renderer, Rect{sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_STREAK),
+                  std::to_string(READING_STATS.getCurrentStreakDays()));
+    drawMetricCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT},
+                  tr(STR_MAX_STREAK), std::to_string(READING_STATS.getMaxStreakDays()));
+    drawMetricCard(renderer,
+                  Rect{sidePadding, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth, SUMMARY_CARD_HEIGHT},
+                  tr(STR_DAILY_GOAL), dailyGoalValue, todayReadingMs >= getDailyReadingGoalMs());
+    drawMetricCard(renderer,
+                  Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth,
+                       SUMMARY_CARD_HEIGHT},
+                  tr(STR_READING_TIME), ReadingStatsAnalytics::formatDurationHm(READING_STATS.getTotalReadingMs()));
+    drawMetricCard(
+        renderer, Rect{sidePadding, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2, cardWidth, SUMMARY_CARD_HEIGHT},
+        tr(STR_BOOKS_FINISHED), std::to_string(READING_STATS.getBooksFinishedCount()));
+    drawMetricCard(renderer,
+                  Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2,
+                       cardWidth, SUMMARY_CARD_HEIGHT},
+                  tr(STR_BOOKS_STARTED), std::to_string(READING_STATS.getBooksStartedCount()));
 
-  drawMoreDetailsButton(renderer, Rect{sidePadding, detailsTop, pageWidth - sidePadding * 2, DETAILS_BUTTON_HEIGHT},
-                        selectedIndex == 0);
+    drawMoreDetailsButton(renderer, Rect{sidePadding, detailsTop, pageWidth - sidePadding * 2, DETAILS_BUTTON_HEIGHT},
+                         selectedIndex == 0);
 
-  const int listHeaderTop = detailsTop + DETAILS_BUTTON_HEIGHT + metrics.verticalSpacing;
-  const auto& books = READING_STATS.getBooks();
-  const int totalPages = std::max(1, static_cast<int>((books.size() + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE));
-  const int currentPage = books.empty() || selectedIndex == 0 ? 1 : ((selectedIndex - 1) / BOOKS_PER_PAGE) + 1;
-  const std::string bookCountLabel = std::to_string(currentPage) + "/" + std::to_string(totalPages);
-  const std::string startedBooksLabel =
-      std::string(tr(STR_STARTED_BOOKS)) + " (" + std::to_string(READING_STATS.getBooksStartedCount()) + ")";
-  GUI.drawSubHeader(renderer, Rect{0, listHeaderTop, pageWidth, LIST_HEADER_HEIGHT}, startedBooksLabel.c_str(),
-                    bookCountLabel.c_str());
+    const int listHeaderTop = detailsTop + DETAILS_BUTTON_HEIGHT + metrics.verticalSpacing;
+    const auto& books = READING_STATS.getBooks();
+    const int bookCount = static_cast<int>(books.size());
+    const std::string startedBooksLabel =
+        std::string(tr(STR_STARTED_BOOKS)) + " (" + std::to_string(READING_STATS.getBooksStartedCount()) + ")";
 
-  const int contentTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
+    // Calculate book list viewport
+    const int listTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
+    const int listBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int listHeight = listBottom - listTop;
 
-  if (books.empty()) {
-    renderer.drawText(UI_10_FONT_ID, sidePadding, contentTop + 20, tr(STR_NO_READING_STATS));
-  } else {
-    const int selectedBookIndex = std::max(0, selectedIndex - 1);
-    const int pageStartIndex = (selectedBookIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
-    const int pageEndIndex = std::min(static_cast<int>(books.size()), pageStartIndex + BOOKS_PER_PAGE);
-    for (int index = pageStartIndex; index < pageEndIndex; ++index) {
-      const int rowIndex = index - pageStartIndex;
-      const int rowY = contentTop + rowIndex * (BOOK_ROW_HEIGHT + BOOK_ROW_GAP);
-      drawBookRow(renderer, Rect{sidePadding, rowY, pageWidth - sidePadding * 2, BOOK_ROW_HEIGHT}, books[index],
-                  selectedIndex == index + 1);
+    // Total height of the book list
+    int totalBookListHeight = 0;
+    if (bookCount > 0) {
+        totalBookListHeight = bookCount * BOOK_ROW_HEIGHT + (bookCount - 1) * BOOK_ROW_GAP;
     }
-  }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    // Calculate how many books fit in the viewport
+    int visibleBookCount = 0;
+    if (listHeight > 0 && bookCount > 0) {
+        int currentHeight = 0;
+        for (int i = 0; i < bookCount; ++i) {
+            if (currentHeight + BOOK_ROW_HEIGHT > listHeight) {
+                break;
+            }
+            currentHeight += BOOK_ROW_HEIGHT;
+            visibleBookCount++;
+            if (i < bookCount - 1) {
+                currentHeight += BOOK_ROW_GAP;
+            }
+        }
+        if (visibleBookCount == 0) {
+            visibleBookCount = 1;
+        }
+    } else {
+        visibleBookCount = (bookCount > 0) ? 1 : 0;
+    }
 
-  renderer.displayBuffer();
+    // Determine the first visible book index based on the selected book
+    int selectedBookIndex = selectedIndex - 1; // because selectedIndex 0 is the details button
+    int firstVisibleIndex = 0;
+    if (bookCount > 0 && selectedIndex > 0) { // we have a book selected
+        // We want the selected book to be in the viewport.
+        // We'll try to put it in the middle of the viewport.
+        int desiredFirstVisibleIndex = selectedBookIndex - visibleBookCount / 2;
+        if (desiredFirstVisibleIndex < 0) {
+            desiredFirstVisibleIndex = 0;
+        }
+        if (desiredFirstVisibleIndex + visibleBookCount > bookCount) {
+            desiredFirstVisibleIndex = bookCount - visibleBookCount;
+        }
+        firstVisibleIndex = desiredFirstVisibleIndex;
+    }
+
+    // Calculate the viewport offset in the list (for scrollbar)
+    int viewportOffset = 0;
+    if (firstVisibleIndex > 0) {
+        viewportOffset = firstVisibleIndex * (BOOK_ROW_HEIGHT + BOOK_ROW_GAP);
+    }
+
+    // Draw the book list header (started books label and page indicator)
+    int totalPages = 1;
+    if (visibleBookCount > 0) {
+        totalPages = (bookCount + visibleBookCount - 1) / visibleBookCount; // ceil division
+    }
+    int currentPage = 1;
+    if (visibleBookCount > 0 && bookCount > 0) {
+        currentPage = (firstVisibleIndex / visibleBookCount) + 1;
+    }
+    const std::string pageLabel = std::to_string(currentPage) + "/" + std::to_string(totalPages);
+    GUI.drawSubHeader(renderer, Rect{0, listHeaderTop, pageWidth, LIST_HEADER_HEIGHT}, startedBooksLabel.c_str(),
+                     pageLabel.c_str());
+
+    const int contentTop = listTop;
+
+    if (books.empty()) {
+        renderer.drawText(UI_10_FONT_ID, sidePadding, contentTop + 20, tr(STR_NO_READING_STATS));
+    } else {
+        // Draw the visible books
+        int currentY = contentTop;
+        for (int i = firstVisibleIndex; i < firstVisibleIndex + visibleBookCount && i < bookCount; ++i) {
+            const bool selected = (selectedIndex > 0 && (i == selectedBookIndex));
+            const Rect bookRect{sidePadding, currentY, pageWidth - sidePadding * 2, BOOK_ROW_HEIGHT};
+            drawBookRow(renderer, bookRect, books[i], selected);
+            currentY += BOOK_ROW_HEIGHT;
+            if (i < bookCount - 1) {
+                currentY += BOOK_ROW_GAP;
+            }
+        }
+
+        // Draw scrollbar if needed
+        if (totalBookListHeight > listHeight) {
+            constexpr int scrollBarWidth = 4;
+            constexpr int scrollBarGap = 6;
+            const int scrollTrackX = pageWidth - sidePadding;
+            const int scrollBarHeight = std::max(18, (listHeight * listHeight) / totalBookListHeight);
+            const int maxScrollOffset = std::max(1, totalBookListHeight - listHeight);
+            const int scrollBarY =
+                listTop + ((listHeight - scrollBarHeight) * std::min(viewportOffset, maxScrollOffset)) / maxScrollOffset;
+            renderer.drawLine(scrollTrackX, listTop, scrollTrackX, listTop + listHeight, true);
+            renderer.fillRect(scrollTrackX - scrollBarWidth + 1, scrollBarY, scrollBarWidth, scrollBarHeight, true);
+        }
+    }
+
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
 }
