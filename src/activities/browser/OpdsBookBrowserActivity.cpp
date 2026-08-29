@@ -174,6 +174,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       GUI.drawProgressBar(renderer, Rect{50, pageHeight / 2 + 20, pageWidth - 100, 20}, downloadProgress,
                           downloadTotal);
     }
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 60, tr(STR_PRESS_BACK_TO_CANCEL));
     renderer.displayBuffer();
     return;
   }
@@ -280,6 +281,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   state = BrowserState::DOWNLOADING;
   statusMessage = book.title;
   downloadProgress = downloadTotal = 0;
+  cancelRequested_ = false;
   requestUpdate(true);
 
   // Build full download URL relative to the current feed, not the root server URL
@@ -294,17 +296,30 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   std::string filename = opdsDir + "/" + StringUtils::sanitizeFilename(buildOpdsDownloadBaseName(book)) + ".epub";
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
+  unsigned long lastInputPollMs = 0;
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
-      [this](const size_t downloaded, const size_t total) {
+      [this, &lastInputPollMs](const size_t downloaded, const size_t total) {
         downloadProgress = downloaded;
         downloadTotal = total;
+
+        const unsigned long now = millis();
+        if (now - lastInputPollMs >= 150) {
+          lastInputPollMs = now;
+          mappedInput.update();
+          if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+            cancelRequested_ = true;
+          }
+        }
+
         requestUpdate(true);
       },
-      nullptr, server.username, server.password);
+      &cancelRequested_, server.username, server.password);
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
+    state = BrowserState::BROWSING;
+  } else if (result == HttpDownloader::ABORTED) {
     state = BrowserState::BROWSING;
   } else {
     state = BrowserState::ERROR;

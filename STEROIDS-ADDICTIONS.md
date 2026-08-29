@@ -554,6 +554,12 @@ words from chapter start to the beginning of `page`. Bookmarks store
   the ~41 KB full `reading_stats.json` store into RAM at boot**. Written on every
   `markDirty()`/`saveToFile()`, read lazily at boot (`preloadHomeSummary`), with an
   upgrade path that generates it once from the existing store. Detail in [§22](#22-home-reading-stats-summary-json-fast-path).
+- **OPDS download cancellation** — the OPDS book browser now supports cancelling an
+  in-progress download by pressing the Back button. A "Press Back to cancel download"
+  hint is shown on the progress screen. On cancellation the network stream is aborted,
+  the partial file is deleted, and the user returns cleanly to the catalog browser
+  without freezing the UI. Input is polled during the download progress callback
+  (matching the FontDownloadActivity cancellation pattern). Issue [#91](https://github.com/marcoand75/cpr-vcodex-steroids/issues/91).
 - **Power button / deep-sleep state machine** (see §4.3).
 
 - **Select Long Press configuration** (`CrossPointSettings::selectLongPressBehavior`) — expanded from 3 to 14 `BUTTON_ACTION` options. Default is Toggle Bookmark; also supports Add/View Clippings, Lookup Word, Dictionary, Chapter Skip, Orientation, Font Size, Dark Mode, Full Refresh, Quick Settings, Reading Timer (pause/resume tracking), and Off. A `|| PAUSED` status bar indicator appears when reading timer is paused. TXT/XTC readers restrict to `READING_TIME` and `OFF` only.

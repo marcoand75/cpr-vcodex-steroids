@@ -68,6 +68,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/util/TimeUtils.cpp`** | **applySystemClockFromRtc: no clockHasBeenSynced guard, DS3231 time used immediately** |
 | **`src/network/OtaUpdater.h`** | **Added ABORTED error code + cancelFlag parameter to installUpdate** |
 | **`src/activities/settings/OtaUpdateActivity.h/.cpp`** | **Battery check (min 30%), LOW_BATTERY_WARNING state, Back-button cancel during download** |
+| **`src/activities/browser/OpdsBookBrowserActivity.cpp/h`** | **OPDS download cancellation (#91)**: Back-button cancel during download with progress callback polling, partial file cleanup, "Press Back to cancel" visual hint. |
 
 ### Why ReadingStatsStore is critical
 
