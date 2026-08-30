@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "DictionaryStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -234,11 +235,46 @@ void DictionaryDefinitionActivity::wrapText() {
   currentPage = std::clamp(currentPage, 0, totalPages - 1);
 }
 
+void DictionaryDefinitionActivity::switchToDictionary(const int newDictIndex) {
+  if (query.empty()) return;
+
+  const auto activeEntries = DICTIONARIES.getActiveEntries();
+  if (newDictIndex < 0 || newDictIndex >= static_cast<int>(activeEntries.size())) return;
+
+  DictionaryEntry* mutableEntry = const_cast<DictionaryEntry*>(activeEntries[newDictIndex]);
+  DictionaryLookupResult result = DICTIONARIES.lookupInEntry(*mutableEntry, query, true);
+
+  if (result.status == DictionaryLookupResult::Status::Found) {
+    headword = std::move(result.headword);
+    definition = std::move(result.definition);
+    truncated = result.truncated;
+    activeDictIndex = newDictIndex;
+  } else if (!result.suggestions.empty()) {
+    headword = query;
+    definition = tr(STR_DICTIONARY_SUGGESTIONS_PREFIX) + result.suggestions[0];
+    for (size_t i = 1; i < result.suggestions.size(); ++i) {
+      definition += ", ";
+      definition += result.suggestions[i];
+    }
+    truncated = false;
+    activeDictIndex = newDictIndex;
+  } else {
+    headword = query;
+    definition = tr(STR_DICTIONARY_NOT_READY);
+    truncated = false;
+    activeDictIndex = newDictIndex;
+  }
+
+  currentPage = 0;
+  wrapText();
+  requestUpdate();
+}
+
 void DictionaryDefinitionActivity::loop() {
   const bool prevPage = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
-                        mappedInput.wasReleased(MappedInputManager::Button::Left);
+                        mappedInput.wasReleased(MappedInputManager::Button::Up);
   const bool nextPage = mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
-                        mappedInput.wasReleased(MappedInputManager::Button::Right);
+                        mappedInput.wasReleased(MappedInputManager::Button::Down);
 
   if (prevPage && currentPage > 0) {
     --currentPage;
@@ -250,6 +286,23 @@ void DictionaryDefinitionActivity::loop() {
     requestUpdate();
     return;
   }
+
+  if (DICTIONARIES.getLookupMode() == DictionaryStore::LookupMode::Manual) {
+    const auto activeEntries = DICTIONARIES.getActiveEntries();
+    if (!activeEntries.empty()) {
+      if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+        const int newIndex = (activeDictIndex - 1 + static_cast<int>(activeEntries.size())) % static_cast<int>(activeEntries.size());
+        switchToDictionary(newIndex);
+        return;
+      }
+      if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+        const int newIndex = (activeDictIndex + 1) % static_cast<int>(activeEntries.size());
+        switchToDictionary(newIndex);
+        return;
+      }
+    }
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     setResult(ActivityResult{});
     finish();
@@ -266,13 +319,8 @@ void DictionaryDefinitionActivity::loop() {
 void DictionaryDefinitionActivity::render(RenderLock&&) {
   if (renderPageBackground) {
     renderer.clearScreen();
-    std::optional<FontCacheManager::PrewarmScope> pageFontPrewarm;
     if (page) {
-      if (auto* fcm = renderer.getFontCacheManager()) {
-        pageFontPrewarm.emplace(fcm->createPrewarmScope(false));
-      }
       page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
-      if (pageFontPrewarm) pageFontPrewarm->endScanAndPrewarm();
     }
   }
 
@@ -285,6 +333,15 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int titleMaxWidth = rect.width - padding * 2 - 54;
   const std::string title = renderer.truncatedText(UI_10_FONT_ID, headword.c_str(), titleMaxWidth, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, rect.x + padding, titleY, title.c_str(), true, EpdFontFamily::BOLD);
+
+  if (activeDictIndex >= 0) {
+    const auto activeEntries = DICTIONARIES.getActiveEntries();
+    if (static_cast<size_t>(activeDictIndex) < activeEntries.size()) {
+      const std::string dictLabel = std::string("[") + activeEntries[activeDictIndex]->languageId + "]";
+      const int dictWidth = renderer.getTextWidth(SMALL_FONT_ID, dictLabel.c_str());
+      renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - padding - dictWidth, titleY + 2, dictLabel.c_str());
+    }
+  }
 
   if (totalPages > 1) {
     const std::string pageText = std::to_string(currentPage + 1) + "/" + std::to_string(totalPages);

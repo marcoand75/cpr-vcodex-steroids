@@ -6,7 +6,9 @@
 class DictionaryActivity final : public Activity {
  public:
   explicit DictionaryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Dictionary", renderer, mappedInput) {}
+      : Activity("Dictionary", renderer, mappedInput) {
+    ButtonNavigator::setMappedInputManager(mappedInput);
+  }
 
   void onEnter() override;
   void loop() override;
@@ -15,6 +17,8 @@ class DictionaryActivity final : public Activity {
  private:
   int selectedIndex = 0;
   ButtonNavigator buttonNavigator;
+  bool orderingMode = false;
 
   void selectCurrent();
+  void moveActiveDict(int delta);
 };

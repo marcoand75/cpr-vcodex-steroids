@@ -59,15 +59,9 @@ void DictionaryWordSelectActivity::extractWords() {
 
     const uint16_t count = block->wordCount();
     for (uint16_t i = 0; i < count; ++i) {
-      // Feed the task watchdog: on dense pages with an SD reader font the
-      // per-word measurement below (getTextAdvanceX + cleanWord) can take long
-      // enough to trip the 5s reset on the main loop task.
       esp_task_wdt_reset();
 
       const char* wordText = block->wordText(i);
-      // Defensive guard: a bad/corrupt word pointer must never reach the
-      // std::string constructor (that would hard-fault with no recoverable
-      // panic message). Skip the word instead.
       if (!wordText || !wordText[0]) continue;
       const std::string cleaned = DictionaryStore::cleanWord(wordText);
       if (cleaned.empty()) continue;
@@ -99,8 +93,9 @@ void DictionaryWordSelectActivity::extractWords() {
 void DictionaryWordSelectActivity::prepareReaderFontMetrics() {
   if (!page || !renderer.isSdCardFont(readerFontId)) return;
 
+  constexpr size_t MAX_PAGE_TEXT_BYTES = 2048;
   std::string pageText;
-  pageText.reserve(2048);
+  pageText.reserve(MAX_PAGE_TEXT_BYTES);
   for (const auto& element : page->elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
     const auto& line = static_cast<const PageLine&>(*element);
@@ -109,9 +104,11 @@ void DictionaryWordSelectActivity::prepareReaderFontMetrics() {
 
     const uint16_t count = block->wordCount();
     for (uint16_t i = 0; i < count; ++i) {
+      if (pageText.size() >= MAX_PAGE_TEXT_BYTES) break;
       if (!pageText.empty()) pageText.push_back(' ');
       pageText += block->wordText(i);
     }
+    if (pageText.size() >= MAX_PAGE_TEXT_BYTES) break;
   }
 
   if (!pageText.empty()) {
@@ -340,11 +337,13 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
     RenderLock lock(*this);
     popup = GUI.drawPopup(renderer, tr(STR_DICTIONARY_LOOKUP));
   }
-  const auto lookup = DICTIONARIES.lookup(query, true);
+
+  DictionaryLookupResult lookup = DICTIONARIES.lookup(query, true);
   if (lookup.status == DictionaryLookupResult::Status::Found) {
     startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(
                                renderer, mappedInput, page, lookup.headword, lookup.definition, lookup.truncated,
-                               readerFontId, DICTIONARIES.getDefinitionFontId(readerFontId), marginLeft, marginTop),
+                               readerFontId, DICTIONARIES.getDefinitionFontId(readerFontId), marginLeft, marginTop,
+                               true, 0, query),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                setResult(ActivityResult{});
@@ -372,7 +371,7 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
   }
 
   GUI.drawPopup(renderer, lookup.status == DictionaryLookupResult::Status::NoDictionary ? tr(STR_DICTIONARY_NONE_SELECTED)
-                                                                                        : tr(STR_DEFINITION_NOT_FOUND));
+                                                                                       : tr(STR_DEFINITION_NOT_FOUND));
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   delay(900);
   requestUpdate();
@@ -428,15 +427,29 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int sideBackgroundWidth = metrics.sideButtonHintsWidth + 8;
   const int sideBackgroundHeight = 168;
+  int sideY;
   if (gpio.deviceIsX3()) {
-    constexpr int sideY = 151;
+    constexpr int sideYX3 = 151;
+    sideY = sideYX3;
     renderer.fillRect(0, sideY, sideBackgroundWidth, sideBackgroundHeight / 2, false);
     renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth,
                       sideBackgroundHeight / 2, false);
   } else {
-    const int sideY = std::min(341, std::max(0, renderer.getScreenHeight() - sideBackgroundHeight - 4));
+    sideY = std::min(341, std::max(0, renderer.getScreenHeight() - sideBackgroundHeight - 4));
     renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth,
                       sideBackgroundHeight, false);
+  }
+
+  if (progressPercent >= 0 && progressPercent <= 100) {
+    const int barX = renderer.getScreenWidth() - sideBackgroundWidth + 4;
+    const int barY = sideY + 4;
+    const int barWidth = sideBackgroundWidth - 8;
+    const int barHeight = 3;
+    renderer.drawRect(barX, barY, barWidth, barHeight, 1, true);
+    const int fillWidth = std::max(0, (barWidth - 2) * progressPercent / 100);
+    if (fillWidth > 0) {
+      renderer.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, true);
+    }
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));

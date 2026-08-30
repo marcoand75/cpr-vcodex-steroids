@@ -1025,6 +1025,9 @@ DictionaryStore& DictionaryStore::getInstance() {
 void DictionaryStore::loadConfig() {
   configLoaded = true;
   activeIfoPath.clear();
+  activeIfoPaths.clear();
+  lookupOrder.clear();
+  lookupMode = LookupMode::Failover;
   definitionTextSize = DEF_TEXT_SMALL;
   if (!Storage.exists(CONFIG_PATH)) return;
 
@@ -1033,7 +1036,35 @@ void DictionaryStore::loadConfig() {
 
   JsonDocument doc;
   if (deserializeJson(doc, json) != DeserializationError::Ok) return;
+
   activeIfoPath = doc["activeIfoPath"] | std::string("");
+  if (!activeIfoPath.empty() && activeIfoPaths.empty()) {
+    activeIfoPaths.push_back(activeIfoPath);
+    lookupOrder = activeIfoPaths;
+  }
+
+  if (doc.containsKey("activeIfoPaths")) {
+    JsonArray paths = doc["activeIfoPaths"];
+    activeIfoPaths.clear();
+    for (size_t i = 0; i < paths.size(); ++i) {
+      const char* value = paths[i];
+      if (value && value[0]) activeIfoPaths.emplace_back(value);
+    }
+  }
+  if (doc.containsKey("lookupOrder")) {
+    JsonArray order = doc["lookupOrder"];
+    lookupOrder.clear();
+    for (size_t i = 0; i < order.size(); ++i) {
+      const char* value = order[i];
+      if (value && value[0]) lookupOrder.emplace_back(value);
+    }
+  }
+  if (lookupOrder.empty()) {
+    lookupOrder = activeIfoPaths;
+  }
+  const std::string modeStr = doc["lookupMode"] | std::string("failover");
+  lookupMode = (modeStr == "manual") ? LookupMode::Manual : LookupMode::Failover;
+
   const int storedSize = doc["definitionTextSize"] | static_cast<int>(definitionTextSize);
   const uint8_t sizeVersion = doc["definitionTextSizeVersion"] | static_cast<uint8_t>(0);
   if (sizeVersion == 0) {
@@ -1048,12 +1079,28 @@ void DictionaryStore::loadConfig() {
   } else if (storedSize >= 0 && storedSize < DEF_TEXT_SIZE_COUNT) {
     definitionTextSize = static_cast<uint8_t>(storedSize);
   }
+
+  bool cleaned = false;
+  for (auto it = activeIfoPaths.begin(); it != activeIfoPaths.end();) {
+    if (!Storage.exists(it->c_str())) {
+      it = activeIfoPaths.erase(it);
+      cleaned = true;
+    } else {
+      ++it;
+    }
+  }
+  if (cleaned) saveConfig();
 }
 
 bool DictionaryStore::saveConfig() const {
   Storage.mkdir("/.crosspoint");
   JsonDocument doc;
   doc["activeIfoPath"] = activeIfoPath;
+  JsonArray paths = doc.createNestedArray("activeIfoPaths");
+  for (const auto& p : activeIfoPaths) paths.add(p);
+  JsonArray order = doc.createNestedArray("lookupOrder");
+  for (const auto& p : lookupOrder) order.add(p);
+  doc["lookupMode"] = (lookupMode == LookupMode::Manual) ? "manual" : "failover";
   doc["definitionTextSize"] = definitionTextSize;
   doc["definitionTextSizeVersion"] = DEFINITION_TEXT_SIZE_CONFIG_VERSION;
   const std::string tempPath = std::string(CONFIG_PATH) + ".tmp";
@@ -1174,10 +1221,10 @@ void DictionaryStore::scan() {
     return true;
   };
 
-  if (!activeIfoPath.empty()) {
-    DictionaryEntry activeEntry;
-    if (loadEntryFromIfoPath(activeIfoPath, activeEntry)) {
-      appendEntry(std::move(activeEntry));
+  if (!activeIfoPath.empty() && activeIfoPaths.empty()) {
+    DictionaryEntry legacyActive;
+    if (loadEntryFromIfoPath(activeIfoPath, legacyActive)) {
+      appendEntry(std::move(legacyActive));
     }
   }
 
@@ -1226,21 +1273,44 @@ void DictionaryStore::scan() {
   }
   root.close();
 
-  std::sort(entries.begin(), entries.end(), [](const DictionaryEntry& a, const DictionaryEntry& b) {
-    if (a.languageId != b.languageId) return a.languageId < b.languageId;
-    return a.name < b.name;
-  });
-
-  for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
-    if (entries[i].ifoPath == activeIfoPath) {
-      activeIndex = i;
-      break;
+  if (!lookupOrder.empty()) {
+    std::vector<DictionaryEntry> ordered;
+    ordered.reserve(entries.size());
+    std::vector<bool> placed(entries.size(), false);
+    for (const auto& ifoPath : lookupOrder) {
+      for (size_t i = 0; i < entries.size(); ++i) {
+        if (placed[i]) continue;
+        if (entries[i].ifoPath == ifoPath) {
+          ordered.push_back(std::move(entries[i]));
+          placed[i] = true;
+          break;
+        }
+      }
     }
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (!placed[i]) {
+        ordered.push_back(std::move(entries[i]));
+      }
+    }
+    entries.swap(ordered);
+  }
+
+  activeIndex = -1;
+  for (const auto& ifoPath : lookupOrder) {
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+      if (entries[i].ifoPath == ifoPath) {
+        activeIndex = i;
+        break;
+      }
+    }
+    if (activeIndex >= 0) break;
   }
 
   if (activeIndex < 0 && entries.size() == 1 && !entries[0].compressed && !entries[0].missingFiles) {
     activeIndex = 0;
     activeIfoPath = entries[0].ifoPath;
+    if (activeIfoPaths.empty()) activeIfoPaths = {entries[0].ifoPath};
+    if (lookupOrder.empty()) lookupOrder = activeIfoPaths;
     saveConfig();
   }
 }
@@ -1251,6 +1321,8 @@ bool DictionaryStore::setActiveIndex(const int index) {
   if (entries[index].compressed || entries[index].missingFiles) return false;
   activeIndex = index;
   activeIfoPath = entries[index].ifoPath;
+  activeIfoPaths = {entries[index].ifoPath};
+  lookupOrder = activeIfoPaths;
   clearActiveOnlyEntry();
   return saveConfig();
 }
@@ -1283,7 +1355,9 @@ int DictionaryStore::getDefinitionFontId(const int) const {
 
 bool DictionaryStore::hasActiveDictionary() const {
   const_cast<DictionaryStore*>(this)->ensureActiveEntryLoaded();
-  return activeEntry() != nullptr;
+  const DictionaryEntry* entry = activeEntry();
+  if (!entry) return false;
+  return !entry->missingFiles && !entry->compressed;
 }
 
 void DictionaryStore::ensureScanned() {
@@ -1294,13 +1368,14 @@ bool DictionaryStore::ensureActiveEntryLoaded() {
   if (!configLoaded) loadConfig();
   if (activeEntry()) return true;
 
-  if (activeIfoPath.empty()) {
+  if (activeIfoPaths.empty() && activeIfoPath.empty()) {
     if (!scanned) scan();
     return activeEntry() != nullptr;
   }
 
   if (!activeOnlyLoaded || activeOnlyEntry.ifoPath != activeIfoPath) {
     clearActiveOnlyEntry();
+    if (activeIfoPath.empty()) return false;
     if (!loadEntryFromIfoPath(activeIfoPath, activeOnlyEntry)) return false;
     activeOnlyLoaded = true;
   }
@@ -1324,6 +1399,290 @@ bool DictionaryStore::prepareActive(const std::function<void(int percent)>& onPr
   DictionaryEntry* entry = activeEntry();
   if (!entry) return false;
   return ensurePrepared(*entry, onProgress);
+}
+
+DictionaryLookupResult DictionaryStore::lookupInEntry(DictionaryEntry& entry, const std::string& rawWord, bool includeSuggestions) {
+  DictionaryLookupResult result;
+  result.query = cleanWord(rawWord);
+  if (result.query.empty()) {
+    result.status = DictionaryLookupResult::Status::NotFound;
+    return result;
+  }
+
+  result.dictionaryName = entry.name;
+
+  if (!ensurePrepared(entry)) {
+    result.status = DictionaryLookupResult::Status::NotReady;
+    return result;
+  }
+
+  auto finishFound = [&](const IndexHit& hit) {
+    result.status = DictionaryLookupResult::Status::Found;
+    result.headword = hit.headword;
+    result.definition = readDefinition(entry, hit, result.truncated);
+    addHistory(result.headword.empty() ? result.query : result.headword);
+  };
+
+  IndexHit hit;
+  if (findIndexHit(entry, result.query, hit)) {
+    finishFound(hit);
+    return result;
+  }
+
+  std::string canonical;
+  if (lookupSynonym(entry, result.query, canonical) && findIndexHit(entry, canonical, hit)) {
+    finishFound(hit);
+    return result;
+  }
+
+  for (const std::string& fallback : getFallbackForms(entry, result.query)) {
+    if (findIndexHit(entry, fallback, hit)) {
+      finishFound(hit);
+      return result;
+    }
+    if (lookupSynonym(entry, fallback, canonical) && findIndexHit(entry, canonical, hit)) {
+      finishFound(hit);
+      return result;
+    }
+  }
+
+  result.status = DictionaryLookupResult::Status::NotFound;
+  if (includeSuggestions) {
+    result.suggestions = findSuggestions(entry, result.query, 8);
+  }
+  return result;
+}
+
+DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const bool includeSuggestions) {
+  DictionaryLookupResult result;
+  ensureScanned();
+  result.query = cleanWord(rawWord);
+  if (result.query.empty()) {
+    result.status = DictionaryLookupResult::Status::NotFound;
+    return result;
+  }
+
+  std::vector<const DictionaryEntry*> activeEntries = getActiveEntries();
+  if (activeEntries.empty()) {
+    result.status = DictionaryLookupResult::Status::NoDictionary;
+    return result;
+  }
+
+  bool allNotReady = true;
+  for (size_t i = 0; i < activeEntries.size(); ++i) {
+    DictionaryEntry* mutableEntry = const_cast<DictionaryEntry*>(activeEntries[i]);
+    DictionaryLookupResult entryResult = lookupInEntry(*mutableEntry, result.query, includeSuggestions && i == 0);
+    if (entryResult.status == DictionaryLookupResult::Status::Found) {
+      return entryResult;
+    }
+    if (entryResult.status != DictionaryLookupResult::Status::NotReady) {
+      allNotReady = false;
+    }
+    if (lookupMode == LookupMode::Failover && entryResult.status == DictionaryLookupResult::Status::NotReady) {
+      continue;
+    }
+    if (lookupMode == LookupMode::Failover && entryResult.status == DictionaryLookupResult::Status::NotFound) {
+      continue;
+    }
+    if (i == 0) {
+      result = entryResult;
+    }
+  }
+
+  if (allNotReady) {
+    result.status = DictionaryLookupResult::Status::NotReady;
+  } else if (result.status == DictionaryLookupResult::Status::NotFound && !activeEntries.empty()) {
+    result.dictionaryName = activeEntries[0]->name;
+  }
+  return result;
+}
+
+DictionaryLookupResult DictionaryStore::lookupInActive(const size_t activeIndex, const std::string& rawWord,
+                                                       const bool includeSuggestions) {
+  DictionaryLookupResult result;
+  ensureScanned();
+  result.query = cleanWord(rawWord);
+  if (result.query.empty()) {
+    result.status = DictionaryLookupResult::Status::NotFound;
+    return result;
+  }
+
+  std::vector<const DictionaryEntry*> activeEntries = getActiveEntries();
+  if (activeIndex >= activeEntries.size()) {
+    result.status = DictionaryLookupResult::Status::NoDictionary;
+    return result;
+  }
+
+  DictionaryEntry* mutableEntry = const_cast<DictionaryEntry*>(activeEntries[activeIndex]);
+  return lookupInEntry(*mutableEntry, result.query, includeSuggestions);
+}
+
+bool DictionaryStore::setActiveIfoPaths(const std::vector<std::string>& paths) {
+  ensureScanned();
+  activeIfoPaths.clear();
+  for (const auto& p : paths) {
+    if (Storage.exists(p.c_str())) {
+      activeIfoPaths.push_back(p);
+    }
+  }
+
+  std::vector<std::string> newLookupOrder;
+  for (const auto& p : lookupOrder) {
+    if (Storage.exists(p.c_str())) {
+      newLookupOrder.push_back(p);
+    }
+  }
+  for (const auto& p : activeIfoPaths) {
+    if (std::find(newLookupOrder.begin(), newLookupOrder.end(), p) == newLookupOrder.end()) {
+      newLookupOrder.push_back(p);
+    }
+  }
+  lookupOrder = newLookupOrder;
+
+  if (!activeIfoPaths.empty()) {
+    activeIfoPath = activeIfoPaths[0];
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+      if (entries[i].ifoPath == activeIfoPath) {
+        activeIndex = i;
+        break;
+      }
+    }
+  } else {
+    activeIfoPath.clear();
+    activeIndex = -1;
+  }
+  return saveConfig();
+}
+
+bool DictionaryStore::setLookupOrder(const std::vector<std::string>& order) {
+  ensureScanned();
+  lookupOrder.clear();
+  for (const auto& p : order) {
+    const auto it = std::find_if(entries.begin(), entries.end(), [&p](const DictionaryEntry& e) { return e.ifoPath == p; });
+    if (it != entries.end() && !it->compressed && !it->missingFiles) {
+      lookupOrder.push_back(p);
+    }
+  }
+  if (!lookupOrder.empty()) {
+    activeIfoPath = lookupOrder[0];
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+      if (entries[i].ifoPath == activeIfoPath) {
+        activeIndex = i;
+        break;
+      }
+    }
+  } else {
+    activeIfoPath.clear();
+    activeIndex = -1;
+  }
+  return saveConfig();
+}
+
+bool DictionaryStore::setLookupMode(LookupMode mode) {
+  lookupMode = mode;
+  return saveConfig();
+}
+
+std::vector<const DictionaryEntry*> DictionaryStore::getActiveEntries() const {
+  const_cast<DictionaryStore*>(this)->ensureScanned();
+  std::vector<const DictionaryEntry*> result;
+  for (const auto& ifoPath : lookupOrder) {
+    for (const auto& entry : entries) {
+      if (entry.ifoPath == ifoPath && !entry.compressed && !entry.missingFiles) {
+        result.push_back(&entry);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+bool DictionaryStore::prepareEntry(const std::string& ifoPath, const std::function<void(int percent)>& onProgress) {
+  ensureScanned();
+  for (auto& entry : entries) {
+    if (entry.ifoPath == ifoPath) {
+      return ensurePrepared(entry, onProgress);
+    }
+  }
+  return false;
+}
+
+bool DictionaryStore::removeMissingEntries() {
+  ensureScanned();
+  bool changed = false;
+  for (auto it = activeIfoPaths.begin(); it != activeIfoPaths.end();) {
+    if (!Storage.exists(it->c_str())) {
+      it = activeIfoPaths.erase(it);
+      changed = true;
+    } else {
+      ++it;
+    }
+  }
+  for (auto it = lookupOrder.begin(); it != lookupOrder.end();) {
+    if (!Storage.exists(it->c_str())) {
+      it = lookupOrder.erase(it);
+      changed = true;
+    } else {
+      ++it;
+    }
+  }
+  if (!activeIfoPaths.empty()) {
+    activeIfoPath = activeIfoPaths[0];
+    activeIndex = -1;
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+      if (entries[i].ifoPath == activeIfoPath) {
+        activeIndex = i;
+        break;
+      }
+    }
+  } else {
+    activeIfoPath.clear();
+    activeIndex = -1;
+  }
+  if (changed) return saveConfig();
+  return true;
+}
+
+bool DictionaryStore::setEntriesOrder(const std::vector<std::string>& ifoPaths) {
+  ensureScanned();
+  std::vector<DictionaryEntry> reordered;
+  reordered.reserve(ifoPaths.size());
+  for (const auto& ifoPath : ifoPaths) {
+    for (auto& entry : entries) {
+      if (entry.ifoPath == ifoPath) {
+        reordered.push_back(std::move(entry));
+        break;
+      }
+    }
+  }
+  for (auto& entry : entries) {
+    if (std::find(ifoPaths.begin(), ifoPaths.end(), entry.ifoPath) == ifoPaths.end()) {
+      reordered.push_back(std::move(entry));
+    }
+  }
+  entries.swap(reordered);
+
+  lookupOrder.clear();
+  activeIfoPaths.clear();
+  for (const auto& entry : entries) {
+    if (!entry.compressed && !entry.missingFiles) {
+      lookupOrder.push_back(entry.ifoPath);
+    }
+  }
+  if (!lookupOrder.empty()) {
+    activeIfoPath = lookupOrder[0];
+    activeIndex = -1;
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+      if (entries[i].ifoPath == activeIfoPath) {
+        activeIndex = i;
+        break;
+      }
+    }
+  } else {
+    activeIfoPath.clear();
+    activeIndex = -1;
+  }
+  return true;
 }
 
 bool DictionaryStore::loadCheckpointCache(DictionaryEntry& entry) {
@@ -1758,66 +2117,8 @@ std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry
   return forms;
 }
 
-DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const bool includeSuggestions) {
-  DictionaryLookupResult result;
-  ensureActiveEntryLoaded();
-  result.query = cleanWord(rawWord);
-  if (result.query.empty()) {
-    result.status = DictionaryLookupResult::Status::NotFound;
-    return result;
-  }
-
-  DictionaryEntry* entry = activeEntry();
-  if (!entry) {
-    result.status = DictionaryLookupResult::Status::NoDictionary;
-    return result;
-  }
-  result.dictionaryName = entry->name;
-
-  if (!ensurePrepared(*entry)) {
-    result.status = DictionaryLookupResult::Status::NotReady;
-    return result;
-  }
-
-  auto finishFound = [&](const IndexHit& hit) {
-    result.status = DictionaryLookupResult::Status::Found;
-    result.headword = hit.headword;
-    result.definition = readDefinition(*entry, hit, result.truncated);
-    addHistory(result.headword.empty() ? result.query : result.headword);
-  };
-
-  IndexHit hit;
-  if (findIndexHit(*entry, result.query, hit)) {
-    finishFound(hit);
-    return result;
-  }
-
-  std::string canonical;
-  if (lookupSynonym(*entry, result.query, canonical) && findIndexHit(*entry, canonical, hit)) {
-    finishFound(hit);
-    return result;
-  }
-
-  for (const std::string& fallback : getFallbackForms(*entry, result.query)) {
-    if (findIndexHit(*entry, fallback, hit)) {
-      finishFound(hit);
-      return result;
-    }
-    if (lookupSynonym(*entry, fallback, canonical) && findIndexHit(*entry, canonical, hit)) {
-      finishFound(hit);
-      return result;
-    }
-  }
-
-  result.status = DictionaryLookupResult::Status::NotFound;
-  if (includeSuggestions) {
-    result.suggestions = findSuggestions(*entry, result.query, 8);
-  }
-  return result;
-}
-
 std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry& entry, const std::string& word,
-                                                          const int maxResults) const {
+                                                           const int maxResults) const {
   std::vector<std::string> results;
   if (entry.checkpoints.empty()) return results;
 

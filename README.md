@@ -49,6 +49,10 @@ On top of that, Steroids adds a substantial set of original features developed a
 > - **📖 Wikipedia app** — search, summarised preview, and full-article reading
 >   (wikitext → markdown), in your device language; each article is cached in its
 >   own per-article folder for instant offline reopen and crash-safe recovery.
+> - **📚 Dictionary** — multi-dictionary lookup with per-dictionary labels, reorderable
+>   active list, orphan IFO cleanup on delete, and a reading-progress indicator in the
+>   word-selection overlay. Failover and manual modes are preserved from upstream, but
+>   the active-dictionary list is now fully interactive.
 > - **🟢 Guide dots & 📐 EPUB render modes** — optional word guides and
 >   Default/Balanced/Light rendering with isolated caches.
 > - **🕹️ Configurable Long-Press** — independent per-button actions for Up/Down (side) and Left/Right (front) long-press, plus expanded short power-button and Select long-press. Each button can be set to one of 14 `BUTTON_ACTION` values (Bookmark, Clipping, Chapter Skip, Orientation, Font Size, Dictionary, Dark Mode, Full Refresh, Quick Settings, Lookup Word, Bookmark Store, Clipping Store, Reading Timer, Off) via a reusable popup selector — replacing the old single legacy enum.
@@ -446,6 +450,7 @@ A reusable `ButtonActionSelectorActivity` popup (with circular wrap-around navig
 | **Steroids Settings JSON Split** | 🧹 Settings | 37 Steroids-only settings in dedicated `settings-steroids.json` + `JsonSettingsIOSteroids.cpp`; upstream `JsonSettingsIO.cpp` byte-identical (zero merge conflicts); pre-migration backup at `settings-steroids.json.bak` |
 | **Silent Restart** | 🔄 Heap | Seamless `ESP.restart()` on Back-to-Home from Library/Wikipedia; maxAlloc ~70KB → ~105KB; boot skips 4 stages (~1088ms saved); no popup, no white flash |
 | **Wikipedia App** | 📖 Apps | Search Wikipedia, summary preview, and full-article reading — wikitext converted to markdown and cached per-article in `/.crosspoint/wikipedia-cache/wiki_<hash>/` (`article.md` + `title.txt` + `index.bin` + `progress.bin`) for offline reopen; dedicated `WikiTxtReaderActivity` |
+| **Dictionary** | 📖 Apps | Multi-dictionary lookup with per-dictionary labels, reorderable active list with stored lookup order, orphan IFO/IDX/DICT cleanup on delete, reading-progress indicator in word-selection overlay; failover/manual modes preserved from upstream |
 | **Per-Language Wikipedia** | 📖 Apps | Request base URL follows the selected UI language (`it`, `fr`, `de`, `sl`, …) instead of a hardcoded `it.wikipedia.org` |
 | **Clippings Preview Panel** | ✂️ Reading | Single press on a clipping opens a readable preview (chapter, page, full text); Select again jumps to the book — lets you read a highlight without leaving your place |
 | **Grayscale Image Pipeline** | 🖼️ Rendering | Shared 2-bit gray config: gamma LUT (1.5) + empiric thresholds 50/120/200, error-diffusion dithering (`int16_t`, overflow-safe buffers), better midtone contrast on covers and screensaver/sleep images |

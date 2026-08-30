@@ -505,6 +505,7 @@ These files implement the sandboxed Lua 5.4.7 plugin runtime. Must never be over
 
 | File | Steroids Feature |
 |---|---|
+| `src/activities/apps/DictionaryActivity.cpp/h` | **Dictionary detail**: lookup-mode labels, reorderable active-dictionary list with stored order, orphan IFO cleanup on delete, word-selection reading-progress indicator. |
 | `src/activities/settings/ButtonActionSelectorActivity.cpp/h` | Reusable popup selector for all `BUTTON_ACTION` settings with circular wrap-around navigation |
 | `src/JsonSettingsIOSteroids.cpp/h` | Steroids-only settings serialization (43 fields, including per-directional button actions) |
 | `src/JsonSettingsIOShared.inc` | Shared internal serialization helpers (saveJsonDocumentToFile, migration functions) |

@@ -59,7 +59,8 @@ icon/theme checklist at the end of this file).
 | **Reading Profile** | `ReadingProfileActivity` | Reading profile / pace settings. |
 | **Achievements** | `AchievementsActivity` | Achievements browser. |
 | **Flashcards** | `FlashcardsAppActivity`, `FlashcardBrowserActivity`, `FlashcardReviewActivity`, `FlashcardDeckStatsActivity`, `FlashcardSessionSummaryActivity`, `FlashcardSettingsActivity`, `FlashcardStatsActivity`, `FlashcardRecentsActivity` | Spaced-repetition flashcards with decks and stats. |
-| **Dictionary** | `DictionaryActivity` | Dictionary lookup. |
+| **Dictionary** | `DictionaryActivity` | Multi-dictionary lookup with failover/manual modes, configurable lookup order, orphan cleanup, reading-progress indicator in word-selection overlay. Detail in [§25](#25-dictionary-activity-detail). |
+| **IfFound** | `IfFoundActivity` | Send to / find device. |
 | **Bookmarks** | `BookmarksAppActivity` | Cross-book bookmark browser. Detail in [§7](#7-bookmarks--clippings-detail). |
 | **Clippings** | `ClippingsAppActivity` | Cross-book highlight/clipping browser. Detail in [§7](#7-bookmarks--clippings-detail). |
 | **Favorites** | `FavoritesAppActivity`, `FavoritesBrowserActivity`, `FavoritesOrderActivity` | Favorite books list, ordering. |
@@ -1647,6 +1648,76 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 `src/activities/home/HomeActivity.cpp`,
 `src/components/themes/lyra/LyraTheme.cpp`, `LyraCarouselTheme.cpp`,
 `LyraCustomTheme.cpp`, `LyraMarcoand75Theme.cpp`.
+
+---
+
+## 25. Dictionary Activity (Detail)
+
+A richer on-device dictionary experience built on top of the upstream StarDict
+lookup pipeline. The activity keeps upstream failover/manual modes, but the
+active-dictionary list is now **fully interactive**: each dictionary shows its
+real name, the user can reorder the lookup list, and deleting a dictionary also
+cleans up orphan index/data files. A reading-progress indicator is shown in the
+word-selection overlay so the user can see current position while looking up
+words.
+
+### 25.1 Active-dictionary list
+
+The dictionary activity lists the **active** dictionaries in the order they are
+tried during lookup. Each entry shows:
+
+- The dictionary name from the IFO metadata (instead of the folder name).
+- The lookup mode for that dictionary (`Failover` or `Manual`).
+
+Upstream only exposed the folder name and did not distinguish the per-dictionary
+mode. Steroids now derives both from the active IFO paths.
+
+### 25.2 Reordering
+
+In the dictionary list:
+
+- `Left` / `Right` move the selected dictionary up or down in the lookup order.
+- `Select` saves the new order.
+- `Back` cancels without saving.
+
+The order is persisted in `lookupOrder` inside `activeIfoPaths` so it survives
+reboot. Moving a dictionary does not change whether it is active; it only changes
+the sequence used during word lookup.
+
+### 25.3 Orphan cleanup
+
+When the user deletes a dictionary from the list, Steroids now removes:
+
+- The IFO file.
+- The IDX file.
+- The DICT file.
+
+This prevents the SD card from retaining orphan dictionary data after the user
+has removed the dictionary from the active list.
+
+### 25.4 Word-selection progress indicator
+
+While the reader word-selection overlay is open for dictionary lookup, Steroids
+renders a **reading-progress indicator** showing the current position in the
+book. This gives context during lookup without leaving the reader.
+
+### 25.5 Lookup-mode labels
+
+The list distinguishes:
+
+- `Failover` — the dictionary is tried automatically when the previous one has
+  no definition.
+- `Manual` — the dictionary is only used when explicitly selected.
+
+This replaces the upstream static "Lookup mode" placeholder that was shown for
+every dictionary entry.
+
+### 25.6 Files
+
+| Path | Change |
+|------|--------|
+| `src/activities/apps/DictionaryActivity.cpp/h` | Richer list rendering with dictionary names, mode labels, reorder controls, reading-progress indicator, and orphan cleanup on delete. |
+| `src/DictionaryStore.cpp/h` | Stores lookup order separately from active IFO paths; `moveActiveDict()` swaps positions in the full scan list and updates selected index; `scan()` preserves stored order instead of forcing alphabetical sorting. |
 
 ---
 
