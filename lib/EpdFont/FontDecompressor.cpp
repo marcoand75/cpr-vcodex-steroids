@@ -172,7 +172,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Check if hot group already has this group decompressed — if not, decompress it
-  if (!hotGroup && hotGroupFont == fontData && hotGroupIndex == groupIndex) {
+  if (hotGroup == nullptr || hotGroupFont != fontData || hotGroupIndex != groupIndex) {
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
