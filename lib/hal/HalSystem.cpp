@@ -1,5 +1,7 @@
 #include "HalSystem.h"
 
+#include <HalClock.h>
+#include <ctime>
 #include <string>
 
 #include "Arduino.h"
@@ -98,20 +100,65 @@ void begin() {
 void checkPanic() {
   if (isRebootFromPanic()) {
     auto panicInfo = getPanicInfo(true);
-    auto file = Storage.open("/crash_report.txt", O_WRITE | O_CREAT | O_TRUNC);
+
+    // Build a timestamped filename so crash reports are preserved instead of overwritten.
+    char timestampedPath[64] = "/logs/crash_report.txt";
+    uint32_t epoch = 0;
+    if (halClock.isAvailable() && halClock.readUtcEpoch(epoch) && epoch > 1704067200UL) {
+      const time_t rawtime = static_cast<time_t>(epoch);
+      struct tm timeinfo{};
+      if (gmtime_r(&rawtime, &timeinfo) != nullptr) {
+        snprintf(timestampedPath, sizeof(timestampedPath),
+                 "/logs/crash_report_%04d%02d%02d_%02d%02d%02d.txt",
+                 timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      }
+    }
+    if (strcmp(timestampedPath, "/logs/crash_report.txt") == 0) {
+      // Fallback when no valid clock is available yet.
+      snprintf(timestampedPath, sizeof(timestampedPath),
+               "/logs/crash_report_boot_%lu.txt", (unsigned long)millis());
+    }
+
+    Storage.mkdir("/logs");
+
+    // Keep writing the legacy /crash_report.txt for CrashActivity / user-facing messages,
+    // and also write the timestamped copy so historical reports are not lost.
+    const char* legacyPath = "/crash_report.txt";
+    bool legacyOk = false;
+    auto legacyFile = Storage.open(legacyPath, O_WRITE | O_CREAT | O_TRUNC);
+    if (legacyFile) {
+      const size_t written = legacyFile.write(panicInfo.c_str(), panicInfo.size());
+      legacyFile.close();
+      if (written == panicInfo.size()) {
+        legacyOk = true;
+        LOG_INF("SYS", "Dumped panic info to %s", legacyPath);
+      } else {
+        LOG_ERR("SYS", "Failed to write complete crash report (%zu of %zu bytes) to %s", written,
+                panicInfo.size(), legacyPath);
+      }
+    } else {
+      LOG_ERR("SYS", "Failed to open %s for writing", legacyPath);
+    }
+
+    bool timestampedOk = false;
+    auto file = Storage.open(timestampedPath, O_WRITE | O_CREAT | O_TRUNC);
     if (file) {
       const size_t written = file.write(panicInfo.c_str(), panicInfo.size());
       file.close();
       if (written == panicInfo.size()) {
-        // Retain the message for CrashActivity but consume the watchdog marker,
-        // so a later reset cannot be mistaken for this same crash.
-        panicCaptureMarker = 0;
-        LOG_INF("SYS", "Dumped panic info to SD card");
+        timestampedOk = true;
+        LOG_INF("SYS", "Dumped panic info to %s", timestampedPath);
       } else {
-        LOG_ERR("SYS", "Failed to write complete crash report (%zu of %zu bytes)", written, panicInfo.size());
+        LOG_ERR("SYS", "Failed to write complete crash report (%zu of %zu bytes) to %s", written,
+                panicInfo.size(), timestampedPath);
       }
     } else {
-      LOG_ERR("SYS", "Failed to open crash_report.txt for writing");
+      LOG_ERR("SYS", "Failed to open %s for writing", timestampedPath);
+    }
+
+    if (legacyOk || timestampedOk) {
+      panicCaptureMarker = 0;
     }
   }
 }

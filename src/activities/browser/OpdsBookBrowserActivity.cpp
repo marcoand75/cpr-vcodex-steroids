@@ -100,7 +100,11 @@ void OpdsBookBrowserActivity::loop() {
 
   if (state == BrowserState::CHECK_WIFI || state == BrowserState::LOADING) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      state == BrowserState::CHECK_WIFI ? onGoHome() : navigateBack();
+      if (state == BrowserState::CHECK_WIFI) {
+        onGoHome();
+      } else {
+        navigateBack();
+      }
     }
     return;
   }

@@ -35,7 +35,7 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
       errorOccured = true;
       LOG_DBG("OPDS", "Couldn't allocate memory for buffer");
       destroyXmlParser(parser);
-      return length;
+      return 0;
     }
 
     memcpy(buf, currentPos, toRead);
@@ -45,7 +45,7 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
       LOG_DBG("OPDS", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
               XML_ErrorString(XML_GetErrorCode(parser)));
       destroyXmlParser(parser);
-      return length;
+      return 0;
     }
     currentPos += toRead;
     remaining -= toRead;

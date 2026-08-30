@@ -746,12 +746,8 @@ void setup() {
     KOREADER_STORE.loadFromFile();
   }
 
-  if (BootRecovery::shouldSkipOPDS() || isSilentReboot) {
-    if (isSilentReboot) {
-      logSkip("Skipping OPDS store load on silent reboot (servers unchanged)");
-    } else {
-      logSkip("Skipping OPDS store load due to recovery mode");
-    }
+  if (BootRecovery::shouldSkipOPDS()) {
+    logSkip("Skipping OPDS store load due to recovery mode");
   } else {
     BootRecovery::enterStage(BootRecovery::BootStage::OPDS);
     OPDS_STORE.loadFromFile();

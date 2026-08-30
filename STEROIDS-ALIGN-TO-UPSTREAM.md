@@ -69,6 +69,10 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/network/OtaUpdater.h`** | **Added ABORTED error code + cancelFlag parameter to installUpdate** |
 | **`src/activities/settings/OtaUpdateActivity.h/.cpp`** | **Battery check (min 30%), LOW_BATTERY_WARNING state, Back-button cancel during download** |
 | **`src/activities/browser/OpdsBookBrowserActivity.cpp/h`** | **OPDS download cancellation (#91)**: Back-button cancel during download with progress callback polling, partial file cleanup, "Press Back to cancel" visual hint. |
+| **`src/activities/browser/OpdsBookBrowserActivity.cpp`** | **OPDS browser persistent visibility (#95)**: OPDS store is now reloaded on every normal boot so the Apps menu shortcut remains visible after silent reboots. |
+| **`src/network/HttpDownloader.cpp`** | **OPDS fetch robustness (#94)**: defensive null checks around network client allocation. |
+| **`lib/OpdsParser/OpdsParser.cpp`** | **OPDS fetch robustness (#94)**: parser error paths return `0` on allocation/parse failure so `HTTPClient::writeToStream` reports write errors cleanly. |
+| **`lib/hal/HalSystem.cpp`** | **Crash report timestamping (#94)**: panic info is written to `/logs/crash_report_<YYYYMMDD_HHMMSS>.txt` plus the legacy `/crash_report.txt`, preserving historical reports. |
 
 ### Why ReadingStatsStore is critical
 

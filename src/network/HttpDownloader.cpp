@@ -62,10 +62,19 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   std::unique_ptr<NetworkClient> client;
   if (UrlUtils::isHttpsUrl(url)) {
     auto* secureClient = new NetworkClientSecure();
+    if (!secureClient) {
+      LOG_ERR("HTTP", "Failed to allocate NetworkClientSecure");
+      return false;
+    }
     secureClient->setInsecure();
     client.reset(secureClient);
   } else {
-    client.reset(new NetworkClient());
+    auto* plainClient = new NetworkClient();
+    if (!plainClient) {
+      LOG_ERR("HTTP", "Failed to allocate NetworkClient");
+      return false;
+    }
+    client.reset(plainClient);
   }
   HTTPClient http;
 

@@ -567,6 +567,18 @@ words from chapter start to the beginning of `page`. Bookmarks store
   the partial file is deleted, and the user returns cleanly to the catalog browser
   without freezing the UI. Input is polled during the download progress callback
   (matching the FontDownloadActivity cancellation pattern). Issue [#91](https://github.com/marcoand75/cpr-vcodex-steroids/issues/91).
+- **OPDS browser persistent visibility** — the OPDS Browser shortcut no longer
+  disappears from the Apps menu after silent reboots. The OPDS server store is now
+  reloaded on every normal boot, so the Apps list consistently shows OPDS Browser
+  whenever servers are configured. Issue [#95](https://github.com/marcoand75/cpr-vcodex-steroids/issues/95).
+- **Crash report timestamping** — panic reports are now written to a timestamped
+  `/logs/crash_report_<YYYYMMDD_HHMMSS>.txt` in addition to the legacy
+  `/crash_report.txt`. Historical crash data is preserved instead of being overwritten
+  by the next crash. Issue [#94](https://github.com/marcoand75/cpr-vcodex-steroids/issues/94).
+- **OPDS fetch robustness** — hardened the OPDS HTTP fetch path against intermittent
+  startup crashes: added null checks for network client allocation, tightened parser
+  error returns, and ensured malformed feed errors surface as UI errors instead of
+  crashing. Issue [#94](https://github.com/marcoand75/cpr-vcodex-steroids/issues/94).
 - **Power button / deep-sleep state machine** (see §4.3).
 
 - **Select Long Press configuration** (`CrossPointSettings::selectLongPressBehavior`) — expanded from 3 to 14 `BUTTON_ACTION` options. Default is Toggle Bookmark; also supports Add/View Clippings, Lookup Word, Dictionary, Chapter Skip, Orientation, Font Size, Dark Mode, Full Refresh, Quick Settings, Reading Timer (pause/resume tracking), and Off. A `|| PAUSED` status bar indicator appears when reading timer is paused. TXT/XTC readers restrict to `READING_TIME` and `OFF` only.
