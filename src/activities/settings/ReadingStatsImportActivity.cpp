@@ -12,6 +12,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -174,9 +175,8 @@ void ReadingStatsImportActivity::render(RenderLock&&) {
         [](int) { return UIIcon::File; });
   }
 
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), importPaths.empty() ? "" : tr(STR_SELECT),
-                            importPaths.empty() ? "" : tr(STR_DIR_UP), importPaths.empty() ? "" : tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasImports = !importPaths.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasImports ? tr(STR_SELECT) : "",
+                              hasImports ? tr(STR_DIR_UP) : "", hasImports ? tr(STR_DIR_DOWN) : "");
   renderer.displayBuffer();
 }

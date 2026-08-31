@@ -14,6 +14,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/TimeUtils.h"
 #include "util/WiFiUtils.h"
 
@@ -142,8 +143,7 @@ void ClockSyncActivity::render(RenderLock&&) {
   }
 
   if (state != SYNCING) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
   }
 
   renderer.displayBuffer();
