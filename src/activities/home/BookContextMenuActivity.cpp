@@ -1,6 +1,6 @@
 #include "BookContextMenuActivity.h"
 
-#include <algorithm> // RICHIESTO per std::min / std::max
+#include <algorithm>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
@@ -84,33 +84,38 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
 void BookContextMenuActivity::onEnter() {
     Activity::onEnter();
     requestUpdate();
+
+    listInputMapper.setBackHandler([](void* ctx) {
+        auto* self = static_cast<BookContextMenuActivity*>(ctx);
+        ActivityResult result;
+        result.isCancelled = true;
+        self->setResult(std::move(result));
+        self->finish();
+    }, this, false);
+
+    listInputMapper.setConfirmHandler([](void* ctx) {
+        auto* self = static_cast<BookContextMenuActivity*>(ctx);
+        const auto selectedAction = self->menuItems[self->selectedIndex].action;
+        self->setResult(MenuResult{static_cast<int>(selectedAction), 0, 0});
+        self->finish();
+    }, this, false);
+
+    auto onNav = [](void* ctx, int delta) {
+      auto* self = static_cast<BookContextMenuActivity*>(ctx);
+      if (self->menuItems.empty()) return;
+      if (delta > 0) {
+        self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->menuItems.size()));
+      } else {
+        self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->menuItems.size()));
+      }
+      self->requestUpdate();
+    };
+
+    listInputMapper.setNavPressAndContinuous(onNav, onNav, this);
 }
 
 void BookContextMenuActivity::loop() {
-    buttonNavigator.onNext([this] {
-        selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(menuItems.size()));
-        requestUpdate();
-    });
-
-    buttonNavigator.onPrevious([this] {
-        selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(menuItems.size()));
-        requestUpdate();
-    });
-
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-        const auto selectedAction = menuItems[selectedIndex].action;
-        setResult(MenuResult{static_cast<int>(selectedAction), 0, 0});
-        finish();
-        return;
-    }
-
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-        ActivityResult result;
-        result.isCancelled = true;
-        setResult(std::move(result));
-        finish();
-        return;
-    }
+    listInputMapper.loop(mappedInput);
 }
 
 void BookContextMenuActivity::render(RenderLock&&) {

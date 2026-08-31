@@ -25,34 +25,43 @@ LibraryContextMenuActivity::LibraryContextMenuActivity(GfxRenderer& renderer, Ma
 void LibraryContextMenuActivity::onEnter() {
   Activity::onEnter();
   requestUpdate();
+  confirmed_ = false;
+
+  listInputMapper_.setBackHandler([](void* ctx) {
+    auto* self = static_cast<LibraryContextMenuActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper_.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<LibraryContextMenuActivity*>(ctx);
+    self->onConfirm();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<LibraryContextMenuActivity*>(ctx);
+    if (delta > 0) {
+      if (self->selectedIndex_ < static_cast<int>(self->items_.size()) - 1) {
+        self->selectedIndex_++;
+        self->requestUpdate();
+      }
+    } else {
+      if (self->selectedIndex_ > 0) {
+        self->selectedIndex_--;
+        self->requestUpdate();
+      }
+    }
+  };
+
+  listInputMapper_.setNavPressAndContinuous(onNav, onNav, this);
 }
 
 void LibraryContextMenuActivity::loop() {
   if (confirmed_) return;
 
-  buttonNavigator_.onNext([this] {
-    if (selectedIndex_ < static_cast<int>(items_.size()) - 1) {
-      selectedIndex_++;
-      requestUpdate();
-    }
-  });
+  listInputMapper_.loop(mappedInput);
 
-  buttonNavigator_.onPrevious([this] {
-    if (selectedIndex_ > 0) {
-      selectedIndex_--;
-      requestUpdate();
-    }
-  });
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    onConfirm();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-      mappedInput.wasPressed(MappedInputManager::Button::Power)) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Power)) {
     finish();
-    return;
   }
 
   delay(50);
