@@ -1274,8 +1274,6 @@ void SleepActivity::cycleScreensaverFromDeepSleep(GfxRenderer& renderer) {
 
   if (hasGreyscale) {
     renderBitmapGrayscaleOverlay(renderer, bitmap, placement, pageWidth, pageHeight);
-  } else {
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   }
 
   file.close();
