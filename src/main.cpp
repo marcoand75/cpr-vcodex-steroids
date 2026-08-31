@@ -261,28 +261,49 @@ constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
 
+enum class SilentRebootTarget : uint32_t {
+  Home = 0,
+  Reader = 1,
+  Apps = 2,
+  Plugin = 3,
+  PluginBrowser = 4
+};
+
 // Latched once deep sleep is committed. WiFi activities also restart silently
 // from onExit(), but deep sleep already gives us a clean heap on wake.
 static bool deepSleepInProgress = false;
 
-void silentRestart() {
+static void requestSilentRestart(SilentRebootTarget target, bool seamless,
+                                 const char* pluginName = nullptr, bool fromApps = false,
+                                 bool returnToPluginBrowser = false) {
   if (deepSleepInProgress) return;
-  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+
+  silentRebootTarget = static_cast<uint32_t>(target);
   silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=home)");
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  delay(50);
+
+  if (target == SilentRebootTarget::Plugin) {
+    if (pluginName) {
+      strncpy(silentRebootPluginName, pluginName, sizeof(silentRebootPluginName) - 1);
+      silentRebootPluginName[sizeof(silentRebootPluginName) - 1] = '\0';
+    }
+    silentRebootCaller = fromApps ? 1 : 2;  // 1=apps, 2=home
+    silentRebootReturnToPluginBrowser = returnToPluginBrowser;
+    LOG_INF("MAIN", "Silent restart (target=%u plugin:%s, caller=%u, retPB=%d)",
+            silentRebootTarget, pluginName, fromApps ? 1 : 2, returnToPluginBrowser);
+  } else {
+    LOG_DBG("MAIN", "Silent restart (target=%u, seamless=%d)", static_cast<uint32_t>(target), seamless ? 1 : 0);
+  }
+
+  delay(seamless ? 20 : 50);
   ESP.restart();
 }
 
+void silentRestart() {
+  requestSilentRestart(SilentRebootTarget::Home, false);
+}
+
 void silentRestartToReader() {
-  if (deepSleepInProgress) return;
-  silentRebootTarget = SILENT_REBOOT_TARGET_READER;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=reader)");
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  delay(50);
-  ESP.restart();
+  requestSilentRestart(SilentRebootTarget::Reader, false);
 }
 
 void silentRestartToHome() {
@@ -290,15 +311,12 @@ void silentRestartToHome() {
     LOG_DBG("MAIN", "Silent restart skipped: deepSleepInProgress");
     return;
   }
-  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=home, seamless — no popup)");
   // Skip the "Loading..." popup for a seamless transition.
   // The display.begin(true) in setup() will skip the white flash,
   // and the boot activity is skipped, so the user sees a brief
   // dark frame then Home appears — visually cleaner than the popup.
-   delay(20);
-  ESP.restart();
+  requestSilentRestart(SilentRebootTarget::Home, true);
 }
 
 void silentRestartToApps() {
@@ -306,23 +324,15 @@ void silentRestartToApps() {
     LOG_DBG("MAIN", "Silent restart to apps skipped: deepSleepInProgress");
     return;
   }
-  silentRebootTarget = SILENT_REBOOT_TARGET_APPS;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=apps, seamless — no popup)");
-   delay(20);
-   ESP.restart();
+  requestSilentRestart(SilentRebootTarget::Apps, true);
 }
 
 void silentRestartToPluginBrowser() {
-   if (deepSleepInProgress) {
-     LOG_DBG("MAIN", "Silent restart to plugin browser skipped: deepSleepInProgress");
-     return;
-   }
-   silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN_BROWSER;
-   silentRebootMagic = SILENT_REBOOT_MAGIC;
-   LOG_DBG("MAIN", "Silent restart (target=plugin_browser, seamless — no popup)");
-    delay(20);
-    ESP.restart();
+  if (deepSleepInProgress) {
+    LOG_DBG("MAIN", "Silent restart to plugin browser skipped: deepSleepInProgress");
+    return;
+  }
+  requestSilentRestart(SilentRebootTarget::PluginBrowser, true);
 }
 
 void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
@@ -330,16 +340,7 @@ void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToP
     LOG_DBG("MAIN", "silentRestartToPlugin skipped: deepSleepInProgress");
     return;
   }
-  strncpy(silentRebootPluginName, pluginName, sizeof(silentRebootPluginName) - 1);
-  silentRebootPluginName[sizeof(silentRebootPluginName) - 1] = '\0';
-  silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN;
-  silentRebootCaller = fromApps ? 1 : 2;  // 1=apps, 2=home
-  silentRebootReturnToPluginBrowser = returnToPluginBrowser;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_INF("MAIN", "Silent restart (target=%u plugin:%s, caller=%u, retPB=%d)",
-          silentRebootTarget, pluginName, silentRebootCaller, returnToPluginBrowser);
-  delay(20);
-  ESP.restart();
+  requestSilentRestart(SilentRebootTarget::Plugin, true, pluginName, fromApps, returnToPluginBrowser);
 }
 
 // Verify power button press duration on wake-up from deep sleep
@@ -463,16 +464,11 @@ static bool consumeCompletedSleepEntryTap() {
 // Minimal boot path for cycle-screensaver-on-tap.
 // Runs after a brief power-button tap from deep sleep; does NOT do a full UI boot.
 // Loads APP_STATE, inits display+renderer, cycles the sleep image, then re-sleeps.
+static void initDisplayRenderer(bool seamless = false);
 [[noreturn]] static void cycleScreensaverThenDeepSleep() {
   APP_STATE.loadFromFile();
 
-  // Seamless init: the panel already holds the sleep image from before deep sleep.
-  // display.begin(true) skips the full-panel white-reset so the screen doesn't flash
-  // white before the new wallpaper is drawn — identical to the silent-reboot path.
-  BoardConfig::holdPowerRails();
-  display.begin(true);
-  HalSpiBus::begin();
-  renderer.begin();
+  initDisplayRenderer(true);
 
   armSleepEntryTapIsr();
   while (true) {
@@ -589,11 +585,15 @@ void restoreFontMemory() {
           beforeMaxAlloc, static_cast<int>(ESP.getMaxAllocHeap()));
 }
 
-void setupDisplayAndFonts(bool seamless = false) {
+static void initDisplayRenderer(bool seamless) {
   BoardConfig::holdPowerRails();
   display.begin(seamless);
   HalSpiBus::begin();
   renderer.begin();
+}
+
+void setupDisplayAndFonts(bool seamless = false) {
+  initDisplayRenderer(seamless);
   renderer.setDarkMode(SETTINGS.darkMode);
   activityManager.begin();
   LOG_DBG("MAIN", "Display initialized");

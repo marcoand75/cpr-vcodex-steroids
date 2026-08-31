@@ -91,7 +91,7 @@ constexpr int kMenuIconPad = 14;
 constexpr int kHighlightPad = 12;
 constexpr int kVisibleMenuSlots = 7;
 
-int lastCarouselSelectorIndex = -1;
+int carouselLastSelectorIndex = -1;
 
 const uint8_t* iconForName(UIIcon icon, int size) {
   if (size == 24) {
@@ -324,7 +324,7 @@ void drawProgressBadge(GfxRenderer& renderer, const RecentBook& book, const int 
 }
 }  // namespace
 
-void LyraCarouselTheme::setPreRenderIndex(int index) { lastCarouselSelectorIndex = index; }
+void LyraCarouselTheme::setPreRenderIndex(int index) { carouselLastSelectorIndex = index; }
 
 void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                                             const std::vector<RecentBook>& recentBooks, const int selectorIndex,
@@ -338,9 +338,9 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
   const int bookCount = static_cast<int>(recentBooks.size());
   const bool inCarouselRow = selectorIndex < bookCount;
-  int centerIdx = inCarouselRow ? selectorIndex : (lastCarouselSelectorIndex >= 0 ? lastCarouselSelectorIndex : 0);
+  int centerIdx = inCarouselRow ? selectorIndex : (carouselLastSelectorIndex >= 0 ? carouselLastSelectorIndex : 0);
   centerIdx = std::max(0, std::min(centerIdx, bookCount - 1));
-  if (centerIdx != lastCarouselSelectorIndex) {
+  if (centerIdx != carouselLastSelectorIndex) {
     coverRendered = false;
     coverBufferStored = false;
   }
@@ -390,7 +390,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   };
 
   if (!coverRendered) {
-    lastCarouselSelectorIndex = centerIdx;
+    carouselLastSelectorIndex = centerIdx;
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
     const int prevIdx = (centerIdx + bookCount - 1) % bookCount;

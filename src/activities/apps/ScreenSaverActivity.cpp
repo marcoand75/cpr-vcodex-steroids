@@ -136,6 +136,37 @@ void ScreenSaverActivity::pickNextImage() {
   std::vector<std::string>().swap(scanned);
 }
 
+struct BitmapPlacement {
+  int x = 0;
+  int y = 0;
+  float cropX = 0.0f;
+  float cropY = 0.0f;
+};
+
+BitmapPlacement getBitmapPlacement(const Bitmap& bitmap, const int pageWidth, const int pageHeight) {
+  BitmapPlacement placement;
+  placement.x = 0;
+  placement.y = 0;
+
+  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
+    const float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+    const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
+
+    if (ratio > screenRatio) {
+      placement.cropX = 1.0f - (screenRatio / ratio);
+      placement.y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
+    } else {
+      placement.cropY = 1.0f - (ratio / screenRatio);
+      placement.x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
+    }
+  } else {
+    placement.x = (pageWidth - bitmap.getWidth()) / 2;
+    placement.y = (pageHeight - bitmap.getHeight()) / 2;
+  }
+
+  return placement;
+}
+
 unsigned long ScreenSaverActivity::getIntervalMs() const {
   switch (static_cast<CrossPointSettings::SCREENSAVER_INTERVAL>(SETTINGS.screenSaverInterval)) {
     case CrossPointSettings::SCREENSAVER_1_MIN:   return 60000UL;
@@ -482,25 +513,6 @@ void ScreenSaverActivity::render(RenderLock&&) {
     return;
   }
 
-  float cropX = 0, cropY = 0;
-  int x = 0, y = 0;
-  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
-    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-    float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
-    if (ratio > screenRatio) {
-      cropX = 1.0f - (screenRatio / ratio);
-      x = 0;
-      y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
-    } else {
-      cropY = 1.0f - (ratio / screenRatio);
-      x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
-      y = 0;
-    }
-  } else {
-    x = (pageWidth - bitmap.getWidth()) / 2;
-    y = (pageHeight - bitmap.getHeight()) / 2;
-  }
-
   bool hasGreyscale = bitmap.hasGreyscale();
 
   // Skip grayscale rendering if heap is too fragmented for the
@@ -517,9 +529,11 @@ void ScreenSaverActivity::render(RenderLock&&) {
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
           static_cast<int>(hasGreyscale));
 
+  const BitmapPlacement placement = getBitmapPlacement(bitmap, pageWidth, pageHeight);
+
   // BW pass
   renderer.clearScreen();
-  renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
 
   // Fonts were already restored and prewarmed before the decode.
   drawTextOverlay();
@@ -535,7 +549,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawTextOverlay();
     renderer.copyGrayscaleLsbBuffers();
 
@@ -546,7 +560,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawTextOverlay();
     renderer.copyGrayscaleMsbBuffers();
 
