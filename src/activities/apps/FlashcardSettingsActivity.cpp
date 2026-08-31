@@ -5,6 +5,7 @@
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -43,6 +44,29 @@ void FlashcardSettingsActivity::onEnter() {
   Activity::onEnter();
   selectedIndex = 0;
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<FlashcardSettingsActivity*>(ctx);
+    self->finish();
+  }, this, true);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<FlashcardSettingsActivity*>(ctx);
+    self->toggleSelectedSetting();
+    self->requestUpdate(true);
+  }, this, true);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<FlashcardSettingsActivity*>(ctx);
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, self->getSettingCount());
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, self->getSettingCount());
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void FlashcardSettingsActivity::toggleSelectedSetting() {
@@ -57,26 +81,7 @@ void FlashcardSettingsActivity::toggleSelectedSetting() {
 }
 
 void FlashcardSettingsActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    toggleSelectedSetting();
-    requestUpdate(true);
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, getSettingCount());
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, getSettingCount());
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void FlashcardSettingsActivity::render(RenderLock&&) {
@@ -102,7 +107,6 @@ void FlashcardSettingsActivity::render(RenderLock&&) {
                },
                true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

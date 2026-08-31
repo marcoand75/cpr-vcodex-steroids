@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class FlashcardSettingsActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   int selectedIndex = 0;
 
   int getSettingCount() const { return 2; }

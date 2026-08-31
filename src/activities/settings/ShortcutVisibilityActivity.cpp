@@ -31,11 +31,7 @@ void ShortcutVisibilityActivity::reloadEntries() {
     return getShortcutOrder(*lhs) < getShortcutOrder(*rhs);
   });
 
-  if (entries.empty()) {
-    selectedIndex = 0;
-  } else {
-    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
-  }
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
 }
 
 void ShortcutVisibilityActivity::toggleSelectedEntry() {
@@ -51,43 +47,34 @@ void ShortcutVisibilityActivity::toggleSelectedEntry() {
 void ShortcutVisibilityActivity::onEnter() {
   Activity::onEnter();
   reloadEntries();
-  waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<ShortcutVisibilityActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<ShortcutVisibilityActivity*>(ctx);
+    self->toggleSelectedEntry();
+  }, this, true);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<ShortcutVisibilityActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void ShortcutVisibilityActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (waitForConfirmRelease) {
-    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-      waitForConfirmRelease = false;
-    }
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    toggleSelectedEntry();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void ShortcutVisibilityActivity::render(RenderLock&&) {
@@ -110,8 +97,7 @@ void ShortcutVisibilityActivity::render(RenderLock&&) {
                  [this](const int index) { return std::string(getVisibilityLabel(*entries[index])); }, true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   renderer.displayBuffer();
 }
