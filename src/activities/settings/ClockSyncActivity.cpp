@@ -29,7 +29,7 @@ void ClockSyncActivity::onEnter() {
     return;
   }
 
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   openWifiSelection();
 }
 
