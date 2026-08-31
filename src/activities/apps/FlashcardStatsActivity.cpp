@@ -130,8 +130,8 @@ void FlashcardStatsActivity::render(RenderLock&&) {
                  [](const int) { return UIIcon::Library; });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), decks.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasDecks = !decks.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasDecks ? tr(STR_OPEN) : "", tr(STR_DIR_UP),
+                              tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }
