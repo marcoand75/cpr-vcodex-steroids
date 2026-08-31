@@ -88,7 +88,7 @@ void ClippingsAppActivity::refreshEntries() {
     });
   }
   if (selectedIndex >= static_cast<int>(entries.size()))
-    selectedIndex = std::max(0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
 }
 
 void ClippingsAppActivity::openSelectedBook() {

@@ -93,7 +93,7 @@ void AchievementsActivity::rebuildVisibleIndexes() {
   }
 
   if (selectedIndex >= static_cast<int>(visibleIndexes.size())) {
-    selectedIndex = std::max(0, static_cast<int>(visibleIndexes.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(visibleIndexes.size()));
   }
 }
 

@@ -406,7 +406,7 @@ void WikipediaActivity::loop() {
               Storage.writeFile(HISTORY_FILE, content);
             }
             loadHistory();
-            if (selectedIndex >= static_cast<int>(historyQueries.size())) selectedIndex = std::max(0, static_cast<int>(historyQueries.size()) - 1);
+            selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(historyQueries.size()));
             requestUpdate();
           } else {
             currentQuery = historyQueries[selectedIndex]; searchInput = currentQuery; performSearch(currentQuery);
@@ -432,9 +432,7 @@ void WikipediaActivity::loop() {
                     LOG_ERR("WIKI", "Failed to delete cached page: %s", path.c_str());
                   }
                   loadCachedPages();
-                  if (currentSelection >= static_cast<int>(cachedPageTitles.size())) {
-                    selectedIndex = std::max(0, static_cast<int>(cachedPageTitles.size()) - 1);
-                  }
+                  selectedIndex = ButtonNavigator::clampIndex(currentSelection, static_cast<int>(cachedPageTitles.size()));
                   requestUpdate();
                 });
           } else {

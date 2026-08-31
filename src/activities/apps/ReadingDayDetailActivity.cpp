@@ -27,7 +27,7 @@ void drawMetricCard(GfxRenderer& renderer, const Rect& rect, const char* label, 
 void ReadingDayDetailActivity::refreshEntries() {
   entries = ReadingStatsAnalytics::getBooksReadOnDay(dayOrdinal);
   if (selectedIndex >= static_cast<int>(entries.size())) {
-    selectedIndex = std::max(0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
   }
 }
 
