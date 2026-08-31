@@ -14,6 +14,7 @@
 #include "components/UITheme.h"
 #include "components/PanelDrawHelper.h"
 #include "components/icons/pageview.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "Logging.h"
 
@@ -311,12 +312,8 @@ void PluginBrowserActivity::render(RenderLock&&) {
   }
 
   // Footer
-  const auto labels = mappedInput.mapLabels(
-      tr(STR_BACK), tr(STR_CONFIRM),
-      pluginList_.empty() ? "" : "",
-      pluginList_.empty() ? "" : tr(STR_SELECT));
-
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_CONFIRM), "",
+                              pluginList_.empty() ? "" : tr(STR_SELECT));
 
   renderer.displayBuffer();
 }
