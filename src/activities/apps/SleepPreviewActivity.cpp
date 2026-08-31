@@ -14,6 +14,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/SleepImageUtils.h"
 #include "util/PngSleepRenderer.h"
@@ -52,11 +53,11 @@ bool drawPreviewPng(GfxRenderer& renderer, const Rect& contentRect, const std::s
                                               contentRect.height);
 }
 
-void drawPreviewFrame(GfxRenderer& renderer, const std::string& directoryLabel, const std::string& subtitle,
-                      const char* btn1, const char* btn2, const char* btn3, const char* btn4) {
+void drawPreviewFrame(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& directoryLabel,
+                      const std::string& subtitle, const char* btn1, const char* btn2, const char* btn3, const char* btn4) {
   renderer.clearScreen();
   HeaderDateUtils::drawHeaderWithDate(renderer, directoryLabel.c_str(), subtitle.empty() ? nullptr : subtitle.c_str());
-  GUI.drawButtonHints(renderer, btn1, btn2, btn3, btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, btn1, btn2, btn3, btn4);
 }
 }  // namespace
 
@@ -117,11 +118,10 @@ void SleepPreviewActivity::selectDirectory() {
 }
 
 void SleepPreviewActivity::showLoadError(const char* message) {
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_USE_DIRECTORY), "", "");
   renderer.clearScreen();
   HeaderDateUtils::drawHeaderWithDate(renderer, SleepImageUtils::getDirectoryLabel(directoryPath).c_str());
   renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2 - 10, message);
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_USE_DIRECTORY), "", "");
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
@@ -138,7 +138,7 @@ void SleepPreviewActivity::renderPreview(bool showLoadingPopup) {
                                             imagePaths.empty() ? "" : tr(STR_DIR_UP),
                                             imagePaths.empty() ? "" : tr(STR_DIR_DOWN));
 
-  drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   const Rect contentRect{metrics.contentSidePadding, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing,
                          pageWidth - metrics.contentSidePadding * 2,
@@ -162,7 +162,7 @@ void SleepPreviewActivity::renderPreview(bool showLoadingPopup) {
       if (showLoadingPopup) {
         GUI.fillPopupProgress(renderer, popupRect, 55);
       }
-      drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
       rendered = drawPreviewPng(renderer, contentRect, imagePath);
     } else {
       FsFile file;
@@ -172,7 +172,7 @@ void SleepPreviewActivity::renderPreview(bool showLoadingPopup) {
           if (showLoadingPopup) {
             GUI.fillPopupProgress(renderer, popupRect, 55);
           }
-          drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+          drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
           drawPreviewBitmap(renderer, contentRect, bitmap);
           rendered = true;
         }
@@ -184,7 +184,7 @@ void SleepPreviewActivity::renderPreview(bool showLoadingPopup) {
     }
 
     if (!rendered) {
-      drawPreviewFrame(renderer, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
       renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10, "Invalid image file");
     }
   }
