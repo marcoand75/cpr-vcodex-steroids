@@ -12,7 +12,7 @@
 // Shared base for order-style list activities.
 //
 // Provides:
-//  - onEnter/onExit/loop/render lifecycle
+//  - onEnter/onExit/loop/render lifecycle (render is virtual; default draws a standard list)
 //  - moveMode toggle behavior
 //  - standard Back/Select/Up/Down hints
 //  - ListInputMapper setup
@@ -23,6 +23,12 @@
 //  - void moveSelectedEntry(int delta)
 //  - const char* getTitle() const
 //  - std::string getEntryTitle(const Entry& entry) const
+//
+// Derived classes may override:
+//  - void render(RenderLock&&)         -- when a custom layout/header is needed (e.g. date header, icons)
+//  - bool handleConfirmHold(unsigned long heldMs) -- return true to consume the confirm press
+//                                                   (e.g. for hold-to-delete). When true, the default
+//                                                   moveMode toggle is skipped this frame.
 template <typename Derived, typename Entry>
 class OrderListActivity : public Activity {
  public:
@@ -31,7 +37,7 @@ class OrderListActivity : public Activity {
 
   void onEnter() override {
     Activity::onEnter();
-    reloadEntries();
+    static_cast<Derived*>(this)->reloadEntries();
     setupInput();
     requestUpdate();
   }
@@ -45,7 +51,7 @@ class OrderListActivity : public Activity {
     inputMapper_.loop(mappedInput);
   }
 
-  void render(RenderLock&&) override {
+  virtual void render(RenderLock&& lock) {
     renderer.clearScreen();
     const auto layout = ListLayout::compute(renderer);
     ListRenderHelper::drawHeader(renderer, static_cast<Derived*>(this)->getTitle());
@@ -56,6 +62,7 @@ class OrderListActivity : public Activity {
                                 moveMode_ ? tr(STR_DONE) : tr(STR_SELECT),
                                 tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     renderer.displayBuffer();
+    (void)lock;
   }
 
  protected:
@@ -68,6 +75,13 @@ class OrderListActivity : public Activity {
   virtual void moveSelectedEntry(int delta) = 0;
   virtual const char* getTitle() const = 0;
   virtual std::string getEntryTitle(Entry entry) const = 0;
+
+  // Hook: derived classes may return true to consume the confirm release before moveMode is toggled.
+  // Used by FavoritesOrderActivity for hold-to-delete.
+  virtual bool handleConfirmHold(unsigned long /*heldMs*/) { return false; }
+
+  bool isInMoveMode() const { return moveMode_; }
+  int entryCount() const { return static_cast<int>(entries_.size()); }
 
  private:
   ListInputMapper inputMapper_;
@@ -85,10 +99,13 @@ class OrderListActivity : public Activity {
 
     inputMapper_.setConfirmHandler([](void* ctx) {
       auto* self = static_cast<Derived*>(ctx);
-      if (!self->entries_.empty()) {
-        self->moveMode_ = !self->moveMode_;
-        self->requestUpdate();
+      if (self->entries_.empty()) return;
+      const unsigned long heldMs = self->mappedInput.getHeldTime();
+      if (!self->moveMode_ && self->handleConfirmHold(heldMs)) {
+        return;
       }
+      self->moveMode_ = !self->moveMode_;
+      self->requestUpdate();
     }, this, false);
 
     inputMapper_.setNavHandlers(nullptr, [](void* ctx, int delta) {
