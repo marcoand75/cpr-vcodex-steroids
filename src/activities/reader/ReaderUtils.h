@@ -151,6 +151,39 @@ inline CrossPointSettings::BUTTON_ACTION shortPwrBtnToReaderAction(const CrossPo
   }
 }
 
+// Migration helpers: map legacy long-press enums to unified BUTTON_ACTION.
+// Centralized here so all three reader activities use the same fallback mapping.
+inline CrossPointSettings::BUTTON_ACTION legacyLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case CrossPointSettings::LONG_PRESS_OFF:               return CrossPointSettings::BTN_ACTION_OFF;
+    case CrossPointSettings::LONG_PRESS_BOOKMARK:          return CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    case CrossPointSettings::LONG_PRESS_CLIPPING:          return CrossPointSettings::BTN_ACTION_ADD_CLIPPING;
+    case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP:      return CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+    case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE:return CrossPointSettings::BTN_ACTION_ORIENTATION;
+    case CrossPointSettings::LONG_PRESS_FONTSIZE:          return CrossPointSettings::BTN_ACTION_FONTSIZE;
+    case CrossPointSettings::LONG_PRESS_DICTIONARY:        return CrossPointSettings::BTN_ACTION_DICTIONARY;
+    case CrossPointSettings::LONG_PRESS_DARK_MODE:         return CrossPointSettings::BTN_ACTION_DARK_MODE;
+    case CrossPointSettings::LONG_PRESS_FULL_REFRESH:      return CrossPointSettings::BTN_ACTION_FULL_REFRESH;
+    case CrossPointSettings::LONG_PRESS_READER_SETTINGS:   return CrossPointSettings::BTN_ACTION_READER_SETTINGS;
+    default: return CrossPointSettings::BTN_ACTION_OFF;
+  }
+}
+
+inline CrossPointSettings::BUTTON_ACTION legacyFrontLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case CrossPointSettings::FRONT_LONG_PRESS_OFF:         return CrossPointSettings::BTN_ACTION_OFF;
+    case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK:    return CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING:    return CrossPointSettings::BTN_ACTION_ADD_CLIPPING;
+    case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP:return CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+    case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: return CrossPointSettings::BTN_ACTION_ORIENTATION;
+    case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE:    return CrossPointSettings::BTN_ACTION_FONTSIZE;
+    case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY:  return CrossPointSettings::BTN_ACTION_DICTIONARY;
+    case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE:   return CrossPointSettings::BTN_ACTION_DARK_MODE;
+    case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH:return CrossPointSettings::BTN_ACTION_FULL_REFRESH;
+    default: return CrossPointSettings::BTN_ACTION_OFF;
+  }
+}
+
 // Detects if the power button was short-pressed with an action that
 // should be dispatched to the reader (not handled by main.cpp).
 inline bool wasPowerButtonReaderActionPressed(const MappedInputManager& input) {

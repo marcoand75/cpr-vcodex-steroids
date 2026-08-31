@@ -256,10 +256,7 @@ void XtcReaderActivity::loop() {
     }
     // Fall back to legacy frontLongPressBehavior
     if (act == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.frontLongPressBehavior) {
-        case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        default: break;
-      }
+      act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
     }
     if (handleButtonAction(act, prevTriggered, nextTriggered, dir)) {
       return;
@@ -279,10 +276,7 @@ void XtcReaderActivity::loop() {
     }
     // Fall back to legacy longPressButtonBehavior
     if (sideAct == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.longPressButtonBehavior) {
-        case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: sideAct = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        default: break;
-      }
+      sideAct = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
     }
     if (handleButtonAction(sideAct, prevTriggered, nextTriggered, sideDir)) {
       return;

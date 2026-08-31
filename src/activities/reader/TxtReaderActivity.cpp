@@ -415,18 +415,7 @@ void TxtReaderActivity::loop() {
     }
     // Fall back to legacy frontLongPressBehavior
     if (act == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.frontLongPressBehavior) {
-        case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK: act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-        case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING: act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-        default: break;
-      }
+      act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
     }
     if (longPress && handleButtonAction(act, prevTriggered, nextTriggered, dir)) {
       return;
@@ -453,18 +442,7 @@ void TxtReaderActivity::loop() {
     }
     // Fall back to legacy longPressButtonBehavior
     if (sideAct == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.longPressButtonBehavior) {
-        case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: sideAct = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        case CrossPointSettings::LONG_PRESS_FONTSIZE: sideAct = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-        case CrossPointSettings::LONG_PRESS_DARK_MODE: sideAct = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-        case CrossPointSettings::LONG_PRESS_FULL_REFRESH: sideAct = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-        case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE: sideAct = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-        case CrossPointSettings::LONG_PRESS_DICTIONARY: sideAct = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-        case CrossPointSettings::LONG_PRESS_READER_SETTINGS: sideAct = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-        case CrossPointSettings::LONG_PRESS_BOOKMARK: sideAct = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-        case CrossPointSettings::LONG_PRESS_CLIPPING: sideAct = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-        default: break;
-      }
+      sideAct = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
     }
     if (sideLongPress && handleButtonAction(sideAct, prevTriggered, nextTriggered, sideDir)) {
       return;

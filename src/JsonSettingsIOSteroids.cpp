@@ -11,6 +11,7 @@
 #include "SettingsList.h"
 #include "util/CprVcodexLogs.h"
 #include "util/ShortcutRegistry.h"
+#include "activities/reader/ReaderUtils.h"
 
 // Shared internal helpers (saveJsonDocumentToFile, migrateStoredUiTheme, etc.)
 #include "JsonSettingsIOShared.inc"
@@ -18,39 +19,6 @@
 using S = CrossPointSettings;
 
 namespace {
-
-// Migration helpers: map legacy long-press enums to unified BUTTON_ACTION.
-CrossPointSettings::BUTTON_ACTION legacyLongPressToButtonAction(uint8_t legacy) {
-  switch (legacy) {
-    case S::LONG_PRESS_OFF:               return S::BTN_ACTION_OFF;
-    case S::LONG_PRESS_BOOKMARK:          return S::BTN_ACTION_TOGGLE_BOOKMARK;
-    case S::LONG_PRESS_CLIPPING:          return S::BTN_ACTION_ADD_CLIPPING;
-    case S::LONG_PRESS_CHAPTER_SKIP:      return S::BTN_ACTION_CHAPTER_SKIP;
-    case S::LONG_PRESS_ORIENTATION_CHANGE:return S::BTN_ACTION_ORIENTATION;
-    case S::LONG_PRESS_FONTSIZE:          return S::BTN_ACTION_FONTSIZE;
-    case S::LONG_PRESS_DICTIONARY:        return S::BTN_ACTION_DICTIONARY;
-    case S::LONG_PRESS_DARK_MODE:         return S::BTN_ACTION_DARK_MODE;
-    case S::LONG_PRESS_FULL_REFRESH:      return S::BTN_ACTION_FULL_REFRESH;
-    case S::LONG_PRESS_READER_SETTINGS:   return S::BTN_ACTION_READER_SETTINGS;
-    default: return S::BTN_ACTION_OFF;
-  }
-}
-
-CrossPointSettings::BUTTON_ACTION legacyFrontLongPressToButtonAction(uint8_t legacy) {
-  switch (legacy) {
-    case S::FRONT_LONG_PRESS_OFF:         return S::BTN_ACTION_OFF;
-    case S::FRONT_LONG_PRESS_BOOKMARK:    return S::BTN_ACTION_TOGGLE_BOOKMARK;
-    case S::FRONT_LONG_PRESS_CLIPPING:    return S::BTN_ACTION_ADD_CLIPPING;
-    case S::FRONT_LONG_PRESS_CHAPTER_SKIP:return S::BTN_ACTION_CHAPTER_SKIP;
-    case S::FRONT_LONG_PRESS_ORIENTATION: return S::BTN_ACTION_ORIENTATION;
-    case S::FRONT_LONG_PRESS_FONTSIZE:    return S::BTN_ACTION_FONTSIZE;
-    case S::FRONT_LONG_PRESS_DICTIONARY:  return S::BTN_ACTION_DICTIONARY;
-    case S::FRONT_LONG_PRESS_DARK_MODE:   return S::BTN_ACTION_DARK_MODE;
-    case S::FRONT_LONG_PRESS_FULL_REFRESH:return S::BTN_ACTION_FULL_REFRESH;
-    case S::FRONT_LONG_PRESS_READER_SETTINGS: return S::BTN_ACTION_READER_SETTINGS;
-    default: return S::BTN_ACTION_OFF;
-  }
-}
 
 void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   doc["formatVersion"] = 1;
@@ -222,7 +190,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
    // Migrate legacy longPressButtonBehavior to per-directional if new fields at default
    if (s.longPressUpBehavior == S::BTN_ACTION_OFF && s.longPressDownBehavior == S::BTN_ACTION_OFF &&
        s.longPressButtonBehavior != S::LONG_PRESS_OFF) {
-     const auto legacyAct = legacyLongPressToButtonAction(s.longPressButtonBehavior);
+      const auto legacyAct = ReaderUtils::legacyLongPressToButtonAction(s.longPressButtonBehavior);
      s.longPressUpBehavior = legacyAct;
      s.longPressDownBehavior = legacyAct;
      if (needsResave) *needsResave = true;
@@ -231,7 +199,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
    // Migrate legacy frontLongPressBehavior to per-directional if new fields at default
    if (s.frontLongPressLeftBehavior == S::BTN_ACTION_OFF && s.frontLongPressRightBehavior == S::BTN_ACTION_OFF &&
        s.frontLongPressBehavior != S::FRONT_LONG_PRESS_OFF) {
-     const auto legacyAct = legacyFrontLongPressToButtonAction(s.frontLongPressBehavior);
+      const auto legacyAct = ReaderUtils::legacyFrontLongPressToButtonAction(s.frontLongPressBehavior);
      s.frontLongPressLeftBehavior = legacyAct;
      s.frontLongPressRightBehavior = legacyAct;
      if (needsResave) *needsResave = true;

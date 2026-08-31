@@ -663,78 +663,55 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-   // ====== SIDE BUTTON long-press (Up/Down) — per-directional config ======
-   // Falls back to legacy longPressButtonBehavior if per-directional not set.
-   if (longPress && !fromFrontButton) {
+    // ====== SIDE BUTTON long-press (Up/Down) — per-directional config ======
+    // Falls back to legacy longPressButtonBehavior if per-directional not set.
+    if (longPress && !fromFrontButton) {
       if (upBtn || downBtn) {
         CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
         ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
         if (upBtn) {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
-       } else {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
-       }
-       // If per-directional behavior is OFF (0), fall back to legacy config
-       if (act == CrossPointSettings::BTN_ACTION_OFF) {
-         // Map legacy longPressButtonBehavior to BUTTON_ACTION
-         switch (SETTINGS.longPressButtonBehavior) {
-           case CrossPointSettings::LONG_PRESS_BOOKMARK:  act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-           case CrossPointSettings::LONG_PRESS_CLIPPING:  act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-           case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-           case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-           case CrossPointSettings::LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-           case CrossPointSettings::LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-           case CrossPointSettings::LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-           case CrossPointSettings::LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-           case CrossPointSettings::LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-           default: break;
-         }
-       }
-       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
-       if (handled) {
-         return;
-       }
-       // Fall through to default: normal page turn
-     }
-   }
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
+        } else {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
+        }
+        // If per-directional behavior is OFF (0), fall back to legacy config
+        if (act == CrossPointSettings::BTN_ACTION_OFF) {
+          act = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
+        }
+        const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+        if (handled) {
+          return;
+        }
+        // Fall through to default: normal page turn
+      }
+    }
 
-   // ====== FRONT BUTTON long-press (Left/Right) — per-directional config ======
-   // Falls back to legacy frontLongPressBehavior if per-directional not set.
-   if (frontLongPress) {
-     if (leftBtn || rightBtn) {
-       CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+    // ====== FRONT BUTTON long-press (Left/Right) — per-directional config ======
+    // Falls back to legacy frontLongPressBehavior if per-directional not set.
+    if (frontLongPress) {
+      if (leftBtn || rightBtn) {
+        CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
         ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
-       if (leftBtn) {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
-       } else {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
-       }
-       // If per-directional behavior is OFF (0), fall back to legacy config
-       if (act == CrossPointSettings::BTN_ACTION_OFF) {
-         switch (SETTINGS.frontLongPressBehavior) {
-           case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK: act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING: act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-           default: break;
-         }
-       }
-       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
-       if (handled) {
-         return;
-       }
-       // Fall through to default: normal page turn
-     }
-   }
+        if (leftBtn) {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
+        } else {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
+        }
+        // If per-directional behavior is OFF (0), fall back to legacy config
+        if (act == CrossPointSettings::BTN_ACTION_OFF) {
+          act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
+        }
+        const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+        if (handled) {
+          return;
+        }
+        // Fall through to default: normal page turn
+      }
+    }
 
   // No current section, attempt to rerender the book
   if (!section) {
