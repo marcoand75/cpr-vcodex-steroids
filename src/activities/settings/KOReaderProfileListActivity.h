@@ -1,7 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 /**
  * Activity showing the list of configured KOReader sync profiles.
@@ -21,7 +21,7 @@ class KOReaderProfileListActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   int selectedIndex = 0;
 
   int getItemCount() const;

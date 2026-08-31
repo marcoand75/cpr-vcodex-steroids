@@ -2,7 +2,7 @@
 
 #include "KOReaderCredentialStore.h"
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 /**
  * Edit screen for a single KOReader sync profile.
@@ -24,7 +24,7 @@ class KOReaderProfileEditActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
 
   size_t selectedIndex = 0;
   int profileIndex;

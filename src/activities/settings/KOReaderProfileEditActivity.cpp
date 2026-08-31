@@ -12,6 +12,7 @@
 #include "KOReaderAuthActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 // Editable fields: Name, Username, Password, Server URL, Document Matching.
@@ -44,31 +45,35 @@ void KOReaderProfileEditActivity::onEnter() {
   }
 
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    self->handleSelection();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    const int menuItems = self->getMenuItemCount();
+    if (delta > 0) {
+      self->selectedIndex = (self->selectedIndex + 1) % menuItems;
+    } else {
+      self->selectedIndex = (self->selectedIndex + menuItems - 1) % menuItems;
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavAll(onNav, this);
 }
 
 void KOReaderProfileEditActivity::onExit() { Activity::onExit(); }
 
 void KOReaderProfileEditActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    return;
-  }
-
-  const int menuItems = getMenuItemCount();
-  buttonNavigator.onNext([this, menuItems] {
-    selectedIndex = (selectedIndex + 1) % menuItems;
-    requestUpdate();
-  });
-
-  buttonNavigator.onPrevious([this, menuItems] {
-    selectedIndex = (selectedIndex + menuItems - 1) % menuItems;
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 bool KOReaderProfileEditActivity::saveProfile() {
@@ -263,8 +268,7 @@ void KOReaderProfileEditActivity::render(RenderLock&&) {
       },
       true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
 
   if (showSaveError) {
     GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));

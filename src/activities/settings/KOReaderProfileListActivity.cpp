@@ -8,6 +8,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 int KOReaderProfileListActivity::getItemCount() const {
   const int profileCount = static_cast<int>(KOREADER_STORE.getCount());
@@ -21,34 +22,36 @@ void KOReaderProfileListActivity::onEnter() {
   KOREADER_STORE.loadFromFile();
   selectedIndex = 0;
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileListActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileListActivity*>(ctx);
+    self->handleSelection();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<KOReaderProfileListActivity*>(ctx);
+    const int itemCount = self->getItemCount();
+    if (itemCount <= 0) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, itemCount);
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, itemCount);
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavAll(onNav, this);
 }
 
 void KOReaderProfileListActivity::onExit() { Activity::onExit(); }
 
 void KOReaderProfileListActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    return;
-  }
-
-  const int itemCount = getItemCount();
-  if (itemCount <= 0) {
-    return;
-  }
-  buttonNavigator.onNext([this, itemCount] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPrevious([this, itemCount] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, itemCount);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void KOReaderProfileListActivity::handleSelection() {
@@ -112,8 +115,7 @@ void KOReaderProfileListActivity::render(RenderLock&&) {
       },
       true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
 
   renderer.displayBuffer();
 }
