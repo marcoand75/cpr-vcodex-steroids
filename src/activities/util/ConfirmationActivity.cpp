@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "../../components/UITheme.h"
+#include "../util/ListRenderHelper.h"
 #include "HalDisplay.h"
 
 ConfirmationActivity::ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -73,8 +74,7 @@ void ConfirmationActivity::render(RenderLock&& lock) {
   }
 
   // Draw UI Elements
-  const auto labels = mappedInput.mapLabels("", "", I18N.get(StrId::STR_CANCEL), I18N.get(StrId::STR_CONFIRM));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, "", "", I18N.get(StrId::STR_CANCEL), I18N.get(StrId::STR_CONFIRM));
 
   renderer.displayBuffer(HalDisplay::RefreshMode::FAST_REFRESH);
 }
