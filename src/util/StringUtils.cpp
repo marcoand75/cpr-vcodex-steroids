@@ -1,5 +1,6 @@
 #include "StringUtils.h"
 
+#include <cstring>
 #include <Utf8.h>
 
 namespace StringUtils {
@@ -50,6 +51,15 @@ std::string toLowerAscii(std::string value) {
     }
   }
   return value;
+}
+
+void copyToFixedBuffer(char* dest, size_t destSize, const std::string& src) {
+  if (destSize == 0) {
+    return;
+  }
+  const size_t copyLen = std::min(src.size(), destSize - 1);
+  std::memcpy(dest, src.c_str(), copyLen);
+  dest[copyLen] = '\0';
 }
 
 }  // namespace StringUtils

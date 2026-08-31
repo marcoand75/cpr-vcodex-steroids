@@ -26,6 +26,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
+#include "util/PopupUtils.h"
 #include "DictionaryHistoryActivity.h"
 #include "DictionaryWordSelectActivity.h"
 #include "KOReaderCredentialStore.h"
@@ -894,9 +895,7 @@ bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION ac
     {
       const bool nowPaused = !READING_STATS.isReadingPaused();
       READING_STATS.setReadingPaused(nowPaused);
-      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-      renderer.displayBuffer();
-      delay(500);
+      PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
       requestUpdate();
       return true;
     }
@@ -1054,9 +1053,7 @@ void EpubReaderActivity::enterClippingMode() {
 
   extractClippingWords(page, marginLeft, marginTop);
   if (clippingWords.empty()) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     return;
   }
 
@@ -1373,9 +1370,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   }
 
   if (!clippingStartMarkSet || clippingStartWordIndex < 0 || clippingEndWordIndex < 0 || clippingStartRow < 0 || clippingEndRow < 0) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     exitClippingMode();
     requestUpdate();
     return;
@@ -1450,9 +1445,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.selectedText = selectedText;
 
   if (clipping.selectedText.empty()) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     exitClippingMode();
     requestUpdate();
     return;

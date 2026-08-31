@@ -1,8 +1,9 @@
 #pragma once
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
 #include "SilentRestart.h"
+#include "util/ButtonNavigator.h"
+#include "util/PopupUtils.h"
 
 class SyncDayActivity final : public Activity {
   bool wifiConnectedOnEnter = false;
@@ -18,7 +19,6 @@ class SyncDayActivity final : public Activity {
   void openManualDateSelection();
   void openTimeZoneSelection();
   void syncTime();
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void createDueReadingStatsBackupWithFeedback();
   void createSyncDateBackupIfDayChanged(uint32_t previousTimestamp, uint32_t currentTimestamp);
   bool isWifiConnected() const;

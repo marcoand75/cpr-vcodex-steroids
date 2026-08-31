@@ -305,30 +305,14 @@ void ReadingStatsActivity::confirmRemoveSelectedBook() {
 
 void ReadingStatsActivity::guardBackReturn() { waitForBackRelease = true; }
 
-void ReadingStatsActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
-  requestUpdateAndWait();
-
-  {
-    RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
-    if (progress >= 0) {
-      GUI.fillPopupProgress(renderer, popupRect, progress);
-    }
-  }
-
-  if (delayMs > 0) {
-    delay(delayMs);
-  }
-}
-
 void ReadingStatsActivity::createDueAutoBackupWithFeedback() {
   if (!READING_STATS.isAutoBackupDue()) {
     return;
   }
 
-  showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+  PopupUtils::showTransientPopup(*this,tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
   const bool backupReady = READING_STATS.createDueAutoBackup();
-  showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+  PopupUtils::showTransientPopup(*this,backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                      backupReady ? 100 : -1, backupReady ? 350 : 700);
   requestUpdate(true);
 }

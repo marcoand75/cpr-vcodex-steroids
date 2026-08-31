@@ -12,6 +12,8 @@
 #include <mutex>
 #include <string>
 
+#include "util/StringUtils.h"
+
 #include "AchievementsStore.h"
 #include <CredentialIntegrity.h>
 #include "CrossPointSettings.h"
@@ -99,8 +101,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   };
   auto loadString = [&](const char* key, char* dest, const size_t maxLen) {
     const std::string value = doc[key] | std::string(dest);
-    strncpy(dest, value.c_str(), maxLen - 1);
-    dest[maxLen - 1] = '\0';
+    StringUtils::copyToFixedBuffer(dest, maxLen, value);
   };
 
   if (doc["statusBarChapterPageCount"].isNull()) {
@@ -220,8 +221,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                   S::SYNC_DAY_REMINDER_STARTS_COUNT, s.syncDayReminderStarts);
   {
     const std::string sleepDirectory = doc["sleepDirectory"] | std::string("");
-    strncpy(s.sleepDirectory, sleepDirectory.c_str(), sizeof(s.sleepDirectory) - 1);
-    s.sleepDirectory[sizeof(s.sleepDirectory) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(s.sleepDirectory, sizeof(s.sleepDirectory), sleepDirectory);
   }
   s.sleepImageOrder = clamp(doc["sleepImageOrder"] | static_cast<uint8_t>(S::SLEEP_IMAGE_SHUFFLE),
                             S::SLEEP_IMAGE_ORDER_COUNT, S::SLEEP_IMAGE_SHUFFLE);

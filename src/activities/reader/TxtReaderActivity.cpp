@@ -27,6 +27,7 @@
 #include "util/AchievementPopupUtils.h"
 #include "util/BookIdentity.h"
 #include "util/CompletedBookMover.h"
+#include "util/PopupUtils.h"
 
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
@@ -1071,9 +1072,7 @@ void TxtReaderActivity::handleSelectLongPress() {
   if (action == CrossPointSettings::BTN_ACTION_READING_TIME) {
     const bool nowPaused = !READING_STATS.isReadingPaused();
     READING_STATS.setReadingPaused(nowPaused);
-    GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
     requestUpdate();
   }
 }
@@ -1150,9 +1149,7 @@ bool TxtReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION act
     case CrossPointSettings::BTN_ACTION_READING_TIME: {
       const bool nowPaused = !READING_STATS.isReadingPaused();
       READING_STATS.setReadingPaused(nowPaused);
-      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-      renderer.displayBuffer();
-      delay(500);
+      PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
       requestUpdate();
       return true;
     }

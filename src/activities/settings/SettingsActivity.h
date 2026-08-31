@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "util/PopupUtils.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -207,7 +208,6 @@ class SettingsActivity final : public Activity {
   void renderAppSettingsList(const Rect& rect) const;
   bool prewarmSettingsRenderText(const char* settingsTitle, const char* selectedCategoryLabel,
                                  const char* firmwareVersion, const char* confirmLabel) const;
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void toggleCurrentSetting();
   void buildSettingsLists();
 

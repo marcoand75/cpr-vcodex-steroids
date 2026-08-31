@@ -9,6 +9,7 @@
 
 #include "CrossPointSettings.h"
 #include "SettingsList.h"
+#include "util/StringUtils.h"
 #include "util/CprVcodexLogs.h"
 #include "util/ShortcutRegistry.h"
 #include "activities/reader/ReaderUtils.h"
@@ -147,8 +148,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   };
   auto loadString = [&](const char* key, char* dest, const size_t maxLen) {
     const std::string value = doc[key] | std::string(dest);
-    strncpy(dest, value.c_str(), maxLen - 1);
-    dest[maxLen - 1] = '\0';
+    StringUtils::copyToFixedBuffer(dest, maxLen, value);
   };
   using S = CrossPointSettings;
 
@@ -228,8 +228,7 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   loadEnum("libraryUpdateMode", s.libraryUpdateMode, S::LIBRARY_UPDATE_MODE_COUNT);
   {
     const std::string searchText = doc["librarySearchText"] | std::string("");
-    strncpy(s.librarySearchText, searchText.c_str(), sizeof(s.librarySearchText) - 1);
-    s.librarySearchText[sizeof(s.librarySearchText) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(s.librarySearchText, sizeof(s.librarySearchText), searchText);
   }
 
   loadString("screenSaverDirectory", s.screenSaverDirectory, sizeof(s.screenSaverDirectory));

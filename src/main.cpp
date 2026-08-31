@@ -36,9 +36,10 @@
 #include "RecentBooksStore.h"
 #include "version.h"
 #include "SdCardFontGlobals.h"
-#include "SilentRestart.h"
+#include "util/StringUtils.h"
 #include "UiFontSelection.h"
 #include "util/WiFiUtils.h"
+#include "SilentRestart.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/apps/LuaPluginActivity.h"
@@ -276,8 +277,7 @@ static void requestSilentRestart(SilentRebootTarget target, bool seamless,
 
   if (target == SilentRebootTarget::Plugin) {
     if (pluginName) {
-      strncpy(silentRebootPluginName, pluginName, sizeof(silentRebootPluginName) - 1);
-      silentRebootPluginName[sizeof(silentRebootPluginName) - 1] = '\0';
+      StringUtils::copyToFixedBuffer(silentRebootPluginName, sizeof(silentRebootPluginName), pluginName);
     }
     silentRebootCaller = fromApps ? 1 : 2;  // 1=apps, 2=home
     silentRebootReturnToPluginBrowser = returnToPluginBrowser;
@@ -656,8 +656,7 @@ void setup() {
   bool snapshotCallerFromApps = false;
   bool snapshotReturnToPluginBrowser = false;
   if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
-    strncpy(snapshotPluginName, silentRebootPluginName, sizeof(snapshotPluginName) - 1);
-    snapshotPluginName[sizeof(snapshotPluginName) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(snapshotPluginName, sizeof(snapshotPluginName), silentRebootPluginName);
     snapshotCallerFromApps = (silentRebootCaller == 1);
     snapshotReturnToPluginBrowser = silentRebootReturnToPluginBrowser;
   }

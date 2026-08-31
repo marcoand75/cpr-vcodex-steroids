@@ -32,6 +32,7 @@ class Activity {
   explicit Activity(std::string name, GfxRenderer& renderer, MappedInputManager& mappedInput)
       : name(std::move(name)), renderer(renderer), mappedInput(mappedInput) {}
   virtual ~Activity() = default;
+  GfxRenderer& getRenderer() const { return renderer; }
   virtual void onEnter();
   virtual void onExit();
   virtual void loop() {}

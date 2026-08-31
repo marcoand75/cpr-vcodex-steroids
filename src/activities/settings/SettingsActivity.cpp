@@ -654,20 +654,6 @@ int SettingsActivity::stepSettingSelection(const int direction) const {
   return selectedSettingIndex;
 }
 
-void SettingsActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
-  requestUpdateAndWait();
-  {
-    RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
-    if (progress >= 0) {
-      GUI.fillPopupProgress(renderer, popupRect, progress);
-    }
-  }
-  if (delayMs > 0) {
-    delay(delayMs);
-  }
-}
-
 void SettingsActivity::loop() {
   bool hasChangedCategory = false;
 
@@ -896,19 +882,19 @@ case SettingAction::ReaderMenuVisibility:
             });
         break;
       case SettingAction::ExportReadingStats: {
-        showTransientPopup(tr(STR_EXPORTING), 20, 120);
+        PopupUtils::showTransientPopup(*this,tr(STR_EXPORTING), 20, 120);
         Storage.mkdir("/exports");
         const std::string exportPath = getReadingStatsExportPath();
         if (Storage.exists(exportPath.c_str())) { Storage.remove(exportPath.c_str()); }
         const bool exported = READING_STATS.exportToFile(exportPath);
-        showTransientPopup(exported ? tr(STR_EXPORT_DONE) : tr(STR_EXPORT_FAILED), exported ? 100 : -1,
+        PopupUtils::showTransientPopup(*this,exported ? tr(STR_EXPORT_DONE) : tr(STR_EXPORT_FAILED), exported ? 100 : -1,
                            exported ? 350 : 700);
         requestUpdate(true);
         break;
       }
       case SettingAction::ImportReadingStats:
         if (ReadingStatsImportActivity::getImportPaths().empty()) {
-          showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
+          PopupUtils::showTransientPopup(*this,tr(STR_NO_READING_STATS_EXPORT), -1, 700);
           requestUpdate(true);
           break;
         }
@@ -917,12 +903,12 @@ case SettingAction::ReaderMenuVisibility:
                                  if (!result.isCancelled) {
                                    const auto* path = std::get_if<FilePathResult>(&result.data);
                                    if (path == nullptr || path->path.empty()) {
-                                     showTransientPopup(tr(STR_IMPORT_FAILED), -1, 700);
+                                     PopupUtils::showTransientPopup(*this,tr(STR_IMPORT_FAILED), -1, 700);
                                    } else {
-                                     showTransientPopup(tr(STR_IMPORTING), 20, 120);
+                                     PopupUtils::showTransientPopup(*this,tr(STR_IMPORTING), 20, 120);
                                      const bool imported = READING_STATS.importFromFile(path->path);
                                      if (imported) { ACHIEVEMENTS.rebuildProgressFromCurrentStats(); }
-                                     showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
+                                     PopupUtils::showTransientPopup(*this,imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
                                                         imported ? 100 : -1, imported ? 350 : 700);
                                    }
                                  }
@@ -934,9 +920,9 @@ case SettingAction::ReaderMenuVisibility:
                                                                       tr(STR_CLEAR_READING_STATS_BACKUPS_CONFIRM), ""),
                                [this](const ActivityResult& result) {
                                  if (!result.isCancelled) {
-                                   showTransientPopup(tr(STR_CLEARING_READING_STATS_BACKUPS), 20, 120);
+                                   PopupUtils::showTransientPopup(*this,tr(STR_CLEARING_READING_STATS_BACKUPS), 20, 120);
                                    const int removedCount = READING_STATS.clearAutoBackups();
-                                   showTransientPopup(removedCount > 0 ? tr(STR_READING_STATS_BACKUPS_CLEARED)
+                                   PopupUtils::showTransientPopup(*this,removedCount > 0 ? tr(STR_READING_STATS_BACKUPS_CLEARED)
                                                                        : tr(STR_NO_READING_STATS_BACKUPS),
                                                       removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
                                  }
@@ -975,9 +961,9 @@ case SettingAction::ReaderMenuVisibility:
             });
         break;
       case SettingAction::SyncAchievementsFromStats:
-        showTransientPopup(tr(STR_SYNC_WITH_PREV_STATS), 20, 120);
+        PopupUtils::showTransientPopup(*this,tr(STR_SYNC_WITH_PREV_STATS), 20, 120);
         ACHIEVEMENTS.syncWithPreviousStats();
-        showTransientPopup(tr(STR_DONE), 100, 350);
+        PopupUtils::showTransientPopup(*this,tr(STR_DONE), 100, 350);
         requestUpdate(true);
         break;
       case SettingAction::Bookmarks:
@@ -1010,7 +996,7 @@ case SettingAction::ReaderMenuVisibility:
             [this](const ActivityResult& result) {
               if (!result.isCancelled) {
                 LibraryCache::invalidate();
-                showTransientPopup(tr(STR_REBUILD_LIBRARY_DONE), 100, 350);
+                PopupUtils::showTransientPopup(*this,tr(STR_REBUILD_LIBRARY_DONE), 100, 350);
               }
               requestUpdate(true);
             });
@@ -1069,7 +1055,7 @@ case SettingAction::ReaderMenuVisibility:
                 } else {
                   std::snprintf(msg, sizeof(msg), "%s", tr(STR_NO_CORRUPT_COVERS));
                 }
-                showTransientPopup(msg, removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
+                PopupUtils::showTransientPopup(*this,msg, removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
               }
               requestUpdate(true);
             });
@@ -1116,9 +1102,9 @@ case SettingAction::ReaderMenuVisibility:
 
   SETTINGS.saveToFile();
   if (createInitialReadingStatsBackup) {
-    showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+    PopupUtils::showTransientPopup(*this,tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
     const bool backupReady = READING_STATS.ensureAutoBackupForEnabledSetting();
-    showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+    PopupUtils::showTransientPopup(*this,backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                        backupReady ? 100 : -1, backupReady ? 350 : 700);
     requestUpdate(true);
   }
