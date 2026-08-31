@@ -239,11 +239,7 @@ void AppsActivity::openSelectedApp() {
                               [this](const ActivityResult&) {
                                 appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
                                 rebuildShortcutSubtitles();
-                                if (!appShortcuts.empty()) {
-                                  selectedIndex = std::min(selectedIndex, static_cast<int>(appShortcuts.size()) - 1);
-                                } else {
-                                  selectedIndex = 0;
-                                }
+                                selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
                                 requestUpdate();
                               });
        return;
@@ -258,11 +254,7 @@ void AppsActivity::openSelectedApp() {
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
     appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
     rebuildShortcutSubtitles();
-    if (!appShortcuts.empty()) {
-      selectedIndex = std::min(selectedIndex, static_cast<int>(appShortcuts.size()) - 1);
-    } else {
-      selectedIndex = 0;
-    }
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
     requestUpdate();
   });
 }

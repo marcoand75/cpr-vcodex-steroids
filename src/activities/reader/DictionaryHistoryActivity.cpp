@@ -38,7 +38,7 @@ void DictionaryHistoryActivity::lookupSelected() {
                              readerFontId, DICTIONARIES.getDefinitionFontId(readerFontId), marginLeft, marginTop),
                          [this](const ActivityResult&) {
                            history = DICTIONARIES.getHistory();
-                           selectedIndex = std::min(selectedIndex, std::max(0, static_cast<int>(history.size()) - 1));
+                           selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(history.size()));
                            requestUpdate();
                          });
 }
