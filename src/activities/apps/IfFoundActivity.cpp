@@ -9,6 +9,7 @@
 
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/IfFoundFile.h"
 
@@ -163,7 +164,6 @@ void IfFoundActivity::render(RenderLock&&) {
                       true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }
