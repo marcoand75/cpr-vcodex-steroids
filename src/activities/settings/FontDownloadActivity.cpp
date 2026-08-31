@@ -18,6 +18,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/WiFiUtils.h"
 #include "network/HttpDownloader.h"
 
 FontDownloadActivity::FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -83,9 +84,7 @@ void FontDownloadActivity::onExit() {
   releaseManifestMemory();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 

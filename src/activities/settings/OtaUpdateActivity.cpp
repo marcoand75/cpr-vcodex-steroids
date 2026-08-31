@@ -13,6 +13,7 @@
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
 #include "util/NetworkMemory.h"
+#include "util/WiFiUtils.h"
 #include <HalPowerManager.h>
 #include "version.h"
 
@@ -146,9 +147,7 @@ void OtaUpdateActivity::onExit() {
   // Success path reboots via SHUTTING_DOWN, so the new firmware boots
   // normally. Back-out/failure paths land here with WiFi still active.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 

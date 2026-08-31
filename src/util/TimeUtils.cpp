@@ -1,9 +1,11 @@
 #include "TimeUtils.h"
 
 #include <HalClock.h>
+#include <WiFi.h>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "SilentRestart.h"
 
 #include <Arduino.h>
 #include <esp_sntp.h>

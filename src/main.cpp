@@ -261,14 +261,6 @@ constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
 
-enum class SilentRebootTarget : uint32_t {
-  Home = 0,
-  Reader = 1,
-  Apps = 2,
-  Plugin = 3,
-  PluginBrowser = 4
-};
-
 // Latched once deep sleep is committed. WiFi activities also restart silently
 // from onExit(), but deep sleep already gives us a clean heap on wake.
 static bool deepSleepInProgress = false;

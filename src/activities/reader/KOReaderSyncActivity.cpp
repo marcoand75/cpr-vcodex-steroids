@@ -26,6 +26,7 @@
 #include "util/CompletedBookMover.h"
 #include "util/NetworkMemory.h"
 #include "util/TimeUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr time_t NTP_RESYNC_MIN_INTERVAL_SEC = 15 * 60;
@@ -81,13 +82,6 @@ bool isAutomaticSyncIntent(const KOReaderSyncIntentState intent) {
   return intent == KOReaderSyncIntentState::AUTO_PULL || intent == KOReaderSyncIntentState::AUTO_PUSH;
 }
 
-void wifiOff() {
-  TimeUtils::stopNtp();
-  WiFi.disconnect(false);
-  delay(100);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
-}
 }  // namespace
 
 void KOReaderSyncActivity::onWifiSelectionComplete(const bool success) {
@@ -196,7 +190,7 @@ void KOReaderSyncActivity::performSync() {
       LOG_INF("KOSync", "Auto-push skipped because remote progress is ahead: remote=%.4f local=%.4f",
               warmupProgress.percentage, localProgress.percentage);
       KOReaderSyncClient::endPersistentSession();
-      wifiOff();
+      WiFiUtils::wifiOff();
       resumeReader(KOReaderSyncOutcomeState::UPLOAD_COMPLETE);
       return;
     }
@@ -239,7 +233,7 @@ void KOReaderSyncActivity::performSync() {
     }
     if (syncIntent == KOReaderSyncIntentState::AUTO_PULL) {
       KOReaderSyncClient::endPersistentSession();
-      wifiOff();
+      WiFiUtils::wifiOff();
       LOG_DBG("KOSync", "Auto-pull found no remote progress; opening local progress");
       resumeReader(KOReaderSyncOutcomeState::CANCELLED);
       return;
@@ -296,7 +290,7 @@ void KOReaderSyncActivity::performSync() {
   if (syncIntent == KOReaderSyncIntentState::PULL_REMOTE || syncIntent == KOReaderSyncIntentState::AUTO_PULL) {
     if (!ensureRemotePositionMapped()) {
       if (syncIntent == KOReaderSyncIntentState::AUTO_PULL) {
-        wifiOff();
+        WiFiUtils::wifiOff();
         resumeReader(KOReaderSyncOutcomeState::CANCELLED);
         return;
       }
@@ -319,7 +313,7 @@ void KOReaderSyncActivity::performSync() {
     sync.resultHasListItemIndex = remotePosition.hasListItemIndex;
     APP_STATE.saveToFile();
     if (syncIntent == KOReaderSyncIntentState::AUTO_PULL) {
-      wifiOff();
+      WiFiUtils::wifiOff();
       resumeReader(KOReaderSyncOutcomeState::APPLIED_REMOTE);
       return;
     }
@@ -347,7 +341,7 @@ void KOReaderSyncActivity::performSync() {
     static constexpr float SAME_PROGRESS_EPSILON = 0.001f;
     const float delta = localProgress.percentage - remoteProgress.percentage;
     if (std::fabs(delta) <= SAME_PROGRESS_EPSILON) {
-      wifiOff();
+      WiFiUtils::wifiOff();
       resumeReader(KOReaderSyncOutcomeState::UPLOAD_COMPLETE);
       return;
     }
@@ -361,7 +355,7 @@ void KOReaderSyncActivity::performSync() {
                                 remotePosition.hasParagraphIndex,
                                 remotePosition.listItemIndex,
                                 remotePosition.hasListItemIndex};
-    wifiOff();
+    WiFiUtils::wifiOff();
     resumeReader(KOReaderSyncOutcomeState::APPLIED_REMOTE, &applied);
     return;
   }
@@ -451,7 +445,7 @@ void KOReaderSyncActivity::performUpload() {
   restoreNetworkMemory("after_updateProgress_restore");
 
   if (result != KOReaderSyncClient::OK) {
-    wifiOff();
+    WiFiUtils::wifiOff();
     {
       RenderLock lock(*this);
       state = SYNC_FAILED;
@@ -466,7 +460,7 @@ void KOReaderSyncActivity::performUpload() {
     return;
   }
 
-  wifiOff();
+  WiFiUtils::wifiOff();
   APP_STATE.koReaderSyncSession.outcome = KOReaderSyncOutcomeState::UPLOAD_COMPLETE;
   APP_STATE.saveToFile();
   if (syncIntent == KOReaderSyncIntentState::AUTO_PUSH) {
@@ -526,7 +520,7 @@ void KOReaderSyncActivity::onExit() {
   logSyncMemSnapshot("onExit_before_cleanup");
   KOReaderSyncClient::endPersistentSession();
   restoreNetworkMemory("onExit_restore");
-  wifiOff();
+  WiFiUtils::wifiOff();
   releaseEpubForMapping();
   logSyncMemSnapshot("onExit_after_cleanup");
 }

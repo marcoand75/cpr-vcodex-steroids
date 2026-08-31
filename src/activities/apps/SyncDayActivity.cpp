@@ -17,18 +17,11 @@
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 #include "util/TimeZoneRegistry.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr int ACTION_COUNT = 4;
 constexpr int HELP_TEXT_LINE_HEIGHT = 18;
-
-void wifiOff() {
-  TimeUtils::stopNtp();
-  WiFi.disconnect(false);
-  delay(100);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
-}
 
 int drawWrappedHelpLine(GfxRenderer& renderer, const int left, const int top, const int width, const char* text) {
   int currentTop = top;
@@ -100,7 +93,13 @@ void SyncDayActivity::onExit() {
   Activity::onExit();
 
   if (!wifiConnectedOnEnter && connectedInActivity) {
-    wifiOff();
+    WiFiUtils::wifiOff();
+  }
+
+  if (returnTarget_ == SilentRebootTarget::Home) {
+    silentRestartToHome();
+  } else if (returnTarget_ == SilentRebootTarget::Apps) {
+    silentRestartToApps();
   }
 }
 

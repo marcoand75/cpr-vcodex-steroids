@@ -15,16 +15,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/TimeUtils.h"
-
-namespace {
-  void wifiOff() {
-    TimeUtils::stopNtp();
-    WiFi.disconnect(false);
-    delay(100);
-    WiFi.mode(WIFI_OFF);
-    delay(100);
-  }
-}
+#include "util/WiFiUtils.h"
 
 void ClockSyncActivity::onEnter() {
   Activity::onEnter();
@@ -46,7 +37,7 @@ void ClockSyncActivity::onExit() {
   Activity::onExit();
 
   if (!wifiConnectedOnEnter && connectedInActivity) {
-    wifiOff();
+    WiFiUtils::wifiOff();
   }
 }
 

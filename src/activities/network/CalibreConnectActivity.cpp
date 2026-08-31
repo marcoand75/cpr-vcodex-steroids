@@ -13,6 +13,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/NetworkMemory.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -58,9 +59,7 @@ void CalibreConnectActivity::onExit() {
   MDNS.end();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 

@@ -2,6 +2,7 @@
 
 #include "../Activity.h"
 #include "util/ButtonNavigator.h"
+#include "SilentRestart.h"
 
 class SyncDayActivity final : public Activity {
   bool wifiConnectedOnEnter = false;
@@ -9,6 +10,7 @@ class SyncDayActivity final : public Activity {
   bool syncing = false;
   bool lastSyncSucceeded = false;
   bool lastSyncFailed = false;
+  SilentRebootTarget returnTarget_ = SilentRebootTarget::Home;
   ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
 
@@ -23,8 +25,9 @@ class SyncDayActivity final : public Activity {
   std::string getStatusMessage() const;
 
  public:
-  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("SyncDay", renderer, mappedInput) {}
+  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                           SilentRebootTarget returnTarget = SilentRebootTarget::Home)
+      : Activity("SyncDay", renderer, mappedInput), returnTarget_(returnTarget) {}
 
   void onEnter() override;
   void onExit() override;

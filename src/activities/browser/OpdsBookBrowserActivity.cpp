@@ -18,6 +18,7 @@
 #include "util/BookCacheUtils.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr int PAGE_ITEMS = 23;
@@ -62,9 +63,7 @@ void OpdsBookBrowserActivity::onExit() {
   navigationHistory.clear();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 

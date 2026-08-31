@@ -20,6 +20,7 @@
 #include "fontIds.h"
 #include "util/NetworkMemory.h"
 #include "util/QrUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 // AP Mode configuration
