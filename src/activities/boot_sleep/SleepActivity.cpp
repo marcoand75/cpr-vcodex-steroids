@@ -30,6 +30,7 @@
 #include "util/ReadingStatsAnalytics.h"
 #include "util/SleepImageUtils.h"
 #include "util/SleepScreenCache.h"
+#include "util/TextDrawer.h"
 
 namespace {
 
@@ -191,45 +192,27 @@ std::vector<const ReadingBookStats*> getRecentSleepBooks(const size_t limit) {
 void drawTextClipped(const GfxRenderer& renderer, const int fontId, const int x, const int y, const std::string& text,
                      const int maxWidth, const bool black = true,
                      const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
-  renderer.drawText(fontId, x, y, renderer.truncatedText(fontId, text.c_str(), maxWidth, style).c_str(), black, style);
+  text_draw::drawTextClipped(renderer, fontId, x, y, text, maxWidth, black, style);
 }
 
 void drawRightText(const GfxRenderer& renderer, const int fontId, const int right, const int y, const std::string& text,
                    const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
-  renderer.drawText(fontId, right - renderer.getTextWidth(fontId, text.c_str(), style), y, text.c_str(), true, style);
+  text_draw::drawRightText(renderer, fontId, right, y, text, style);
 }
 
 void drawTextWithRightValue(const GfxRenderer& renderer, const int fontId, const int x, const int right, const int y,
                             const std::string& text, const std::string& value,
                             const EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR,
                             const EpdFontFamily::Style valueStyle = EpdFontFamily::REGULAR) {
-  const int valueWidth = renderer.getTextWidth(fontId, value.c_str(), valueStyle);
-  const int textWidth = std::max(0, right - x - valueWidth - 8);
-  drawTextClipped(renderer, fontId, x, y, text, textWidth, true, textStyle);
-  drawRightText(renderer, fontId, right, y, value, valueStyle);
+  text_draw::drawTextWithRightValue(renderer, fontId, x, right, y, text, value, textStyle, valueStyle);
 }
 
 void drawProgressBar(const GfxRenderer& renderer, const Rect& rect, const int percent, const int lineWidth = 2) {
-  renderer.drawRect(rect.x, rect.y, rect.width, rect.height, lineWidth, true);
-  const int innerX = rect.x + lineWidth + 2;
-  const int innerY = rect.y + lineWidth + 2;
-  const int innerW = std::max(0, rect.width - 2 * (lineWidth + 2));
-  const int innerH = std::max(0, rect.height - 2 * (lineWidth + 2));
-  const int fillW = std::clamp((innerW * std::clamp(percent, 0, 100) + 50) / 100, 0, innerW);
-  if (fillW > 0 && innerH > 0) {
-    renderer.fillRect(innerX, innerY, fillW, innerH, true);
-  }
+  text_draw::drawProgressBar(renderer, rect, percent, lineWidth);
 }
 
 void drawCheckBox(const GfxRenderer& renderer, const int x, const int y, const bool checked) {
-  renderer.drawRect(x, y, 16, 16, 1, true);
-  if (!checked) {
-    return;
-  }
-
-  renderer.fillRect(x, y, 16, 16, true);
-  renderer.drawLine(x + 4, y + 9, x + 7, y + 12, 2, false);
-  renderer.drawLine(x + 7, y + 12, x + 12, y + 5, 2, false);
+  text_draw::drawCheckBox(renderer, x, y, checked);
 }
 
 void drawMetricPanel(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value) {
