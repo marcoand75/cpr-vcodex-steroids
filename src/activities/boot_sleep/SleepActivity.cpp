@@ -895,6 +895,8 @@ void SleepActivity::renderDefaultSleepScreen() const {
 
 void renderBitmapGrayscaleOverlay(GfxRenderer& renderer, const Bitmap& bitmap, const BitmapPlacement& placement,
                                  const int pageWidth, const int pageHeight) {
+  displaySleepGrayscaleBase(renderer);
+
   bitmap.rewindToData();
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
@@ -935,6 +937,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const std::str
   }
 
   if (hasGreyscale) {
+    displaySleepBuffer(renderer);
     renderBitmapGrayscaleOverlay(renderer, bitmap, placement, pageWidth, pageHeight);
   } else {
     displaySleepBuffer(renderer);
