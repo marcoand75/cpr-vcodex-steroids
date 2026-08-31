@@ -33,7 +33,7 @@ void ShortcutLocationActivity::reloadEntries() {
   if (entries.empty()) {
     selectedIndex = 0;
   } else {
-    selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
   }
 }
 

@@ -19,7 +19,7 @@ constexpr int ACTION_COUNT = 2;
 
 void FavoritesAppActivity::refreshEntries() {
   favoriteCount = static_cast<int>(FAVORITES.getBooks().size());
-  selectedIndex = std::clamp(selectedIndex, 0, ACTION_COUNT - 1);
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
 }
 
 void FavoritesAppActivity::openSelectedEntry() {

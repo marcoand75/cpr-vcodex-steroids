@@ -85,7 +85,7 @@ void SyncDayActivity::onEnter() {
   syncing = false;
   lastSyncSucceeded = false;
   lastSyncFailed = false;
-  selectedIndex = std::clamp(selectedIndex, 0, ACTION_COUNT - 1);
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
   requestUpdate();
 }
 
