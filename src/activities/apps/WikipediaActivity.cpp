@@ -624,11 +624,10 @@ void WikipediaActivity::renderSearchHistory() {
   renderWikipediaHeader(tr(STR_RECENT_SEARCHES));
   auto layout = ListLayout::compute(renderer, true, false);
   if (historyQueries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight,
-                               static_cast<int>(historyQueries.size()), selectedIndex,
-                               [this](int i) { return historyQueries[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(historyQueries.size()), selectedIndex,
+                               [this](int i) { return historyQueries[i]; });
   }
   ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
@@ -638,11 +637,10 @@ void WikipediaActivity::renderCachedPages() {
   renderWikipediaHeader(tr(STR_CACHED_PAGES));
   auto layout = ListLayout::compute(renderer, true, false);
   if (cachedPageTitles.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight,
-                               static_cast<int>(cachedPageTitles.size()), selectedIndex,
-                               [this](int i) { return cachedPageTitles[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(cachedPageTitles.size()), selectedIndex,
+                               [this](int i) { return cachedPageTitles[i]; });
   }
   ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
@@ -651,12 +649,11 @@ void WikipediaActivity::renderCachedPages() {
 void WikipediaActivity::renderResults() {
   auto layout = ListLayout::compute(renderer, true, false);
   renderWikipediaHeader(tr(STR_WIKIPEDIA));
-  int rc = static_cast<int>(searchResults.size());
-  if (rc == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+  if (searchResults.empty()) {
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight, rc, selectedIndex,
-                               [this](int i) { return searchResults[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(searchResults.size()), selectedIndex,
+                               [this](int i) { return searchResults[i]; });
   }
   ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
