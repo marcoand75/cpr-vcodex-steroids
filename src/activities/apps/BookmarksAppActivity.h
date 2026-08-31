@@ -5,7 +5,7 @@
 
 #include "../Activity.h"
 #include "../reader/BookmarkStore.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class BookmarksAppActivity final : public Activity {
   struct BookEntry {
@@ -16,7 +16,7 @@ class BookmarksAppActivity final : public Activity {
     std::vector<BookmarkStore::Bookmark> bookmarks;
   };
 
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   int selectedIndex = 0;
   std::vector<BookEntry> entries;
 

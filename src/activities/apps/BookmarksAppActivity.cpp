@@ -217,39 +217,38 @@ void BookmarksAppActivity::onEnter() {
   READING_STATS.ensureLoaded();
   refreshEntries();
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (self->mappedInput.getHeldTime() >= DELETE_BOOKMARKS_HOLD_MS) {
+      self->confirmDeleteSelectedBook();
+      return;
+    }
+    self->openSelectedBook();
+  }, this, false);
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void BookmarksAppActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (mappedInput.getHeldTime() >= DELETE_BOOKMARKS_HOLD_MS) {
-      confirmDeleteSelectedBook();
-      return;
-    }
-
-    openSelectedBook();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void BookmarksAppActivity::render(RenderLock&&) {

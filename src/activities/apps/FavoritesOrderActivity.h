@@ -4,7 +4,7 @@
 
 #include "FavoritesStore.h"
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class FavoritesOrderActivity final : public Activity {
  public:
@@ -16,7 +16,7 @@ class FavoritesOrderActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   std::vector<FavoriteBook> entries;
   int selectedIndex = 0;
   bool moveMode = false;

@@ -30,6 +30,44 @@ void FavoritesOrderActivity::onEnter() {
   FAVORITES.ensureLoaded();
   reloadEntries();
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<FavoritesOrderActivity*>(ctx);
+    if (self->moveMode) {
+      self->moveMode = false;
+      self->requestUpdate();
+    } else {
+      self->finish();
+    }
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<FavoritesOrderActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (!self->moveMode && self->mappedInput.getHeldTime() >= DELETE_FAVORITE_HOLD_MS) {
+      self->confirmDeleteSelectedEntry();
+      return;
+    }
+    self->moveMode = !self->moveMode;
+    self->requestUpdate();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<FavoritesOrderActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (self->moveMode) {
+      self->moveSelectedEntry(delta);
+      return;
+    }
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void FavoritesOrderActivity::reloadEntries() {
@@ -38,7 +76,7 @@ void FavoritesOrderActivity::reloadEntries() {
   if (entries.empty()) {
     selectedIndex = 0;
   } else {
-    selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
   }
 }
 
@@ -76,51 +114,7 @@ void FavoritesOrderActivity::confirmDeleteSelectedEntry() {
 }
 
 void FavoritesOrderActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (moveMode) {
-      moveMode = false;
-      requestUpdate();
-    } else {
-      finish();
-    }
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (!entries.empty()) {
-      if (!moveMode && mappedInput.getHeldTime() >= DELETE_FAVORITE_HOLD_MS) {
-        confirmDeleteSelectedEntry();
-        return;
-      }
-      moveMode = !moveMode;
-      requestUpdate();
-    }
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    if (moveMode) {
-      moveSelectedEntry(1);
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    if (moveMode) {
-      moveSelectedEntry(-1);
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void FavoritesOrderActivity::render(RenderLock&&) {
