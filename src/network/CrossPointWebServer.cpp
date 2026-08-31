@@ -2752,8 +2752,7 @@ void CrossPointWebServer::handlePostSteroidsSettings() {
   auto applyString = [&](const char* key, char* dest, size_t maxLen) {
     if (doc[key].is<const char*>()) {
       const char* val = doc[key].as<const char*>();
-      strncpy(dest, val, maxLen - 1);
-      dest[maxLen - 1] = '\0';
+      StringUtils::copyToFixedBuffer(dest, maxLen, std::string(val));
       applied++;
     }
   };

@@ -61,6 +61,7 @@
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
 #include "util/SleepImageUtils.h"
+#include "util/StringUtils.h"
 #include "util/TimeUtils.h"
 #include "version.h"
 
@@ -748,11 +749,10 @@ void SettingsActivity::toggleCurrentSetting() {
                            [this, setting](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
-                               if (kbResult) {
-                                 char* strPtr = (char*)&SETTINGS + setting.stringOffset;
-                                 strncpy(strPtr, kbResult->text.c_str(), setting.stringMaxLen - 1);
-                                 strPtr[setting.stringMaxLen - 1] = '\0';
-                                 SETTINGS.saveToFile();
+                                if (kbResult) {
+                                  char* strPtr = (char*)&SETTINGS + setting.stringOffset;
+                                  StringUtils::copyToFixedBuffer(strPtr, setting.stringMaxLen, kbResult->text);
+                                  SETTINGS.saveToFile();
                                }
                              }
                              requestUpdate(true);

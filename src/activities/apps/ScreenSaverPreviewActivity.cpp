@@ -19,6 +19,7 @@
 #include "util/HeaderDateUtils.h"
 #include "util/SleepImageUtils.h"
 #include "util/PngSleepRenderer.h"
+#include "util/StringUtils.h"
 
 namespace {
 void drawPreviewBitmap(GfxRenderer& renderer, const Rect& contentRect, Bitmap& bitmap) {
@@ -113,8 +114,7 @@ void ScreenSaverPreviewActivity::loop() {
 
 void ScreenSaverPreviewActivity::selectDirectory() {
   char* target = forReader ? SETTINGS.screenSaverReaderDir : SETTINGS.screenSaverDirectory;
-  strncpy(target, directoryPath.c_str(), 127);
-  target[127] = '\0';
+  StringUtils::copyToFixedBuffer(target, 128, directoryPath);
   SETTINGS.saveToFile();
   GUI.drawPopup(renderer, tr(STR_SELECTED));
   delay(700);

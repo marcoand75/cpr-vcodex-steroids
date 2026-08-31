@@ -189,8 +189,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       password = doc["opdsPassword"] | std::string(s.opdsPassword);
       if (password != s.opdsPassword && needsResave) *needsResave = true;
     }
-    strncpy(s.opdsPassword, password.c_str(), sizeof(s.opdsPassword) - 1);
-    s.opdsPassword[sizeof(s.opdsPassword) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(s.opdsPassword, sizeof(s.opdsPassword), password);
   }
 
   loadToggle("statusBarChapterPageCount", s.statusBarChapterPageCount);
