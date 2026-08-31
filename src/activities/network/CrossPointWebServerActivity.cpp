@@ -113,13 +113,11 @@ void CrossPointWebServerActivity::onExit() {
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (isApMode) {
       LOG_DBG("WEBACT", "Stopping WiFi AP...");
-      WiFi.softAPdisconnect(true);
+      WiFiUtils::stopAp();
     } else {
       LOG_DBG("WEBACT", "Disconnecting WiFi (graceful)...");
-      WiFi.disconnect(false);
+      WiFiUtils::gracefulDisconnectAndSilentRestart();
     }
-    delay(30);
-    silentRestart();
   }
 
   LOG_DBG("WEBACT", "Free heap at onExit end: %d bytes", ESP.getFreeHeap());
@@ -157,7 +155,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   if (mode == NetworkMode::JOIN_NETWORK) {
     // STA mode - launch WiFi selection
     LOG_DBG("WEBACT", "Turning on WiFi (STA mode)...");
-    WiFi.mode(WIFI_STA);
+    WiFiUtils::enterStationMode();
 
     state = WebServerActivityState::WIFI_SELECTION;
     LOG_DBG("WEBACT", "Launching WifiSelectionActivity...");

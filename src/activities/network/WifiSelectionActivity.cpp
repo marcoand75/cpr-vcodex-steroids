@@ -19,6 +19,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/TimeUtils.h"
+#include "util/WiFiUtils.h"
 
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_mac.h>
@@ -107,7 +108,7 @@ void WifiSelectionActivity::onEnter() {
            baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
   cachedMacAddress = std::string(macStr);
 #else
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   delay(10);
   uint8_t mac[6];
   WiFi.macAddress(mac);
@@ -150,9 +151,8 @@ void WifiSelectionActivity::startWifiScan() {
   requestUpdate();
 
   // Set WiFi mode to station
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.disconnect();
+  WiFiUtils::enterStationMode();
+  WiFiUtils::disconnect();
   delay(100);
 
   // Start async scan
@@ -413,12 +413,8 @@ void WifiSelectionActivity::attemptConnection() {
   connectionError.clear();
   requestUpdate();
 
-  WiFi.persistent(false);  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);  // Abort any in-progress SDK auto-connect and clear NVS-saved SSID
-  delay(100);
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFiUtils::disableNvsAutoPersist();  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
+  WiFiUtils::abortAutoConnectAndClearNvs();  // Abort any in-progress SDK auto-connect and clear NVS-saved SSID
 
   // Set hostname so routers show "CrossPoint-Reader-AABBCCDDEEFF" instead of "esp32-XXXXXXXXXXXX"
   String mac = WiFi.macAddress();
@@ -499,7 +495,7 @@ void WifiSelectionActivity::checkConnectionStatus() {
     }
     // Stop the SDK from retrying in the background while the user is back in
     // the list; the timeout path below does the same.
-    WiFi.disconnect();
+    WiFiUtils::disconnect();
     if (autoConnectOnly) {
       LOG_DBG("WIFI", "Auto-connect only failed for saved network %s (status=%d)", selectedSSID.c_str(),
               static_cast<int>(status));
@@ -515,7 +511,7 @@ void WifiSelectionActivity::checkConnectionStatus() {
   if (millis() - connectionStartTime > CONNECTION_TIMEOUT_MS) {
     LOG_ERR("WIFI", "Connection timeout for %s, status=%d, channel=%d, bssid=%d", selectedSSID.c_str(),
             static_cast<int>(status), static_cast<int>(selectedChannel), selectedHasBssid ? 1 : 0);
-    WiFi.disconnect();
+    WiFiUtils::disconnect();
     connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
     if (autoConnectOnly) {
       LOG_DBG("WIFI", "Auto-connect only timed out for saved network %s", selectedSSID.c_str());

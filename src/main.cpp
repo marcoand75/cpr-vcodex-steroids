@@ -38,6 +38,7 @@
 #include "SdCardFontGlobals.h"
 #include "SilentRestart.h"
 #include "UiFontSelection.h"
+#include "util/WiFiUtils.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/apps/LuaPluginActivity.h"
@@ -684,7 +685,7 @@ void setup() {
   // Disable Arduino core's NVS auto-persist of Wi-Fi credentials. WifiSelectionActivity
   // always scans first and uses WifiCredentialStore (SD card JSON) as the source of
   // truth; the SDK's hidden nvs.net80211 copy must not auto-reconnect behind the user.
-  WiFi.persistent(false);
+  WiFiUtils::disableNvsAutoPersist();
   WiFi.mode(WIFI_OFF);
 
 #ifdef ENABLE_SERIAL_LOG

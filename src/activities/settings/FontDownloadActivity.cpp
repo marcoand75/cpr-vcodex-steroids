@@ -73,7 +73,7 @@ HttpDownloader::DownloadError downloadToFileWithRetries(const std::string& url, 
 void FontDownloadActivity::onEnter() {
   Activity::onEnter();
   READING_STATS.releaseMemoryForNetwork();
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
@@ -113,7 +113,7 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
 
   // Font downloads are large enough that modem sleep can produce avoidable
   // stalls on weak networks. Restore the normal Wi-Fi state on exit.
-  WiFi.setSleep(false);
+  WiFiUtils::disableModemSleep();
   delay(250);
 
   {

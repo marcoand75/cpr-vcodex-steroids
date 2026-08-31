@@ -13,9 +13,9 @@ namespace WiFiUtils {
 void wifiOff() {
   TimeUtils::stopNtp();
   WiFi.disconnect(false);
-  delay(100);
+  delay(50);
   WiFi.mode(WIFI_OFF);
-  delay(100);
+  delay(50);
 }
 
 void gracefulDisconnectAndSilentRestart() {
@@ -25,6 +25,34 @@ void gracefulDisconnectAndSilentRestart() {
     delay(30);
     silentRestart();
   }
+}
+
+void enterStationMode() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+}
+
+void disableNvsAutoPersist() {
+  WiFi.persistent(false);
+}
+
+void disableModemSleep() {
+  WiFi.setSleep(false);
+}
+
+void abortAutoConnectAndClearNvs() {
+  WiFi.disconnect(true, true);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+}
+
+void stopAp() {
+  WiFi.softAPdisconnect(true);
+}
+
+void disconnect() {
+  WiFi.disconnect();
 }
 
 }  // namespace WiFiUtils

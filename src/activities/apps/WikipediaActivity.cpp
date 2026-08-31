@@ -36,6 +36,7 @@
 #include "util/StringUtils.h"
 #include "util/WikitextToMarkdown.h"
 #include "util/NetworkMemory.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 
@@ -309,14 +310,6 @@ void WikipediaActivity::freeBuffer() {
   LOG_DBG("WIKI", "Freed resources");
 }
 
-void WikipediaActivity::wifiOff() {
-  LOG_DBG("WIKI", "Turning off WiFi");
-  WiFi.disconnect(false);
-  delay(50);
-  WiFi.mode(WIFI_OFF);
-  delay(50);
-}
-
 void WikipediaActivity::openArticleFile() {
   if (!g_articleFilePath.empty() && !isFileOpen) {
     if (Storage.openFileForRead("WIKI", g_articleFilePath.c_str(), openFile)) {
@@ -353,7 +346,7 @@ void WikipediaActivity::onExit() {
   historyQueries.clear();
   cachedPageTitles.clear();
   freeBuffer();
-  wifiOff();
+  WiFiUtils::wifiOff();
 }
 
 void WikipediaActivity::loop() {
@@ -833,7 +826,7 @@ void WikipediaActivity::openArticleForReading(const std::string& title) {
   }
 
   // Disattiva il Wi-Fi prima di aprire il reader per liberare heap.
-  if (WiFi.status() == WL_CONNECTED) wifiOff();
+  if (WiFi.status() == WL_CONNECTED) WiFiUtils::wifiOff();
 
   // Quando il reader chiude, si torna SEMPRE al menu principale di Wikipedia.
   startActivityForResult(

@@ -7,6 +7,11 @@
 // Usage:
 //   - WiFiUtils::wifiOff()                       // full shutdown, keeps caller alive
 //   - WiFiUtils::gracefulDisconnectAndSilentRestart()  // disconnect + silent restart
+//   - WiFiUtils::enterStationMode()              // STA mode + disable modem sleep
+//   - WiFiUtils::disableNvsAutoPersist()         // suppress SDK NVS credential auto-reconnect
+//   - WiFiUtils::abortAutoConnectAndClearNvs()   // disconnect(true,true) for WifiSelectionActivity
+//   - WiFiUtils::stopAp()                        // softAPdisconnect(true) for web server teardown
+//   - WiFiUtils::disconnect()                    // plain WiFi.disconnect() for scan/connect flows
 
 #include <cstdint>
 
@@ -19,5 +24,30 @@ void wifiOff();
 // Graceful WiFi teardown followed by a silent restart. Uses the shorter
 // settle delay used by the existing network-exit activities.
 void gracefulDisconnectAndSilentRestart();
+
+// Prepare WiFi for normal station operation: force STA mode and disable
+// modem sleep so the radio stays responsive during network activity.
+void enterStationMode();
+
+// Suppress the Arduino core's automatic NVS persistence of WiFi credentials.
+// The firmware uses WifiCredentialStore on the SD card as the source of truth,
+// so the SDK's hidden nvs.net80211 copy must not auto-reconnect behind the user.
+void disableNvsAutoPersist();
+
+// Disable WiFi modem sleep so the radio stays responsive during network
+// activity. Used after connection to avoid stalls on weak networks.
+void disableModemSleep();
+
+// Abort any in-progress SDK auto-connect and clear the NVS-saved SSID used by
+// WifiSelectionActivity before starting a fresh scan/connect cycle.
+void abortAutoConnectAndClearNvs();
+
+// Stop the access-point side of WiFi without powering the radio off entirely.
+// Used by web-server teardown where the mode may be left for later reuse.
+void stopAp();
+
+// Plain disconnect without changing mode or power state. Used by scan and
+// connection flows where the caller will immediately re-enter STA mode.
+void disconnect();
 
 }  // namespace WiFiUtils
