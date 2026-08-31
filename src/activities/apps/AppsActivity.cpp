@@ -141,8 +141,7 @@ void AppsActivity::render(RenderLock&&) {
                  [this](const int index) { return appShortcuts[index]->icon; });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   renderer.displayBuffer();
 }
