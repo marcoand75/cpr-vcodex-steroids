@@ -120,7 +120,7 @@ void OtaUpdateActivity::onEnter() {
 
   // Turn on WiFi immediately
   LOG_DBG("OTA", "Turning on WiFi...");
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
 
   // Launch WiFi selection subactivity
   LOG_DBG("OTA", "Launching WifiSelectionActivity...");

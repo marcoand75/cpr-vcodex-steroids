@@ -50,4 +50,8 @@ void stopAp();
 // connection flows where the caller will immediately re-enter STA mode.
 void disconnect();
 
+// Forceful disconnect that also clears the SDK's auto-connect state. Used
+// before deep sleep or full power-down where the radio must not reconnect.
+void forceDisconnect();
+
 }  // namespace WiFiUtils

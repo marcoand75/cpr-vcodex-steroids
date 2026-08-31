@@ -55,4 +55,8 @@ void disconnect() {
   WiFi.disconnect();
 }
 
+void forceDisconnect() {
+  WiFi.disconnect(true);
+}
+
 }  // namespace WiFiUtils

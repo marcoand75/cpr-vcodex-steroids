@@ -8,7 +8,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <WiFi.h>
+#include "util/WiFiUtils.h"
 #include <cctype>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
@@ -570,7 +570,7 @@ void CrossPointWebServer::begin() {
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
-  WiFi.setSleep(false);
+  WiFiUtils::disableModemSleep();
   // Default varies by ESP32 core version. The activity's loss-recovery loop
   // relies on driver retries during transient disconnects.
   WiFi.setAutoReconnect(true);

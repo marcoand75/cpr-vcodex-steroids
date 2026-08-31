@@ -537,7 +537,7 @@ void enterDeepSleep() {
   APP_STATE.saveToFile();  // deferred: serialized after the sleep screen rendered
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(true);
+    WiFiUtils::forceDisconnect();
     WiFi.mode(WIFI_OFF);
   }
 

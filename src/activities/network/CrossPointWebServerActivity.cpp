@@ -306,12 +306,10 @@ void CrossPointWebServerActivity::requestReboot() {
   stopWebServer();
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (isApMode) {
-      WiFi.softAPdisconnect(true);
+      WiFiUtils::stopAp();
     } else {
-      WiFi.disconnect(false);
+      WiFiUtils::gracefulDisconnectAndSilentRestart();
     }
-    delay(30);
-    silentRestart();
   }
   renderer.clearScreen();
   renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, "Rebooting device...");
