@@ -11,4 +11,9 @@ namespace StringUtils {
  */
 std::string sanitizeFilename(const std::string& name, size_t maxBytes = 100);
 
+/**
+ * Convert a string to lowercase ASCII in-place and return it.
+ */
+std::string toLowerAscii(std::string value);
+
 }  // namespace StringUtils

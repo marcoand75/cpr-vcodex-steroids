@@ -43,4 +43,13 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
   return result.empty() ? "book" : result;
 }
 
+std::string toLowerAscii(std::string value) {
+  for (char& c : value) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return value;
+}
+
 }  // namespace StringUtils
