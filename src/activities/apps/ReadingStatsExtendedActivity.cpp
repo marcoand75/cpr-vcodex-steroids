@@ -11,6 +11,7 @@
 #include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ReadingStatsAnalytics.h"
 #include "util/TimeUtils.h"
@@ -381,8 +382,7 @@ void ReadingStatsExtendedActivity::render(RenderLock&&) {
   drawRecentWindowCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, recentTop, cardWidth, RECENT_CARD_HEIGHT},
                        "30D", last30DaysValue);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", scrollOffset > 0 ? tr(STR_DIR_UP) : "",
-                                            scrollOffset < maxScrollOffset ? tr(STR_DIR_DOWN) : "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", scrollOffset > 0 ? tr(STR_DIR_UP) : "",
+                              scrollOffset < maxScrollOffset ? tr(STR_DIR_DOWN) : "");
   renderer.displayBuffer();
 }
