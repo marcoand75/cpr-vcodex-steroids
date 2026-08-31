@@ -27,21 +27,21 @@ inline void drawHeader(GfxRenderer& renderer, const char* title, const char* sub
 }
 
 // Draw standard button hints from mapped labels.
-inline void drawHints(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* btn1, const char* btn2,
+inline void drawHints(GfxRenderer& renderer, const MappedInputManager& mappedInput, const char* btn1, const char* btn2,
                       const char* btn3, const char* btn4) {
   const auto labels = mappedInput.mapLabels(btn1, btn2, btn3, btn4);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
 // Convenience: draw hints with localized strings.
-inline void drawHints(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* btn1, const char* btn2,
+inline void drawHints(GfxRenderer& renderer, const MappedInputManager& mappedInput, const char* btn1, const char* btn2,
                       const char* btn3, const char* btn4, const StrId& s1, const StrId& s2, const StrId& s3,
                       const StrId& s4) {
   drawHints(renderer, mappedInput, I18N.get(s1), I18N.get(s2), I18N.get(s3), I18N.get(s4));
 }
 
 // Standard list navigation hints: Back / Select / Up / Down.
-inline void drawStandardHints(GfxRenderer& renderer, MappedInputManager& mappedInput) {
+inline void drawStandardHints(GfxRenderer& renderer, const MappedInputManager& mappedInput) {
   drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 }
 
