@@ -139,11 +139,11 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
   const std::string subtitle =
       imagePaths.empty() ? (isSelectedDirectory ? std::string(tr(STR_SELECTED)) : std::string())
                          : (std::to_string(selectedIndex + 1) + "/" + std::to_string(imagePaths.size()));
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_USE_DIRECTORY),
-                                            imagePaths.empty() ? "" : tr(STR_DIR_UP),
-                                            imagePaths.empty() ? "" : tr(STR_DIR_DOWN));
+  const char* dirUpLabel = imagePaths.empty() ? "" : tr(STR_DIR_UP);
+  const char* dirDownLabel = imagePaths.empty() ? "" : tr(STR_DIR_DOWN);
 
-  drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, tr(STR_BACK), tr(STR_USE_DIRECTORY), dirUpLabel,
+                   dirDownLabel);
 
   const Rect contentRect{metrics.contentSidePadding, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing,
                          pageWidth - metrics.contentSidePadding * 2,
@@ -167,7 +167,8 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
       if (showLoadingPopup) {
         GUI.fillPopupProgress(renderer, popupRect, 55);
       }
-      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, tr(STR_BACK), tr(STR_USE_DIRECTORY), dirUpLabel,
+                     dirDownLabel);
       // Free font caches so the ~44 KB PNG decoder gets a contiguous heap block.
       // The frame text above is already rasterised, so clearing here is safe.
       if (auto* fcm = renderer.getFontCacheManager()) {
@@ -182,7 +183,8 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
           if (showLoadingPopup) {
             GUI.fillPopupProgress(renderer, popupRect, 55);
           }
-          drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+          drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, tr(STR_BACK), tr(STR_USE_DIRECTORY), dirUpLabel,
+                     dirDownLabel);
           if (auto* fcm = renderer.getFontCacheManager()) {
             fcm->clearCache();
           }
@@ -197,7 +199,8 @@ void ScreenSaverPreviewActivity::renderPreview(bool showLoadingPopup) {
     }
 
     if (!rendered) {
-      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      drawPreviewFrame(renderer, mappedInput, directoryLabel, subtitle, tr(STR_BACK), tr(STR_USE_DIRECTORY), dirUpLabel,
+                     dirDownLabel);
       renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10, "Invalid image file");
     }
   }
