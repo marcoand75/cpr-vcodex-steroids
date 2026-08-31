@@ -19,6 +19,7 @@
 #include "components/UITheme.h"
 #include "components/icons/quickcards.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/QrCardParser.h"
 #include "util/QrUtils.h"
@@ -340,8 +341,7 @@ void QuickCardsActivity::renderFileList() {
         int lh=renderer.getLineHeight(UI_12_FONT_ID); bool tb=!sel;
         renderer.drawText(UI_12_FONT_ID,px+16,py+(panelH-lh)/2,label.c_str(),tb,EpdFontFamily::BOLD);
     }
-    auto labels=mappedInput.mapLabels(tr(STR_BACK),tr(STR_SELECT),tr(STR_QUICK_CARDS_DELETE),tr(STR_DIR_DOWN));
-    GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+    ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_SELECT),tr(STR_QUICK_CARDS_DELETE),tr(STR_DIR_DOWN));
     renderer.displayBuffer();
 }
 
@@ -404,8 +404,7 @@ void QuickCardsActivity::renderImageView(const std::string& path, int index, int
         drawHeaderWithIcon();
         char buf[32]; snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
         renderer.drawText(SMALL_FONT_ID,10,ph-m.buttonHintsHeight-24,buf,true);
-        auto labels=mappedInput.mapLabels(tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
-        GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
     } else {
         // Solo nome file in basso in fullscreen
         std::string nm=cards[static_cast<size_t>(selectedIndex)].displayName;
@@ -424,8 +423,7 @@ fail_open:
     renderer.drawCenteredText(UI_10_FONT_ID,ph/2,"Cannot open image");
 draw_btns: 
     {
-        auto labels=mappedInput.mapLabels(tr(STR_BACK),"","","");
-        GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),"","","");
     }
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
@@ -528,8 +526,7 @@ void QuickCardsActivity::renderQrCard(const std::string& primary, const std::str
     if(!fullscreenMode){
         char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
         renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
-        auto labels=mappedInput.mapLabels(tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
-        GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
     } else {
         std::string nm=title; auto dp=nm.find_last_of('.');if(dp!=std::string::npos)nm=nm.substr(0,dp);
         int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
@@ -579,8 +576,7 @@ void QuickCardsActivity::renderBarcodeCard(const std::string& primary, const std
     if(!fullscreenMode){
         char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
         renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
-        auto labels=mappedInput.mapLabels(tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
-        GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
     } else {
         std::string nm=title; auto dp=nm.find_last_of('.');if(dp!=std::string::npos)nm=nm.substr(0,dp);
         int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
@@ -594,8 +590,7 @@ void QuickCardsActivity::renderEmpty() {
     renderer.clearScreen(); drawHeaderWithIcon();
     int mw=renderer.getTextWidth(UI_10_FONT_ID,tr(STR_QUICK_CARDS_NO_FILES));
     renderer.drawText(UI_10_FONT_ID,(pw-mw)/2,ph/2,tr(STR_QUICK_CARDS_NO_FILES),true);
-    auto labels=mappedInput.mapLabels(tr(STR_BACK),"","","");
-    GUI.drawButtonHints(renderer,labels.btn1,labels.btn2,labels.btn3,labels.btn4);
+    ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),"","","");
     renderer.displayBuffer();
 }
 
