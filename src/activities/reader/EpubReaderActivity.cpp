@@ -27,6 +27,7 @@
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "util/PopupUtils.h"
+#include "util/StringUtils.h"
 #include "DictionaryHistoryActivity.h"
 #include "DictionaryWordSelectActivity.h"
 #include "KOReaderCredentialStore.h"
@@ -803,12 +804,7 @@ bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION ac
       if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
         ACHIEVEMENTS.recordBookmarkAdded();
       }
-      const bool showedAchievement = showPendingAchievementPopups(renderer);
-      if (!showedAchievement) {
-        GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
-        renderer.displayBuffer();
-        delay(500);
-      }
+      const bool showedAchievement = ReaderUtils::showBookmarkToggleFeedback(renderer, addedBookmark);
       requestUpdate();
       return true;
     }
@@ -981,12 +977,7 @@ void EpubReaderActivity::saveCurrentPageBookmark() {
     ACHIEVEMENTS.recordBookmarkAdded();
   }
 
-  const bool showedAchievement = showPendingAchievementPopups(renderer);
-  if (!showedAchievement) {
-    GUI.drawPopup(renderer, tr(STR_BOOKMARK_ADDED));
-    renderer.displayBuffer();
-    delay(500);
-  }
+  const bool showedAchievement = ReaderUtils::showBookmarkToggleFeedback(renderer, addedBookmark);
   requestUpdate();
 }
 
@@ -1394,8 +1385,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.timestamp = static_cast<uint32_t>(millis() / 1000);
 
   const std::string chapterTitle = getStatsChapterTitle(*epub, currentSpineIndex);
-  strncpy(clipping.chapterTitle, chapterTitle.c_str(), sizeof(clipping.chapterTitle) - 1);
-  clipping.chapterTitle[sizeof(clipping.chapterTitle) - 1] = '\0';
+  StringUtils::copyToFixedBuffer(clipping.chapterTitle, sizeof(clipping.chapterTitle), chapterTitle);
 
   std::string selectedText;
   auto page = section->loadPageFromSectionFile();
@@ -1753,8 +1743,7 @@ void EpubReaderActivity::loadBookReaderSettings() {
   SETTINGS.textDarkness = snap.textDarkness;
   SETTINGS.readerRefreshMode = snap.readerRefreshMode;
   SETTINGS.imageRendering = snap.imageRendering;
-  std::strncpy(SETTINGS.sdFontFamilyName, snap.sdFontFamilyName.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
-  SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+  StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), snap.sdFontFamilyName);
   hasPerBookSettingsOverride = true;
 }
 

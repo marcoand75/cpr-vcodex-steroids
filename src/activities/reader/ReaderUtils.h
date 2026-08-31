@@ -10,7 +10,10 @@
 #include <memory>
 #include <new>
 
+#include <I18n.h>
 #include "MappedInputManager.h"
+#include "components/UITheme.h"
+#include "util/AchievementPopupUtils.h"
 
 namespace ReaderUtils {
 
@@ -371,4 +374,17 @@ inline bool isIncreaseDirection(const ButtonDirection dir) {
       return false;
   }
 }
+
+// Show bookmark toggle feedback, checking achievements first.
+// Returns true if an achievement popup was shown (caller should skip its own popup).
+inline bool showBookmarkToggleFeedback(GfxRenderer& renderer, bool addedBookmark) {
+  const bool showedAchievement = showPendingAchievementPopups(renderer);
+  if (!showedAchievement) {
+    GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
+    renderer.displayBuffer();
+    delay(500);
+  }
+  return showedAchievement;
+}
+
 }  // namespace ReaderUtils

@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "util/StringUtils.h"
+
 #include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
@@ -2138,28 +2140,23 @@ void CrossPointWebServer::handlePostSettings() {
             saveKOReader = true;
             break;
           case WebDynamicSetting::LibraryRootDir:
-            strncpy(SETTINGS.libraryRootDir, val.c_str(), sizeof(SETTINGS.libraryRootDir) - 1);
-            SETTINGS.libraryRootDir[sizeof(SETTINGS.libraryRootDir) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverText:
-            strncpy(SETTINGS.screenSaverText, val.c_str(), sizeof(SETTINGS.screenSaverText) - 1);
-            SETTINGS.screenSaverText[sizeof(SETTINGS.screenSaverText) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverDir:
-            strncpy(SETTINGS.screenSaverDirectory, val.c_str(), sizeof(SETTINGS.screenSaverDirectory) - 1);
-            SETTINGS.screenSaverDirectory[sizeof(SETTINGS.screenSaverDirectory) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverReaderDir:
-            strncpy(SETTINGS.screenSaverReaderDir, val.c_str(), sizeof(SETTINGS.screenSaverReaderDir) - 1);
-            SETTINGS.screenSaverReaderDir[sizeof(SETTINGS.screenSaverReaderDir) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverReaderDir, sizeof(SETTINGS.screenSaverReaderDir), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::SdFontFamily:
-            strncpy(SETTINGS.sdFontFamilyName, val.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
-            SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), val);
             saveSettings = true;
             break;
           default:

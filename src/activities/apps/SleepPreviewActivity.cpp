@@ -17,6 +17,7 @@
 #include "util/HeaderDateUtils.h"
 #include "util/SleepImageUtils.h"
 #include "util/PngSleepRenderer.h"
+#include "util/StringUtils.h"
 
 namespace {
 void drawPreviewBitmap(GfxRenderer& renderer, const Rect& contentRect, Bitmap& bitmap) {
@@ -108,8 +109,7 @@ void SleepPreviewActivity::loop() {
 }
 
 void SleepPreviewActivity::selectDirectory() {
-  strncpy(SETTINGS.sleepDirectory, directoryPath.c_str(), sizeof(SETTINGS.sleepDirectory) - 1);
-  SETTINGS.sleepDirectory[sizeof(SETTINGS.sleepDirectory) - 1] = '\0';
+  StringUtils::copyToFixedBuffer(SETTINGS.sleepDirectory, sizeof(SETTINGS.sleepDirectory), directoryPath);
   SETTINGS.saveToFile();
   GUI.drawPopup(renderer, tr(STR_SELECTED));
   delay(700);

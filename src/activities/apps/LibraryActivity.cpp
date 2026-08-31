@@ -18,6 +18,7 @@
 #include "../home/BookContextMenuActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "../util/KeyboardEntryActivity.h"
+#include "util/StringUtils.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
 #include "HiddenBooksStore.h"
@@ -663,8 +664,7 @@ void LibraryActivity::beginTextSearch() {
         const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
         if (!kbResult) { forceRender_ = true; requestUpdate(); return; }
         currentSearchText_ = kbResult->text;
-        strncpy(SETTINGS.librarySearchText, currentSearchText_.c_str(), sizeof(SETTINGS.librarySearchText) - 1);
-        SETTINGS.librarySearchText[sizeof(SETTINGS.librarySearchText) - 1] = '\0';
+        StringUtils::copyToFixedBuffer(SETTINGS.librarySearchText, sizeof(SETTINGS.librarySearchText), currentSearchText_);
         SETTINGS.saveToFile();
         applyFilterAndSort();
         forceRender_ = true;

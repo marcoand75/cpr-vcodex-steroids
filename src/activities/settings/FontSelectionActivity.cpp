@@ -9,6 +9,7 @@
 #include "fontIds.h"
 #include "../util/ListLayout.h"
 #include "../util/ListRenderHelper.h"
+#include "util/StringUtils.h"
 
 static void s_onBack(void* ctx) {
   static_cast<FontSelectionActivity*>(ctx)->finish();
@@ -101,8 +102,7 @@ void FontSelectionActivity::handleSelection() {
     int sdIdx = font.settingIndex - CrossPointSettings::BUILTIN_FONT_COUNT;
     const auto& families = registry_->getFamilies();
     if (sdIdx < static_cast<int>(families.size())) {
-      strncpy(SETTINGS.sdFontFamilyName, families[sdIdx].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
-      SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+      StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), families[sdIdx].name);
     }
   }
   finish();
