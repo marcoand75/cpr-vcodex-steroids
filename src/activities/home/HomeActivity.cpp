@@ -56,6 +56,7 @@
 #include "components/themes/lyra/LyraMarcoand75Theme.h"
 #include "components/PanelDrawHelper.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -1563,9 +1564,9 @@ void HomeActivity::render(RenderLock&&) {
   }
   LOG_DBG("HCR", "render drawButtonMenu/icons: %ums", static_cast<int>(millis() - dbgMenu0));
 
-  const auto labels = carouselTheme ? mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT))
-                                    : mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, "", tr(STR_SELECT),
+                              carouselTheme ? tr(STR_DIR_LEFT) : tr(STR_DIR_UP),
+                              carouselTheme ? tr(STR_DIR_RIGHT) : tr(STR_DIR_DOWN));
   LOG_DBG("HCR", "render pre-displayBuffer cumulative (post-carousel): %ums total=%ums",
           static_cast<int>(millis() - dbgMenu0), static_cast<int>(millis() - dbgRender0));
 
