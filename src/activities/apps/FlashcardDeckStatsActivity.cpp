@@ -10,6 +10,7 @@
 #include "AppMetricCard.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 
@@ -90,10 +91,9 @@ void FlashcardDeckStatsActivity::render(RenderLock&&) {
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FLASHCARDS), loaded ? deck.title.c_str() : tr(STR_STATISTICS));
 
   if (!loaded) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24,
-                              errorMessage.empty() ? tr(STR_FLASHCARDS_INVALID_DECK) : errorMessage.c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawEmptyCentered(renderer, contentTop,
+                                        errorMessage.empty() ? tr(STR_FLASHCARDS_INVALID_DECK) : errorMessage.c_str());
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
@@ -120,7 +120,6 @@ void FlashcardDeckStatsActivity::render(RenderLock&&) {
   drawMetricCard(renderer, Rect{sidePadding + cardWidth + METRIC_CARD_GAP, currentY, cardWidth, METRIC_CARD_HEIGHT},
                  tr(STR_LAST_REVIEW), formatDateOrFallback(metrics.lastReviewedAt));
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_OPEN), "", "");
   renderer.displayBuffer();
 }
