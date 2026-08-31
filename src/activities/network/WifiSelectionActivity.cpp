@@ -18,6 +18,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/TimeUtils.h"
 #include "util/WiFiUtils.h"
 
@@ -802,8 +803,7 @@ void WifiSelectionActivity::renderNetworkList() const {
   const bool hasSavedPassword = !networks.empty() && networks[selectedNetworkIndex].hasSavedPassword;
   const char* forgetLabel = hasSavedPassword ? tr(STR_FORGET_BUTTON) : "";
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONNECT), forgetLabel, tr(STR_RETRY));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_CONNECT), forgetLabel, tr(STR_RETRY));
 }
 
 void WifiSelectionActivity::renderConnecting() const {
@@ -841,8 +841,7 @@ void WifiSelectionActivity::renderConnected() const {
   renderer.drawCenteredText(UI_10_FONT_ID, top + 40, ipInfo.c_str());
 
   // Use centralized button hints
-  const auto labels = mappedInput.mapLabels("", tr(STR_DONE), "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, "", tr(STR_DONE), "", "");
 }
 
 void WifiSelectionActivity::renderSavePrompt() const {
@@ -885,8 +884,8 @@ void WifiSelectionActivity::renderSavePrompt() const {
   }
 
   // Use centralized button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_CANCEL), tr(STR_SELECT), tr(STR_DIR_LEFT),
+                              tr(STR_DIR_RIGHT));
 }
 
 void WifiSelectionActivity::renderConnectionFailed() const {
@@ -900,8 +899,7 @@ void WifiSelectionActivity::renderConnectionFailed() const {
   // Confirm only leads to the forget prompt when a saved credential failed;
   // otherwise it just dismisses like Back does.
   const char* confirmLabel = usedSavedPassword ? tr(STR_FORGET_BUTTON) : tr(STR_DONE);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), confirmLabel, "", "");
 }
 
 void WifiSelectionActivity::renderForgetPrompt() const {
@@ -944,8 +942,8 @@ void WifiSelectionActivity::renderForgetPrompt() const {
   }
 
   // Use centralized button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT),
+                              tr(STR_DIR_RIGHT));
 }
 
 void WifiSelectionActivity::onComplete(const bool connected) {
