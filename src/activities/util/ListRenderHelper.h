@@ -6,6 +6,7 @@
 #include <I18n.h>
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "fontIds.h"
 #include "util/HeaderDateUtils.h"
 
 // Reusable rendering helpers for list-based activities.
@@ -39,6 +40,11 @@ inline void drawHints(GfxRenderer& renderer, MappedInputManager& mappedInput, co
   drawHints(renderer, mappedInput, I18N.get(s1), I18N.get(s2), I18N.get(s3), I18N.get(s4));
 }
 
+// Standard list navigation hints: Back / Select / Up / Down.
+inline void drawStandardHints(GfxRenderer& renderer, MappedInputManager& mappedInput) {
+  drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+}
+
 // Draw a standard list inside a computed layout rect.
 inline void drawList(GfxRenderer& renderer, int contentTop, int contentHeight, int itemCount, int selectedIndex,
                      const std::function<std::string(int index)>& rowTitle,
@@ -61,6 +67,36 @@ inline void drawList(GfxRenderer& renderer, const Layout& layout, int itemCount,
                      const std::function<bool(int index)>& rowCompleted = nullptr) {
   drawList(renderer, layout.contentTop, layout.contentHeight, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon,
            rowValue, highlightValue, rowCompleted);
+}
+
+// Draw a standard list, or a centered empty-state message when itemCount is 0.
+template <typename Layout>
+inline void drawListOrEmpty(GfxRenderer& renderer, const Layout& layout, int itemCount, int selectedIndex,
+                            const std::function<std::string(int index)>& rowTitle, const char* emptyText,
+                            const std::function<std::string(int index)>& rowSubtitle = nullptr,
+                            const std::function<UIIcon(int index)>& rowIcon = nullptr,
+                            const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
+                            const std::function<bool(int index)>& rowCompleted = nullptr) {
+  if (itemCount == 0) {
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, emptyText);
+  } else {
+    drawList(renderer, layout, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue, highlightValue,
+             rowCompleted);
+  }
+}
+
+inline void drawListOrEmpty(GfxRenderer& renderer, int contentTop, int contentHeight, int itemCount, int selectedIndex,
+                            const std::function<std::string(int index)>& rowTitle, const char* emptyText,
+                            const std::function<std::string(int index)>& rowSubtitle = nullptr,
+                            const std::function<UIIcon(int index)>& rowIcon = nullptr,
+                            const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
+                            const std::function<bool(int index)>& rowCompleted = nullptr) {
+  if (itemCount == 0) {
+    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, emptyText);
+  } else {
+    drawList(renderer, contentTop, contentHeight, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue,
+             highlightValue, rowCompleted);
+  }
 }
 
 }  // namespace ListRenderHelper

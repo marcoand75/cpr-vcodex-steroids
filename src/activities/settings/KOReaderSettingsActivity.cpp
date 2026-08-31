@@ -163,6 +163,6 @@ void KOReaderSettingsActivity::render(RenderLock&&) {
                              },
                              true);
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

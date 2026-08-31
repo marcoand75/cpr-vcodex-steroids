@@ -196,7 +196,7 @@ void ScreenCleanActivity::render(RenderLock&&) {
       [](const int index) { return std::string(subtitleForAction(index)); },
       [](const int) { return UIIcon::Image; });
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   if (completed) {
     GUI.drawPopup(renderer, tr(STR_SCREEN_CLEAN_DONE));
     return;

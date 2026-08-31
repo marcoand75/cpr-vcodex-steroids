@@ -122,15 +122,9 @@ void ReaderMenuOrderActivity::render(RenderLock&&) {
 
   ListRenderHelper::drawHeader(renderer, getTitle());
 
-  if (entries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24,
-                              tr(STR_NO_ENTRIES));
-  } else {
-    ListRenderHelper::drawList(renderer, layout, static_cast<int>(entries.size()),
-                               selectedIndex, [this](const int index) {
-                                 return getEntryTitle(entries[index]);
-                               });
-  }
+  ListRenderHelper::drawListOrEmpty(renderer, layout, static_cast<int>(entries.size()), selectedIndex,
+                                    [this](const int index) { return getEntryTitle(entries[index]); },
+                                    tr(STR_NO_ENTRIES));
 
   ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK),
                               moveMode ? tr(STR_DONE) : tr(STR_SELECT),

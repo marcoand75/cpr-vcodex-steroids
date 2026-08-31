@@ -104,31 +104,26 @@ void OpdsServerListActivity::render(RenderLock&&) {
 
   ListRenderHelper::drawHeader(renderer, tr(STR_OPDS_SERVERS));
 
-  if (itemCount == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, tr(STR_NO_SERVERS));
-  } else {
-    const auto& servers = OPDS_STORE.getServers();
-    const auto serverCount = static_cast<int>(servers.size());
+  const auto& servers = OPDS_STORE.getServers();
+  const auto serverCount = static_cast<int>(servers.size());
 
-    // Primary label: server name (falling back to URL if unnamed).
-    // Secondary label: server URL (shown as subtitle when name is set).
-    ListRenderHelper::drawList(
-        renderer, layout, itemCount, selectedIndex,
-        [&servers, serverCount](int index) {
-          if (index < serverCount) {
-            const auto& server = servers[index];
-            return server.name.empty() ? server.url : server.name;
-          }
-          return std::string(I18n::getInstance().get(StrId::STR_ADD_SERVER));
-        },
-        [&servers, serverCount](int index) {
-          if (index < serverCount && !servers[index].name.empty()) {
-            return servers[index].url;
-          }
-          return std::string("");
-        });
-  }
+  ListRenderHelper::drawListOrEmpty(
+      renderer, layout, itemCount, selectedIndex,
+      [&servers, serverCount](int index) {
+        if (index < serverCount) {
+          const auto& server = servers[index];
+          return server.name.empty() ? server.url : server.name;
+        }
+        return std::string(I18n::getInstance().get(StrId::STR_ADD_SERVER));
+      },
+      tr(STR_NO_SERVERS),
+      [&servers, serverCount](int index) {
+        if (index < serverCount && !servers[index].name.empty()) {
+          return servers[index].url;
+        }
+        return std::string("");
+      });
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

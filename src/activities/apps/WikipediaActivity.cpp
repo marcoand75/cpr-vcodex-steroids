@@ -616,8 +616,7 @@ void WikipediaActivity::renderSearchInput() {
     drawWrappedLine(langText, lineY, false);
   }
 
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -631,8 +630,7 @@ void WikipediaActivity::renderSearchHistory() {
                                static_cast<int>(historyQueries.size()), selectedIndex,
                                [this](int i) { return historyQueries[i]; }, nullptr, nullptr, nullptr, false, nullptr);
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -646,8 +644,7 @@ void WikipediaActivity::renderCachedPages() {
                                static_cast<int>(cachedPageTitles.size()), selectedIndex,
                                [this](int i) { return cachedPageTitles[i]; }, nullptr, nullptr, nullptr, false, nullptr);
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -661,8 +658,7 @@ void WikipediaActivity::renderResults() {
     ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight, rc, selectedIndex,
                                [this](int i) { return searchResults[i]; }, nullptr, nullptr, nullptr, false, nullptr);
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -671,8 +667,7 @@ void WikipediaActivity::renderArticle() {
   if (!buf || textLength == 0) {
     LOG_DBG("WIKI", "renderArticle: empty buf=%p len=%zu", (void*)buf, textLength);
     renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight()/2, "Loading...");
-    auto lb = mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, nullptr);
-    GUI.drawButtonHints(renderer, lb.btn1, nullptr, nullptr, nullptr);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), nullptr, nullptr, nullptr);
     renderer.displayBuffer();
     return;
   }
@@ -752,8 +747,7 @@ void WikipediaActivity::renderArticle() {
     drawWrappedLine(tr(STR_WIKIPEDIA_DOWNLOAD_NOTE2), lineY, false);
   }
 
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -761,8 +755,7 @@ void WikipediaActivity::renderError() {
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_WIKIPEDIA));
   renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight()/2 - 20, tr(STR_WIKIPEDIA_ERROR));
   if (!errorMessage.empty()) renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight()/2 + 10, errorMessage.c_str());
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, nullptr);
-  GUI.drawButtonHints(renderer, lb.btn1, nullptr, nullptr, nullptr);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), nullptr, nullptr, nullptr);
   renderer.displayBuffer();
 }
 
