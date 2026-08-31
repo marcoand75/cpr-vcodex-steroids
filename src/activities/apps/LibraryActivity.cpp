@@ -52,6 +52,7 @@ bool LibraryActivity::forceScanOnNextOpen_ = false;
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "SilentRestart.h"
 
 // Compile-time verification: the largest icon (32×32 1‑bpp) is exactly 128 B.
@@ -1450,8 +1451,8 @@ void LibraryActivity::render(RenderLock&&) {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   if (total == 0) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_LIBRARY_EMPTY));
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_LIBRARY_DIR_LEFT_PAGE), tr(STR_LIBRARY_DIR_RIGHT_PAGE));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_LIBRARY_DIR_LEFT_PAGE),
+                                tr(STR_LIBRARY_DIR_RIGHT_PAGE));
     GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
   }
 
@@ -1518,12 +1519,11 @@ void LibraryActivity::render(RenderLock&&) {
 
   // Button hints + popup overlay
   if (popupMode_ != PopupMode::None) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), "", "");
     GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   } else {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_LIBRARY_DIR_LEFT_PAGE), tr(STR_LIBRARY_DIR_RIGHT_PAGE));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_LIBRARY_DIR_LEFT_PAGE),
+                                tr(STR_LIBRARY_DIR_RIGHT_PAGE));
     GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
   }
 

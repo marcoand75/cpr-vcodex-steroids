@@ -9,6 +9,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -536,8 +537,7 @@ void FlashcardReviewActivity::render(RenderLock&&) {
     textY += wrappedLineHeight;
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_FLIP), tr(STR_SUCCESS), tr(STR_FAIL));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_EXIT), tr(STR_FLIP), tr(STR_SUCCESS), tr(STR_FAIL));
   drawReviewScrollHints(renderer, metrics, pageWidth, scrollLineOffset > 0, scrollLineOffset < maxScrollLineOffset);
 
   renderer.displayBuffer();
