@@ -13,6 +13,7 @@
 #include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ReadingStatsAnalytics.h"
 #include "util/TimeUtils.h"
@@ -258,8 +259,8 @@ void BookReadingAdjustmentActivity::render(RenderLock&&) {
   const std::string shortHint = renderer.truncatedText(UI_10_FONT_ID, hint.c_str(), infoWidth);
   renderer.drawText(UI_10_FONT_ID, sidePadding, infoTop + renderer.getLineHeight(UI_10_FONT_ID), shortHint.c_str());
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), selectedField == 1 ? tr(STR_SELECT) : tr(STR_CONFIRM),
-                                            tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK),
+                              selectedField == 1 ? tr(STR_SELECT) : tr(STR_CONFIRM), tr(STR_DIR_LEFT),
+                              tr(STR_DIR_RIGHT));
   renderer.displayBuffer();
 }
