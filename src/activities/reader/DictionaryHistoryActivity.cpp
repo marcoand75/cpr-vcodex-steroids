@@ -13,6 +13,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 void DictionaryHistoryActivity::onEnter() {
   Activity::onEnter();
@@ -93,7 +94,6 @@ void DictionaryHistoryActivity::render(RenderLock&&) {
                  selectedIndex, [this](int index) { return history[index]; });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
