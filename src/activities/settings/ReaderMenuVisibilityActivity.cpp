@@ -9,6 +9,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/ButtonNavigator.h"
 
 namespace {
@@ -102,7 +103,7 @@ void ReaderMenuVisibilityActivity::render(RenderLock&&) {
    const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
    if (entries.empty()) {
-     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_ENTRIES));
+     ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_ENTRIES));
    } else {
      GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(entries.size()), selectedIndex,
                   [this](const int index) { return std::string(I18N.get(entries[index]->nameId)); }, nullptr, nullptr,

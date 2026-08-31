@@ -8,6 +8,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -130,7 +131,7 @@ void FavoritesOrderActivity::render(RenderLock&&) {
   const int listHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
   if (entries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_FAVORITES));
+    ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_FAVORITES));
   } else {
     GUI.drawList(renderer, Rect{0, contentTop, pageWidth, listHeight}, static_cast<int>(entries.size()), selectedIndex,
                  [this](const int index) { return getFavoriteTitle(entries[index]); },
