@@ -59,4 +59,12 @@ void forceDisconnect() {
   WiFi.disconnect(true);
 }
 
+void powerOff() {
+  WiFi.mode(WIFI_OFF);
+}
+
+void setAutoReconnect(bool enabled) {
+  WiFi.setAutoReconnect(enabled);
+}
+
 }  // namespace WiFiUtils

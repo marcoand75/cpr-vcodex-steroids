@@ -573,7 +573,7 @@ void CrossPointWebServer::begin() {
   WiFiUtils::disableModemSleep();
   // Default varies by ESP32 core version. The activity's loss-recovery loop
   // relies on driver retries during transient disconnects.
-  WiFi.setAutoReconnect(true);
+  WiFiUtils::setAutoReconnect(true);
 
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.

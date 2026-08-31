@@ -538,7 +538,7 @@ void enterDeepSleep() {
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFiUtils::forceDisconnect();
-    WiFi.mode(WIFI_OFF);
+    WiFiUtils::powerOff();
   }
 
   halTiltSensor.deepSleep();
@@ -686,7 +686,7 @@ void setup() {
   // always scans first and uses WifiCredentialStore (SD card JSON) as the source of
   // truth; the SDK's hidden nvs.net80211 copy must not auto-reconnect behind the user.
   WiFiUtils::disableNvsAutoPersist();
-  WiFi.mode(WIFI_OFF);
+  WiFiUtils::powerOff();
 
 #ifdef ENABLE_SERIAL_LOG
   if (gpio.isUsbConnected()) {

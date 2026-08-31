@@ -54,4 +54,12 @@ void disconnect();
 // before deep sleep or full power-down where the radio must not reconnect.
 void forceDisconnect();
 
+// Switch the WiFi radio fully off. Used by main.cpp boot and deep-sleep paths
+// where no further WiFi activity will occur until the next boot.
+void powerOff();
+
+// Enable or disable the WiFi stack's automatic reconnect behavior. Used by
+// the web server where driver retries are required during transient disconnects.
+void setAutoReconnect(bool enabled);
+
 }  // namespace WiFiUtils
