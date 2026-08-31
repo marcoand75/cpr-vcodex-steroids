@@ -14,6 +14,7 @@
 #include "ReadingDayDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ReadingStatsAnalytics.h"
 #include "util/TimeUtils.h"
@@ -509,7 +510,6 @@ void ReadingHeatmapActivity::render(RenderLock&&) {
 
   drawLegend(renderer, Rect{sidePadding, legendTop, pageWidth - sidePadding * 2, LEGEND_HEIGHT});
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
