@@ -57,6 +57,7 @@
 #include "components/LibraryCache.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -1347,8 +1348,7 @@ void SettingsActivity::render(RenderLock&&) {
   const auto& settings = *currentSettings;
   renderAppSettingsList(listRect);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
   if (prewarmedFonts) {
     renderer.getFontCacheManager()->clearCache();
