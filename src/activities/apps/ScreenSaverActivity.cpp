@@ -19,6 +19,7 @@
 #include "fontIds.h"
 #include "util/PngSleepRenderer.h"
 #include "util/SleepImageUtils.h"
+#include "util/TextOverlay.h"
 
 // Declared in main.cpp — free/restore font heap to maximise contiguous memory
 // for PNG decoder (~38 KB) during screensaver image rendering.
@@ -402,20 +403,28 @@ void ScreenSaverActivity::render(RenderLock&&) {
   LOG_DBG("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
 
-  // Re-initialise the decompressor and pre-load the overlay glyphs into its
-  // page buffer NOW, while heap is still ~60 KB contiguous. Doing it after the
-  // image decode would force FontDecompressor::getBitmap() to allocate the hot
-  // group on a fragmented heap (maxAlloc ~10 KB) and abort with std::bad_alloc.
-  restoreFontMemory();
+  // Build the overlay config up front. If the user has cleared the text
+  // setting, skip font restoration entirely (the overlay draw will be a no-op)
+  // so we don't waste ~40-48 KB of heap on glyphs we will never use.
   const char* overlayText = SETTINGS.screenSaverText;
-  if (overlayText != nullptr && overlayText[0] != '\0') {
-    int overlayFontId = UI_10_FONT_ID;
-    EpdFontFamily::Style overlayStyle = EpdFontFamily::REGULAR;
-    getOverlayFont(overlayFontId, overlayStyle);
-    // styleMask covers REGULAR(0) and BOLD(1); the overlay uses one of them.
-    const uint8_t styleMask = (overlayStyle == EpdFontFamily::BOLD) ? 0x02 : 0x01;
+  const bool hasOverlay = text_overlay::shouldDraw(overlayText);
+  text_overlay::OverlayConfig overlayCfg;
+  overlayCfg.position = SETTINGS.screenSaverTextPosition;
+  overlayCfg.textStyle = SETTINGS.screenSaverTextStyle;
+  overlayCfg.drawPanel = SETTINGS.screenSaverShowPanel != 0;
+  overlayCfg.panelColor = SETTINGS.screenSaverPanelColor == 0 ? Color::Black : Color::White;
+  overlayCfg.cachedRandomPosition = &overlayTextPosition_;
+
+  if (hasOverlay) {
+    // Re-initialise the decompressor and pre-load the overlay glyphs into its
+    // page buffer NOW, while heap is still ~60 KB contiguous. Doing it after the
+    // image decode would force FontDecompressor::getBitmap() to allocate the hot
+    // group on a fragmented heap (maxAlloc ~10 KB) and abort with std::bad_alloc.
+    restoreFontMemory();
+    text_overlay::resolveFontFromSize(SETTINGS.screenSaverFontSize, overlayCfg.fontId, overlayCfg.fontStyle);
+    const uint8_t styleMask = (overlayCfg.fontStyle == EpdFontFamily::BOLD) ? 0x02 : 0x01;
     if (auto* fcm = renderer.getFontCacheManager()) {
-      fcm->prewarmCache(overlayFontId, overlayText, styleMask);
+      fcm->prewarmCache(overlayCfg.fontId, overlayText, styleMask);
     }
   }
 
@@ -425,7 +434,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
 
   if (!isPng && !isBmp) {
     renderer.clearScreen();
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     LOG_DBG("SS", "RENDER done (unsupported format): free=%d maxAlloc=%d",
@@ -466,7 +475,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     // Fonts were already restored and prewarmed before the decode; the overlay
     // glyphs are in the page buffer so no hot-group alloc happens here.
     if (pngOk) {
-      drawTextOverlay();
+      text_overlay::draw(renderer, overlayText, overlayCfg);
       renderer.clearNextRefreshOverride();
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       // Release font caches now to keep maxAlloc high for the next wake-up.
@@ -477,7 +486,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     }
     // Fall through to white screen on PNG failure
     renderer.clearScreen();
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     freeFontMemory();
@@ -490,7 +499,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   FsFile file;
   if (!Storage.openFileForRead("SS", imagePath, file)) {
     renderer.clearScreen();
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     LOG_DBG("SS", "RENDER done (BMP open fail): free=%d maxAlloc=%d",
@@ -505,7 +514,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
     file.close();
     renderer.clearScreen();
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.clearNextRefreshOverride();
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     LOG_DBG("SS", "RENDER done (BMP parse fail): free=%d maxAlloc=%d",
@@ -536,7 +545,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
   renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
 
   // Fonts were already restored and prewarmed before the decode.
-  drawTextOverlay();
+  text_overlay::draw(renderer, overlayText, overlayCfg);
 
   renderer.clearNextRefreshOverride();
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -550,7 +559,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.copyGrayscaleLsbBuffers();
 
     LOG_DBG("SS", "RENDER BMP grayscale MSB pass: free=%d maxAlloc=%d",
@@ -561,7 +570,7 @@ void ScreenSaverActivity::render(RenderLock&&) {
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
-    drawTextOverlay();
+    text_overlay::draw(renderer, overlayText, overlayCfg);
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.displayGrayBuffer();
@@ -571,109 +580,4 @@ void ScreenSaverActivity::render(RenderLock&&) {
   file.close();
   LOG_DBG("SS", "RENDER done (BMP): free=%d maxAlloc=%d",
           static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
-}
-
-void ScreenSaverActivity::getOverlayFont(int& fontId, EpdFontFamily::Style& style) const {
-  fontId = UI_10_FONT_ID;
-  style = EpdFontFamily::REGULAR;
-  // Use Bookerly (always available) at the size corresponding to the setting.
-  // Regular for X_SMALL through MEDIUM, Bold for LARGE and X_LARGE.
-  switch (SETTINGS.screenSaverFontSize) {
-    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_SMALL:  fontId = BOOKERLY_12_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: fontId = BOOKERLY_14_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_LARGE:  fontId = BOOKERLY_16_FONT_ID; style = EpdFontFamily::BOLD; break;
-    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: fontId = BOOKERLY_18_FONT_ID; style = EpdFontFamily::BOLD; break;
-  }
-}
-
-void ScreenSaverActivity::drawTextOverlay() {
-  const char* text = SETTINGS.screenSaverText;
-  if (text == nullptr || text[0] == '\0') return;
-
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
-  const int margin = 16;
-
-  int fontId = UI_10_FONT_ID;
-  EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR;
-  getOverlayFont(fontId, textStyle);
-
-  const int lineHeight = renderer.getLineHeight(fontId);
-  auto lines = renderer.wrappedText(fontId, text, pageWidth - 2 * margin, 4, textStyle);
-  if (lines.empty()) return;
-
-  const int textHeight = static_cast<int>(lines.size()) * lineHeight;
-
-  bool drawPanel = SETTINGS.screenSaverShowPanel != 0;
-  int pos;
-  const uint8_t configuredPos = SETTINGS.screenSaverTextPosition;
-  if (configuredPos == CrossPointSettings::SCREENSAVER_TEXT_POS_RANDOM) {
-    // Resolve the random position ONCE per frame (not per pass). Rolled lazily
-    // here and cached so the BW / LSB / MSB grayscale passes and any subsequent
-    // drawTextOverlay() call in the same render all agree on the same spot,
-    // otherwise the text would land in different random places between passes
-    // and the discarded position would look like ghosting.
-    if (overlayTextPosition_ < 0) {
-      overlayTextPosition_ = random(CrossPointSettings::SCREENSAVER_TEXT_POSITION_COUNT - 1);
-    }
-    pos = overlayTextPosition_;
-  } else {
-    pos = configuredPos;
-  }
-
-  int baseX = margin, baseY = margin;
-  switch (pos) {
-    case CrossPointSettings::SCREENSAVER_TEXT_POS_TOP_LEFT:     baseX = margin; baseY = margin; break;
-    case CrossPointSettings::SCREENSAVER_TEXT_POS_TOP_RIGHT:    baseX = pageWidth - margin; baseY = margin; break;
-    case CrossPointSettings::SCREENSAVER_TEXT_POS_BOTTOM_LEFT:  baseX = margin; baseY = pageHeight - margin - textHeight; break;
-    case CrossPointSettings::SCREENSAVER_TEXT_POS_BOTTOM_RIGHT: baseX = pageWidth - margin; baseY = pageHeight - margin - textHeight; break;
-    case CrossPointSettings::SCREENSAVER_TEXT_POS_CENTER:       baseX = pageWidth / 2; baseY = (pageHeight - textHeight) / 2; break;
-    default: break;
-  }
-
-  int panelW = 0;
-  for (auto& ln : lines) {
-    int w = renderer.getTextWidth(fontId, ln.c_str(), textStyle);
-    if (w > panelW) panelW = w;
-  }
-
-  int panelPadding = drawPanel ? 16 : 4;
-  int panelX, panelY = baseY;
-
-  if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_TOP_RIGHT || pos == CrossPointSettings::SCREENSAVER_TEXT_POS_BOTTOM_RIGHT) {
-    panelX = pageWidth - margin - panelW - 2 * panelPadding;
-  } else if (pos == CrossPointSettings::SCREENSAVER_TEXT_POS_CENTER) {
-    panelX = (pageWidth - panelW) / 2 - panelPadding;
-  } else {
-    panelX = margin;
-  }
-
-  if (drawPanel) {
-    renderer.fillRectDither(panelX, panelY, panelW + 2 * panelPadding, textHeight + 2 * panelPadding,
-                            SETTINGS.screenSaverPanelColor == 0 ? Color::Black : Color::White);
-  }
-
-  int style = SETTINGS.screenSaverTextStyle;
-  bool textBlack = (style == CrossPointSettings::SCREENSAVER_TEXT_BLACK || style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
-  bool outlined = (style == CrossPointSettings::SCREENSAVER_TEXT_WHITE_OUTLINED_BLACK || style == CrossPointSettings::SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE);
-
-  int drawY = baseY + panelPadding;
-  for (auto& ln : lines) {
-    int tw = renderer.getTextWidth(fontId, ln.c_str(), textStyle);
-    int dx = panelX + panelPadding + (panelW - tw) / 2;
-
-    if (outlined) {
-      renderer.drawText(fontId, dx - 2, drawY, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx + 2, drawY, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx, drawY - 2, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx, drawY + 2, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx - 1, drawY - 1, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx + 1, drawY - 1, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx - 1, drawY + 1, ln.c_str(), !textBlack, textStyle);
-      renderer.drawText(fontId, dx + 1, drawY + 1, ln.c_str(), !textBlack, textStyle);
-    }
-    renderer.drawText(fontId, dx, drawY, ln.c_str(), textBlack, textStyle);
-    drawY += lineHeight;
-  }
 }
