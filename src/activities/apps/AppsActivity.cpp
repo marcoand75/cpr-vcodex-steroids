@@ -65,52 +65,45 @@ void AppsActivity::onEnter() {
   ACHIEVEMENTS.ensureLoaded();
   rebuildShortcutSubtitles();
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    self->onGoHome();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    self->openSelectedApp();
+  }, this, false);
+
+  auto onNavPress = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    }
+    self->requestUpdate();
+  };
+
+  auto onNavContinuous = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    } else {
+      self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavPressAndContinuous(onNavPress, onNavContinuous, this);
 }
 
 void AppsActivity::loop() {
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    onGoHome();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    openSelectedApp();
-    return;
-  }
-
-  buttonNavigator.onNextPress([this] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousPress([this] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, pageItems] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextPageIndex(selectedIndex, static_cast<int>(appShortcuts.size()), pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, pageItems] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, static_cast<int>(appShortcuts.size()), pageItems);
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void AppsActivity::render(RenderLock&&) {

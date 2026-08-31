@@ -3,11 +3,11 @@
 #include <vector>
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
 #include "util/ShortcutRegistry.h"
+#include "../util/ListInputMapper.h"
 
 class AppsActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   int selectedIndex = 0;
   std::vector<const ShortcutDefinition*> appShortcuts;
   std::vector<std::string> shortcutSubtitles;
