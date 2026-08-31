@@ -607,8 +607,7 @@ void ReadingStatsDetailActivity::render(RenderLock&&) {
     HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_STATS));
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding + metrics.headerHeight + 30,
                       tr(STR_NO_READING_STATS));
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
