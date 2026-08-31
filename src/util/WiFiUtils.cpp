@@ -67,4 +67,8 @@ void setAutoReconnect(bool enabled) {
   WiFi.setAutoReconnect(enabled);
 }
 
+void enterApMode() {
+  WiFi.mode(WIFI_AP);
+}
+
 }  // namespace WiFiUtils

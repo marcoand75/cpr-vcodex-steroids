@@ -62,4 +62,7 @@ void powerOff();
 // the web server where driver retries are required during transient disconnects.
 void setAutoReconnect(bool enabled);
 
+// Start access-point mode. Used by the web server activity when creating a hotspot.
+void enterApMode();
+
 }  // namespace WiFiUtils
