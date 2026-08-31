@@ -99,4 +99,14 @@ inline void drawListOrEmpty(GfxRenderer& renderer, int contentTop, int contentHe
   }
 }
 
+// Draw a centered empty-state message below the layout top.
+inline void drawEmptyCentered(GfxRenderer& renderer, int contentTop, const char* emptyText) {
+  renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, emptyText);
+}
+
+template <typename Layout>
+inline void drawEmptyCentered(GfxRenderer& renderer, const Layout& layout, const char* emptyText) {
+  renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, emptyText);
+}
+
 }  // namespace ListRenderHelper
