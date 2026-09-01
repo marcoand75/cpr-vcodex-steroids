@@ -637,21 +637,25 @@ void setupDisplayAndFonts(bool seamless = false) {
 void setup() {
   t1 = millis();
 
+  // ===========================================================================
+  // PHASE 1 — Hardware init
+  //   - Bring up HalSystem and detect the board.
+  //   - Hold the power rails BEFORE any probe (BoardConfig::selectDevice is
+  //     a fallback; HalGPIO::begin() may re-select X3 if the probe confirms it).
+  //   - Start the RTC, tilt sensor, and power manager.
+  // ===========================================================================
   HalSystem::begin();
 
-  // Select default board (X4) and latch power rails BEFORE any detection
-  // probes touch I2C or SPI pins. HalGPIO::begin() will re-select X3 if
-  // the fingerprint probe confirms it.
   BoardConfig::selectDevice(BoardConfig::Board::XteinkX4);
   BoardConfig::holdPowerRails();
 
+  // Snapshot the silent-reboot routing BEFORE zeroing RTC_NOINIT.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
        (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_PLUGIN_BROWSER) ? silentRebootTarget : 0;
   LOG_INF("MAIN", "RTC: magic=0x%08x target=%u caller=%u retPB=%d snapshotTarget=%u",
           silentRebootMagic, silentRebootTarget, silentRebootCaller, silentRebootReturnToPluginBrowser, snapshotTarget);
 
-  // Snapshot plugin name/caller before zeroing RTC_NOINIT vars
   char snapshotPluginName[32] = {0};
   bool snapshotCallerFromApps = false;
   bool snapshotReturnToPluginBrowser = false;
@@ -699,7 +703,13 @@ void setup() {
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
 
-  // SD Card Initialization
+  // ===========================================================================
+  // PHASE 2 — Storage + recovery
+  //   - SD card is required for everything else; bail out to a popup on fail.
+  //   - SdFat file timestamps use the synced RTC time.
+  //   - Panic check + BootRecovery init set the recovery mask (skips that
+  //     are then honoured by every runBootStage() call below).
+  // ===========================================================================
   // We need 6 open files concurrently when parsing a new chapter
   if (!Storage.begin()) {
     LOG_ERR("MAIN", "SD card initialization failed");
@@ -708,47 +718,52 @@ void setup() {
     return;
   }
 
-  // Stamp all SdFat creates/syncs with RTC time when available, else last Sync Day.
   TimeUtils::registerSdFatDateTimeCallback();
 
   HalSystem::checkPanic();
   BootRecovery::initialize();
+  // Wire BootRecovery's runBootStage() skip log to the same destination as
+  // the other boot diagnostics so the cpr-vcodex-logs recovery file picks
+  // up the skip events for post-mortem analysis.
+  BootRecovery::setSkipLogFn([](const char* message) { CPR_VCODEX_LOG_EVENT("BOOT", message); });
 
-  const auto logSkip = [](const char* message) { CPR_VCODEX_LOG_EVENT("BOOT", message); };
-
-  if (BootRecovery::shouldSkipSettings()) {
-    logSkip("Skipping settings load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Settings);
-    SETTINGS.loadFromFile();
+  // ===========================================================================
+  // PHASE 3 — Core settings + UI theme
+  //   Loads (in order): settings.json, language, KOReader credentials, OPDS
+  //   servers, then refreshes the UI theme + ButtonNavigator binding.
+  //   Each is gated by the recovery mask; the lambda runs only on a clean
+  //   boot. imageRenderConfigApplySettings() must run after SETTINGS so the
+  //   image decoders pick up the right gamma/dither config.
+  // ===========================================================================
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::Settings, BootRecovery::shouldSkipSettings(),
+                                 "settings",
+                                 [] { SETTINGS.loadFromFile(); })) {
     imageRenderConfigApplySettings();  // Apply image-rendering params from loaded settings
+    LOG_DBG("BOOT", "After settings: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
-  if (BootRecovery::shouldSkipLanguage()) {
-    logSkip("Skipping language load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Language);
-    I18N.loadSettings();
-  }
+  BootRecovery::runBootStage(BootRecovery::BootStage::Language, BootRecovery::shouldSkipLanguage(), "language",
+                             [] { I18N.loadSettings(); });
 
-  if (BootRecovery::shouldSkipKOReader()) {
-    logSkip("Skipping KOReader credential load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::KOReader);
-    KOREADER_STORE.loadFromFile();
-  }
+  BootRecovery::runBootStage(BootRecovery::BootStage::KOReader, BootRecovery::shouldSkipKOReader(), "koreader",
+                             [] { KOREADER_STORE.loadFromFile(); });
 
-  if (BootRecovery::shouldSkipOPDS()) {
-    logSkip("Skipping OPDS store load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::OPDS);
-    OPDS_STORE.loadFromFile();
-  }
+  BootRecovery::runBootStage(BootRecovery::BootStage::OPDS, BootRecovery::shouldSkipOPDS(), "opds",
+                             [] { OPDS_STORE.loadFromFile(); });
 
   BootRecovery::enterStage(BootRecovery::BootStage::UiTheme);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
+  // ===========================================================================
+  // PHASE 4 — Wakeup handling
+  //   Reads the RTC wakeup reason and:
+  //     - PowerButton: optionally route a short tap into cycleScreensaver
+  //       (does not return); otherwise require a hold-to-wake via
+  //       gpio.verifyPowerButtonWakeup() (does not return on abort).
+  //     - AfterUSBPower: re-sleep immediately.
+  //     - AfterFlash / Other: fall through to the normal boot path.
+  // ===========================================================================
   const auto wakeupReason = gpio.getWakeupReason();
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
@@ -789,12 +804,17 @@ void setup() {
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version %s", CROSSPOINT_VERSION);
 
+  // Manual safe boot: hold Back during boot to skip all data stores and
+  // force the Home activity, mirroring the recovery-mode bit.
   gpio.update();
   const bool manualSafeBoot = gpio.isPressed(HalGPIO::BTN_BACK);
   if (manualSafeBoot) {
     CPR_VCODEX_LOG_EVENT("BOOT", "Manual safe boot requested by holding Back during boot");
   }
 
+  // ===========================================================================
+  // PHASE 5 — Display + fonts + boot screen
+  // ===========================================================================
   BootRecovery::enterStage(BootRecovery::BootStage::DisplayAndFonts);
   setupDisplayAndFonts(isSilentReboot);
   LOG_DBG("BOOT", "After display/fonts: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -803,6 +823,13 @@ void setup() {
     activityManager.goToBoot();
   }
 
+  // ===========================================================================
+  // PHASE 6 — Data stores that don't block boot
+  //   The first 3 (State, RecentBooks, Flashcards) are loaded eagerly because
+  //   they are read on the very first frame of Home / Apps. The rest are
+  //   loaded on demand to save boot heap (see the per-store comment for the
+  //   activity that needs them).
+  // ===========================================================================
   const bool skipStateLoad = manualSafeBoot || BootRecovery::shouldSkipState();
   const bool skipReadingStatsLoad = manualSafeBoot || BootRecovery::shouldSkipReadingStats();
   const bool skipRecentBooksLoad = manualSafeBoot || BootRecovery::shouldSkipRecentBooks();
@@ -811,35 +838,23 @@ void setup() {
   const bool skipAchievementsLoad = manualSafeBoot || BootRecovery::shouldSkipAchievements();
   const bool forceHomeBoot = manualSafeBoot || BootRecovery::shouldForceHome();
 
-  if (skipStateLoad) {
-    logSkip("Skipping app state load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::State);
-    APP_STATE.loadFromFile();
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::State, skipStateLoad, "app state",
+                                 [] { APP_STATE.loadFromFile(); })) {
     LOG_DBG("BOOT", "After app state: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
-  if (skipReadingStatsLoad) {
-    logSkip("Skipping reading stats load due to recovery mode");
-    READING_STATS.markLoadSkippedForRecovery();
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::ReadingStats, skipReadingStatsLoad, "reading stats",
+                                 [] { READING_STATS.markLoadSkippedForRecovery(); })) {
     // Reading stats are loaded on demand by the first activity that needs them.
     LOG_DBG("BOOT", "Reading stats deferred (loaded on demand)");
   }
 
-  if (skipRecentBooksLoad) {
-    logSkip("Skipping recent books load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::RecentBooks);
-    RECENT_BOOKS.loadFromFile();
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::RecentBooks, skipRecentBooksLoad, "recent books",
+                                 [] { RECENT_BOOKS.loadFromFile(); })) {
     LOG_DBG("BOOT", "After recent books: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
-  if (skipFavoritesLoad) {
-    logSkip("Skipping favorites load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Favorites);
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::Favorites, skipFavoritesLoad, "favorites", nullptr)) {
     // Favorites are loaded on demand by HomeActivity/LibraryActivity to save boot heap.
     LOG_DBG("BOOT", "Favorites deferred (loaded on demand)");
   }
@@ -847,46 +862,45 @@ void setup() {
   // Hidden books are loaded on demand by LibraryActivity to save boot heap.
   LOG_DBG("BOOT", "Hidden books deferred (loaded on demand)");
 
-  if (skipFlashcardsLoad || isSilentReboot) {
-    if (isSilentReboot) {
-      logSkip("Skipping flashcards load on silent reboot (decks unchanged)");
-    } else {
-      logSkip("Skipping flashcards load due to recovery mode");
-    }
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Flashcards);
-    // Flashcards are loaded on demand by FlashcardsAppActivity/QuickCardsActivity.
+  // Flashcards are skipped on silent reboot because the on-disk state
+  // hasn't changed; on a clean boot the deck metadata is loaded on demand
+  // by FlashcardsAppActivity/QuickCardsActivity.
+  const bool skipFlashcardsEffective = skipFlashcardsLoad || isSilentReboot;
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::Flashcards, skipFlashcardsEffective, "flashcards", nullptr)) {
     LOG_DBG("BOOT", "Flashcards deferred (loaded on demand)");
   }
 
-  if (skipAchievementsLoad) {
-    logSkip("Skipping achievements load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Achievements);
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::Achievements, skipAchievementsLoad, "achievements", nullptr)) {
     // Achievements are loaded on demand by AchievementsActivity/SleepActivity.
     LOG_DBG("BOOT", "Achievements deferred (loaded on demand)");
   }
 
+  // ===========================================================================
+  // PHASE 7 — Route decision + boot completion
+  //   Decides which activity to launch: crash report (panic), reader
+  //   resume, apps, plugin, or Home. The reader-resume path bumps
+  //   readerActivityLoadCount to break boot loops if the EPUB fails to load.
+  // ===========================================================================
   const bool countUsefulStart = !isSilentReboot && !forceHomeBoot &&
                                 wakeupReason != HalGPIO::WakeupReason::AfterUSBPower &&
                                 wakeupReason != HalGPIO::WakeupReason::AfterFlash;
   const uint8_t syncDayReminderThreshold = SETTINGS.getSyncDayReminderStartThreshold();
   BootRecovery::enterStage(BootRecovery::BootStage::RouteDecision);
 
-   if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
-     // If we rebooted from a panic, go to crash report screen to show the panic info
-     activityManager.goToCrashReport();
-   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
-      activityManager.goToReader(APP_STATE.openEpubPath);
-    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
-      activityManager.goToApps();
-    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN_BROWSER) {
-       activityManager.goToPluginBrowser();
-    } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
-       activityManager.goToPlugin(snapshotPluginName, snapshotCallerFromApps, snapshotReturnToPluginBrowser);
-    } else if (isSilentReboot) {
-     activityManager.goHome();
-   } else {
+  if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
+    // If we rebooted from a panic, go to crash report screen to show the panic info
+    activityManager.goToCrashReport();
+  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
+    activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
+    activityManager.goToApps();
+  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN_BROWSER) {
+    activityManager.goToPluginBrowser();
+  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
+    activityManager.goToPlugin(snapshotPluginName, snapshotCallerFromApps, snapshotReturnToPluginBrowser);
+  } else if (isSilentReboot) {
+    activityManager.goHome();
+  } else {
     const bool bootToHome = forceHomeBoot || APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
                             mappedInputManager.isPressed(MappedInputManager::Button::Back) ||
                             APP_STATE.readerActivityLoadCount > 0;
