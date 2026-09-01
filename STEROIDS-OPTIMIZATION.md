@@ -1,0 +1,452 @@
+# CPR-vCodex Steroids — Shared Procedures & Optimization Reference
+
+> **SCOPE OF THIS FILE**
+>
+> `STEROIDS-OPTIMIZATION.md` is the **single source of truth for the shared
+> utility procedures** that the Steroids fork has extracted to reduce
+> code duplication, ensure consistent behavior, and minimize heap pressure.
+>
+> The other two Steroids definition files are:
+> - `STEROIDS-ADDICTIONS.md` — All Steroids apps, screensavers, sleep/deep-sleep handling, and every enhancement.
+> - `STEROIDS-ALIGN-TO-UPSTREAM.md` — Workflow to merge a new upstream release while preserving Steroids features.
+>
+> Use this file as a **mandatory line-guida** when:
+> - Adding a new app / screen / panel that draws text or lists.
+> - Modifying an existing screen that hand-rolls the same logic.
+> - Reviewing PRs that introduce inline copy-pastes of the helpers below.
+>
+> The rule of thumb: **if a procedure already lives in a util, you must call
+> that util**. Inline re-implementations are rejected at review.
+
+---
+
+## 1. Overview
+
+Steroids has progressively de-duplicated ~1,500 lines of common rendering and
+input-mapping code into 5 shared headers / namespaces. Every Steroids
+contributor must be familiar with the table below before opening a PR.
+
+| # | Util | Path | When to use |
+|---|---|---|---|
+| 1 | `text_overlay::` | `src/util/TextOverlay.{h,cpp}` | Configurable text + box + outlined text overlay on top of an image (screensaver, sleep) |
+| 2 | `text_draw::` | `src/util/TextDrawer.h` | Stateless panel helpers: clipped text, right-aligned text, label+value row, progress bar, checkbox, percent math |
+| 3 | `ListRenderHelper::` | `src/activities/util/ListRenderHelper.h` | List rendering (header, list rows, empty state, hint hints) and the standard `drawEmptyCentered` helper |
+| 4 | `ListInputMapper::` | `src/util/ListInputMapper.h` | List input pipeline (back, confirm, nav) with press/continuous/release lambdas |
+| 5 | `OrderListActivity<>` | `src/activities/util/OrderListActivity.h` | CRTP base for "user can reorder entries" screens (Back/Up/Down with moveMode toggle) |
+
+All five are **tested, building, and used in production**. They are the
+canonically correct way to write Steroids UI code.
+
+---
+
+## 2. `text_overlay::` — Image Overlay Text
+
+### When to use
+You are drawing **any** user-configurable text label on top of an image
+(screensaver, sleep screen, custom wallpaper, custom future screens).
+Includes:
+- Multi-line word-wrapping at the screen width.
+- One of six positions (top-left/right, bottom-left/right, center, random).
+- One of four text styles (white, black, white-outlined, black-outlined).
+- Optional 16-pixel black or white dithered background panel.
+- Resolves the correct Bookerly fontId for the configured size.
+
+### How to use
+```cpp
+#include "util/TextOverlay.h"
+
+// 1. Cheap check: skip font loading entirely if text is empty/null.
+if (text_overlay::shouldDraw(myText)) {
+  // 2. Resolve font + style up front (e.g. before an image decode).
+  text_overlay::OverlayConfig cfg;
+  cfg.position   = SETTINGS.screenSaverTextPosition;
+  cfg.textStyle  = SETTINGS.screenSaverTextStyle;
+  cfg.drawPanel  = SETTINGS.screenSaverShowPanel != 0;
+  cfg.panelColor = SETTINGS.screenSaverPanelColor == 0 ? Color::Black : Color::White;
+  cfg.cachedRandomPosition = &randomCache;  // shared across BW/LSB/MSB passes
+  text_overlay::resolveFontFromSize(SETTINGS.screenSaverFontSize, cfg.fontId, cfg.fontStyle);
+
+  // 3. Prewarm font cache NOW (before heap gets fragmented by the image decode).
+  fcm->prewarmCache(cfg.fontId, myText, styleMask);
+
+  // 4. Call the drawer at every render pass. Returns false on empty text.
+  text_overlay::draw(renderer, myText, cfg);
+}
+```
+
+### Heap-saving behaviour
+When the user has cleared the text setting (`shouldDraw()` returns false),
+the helper returns false and **the caller can skip**:
+- `FontDecompressor::restoreFontMemory()` (~40-48 KB)
+- `FontCacheManager::prewarmCache()`
+- All `renderer.wrappedText()` and `drawText()` calls
+
+This is the central heap optimization of the screensaver. If you add a
+new caller, mirror this pattern: **build the config up front, gate the
+expensive font work on `shouldDraw()`, then call `draw()` per pass**.
+
+### Random position cache
+The `cachedRandomPosition` pointer is a `int*` the caller owns. The helper
+reads it when `position == SCREENSAVER_TEXT_POS_RANDOM`, and writes a
+new value to it **only if** the pointed-to value is negative. This means
+the BW / LSB / MSB grayscale passes of the same image always share the
+same random spot, preventing the "ghost jump" between passes. Always
+reset to -1 at the start of a new frame (see `ScreenSaverActivity::render`).
+
+### See also
+- `ScreenSaverActivity::render` — full reference consumer.
+- Future: SleepActivity `renderCustomSleepScreen` (currently a no-text
+  screen, but if a future version adds a custom sleep text overlay, it
+  MUST use this helper).
+
+---
+
+## 3. `text_draw::` — Panel Text + Checkbox + Progress Helpers
+
+### When to use
+You are building a **panel-style screen** with:
+- A label on the left, a value on the right.
+- A right-aligned or vertically-centered text.
+- A percent / progress bar.
+- A small filled checkbox.
+
+Typical users: SleepActivity dashboard, cover-stats panels, achievement
+panels, library progress overlays, settings value previews.
+
+### How to use
+```cpp
+#include "util/TextDrawer.h"
+
+// All helpers are inline — no namespace aliasing needed.
+text_draw::drawTextClipped(renderer, fontId, x, y, text, maxWidth, black, style);
+text_draw::drawRightText(renderer, fontId, rightEdge, y, text, style);
+text_draw::drawTextWithRightValue(renderer, fontId, x, rightEdge, y, label, value, labelStyle, valueStyle);
+text_draw::drawCheckBox(renderer, x, y, checked);
+text_draw::drawProgressBar(renderer, rect, percent, lineWidth = 2);
+
+// Math helpers
+int pct = text_draw::percentOf(value, target);   // 0..100, safe on target==0
+std::string label = text_draw::formatPercent(pct);  // "73%"
+```
+
+### Why not use `renderer.drawText` directly?
+- `drawTextClipped` automatically truncates with ellipsis when the text
+  overflows `maxWidth`. Without it, a long book title would visually
+  overlap the right value column.
+- `drawRightText` and `drawTextWithRightValue` compute the X offset for
+  you. Without them, every callsite has to hand-roll
+  `right - getTextWidth(...)` arithmetic.
+- `drawProgressBar` matches the SleepActivity / Steroids-panel visual
+  style (1px outline + filled bar) and rounds to nearest integer
+  percent. Theme's `BaseTheme::drawProgressBar(size_t current, size_t
+  total)` is the wrong fit when you have a percent instead of
+  current/total.
+
+### When NOT to use
+- Do NOT use `drawProgressBar` if the surrounding panel already calls
+  `GUI.drawProgressBar` (theme virtual) or `drawHelpText`. Pick one
+  and stay consistent within a screen.
+- Do NOT use `drawTextClipped` for free-form text where overflow is
+  desired (truncation would surprise the user).
+
+### See also
+- `SleepActivity::renderReadingDashboardSleepScreen` — full reference consumer.
+- `SleepActivity::drawLatestBookPanel` / `drawCoverStatsOverlay` — reference usage of the four-helper combo.
+
+---
+
+## 4. `ListRenderHelper::` — List Screens
+
+### When to use
+You are building any list-like activity (settings list, file list, app
+grid, books list, etc.). The helper provides:
+- `drawHeader(renderer, title)` — top header strip.
+- `drawStandardHints(renderer, mappedInput)` — standard BACK/SELECT/UP/DOWN.
+- `drawHints(renderer, mappedInput, btn1, btn2, btn3, btn4)` — custom hints.
+- `drawListOrEmpty(renderer, layout, count, selectedIndex, titleFn, emptyText)` — auto-empty-state.
+- `drawEmptyCentered(renderer, contentTop, text)` — single-line centered empty.
+- `drawList(renderer, layout, count, selectedIndex, titleFn, ...)` — full list with sub-row + value column.
+
+### How to use
+```cpp
+#include "../util/ListRenderHelper.h"
+
+void MyActivity::render(RenderLock&&) {
+  renderer.clearScreen();
+  const auto layout = ListLayout::compute(renderer, true, true);
+  ListRenderHelper::drawHeader(renderer, tr(STR_MY_TITLE));
+
+  if (entries_.empty()) {
+    ListRenderHelper::drawEmptyCentered(renderer, layout.contentTop, tr(STR_NO_ENTRIES));
+  } else {
+    ListRenderHelper::drawList(renderer, layout,
+                                static_cast<int>(entries_.size()), selectedIndex_,
+                                [this](int i) { return entries_[i].title; },
+                                [this](int i) { return entries_[i].subtitle; },
+                                [this](int i) { return entries_[i].icon; },
+                                [this](int i) { return entries_[i].value; });
+  }
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
+  renderer.displayBuffer();
+}
+```
+
+### Conventions enforced by the helper
+- Layout is computed once per frame via `ListLayout::compute(renderer, ...)`.
+- Hints are always drawn last so the button-hints bar is never overlapped.
+- `displayBuffer()` is the LAST call (after hints, after empty-state).
+- Empty state and list rendering share the same vertical region — switching between them does not cause layout shift.
+
+### Forbidden patterns
+The following manual patterns are now banned in Steroids list code:
+```cpp
+// BANNED: manual button-hints pair
+const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+// USE INSTEAD:
+ListRenderHelper::drawStandardHints(renderer, mappedInput);
+```
+```cpp
+// BANNED: manual empty-state draw
+renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_ENTRIES));
+// USE INSTEAD:
+ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_ENTRIES));
+```
+```cpp
+// BANNED: manual `std::clamp(selectedIndex, 0, totalItems - 1)` (or the
+// `std::max(0, ... - 1)` variant). USE INSTEAD:
+selectedIndex = ButtonNavigator::clampIndex(selectedIndex, totalItems);
+```
+
+---
+
+## 5. `ListInputMapper::` — List Input Pipeline
+
+### When to use
+You are building a list activity and want the standard Back / Confirm /
+Up / Down handling with optional continuous-hold paging, **without**
+hand-rolling `ButtonNavigator` lambda capture and `mappedInput.wasPressed`
+polling in `loop()`.
+
+### How to use
+```cpp
+#include "util/ListInputMapper.h"
+
+class MyActivity : public Activity {
+  ListInputMapper listInputMapper;
+  // ...
+
+  void onEnter() override {
+    Activity::onEnter();
+    // ...
+
+    listInputMapper.setBackHandler([](void* ctx) {
+      static_cast<MyActivity*>(ctx)->finish();
+    }, this, false);  // useRelease=false → back fires on press
+
+    listInputMapper.setConfirmHandler([](void* ctx) {
+      static_cast<MyActivity*>(ctx)->openSelected();
+    }, this, false);
+
+    auto onNav = [](void* ctx, int delta) {
+      auto* self = static_cast<MyActivity*>(ctx);
+      if (self->entries_.empty()) return;
+      if (delta > 0) {
+        self->selectedIndex_ = ButtonNavigator::nextIndex(self->selectedIndex_, self->entries_.size());
+      } else {
+        self->selectedIndex_ = ButtonNavigator::previousIndex(self->selectedIndex_, self->entries_.size());
+      }
+      self->requestUpdate();
+    };
+
+    listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
+  }
+
+  void loop() override { listInputMapper.loop(mappedInput); }
+};
+```
+
+### Why lambdas?
+- `setBackHandler` / `setConfirmHandler` / `setNavReleaseAndContinuous`
+  require **two callback args + ctx** (the function + a context pointer)
+  because the helpers are pure free functions that cannot access
+  `this`. The lambdas defined inside `onEnter()` are the canonical
+  pattern — they capture `this` via the ctx argument and have access to
+  the full activity.
+
+### Variants
+- `setBackHandler(fn, ctx, useRelease)` — single tap or release-detect back.
+- `setConfirmHandler(fn, ctx, useRelease)` — single tap or release-detect confirm.
+- `setNavPressAndContinuous(pressFn, continuousFn, ctx)` — press once + auto-repeat when held.
+- `setNavReleaseAndContinuous(releaseFn, continuousFn, ctx)` — release once + auto-repeat.
+- `setNavAll(fn, ctx)` — both press and continuous route to the same lambda (used for simple "next/prev" wrap).
+
+### Deliberate exclusions
+The following activities are **excluded** from ListInputMapper migration
+per the Steroids refactoring policy (in `STEROIDS-ADDICTIONS.md` and the
+branch commit `b9a4db52`):
+- `FlashcardRecentsActivity`, `FlashcardStatsActivity` — page-nav with continuous paging at the page boundary.
+- `BookmarksActivity`, `ClippingsActivity`, `OpdsBookBrowserActivity` — preview / scrolling views.
+- `WifiSelectionActivity` — multi-state dynamic hints.
+- `KeyboardEntryActivity` — keyboard nav.
+- `ButtonActionSelectorActivity` — short-press wrap + long-press autofire.
+
+For these, raw `buttonNavigator` + `mappedInput.wasPressed` is still the
+correct pattern. Do NOT migrate them blindly.
+
+---
+
+## 6. `OrderListActivity<>` — CRTP Reorderable-List Base
+
+### When to use
+You are building a "user can reorder entries" screen (settings list
+order, shortcuts order, plugins order, etc.). The base provides:
+- `onEnter` / `onExit` / `loop` / `render` lifecycle.
+- `moveMode` boolean state with `setNavHandlers` for the move cursor
+  (cursor follows Up/Down in moveMode, or moves the entry in non-moveMode).
+- `setBackHandler` that exits moveMode if active, otherwise finishes.
+- `setConfirmHandler` that toggles moveMode.
+- Standard `drawListOrEmpty` rendering via ListLayout.
+- Standard hint display via ListRenderHelper.
+
+### How to use
+1. Subclass as a CRTP:
+   ```cpp
+   class MyOrderActivity final : public OrderListActivity<MyOrderActivity, MyEntry> {
+   public:
+     explicit MyOrderActivity(GfxRenderer& r, MappedInputManager& m)
+         : OrderListActivity("MyOrder", r, m) {}
+
+     void reloadEntries() override { entries_ = getMyEntries(); /* sort */ }
+     void save() override { /* persist */ }
+     void moveSelectedEntry(int delta) override {
+       const int target = selectedIndex_ + delta;
+       if (target < 0 || target >= static_cast<int>(entries_.size())) return;
+       std::swap(entries_[selectedIndex_], entries_[target]);
+       selectedIndex_ = target;
+     }
+     const char* getTitle() const override { return tr(STR_MY_ORDER_TITLE); }
+     std::string getEntryTitle(MyEntry entry) const override { return entry.name; }
+   };
+   ```
+2. Override `render(RenderLock&&)` if you need a custom layout
+   (date header, subtitle, icon column, etc.). The default
+   `OrderListActivity::render` calls `ListLayout::compute` + a standard
+   header + `drawListOrEmpty` + standard hints.
+3. For custom confirm behavior (e.g. hold-to-delete before reordering),
+   override `handleConfirmHold(unsigned long heldMs)` — return true to
+   consume the confirm press and skip the moveMode toggle.
+
+### Why CRTP
+The `Derived` type is needed to call `Derived::reloadEntries()`,
+`Derived::save()`, `Derived::moveSelectedEntry()` from the base
+callbacks (lambdas). The pure-virtual methods ensure derived classes
+implement them.
+
+### See also
+- `ReaderMenuOrderActivity` — reference consumer.
+- `ShortcutOrderActivity` — second reference consumer.
+- `FavoritesOrderActivity` — consumer with `handleConfirmHold` override for hold-to-delete.
+
+---
+
+## 7. Optimization Patterns (Heap & RAM)
+
+### 7.1 Skip font work on empty text
+Any user-configurable text overlay (screensaver, sleep, custom wallpaper)
+**MUST** check `text_overlay::shouldDraw()` before calling
+`FontDecompressor::restoreFontMemory()` or `FontCacheManager::prewarmCache()`.
+On ESP32-C3 these routines hold ~40-48 KB of heap. When the user has cleared
+the text, the screensaver should not allocate it at all.
+
+```cpp
+if (text_overlay::shouldDraw(myText)) {
+  fcm->prewarmCache(cfg.fontId, myText, styleMask);
+}
+```
+
+### 7.2 Clamp instead of std::min/std::max
+Use `ButtonNavigator::clampIndex(current, total)`:
+- Replaces `std::clamp(selectedIndex, 0, total - 1)`.
+- Replaces `std::max(0, static_cast<int>(entries.size()) - 1)`.
+- Replaces `if (selectedIndex >= size) { selectedIndex = std::max(0, size - 1); }`.
+- Returns 0 on `total <= 0` (empty-list safe).
+- Rounds up to `total - 1` if `current >= total`.
+
+This is now the standard clamp for every list-screen state.
+
+### 7.3 `mappedInput.mapLabels + GUI.drawButtonHints` → `ListRenderHelper::drawHints` / `drawStandardHints`
+This 2-line ritual appeared in ~80 activities before the refactor. It
+is now banned. The single-call replacement handles the `const` qualifier
+correctly (drawHints accepts `const MappedInputManager&`).
+
+### 7.4 `OrderListActivity` over hand-rolled order screens
+Any "user can reorder entries" activity must derive from
+`OrderListActivity<Derived, Entry>`. The base provides all of the
+back/confirm/nav state machine plus the empty-state + standard hints
+rendering. New order screens are ~30 lines instead of ~120.
+
+---
+
+## 8. Build & Footprint Reference
+
+After all refactors, the current footprint is:
+- **RAM 16.2% (53 180 B / 327 680 B)**
+- **Flash 81.1% (5 312 697 B / 6 553 600 B)**
+
+Every util is small enough to fit comfortably. The helpers themselves add
+< 1 KB of code combined; the de-duplication savings dominate.
+
+Build command (Steroids always):
+```powershell
+python -X utf8 -m platformio run -e default -j 16
+```
+
+Never build with `-e gh_release` for verification — that is release-only.
+
+---
+
+## 9. Pre-Merge Checklist (When Upgrading Upstream)
+
+When merging a new upstream release, verify:
+
+- [ ] `src/util/TextOverlay.{h,cpp}` — Steroids-added, **never** overwrite from upstream.
+- [ ] `src/util/TextDrawer.h` — Steroids-added, **never** overwrite from upstream.
+- [ ] `src/activities/util/ListRenderHelper.h` — Steroids-added, **never** overwrite.
+- [ ] `src/util/ListInputMapper.h` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/OrderListActivity.h` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/ListLayout.h` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/ConfirmationActivity.{h,cpp}` — Steroids-added, **never** overwrite.
+
+If upstream modifies an activity that uses these utils, **keep the
+Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
+`ListRenderHelper::` / `ListInputMapper::` / `OrderListActivity<>` calls.
+
+---
+
+## 10. Document Maintenance
+
+This file is the **first thing** a new Steroids contributor must read.
+When adding a new shared util:
+1. Add a row to the table in §1.
+2. Add a full "How to use" section modeled on §2-6.
+3. Update the "Pre-Merge Checklist" in §9.
+4. Run the build command in §8 and verify the footprint delta.
+5. Add a commit named `feat: <util name>` with a description of the
+   refactor and a list of migrated consumers.
+
+When adding a new app / screen that uses an existing util:
+1. The util's "When to use" section already covers your use case.
+2. **Do not** add a new copy-pasted variant. Add a new section only if
+   the new util has a distinctly different API surface from the
+   existing five.
+3. Reference this document in your PR description so reviewers know
+   you used the canonical pattern.
+
+When refactoring an existing screen that hand-rolls something a util
+already provides:
+1. Confirm the util's `When to use` matches your case.
+2. Replace the hand-rolled code with the util call.
+3. Build, run the affected screens on device.
+4. Commit named `refactor: <activity> -> <util>` with the diff stat and
+   any behavior preservation notes (e.g. random-position cache reset).
