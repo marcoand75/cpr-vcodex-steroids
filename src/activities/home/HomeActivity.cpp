@@ -756,6 +756,10 @@ void HomeActivity::onEnter() {
 
   LOG_DBG("HOME", "onEnter: after reloadHomeBooks heap=%u maxA=%u books=%zu",
                ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
+  LOG_DBG("HOME", "onEnter: activityArena used=%u maxUsed=%u capacity=%u",
+               static_cast<unsigned>(util::g_activityArena.used()),
+               static_cast<unsigned>(util::g_activityArena.maxUsed()),
+               static_cast<unsigned>(util::g_activityArena.capacity()));
 
   // Drop any stale carousel frame cache (e.g. frames rendered with old reading
   // statistics) and force a fresh render — important after returning from a
