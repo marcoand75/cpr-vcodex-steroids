@@ -31,6 +31,7 @@
 #include "util/SleepImageUtils.h"
 #include "util/SleepScreenCache.h"
 #include "util/TextDrawer.h"
+#include "util/BookFilter.h"
 
 namespace {
 
@@ -112,15 +113,7 @@ int percentOf(const uint64_t value, const uint64_t target) {
 std::string formatPercent(const int percent) { return text_draw::formatPercent(percent); }
 
 std::string formatBookTitleFromPath(const std::string& path) {
-  std::string name = path;
-  const size_t slash = name.find_last_of('/');
-  if (slash != std::string::npos) {
-    name = name.substr(slash + 1);
-  }
-  const size_t dot = name.find_last_of('.');
-  if (dot != std::string::npos && dot > 0) {
-    name = name.substr(0, dot);
-  }
+  std::string name = book_filter::filenameWithoutExtension(path);
   return name.empty() ? std::string(tr(STR_READING_TIME)) : name;
 }
 

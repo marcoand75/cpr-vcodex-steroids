@@ -10,6 +10,7 @@
 #include "fontIds.h"
 #include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
+#include "util/BookFilter.h"
 
 namespace {
 constexpr unsigned long DELETE_FAVORITE_HOLD_MS = 1000;
@@ -18,11 +19,7 @@ std::string favoriteTitle(const FavoriteBook& book) {
   if (!book.title.empty()) {
     return book.title;
   }
-
-  const auto slashPos = book.path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? book.path : book.path.substr(slashPos + 1);
-  const auto dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
+  return book_filter::filenameWithoutExtension(book.path);
 }
 }  // namespace
 
