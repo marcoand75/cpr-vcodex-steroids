@@ -509,7 +509,7 @@ Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
 This file is the **first thing** a new Steroids contributor must read.
 When adding a new shared util:
 1. Add a row to the table in §1.
-2. Add a full "How to use" section modeled on §2-7.
+2. Add a full "How to use" section modeled on §2-7 and §12.
 3. Update the "Pre-Merge Checklist" in §10.
 4. Run the build command in §9 and verify the footprint delta.
 5. Add a commit named `feat: <util name>` with a description of the
@@ -519,7 +519,7 @@ When adding a new app / screen that uses an existing util:
 1. The util's "When to use" section already covers your use case.
 2. **Do not** add a new copy-pasted variant. Add a new section only if
    the new util has a distinctly different API surface from the
-   existing seven.
+   existing utility set (§1 + §12).
 3. Reference this document in your PR description so reviewers know
    you used the canonical pattern.
 
