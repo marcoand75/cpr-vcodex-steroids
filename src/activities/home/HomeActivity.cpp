@@ -47,6 +47,7 @@
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/WikipediaActivity.h"
 #include "activities/apps/QuickCardsActivity.h"
+#include "util/BookFilter.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/home/BookContextMenuActivity.h"
 #include "activities/home/BookMetadataActivity.h"
@@ -92,19 +93,12 @@ std::string getRecentBookConfirmationLabel(const RecentBook& book) {
   return !book.title.empty() ? book.title : book.path;
 }
 
-std::string getBookTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
-}
-
 bool homeUsesFavorites() { return SETTINGS.homeBookSource == CrossPointSettings::HOME_BOOKS_FAVORITES; }
 
 RecentBook toRecentBook(const FavoriteBook& book) {
   RecentBook recentBook{book.bookId, book.path, book.title, book.author, book.coverBmpPath};
   if (recentBook.title.empty()) {
-    recentBook.title = getBookTitleFromPath(recentBook.path);
+    recentBook.title = book_filter::filenameWithoutExtension(recentBook.path);
   }
   return recentBook;
 }
