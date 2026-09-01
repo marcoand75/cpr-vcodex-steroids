@@ -823,7 +823,7 @@ void LibraryActivity::loop() {
     if (total > 0 && selectorIndex_ < total) {
       const unsigned long held = mappedInput.getHeldTime();
       // Long press: context menu (skip for collections list items)
-      if (held >= 800) {
+      if (held >= long_press::kDefaultMs) {
         const int idx = selectorIndex_;
         const int slot = idx % gridsPerPage_;
         const std::string path(pageCache_[slot].path);
