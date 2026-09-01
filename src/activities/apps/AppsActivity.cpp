@@ -32,6 +32,7 @@
 #include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutUiMetadata.h"
+#include "util/LongPress.h"
 #include "WikipediaActivity.h"
 #include "QuickCardsActivity.h"
 
@@ -113,23 +114,22 @@ void AppsActivity::loop() {
   // library shortcut for >= LIBRARY_LONG_PRESS_MS, open the library context
   // menu. We can't do this from the setConfirmHandler (which fires on the
   // press edge where getHeldTime is 0), so we poll isPressed+getHeldTime
-  // each frame. A static local flag makes sure we fire the menu exactly
+  // each frame. LongPress::Button makes sure we fire the menu exactly
   // once per hold, even if the held duration is checked many times.
-  static bool longPressFired = false;
+  static long_press::Button confirmPress_;
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    longPressFired = false;
-  } else if (!longPressFired && appShortcuts.size() > selectedIndex &&
-             appShortcuts[selectedIndex] && appShortcuts[selectedIndex]->id == ShortcutId::Library &&
-             mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-             mappedInput.getHeldTime() >= LIBRARY_LONG_PRESS_MS) {
-    longPressFired = true;
-    startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
-                           [this](const ActivityResult&) {
-                             appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
-                             rebuildShortcutSubtitles();
-                             selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
-                             requestUpdate();
-                           });
+    confirmPress_.reset();
+  } else if (confirmPress_.fired(mappedInput.getHeldTime(), LIBRARY_LONG_PRESS_MS)) {
+    if (appShortcuts.size() > selectedIndex &&
+        appShortcuts[selectedIndex] && appShortcuts[selectedIndex]->id == ShortcutId::Library) {
+      startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                               rebuildShortcutSubtitles();
+                               selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
+                               requestUpdate();
+                             });
+    }
   }
 }
 
