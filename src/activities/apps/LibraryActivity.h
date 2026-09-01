@@ -7,6 +7,7 @@
 #include "CrossPointSettings.h"
 #include "components/LibraryIndex.h"
 #include "components/LibraryPopupOverlay.h"
+#include "util/LongPress.h"
 
 class LibraryActivity final : public Activity {
  private:
@@ -68,18 +69,18 @@ class LibraryActivity final : public Activity {
   PopupMode popupMode_ = PopupMode::None;
   LibraryPopupOverlay popupOverlay_;
 
-   bool upHeld_ = false;
-   bool upLongTriggered_ = false;
-   bool downHeld_ = false;
-   bool downLongTriggered_ = false;
-   bool leftHeld_ = false;
-   bool leftLongTriggered_ = false;
-   bool rightHeld_ = false;
-   bool rightLongTriggered_ = false;
-   int popupSpawnButton_ = -1;
-   bool launchFromApps = false;
+  bool upHeld_ = false;
+  bool upLongTriggered_ = false;
+  bool downHeld_ = false;
+  bool downLongTriggered_ = false;
+  bool leftHeld_ = false;
+  bool leftLongTriggered_ = false;
+  bool rightHeld_ = false;
+  bool rightLongTriggered_ = false;
+  int popupSpawnButton_ = -1;
+  bool launchFromApps = false;
 
-   static constexpr unsigned long kLongPressMs = 800;
+  static constexpr unsigned long kLongPressMs = 800;
 
   void applyLayoutFromSettings();
   void ensureLayoutUpToDate();
@@ -101,6 +102,17 @@ class LibraryActivity final : public Activity {
   void closePopup();
   void selectPopupItem();
   void beginTextSearch();
+
+  // Rebuild cachedInfo_ / cachedSelTitle_ / cachedSelAuthor_ when the input
+  // key (selector, page, filter, sort, search, collection) changes. Returns
+  // true if the cache was rebuilt. Used by both the partial and full render
+  // paths so the visible info line stays consistent across them.
+  bool rebuildInfoCacheIfChanged(int curPageRaw, int total, int pageWidth);
+
+  // Update only cachedSelTitle_ / cachedSelAuthor_ for the current
+  // selectorIndex_, truncating the title to fit the screen. Used by the
+  // render path.
+  void refreshSelectedTitleAuthor(int selectorIndex, int total, int pageWidth);
 
  public:
   // When true, the next LibraryActivity launch will force an SD scan even
