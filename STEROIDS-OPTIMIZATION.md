@@ -688,3 +688,126 @@ helpers for their respective domains:
   used by the Apps hub + Home.
 - `AchievementPopupUtils` (`src/util/AchievementPopupUtils.h`) — the
   on-reader achievement toast.
+
+---
+
+## 13. Main / Loop / Boot Patterns
+
+`src/main.cpp` is the second-most-edited file in the codebase. The
+following patterns are mandated after the post-refactor cleanup pass.
+
+### 13.1 Power-button state machine (3-phase)
+
+The main loop's power-button handling is split into 3 sub-functions
+inside an anonymous namespace, all backed by a `PowerButtonState`
+struct at namespace scope so the values survive across `loop()`
+iterations:
+
+  - `handlePowerButtonPressEdge()` — record start time; remember if a
+    screen saver is active so the release edge suppresses
+    `shortPwrBtn` (the wake-key event is consumed by the screen
+    saver).
+  - `handlePowerButtonLongPressHold()` — held >= configured duration
+    → if reader + `screenSaverReplaceSleep` + battery ok, push the
+    replacement screensaver; otherwise `enterDeepSleep()`. Returns
+    `true` when the caller MUST return from `loop()`.
+  - `handlePowerButtonReleaseEdge()` — `FORCE_REFRESH` redraws the
+    screen on every short press; `TOGGLE_STATUS_BAR` and `PAGE_TURN`
+    are handled inside the reader activity's `loop()`, not here.
+
+Each phase returns a "must return" bool so the loop body stays flat:
+
+```cpp
+if (handlePowerButtonPressEdge()) return;
+if (handlePowerButtonLongPressHold()) return;
+handlePowerButtonReleaseEdge();
+```
+
+New code MUST follow this 3-phase pattern. The 4 static variables
+that used to live at the top of `loop()` are now grouped inside
+`PowerButtonState`, so reset locations are visible in one place.
+
+### 13.2 Boot phase comment blocks
+
+`setup()` is sectioned into 7 PHASE blocks with a leading
+`// =====` comment banner. Every contributor who adds a new boot
+stage MUST add a new PHASE banner, not append inline to an existing
+phase. The current phases are:
+
+  1. Hardware init (HalSystem, BoardConfig, GPIO, PRNG, gamma LUT, WiFi utils)
+  2. Storage + recovery (SD card, SdFat date callback, panic check, `BootRecovery::initialize`)
+  3. Core settings + UI theme (Settings, Language, KOReader, OPDS, UiTheme)
+  4. Wakeup handling (PowerButton / AfterUSBPower / AfterFlash / Other)
+  5. Display + fonts + boot screen
+  6. Data stores that don't block boot (State, ReadingStats, RecentBooks, Favorites, Flashcards, Achievements)
+  7. Route decision + boot completion (crash report, reader resume, apps, plugin, Home)
+
+### 13.3 `BootRecovery::runBootStage()` helper
+
+The 6-times-repeated `if (shouldSkip) logSkip else enterStage + loader + log heap`
+ritual in `setup()` is consolidated into a single helper:
+
+```cpp
+if (BootRecovery::runBootStage(BootRecovery::BootStage::Settings,
+                               BootRecovery::shouldSkipSettings(),
+                               "settings",
+                               [] { SETTINGS.loadFromFile(); })) {
+  imageRenderConfigApplySettings();
+  LOG_DBG("BOOT", "After settings: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+```
+
+The 4 deferred-load sites (Favorites, Flashcards, Achievements,
+ReadingStats) pass `nullptr` for `loader` and use the bool return
+only as a "did we enter the stage?" signal for the heap diagnostic.
+`BootRecovery::setSkipLogFn()` plugs a custom skip-log emitter so
+the helper routes skip events through `CPR_VCODEX_LOG_EVENT` (so
+the cpr-vcodex-logs recovery file picks them up).
+
+### 13.4 `renderBatteryShutdownScreen()`
+
+The "battery critically low" shutdown path is extracted from
+`loop()` so the same layout is not duplicated when the path is
+reached from a different call site (e.g. a future
+`critical_battery_pending` from a reader timer). The function is
+forward-declared above `enterDeepSleep()` and defined immediately
+after it, so the call chain `battery check → shutdown screen →
+enter deep sleep` reads top-to-bottom.
+
+### 13.5 Silent-reboot subsystem grouping
+
+All silent-reboot declarations are grouped in one anonymous
+namespace block right above the `silentRestart*()` wrappers:
+
+  - The 5 `SILENT_REBOOT_TARGET_*` constants.
+  - The 5 `silentReboot*` `RTC_NOINIT_ATTR` variables.
+  - `deepSleepInProgress` latch.
+  - The `requestSilentRestart()` helper.
+
+`silentRestart*()` and `requestSilentRestart()` MUST stay together.
+The "Definitions for SilentRestart.h" comment is on the namespace
+block, not on each individual declaration.
+
+### 13.6 Local `setupStartMs` not file-scope `t1`
+
+The `t1` / `t2` globals at the top of `main.cpp` were removed. `t2`
+was assigned in `verifyPowerButtonDuration` but never read (true
+dead code). `t1` is now a local `setupStartMs` inside `setup()`
+that only the boot-time `LOG_INF` reads. The `BOOT-TIME` log line is
+the ONLY consumer.
+
+New code MUST NOT add file-scope `unsigned long` "calibration"
+variables. Use local statics or struct-typed state at namespace
+scope instead.
+
+### 13.7 `Activity::onGoHome()` / `onSelectBook()` are stable
+
+The 22 call sites across 13 activities (`OpdsBookBrowser`,
+`RecentBooks`, `HomeActivity`, `FileBrowser`, `ScreenSaverActivity`,
+`LibraryActivity`, `ReadingStatsDetail`, …) all use
+`Activity::onGoHome()` and `Activity::onSelectBook(path)` to
+forward to `ActivityManager`. These convenience forwarders are
+intentionally kept on the `Activity` base class (NOT marked for
+removal) for call-site brevity. New code MUST keep using them
+rather than calling `activityManager.goHome()` / `goToReader()`
+directly.
