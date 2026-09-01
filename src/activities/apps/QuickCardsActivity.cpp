@@ -23,6 +23,7 @@
 #include "util/HeaderDateUtils.h"
 #include "util/QrCardParser.h"
 #include "util/QrUtils.h"
+#include "util/BookFilter.h"
 #include <JpegToBmpConverter.h>
 
 
@@ -333,9 +334,9 @@ void QuickCardsActivity::renderFileList() {
         PanelDrawHelper::drawCyberpunkPanel(renderer,px,py,panelW,panelH,sel);
         const char* badge="";
         switch(cards[static_cast<size_t>(i)].type){case CardType::IMAGE:badge="[IMG] ";break;case CardType::QR:badge="[QR]  ";break;case CardType::BARCODE:badge="[BAR] ";break;}
-        std::string nm=cards[static_cast<size_t>(i)].displayName;
-        auto dp=nm.find_last_of('.'); if(dp!=std::string::npos)nm=nm.substr(0,dp);
-        std::string label=badge+nm;
+std::string nm=cards[static_cast<size_t>(i)].displayName;
+nm = book_filter::filenameWithoutExtension(nm);
+std::string label=badge+nm;
         int maxTW=panelW-32,tw=renderer.getTextWidth(UI_12_FONT_ID,label.c_str());
         while(tw>maxTW&&label.length()>4){label=label.substr(0,label.length()-4)+"...";tw=renderer.getTextWidth(UI_12_FONT_ID,label.c_str());}
         int lh=renderer.getLineHeight(UI_12_FONT_ID); bool tb=!sel;
@@ -407,9 +408,9 @@ void QuickCardsActivity::renderImageView(const std::string& path, int index, int
         ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
     } else {
         // Solo nome file in basso in fullscreen
-        std::string nm=cards[static_cast<size_t>(selectedIndex)].displayName;
-        auto dp=nm.find_last_of('.');if(dp!=std::string::npos)nm=nm.substr(0,dp);
-        int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
+std::string nm=cards[static_cast<size_t>(selectedIndex)].displayName;
+nm = book_filter::filenameWithoutExtension(nm);
+int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
         renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,ph-30,nm.c_str(),true,EpdFontFamily::BOLD);
     }
     
@@ -449,7 +450,7 @@ void QuickCardsActivity::renderQrCard(const std::string& primary, const std::str
 
     // Title (Normal mode only)
     if(!fullscreenMode && !title.empty()){
-        std::string dt=title; auto dp=dt.find_last_of('.');if(dp!=std::string::npos)dt=dt.substr(0,dp);
+        std::string dt = book_filter::filenameWithoutExtension(title);
         int tw=renderer.getTextWidth(UI_12_FONT_ID,dt.c_str());
         while(tw>pw-40&&dt.length()>4){dt=dt.substr(0,dt.length()-4)+"...";tw=renderer.getTextWidth(UI_12_FONT_ID,dt.c_str());}
         renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,startY,dt.c_str(),true,EpdFontFamily::BOLD);
@@ -522,17 +523,17 @@ void QuickCardsActivity::renderQrCard(const std::string& primary, const std::str
       }
     }
 
-    // Footer / Fullscreen Title
-    if(!fullscreenMode){
-        char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
-        renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
-        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
-    } else {
-        std::string nm=title; auto dp=nm.find_last_of('.');if(dp!=std::string::npos)nm=nm.substr(0,dp);
-        int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
-        renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,ph-30,nm.c_str(),true,EpdFontFamily::BOLD);
-    }
-    renderer.displayBuffer();
+// Footer / Fullscreen Title
+     if(!fullscreenMode){
+         char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
+         renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
+         ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
+     } else {
+         std::string nm = book_filter::filenameWithoutExtension(title);
+         int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
+         renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,ph-30,nm.c_str(),true,EpdFontFamily::BOLD);
+     }
+     renderer.displayBuffer();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -554,7 +555,7 @@ void QuickCardsActivity::renderBarcodeCard(const std::string& primary, const std
     if(!fullscreenMode) drawHeaderWithIcon();
 
     if(!fullscreenMode && !title.empty()){
-        std::string dt=title; auto dp=dt.find_last_of('.');if(dp!=std::string::npos)dt=dt.substr(0,dp);
+        std::string dt = book_filter::filenameWithoutExtension(title);
         int tw=renderer.getTextWidth(UI_12_FONT_ID,dt.c_str());
         while(tw>pw-40&&dt.length()>4){dt=dt.substr(0,dt.length()-4)+"...";tw=renderer.getTextWidth(UI_12_FONT_ID,dt.c_str());}
         renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,startY,dt.c_str(),true,EpdFontFamily::BOLD);
@@ -573,15 +574,15 @@ void QuickCardsActivity::renderBarcodeCard(const std::string& primary, const std
         }
     }
 
-    if(!fullscreenMode){
-        char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
-        renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
-        ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
-    } else {
-        std::string nm=title; auto dp=nm.find_last_of('.');if(dp!=std::string::npos)nm=nm.substr(0,dp);
-        int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
-        renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,ph-30,nm.c_str(),true,EpdFontFamily::BOLD);
-    }
+if(!fullscreenMode){
+         char buf[32];snprintf(buf,sizeof(buf),"%d/%d",index+1,total);
+         renderer.drawText(SMALL_FONT_ID,10,ph-footerH-16,buf,true);
+         ListRenderHelper::drawHints(renderer,mappedInput,tr(STR_BACK),tr(STR_FULLSCREEN_LABEL),tr(STR_DIR_UP),tr(STR_DIR_DOWN));
+     } else {
+         std::string nm = book_filter::filenameWithoutExtension(title);
+         int tw=renderer.getTextWidth(UI_12_FONT_ID,nm.c_str());
+         renderer.drawText(UI_12_FONT_ID,(pw-tw)/2,ph-30,nm.c_str(),true,EpdFontFamily::BOLD);
+     }
     renderer.displayBuffer();
 }
 
