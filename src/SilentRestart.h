@@ -8,14 +8,12 @@
 
 enum class SilentRebootTarget : uint32_t {
   Home = 0,
-  Reader = 1,
-  Apps = 2,
-  Plugin = 3,
-  PluginBrowser = 4
+  Apps = 1,
+  Plugin = 2,
+  PluginBrowser = 3
 };
 
 void silentRestart();          // home screen (shows "Loading..." popup)
-void silentRestartToReader();  // currently-open EPUB (shows "Loading..." popup)
 void silentRestartToHome();    // home screen, seamless — NO popup, no screen flash
 void silentRestartToApps();    // apps menu, seamless — NO popup, no screen flash
 void silentRestartToPluginBrowser();  // plugin browser, seamless — NO popup, no screen flash

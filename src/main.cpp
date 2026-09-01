@@ -254,9 +254,13 @@ bool deepSleepInProgress = false;
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 // Grouped with the silentRestart*() functions below so the entire silent-reboot
 // subsystem lives in one place.
+//
+// Values are kept sparse on purpose: SILENT_REBOOT_TARGET_READER used to occupy
+// slot 1 (removed as dead code). A stale value 1 in RTC_NOINIT from a prior
+// firmware will now fall through to the default `goHome()` route, which is
+// safe and recoverable.
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
-constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
@@ -294,10 +298,6 @@ void requestSilentRestart(SilentRebootTarget target, bool seamless,
 
 void silentRestart() {
   requestSilentRestart(SilentRebootTarget::Home, false);
-}
-
-void silentRestartToReader() {
-  requestSilentRestart(SilentRebootTarget::Reader, false);
 }
 
 void silentRestartToHome() {
@@ -902,9 +902,12 @@ void setup() {
 
   // ===========================================================================
   // PHASE 7 — Route decision + boot completion
-  //   Decides which activity to launch: crash report (panic), reader
-  //   resume, apps, plugin, or Home. The reader-resume path bumps
-  //   readerActivityLoadCount to break boot loops if the EPUB fails to load.
+  //   Decides which activity to launch: crash report (panic), apps, plugin,
+  //   or Home. The reader-resume path is handled by the non-silent-reboot
+  //   branch (bootToHome = false) when lastSleepFromReader is true and
+  //   openEpubPath is non-empty, so the user wakes up in their last book
+  //   automatically. readerActivityLoadCount is bumped to break boot loops
+  //   if the EPUB fails to load.
   // ===========================================================================
   const bool countUsefulStart = !isSilentReboot && !forceHomeBoot &&
                                 wakeupReason != HalGPIO::WakeupReason::AfterUSBPower &&
@@ -915,8 +918,6 @@ void setup() {
   if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
-  } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_READER && !APP_STATE.openEpubPath.empty()) {
-    activityManager.goToReader(APP_STATE.openEpubPath);
   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
     activityManager.goToApps();
   } else if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN_BROWSER) {
