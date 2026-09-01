@@ -19,6 +19,7 @@
 #include "util/CprVcodexLogs.h"
 #include "util/StringUtils.h"
 #include "util/TimeUtils.h"
+#include "util/BookFilter.h"
 
 namespace {
 constexpr char FLASHCARDS_INDEX_FILE[] = "/.crosspoint/flashcards_index.json";
@@ -409,10 +410,7 @@ uint32_t FlashcardsStore::getReferenceDayOrdinal() const {
 }
 
 std::string FlashcardsStore::getTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
+  return book_filter::filenameWithoutExtension(path);
 }
 
 std::vector<FlashcardDeckRecord> FlashcardsStore::getRecentDecks() const {

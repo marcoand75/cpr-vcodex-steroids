@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "util/BookFilter.h"
 #include "util/BookIdentity.h"
 #include <HalStorage.h>
 #include "ReadingStatsStore.h"
@@ -12,10 +13,7 @@ namespace BookStoreUtils {
 
 // Unified fallback title derived from a file path.
 inline std::string fallbackTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
+  return book_filter::filenameWithoutExtension(path);
 }
 
 // Find the index of a book by bookId or normalized path.
