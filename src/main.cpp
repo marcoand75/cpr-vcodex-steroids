@@ -246,16 +246,14 @@ void applyUiFontsForLanguage(const Language lang) {
 void refreshUiFontsForCurrentLanguage() { applyUiFontsForLanguage(I18N.getLanguage()); }
 void useLanguageSelectionUiFonts() { applyUiFontsForLanguage(Language::VI); }
 
-// measurement of power button press duration calibration value
-unsigned long t1 = 0;
-unsigned long t2 = 0;
+namespace {
+// Latched once deep sleep is committed. WiFi activities also restart silently
+// from onExit(), but deep sleep already gives us a clean heap on wake.
+bool deepSleepInProgress = false;
 
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
-RTC_NOINIT_ATTR uint32_t silentRebootMagic;
-RTC_NOINIT_ATTR uint32_t silentRebootTarget;
-RTC_NOINIT_ATTR char silentRebootPluginName[32];
-RTC_NOINIT_ATTR uint32_t silentRebootCaller;  // 0=unknown, 1=apps, 2=home, 3=plugin_browser
-RTC_NOINIT_ATTR bool silentRebootReturnToPluginBrowser;
+// Grouped with the silentRestart*() functions below so the entire silent-reboot
+// subsystem lives in one place.
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
@@ -263,13 +261,15 @@ constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
 
-// Latched once deep sleep is committed. WiFi activities also restart silently
-// from onExit(), but deep sleep already gives us a clean heap on wake.
-static bool deepSleepInProgress = false;
+RTC_NOINIT_ATTR uint32_t silentRebootMagic;
+RTC_NOINIT_ATTR uint32_t silentRebootTarget;
+RTC_NOINIT_ATTR char silentRebootPluginName[32];
+RTC_NOINIT_ATTR uint32_t silentRebootCaller;  // 0=unknown, 1=apps, 2=home, 3=plugin_browser
+RTC_NOINIT_ATTR bool silentRebootReturnToPluginBrowser;
 
-static void requestSilentRestart(SilentRebootTarget target, bool seamless,
-                                 const char* pluginName = nullptr, bool fromApps = false,
-                                 bool returnToPluginBrowser = false) {
+void requestSilentRestart(SilentRebootTarget target, bool seamless,
+                          const char* pluginName = nullptr, bool fromApps = false,
+                          bool returnToPluginBrowser = false) {
   if (deepSleepInProgress) return;
 
   silentRebootTarget = static_cast<uint32_t>(target);
@@ -290,6 +290,7 @@ static void requestSilentRestart(SilentRebootTarget target, bool seamless,
   delay(seamless ? 20 : 50);
   ESP.restart();
 }
+}  // namespace
 
 void silentRestart() {
   requestSilentRestart(SilentRebootTarget::Home, false);
@@ -336,6 +337,12 @@ void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToP
   requestSilentRestart(SilentRebootTarget::Plugin, true, pluginName, fromApps, returnToPluginBrowser);
 }
 
+// Render the "battery empty" shutdown screen and enter deep sleep.
+// Extracted from the loop() battery check so the layout is not duplicated
+// when the same path is reached from a different call site. Declared
+// above enterDeepSleep() and defined below it (forward reference).
+void renderBatteryShutdownScreen();
+
 // Verify power button press duration on wake-up from deep sleep
 // Pre-condition: isWakeupByPowerButton() == true
 void verifyPowerButtonDuration() {
@@ -362,7 +369,6 @@ void verifyPowerButtonDuration() {
     gpio.update();
   }
 
-  t2 = millis();
   if (gpio.isPressed(HalGPIO::BTN_POWER)) {
     do {
       delay(10);
@@ -548,6 +554,25 @@ void enterDeepSleep() {
   powerManager.startDeepSleep(gpio);
 }
 
+// Definition of the forward-declared renderBatteryShutdownScreen(). Lives
+// after enterDeepSleep() so the call chain is: battery check -> shutdown
+// screen -> enter deep sleep.
+void renderBatteryShutdownScreen() {
+  {
+    RenderLock lock;
+    renderer.clearScreen();
+    const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+    const auto top = (renderer.getScreenHeight() - height) / 2;
+    renderer.drawCenteredText(UI_10_FONT_ID, top - height, tr(STR_BATTERY_EMPTY_TITLE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BATTERY_EMPTY_BODY));
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  }
+  delay(2000);  // Let the user see the shutdown screen
+  enterDeepSleep();
+  // enterDeepSleep() does not return on hardware; if it ever does, fall
+  // through to the next loop iteration's battery check (defensive).
+}
+
 void ensureSdFontLoaded() {
   if (Storage.ready()) {
     sdFontSystem.ensureLoaded(renderer);
@@ -635,7 +660,7 @@ void setupDisplayAndFonts(bool seamless = false) {
 }
 
 void setup() {
-  t1 = millis();
+  const unsigned long setupStartMs = millis();
 
   // ===========================================================================
   // PHASE 1 — Hardware init
@@ -937,7 +962,7 @@ void setup() {
   waitForPowerRelease();
 
   LOG_INF("BOOT-TIME", "setup done in %lu ms (silent=%d route=%u free=%u maxA=%u)",
-          static_cast<unsigned long>(millis() - t1), isSilentReboot ? 1 : 0, snapshotTarget,
+          static_cast<unsigned long>(millis() - setupStartMs), isSilentReboot ? 1 : 0, snapshotTarget,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
@@ -1057,18 +1082,7 @@ void loop() {
     const uint16_t batteryPct = powerManager.getBatteryPercentage();
     if (batteryPct < 5 && !deepSleepInProgress) {
       LOG_INF("PWR", "Battery critically low (%u%%) under load — rendering shutdown screen", batteryPct);
-      {
-        RenderLock lock;
-        renderer.clearScreen();
-        const auto height = renderer.getLineHeight(UI_10_FONT_ID);
-        const auto top = (renderer.getScreenHeight() - height) / 2;
-        renderer.drawCenteredText(UI_10_FONT_ID, top - height, tr(STR_BATTERY_EMPTY_TITLE), true, EpdFontFamily::BOLD);
-        renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_BATTERY_EMPTY_BODY));
-        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      }
-      delay(2000);  // Let the user see the shutdown screen
-      enterDeepSleep();
-      // Should never reach here (esp_deep_sleep_start blocks)
+      renderBatteryShutdownScreen();
     }
   }
 
