@@ -23,7 +23,7 @@
 ## 1. Overview
 
 Steroids has progressively de-duplicated ~1,500 lines of common rendering and
-input-mapping code into 7 shared utilities, plus a small set of math
+input-mapping code into 9 shared utilities, plus a small set of math
 helpers and reusable activity bases. Every Steroids contributor must be
 familiar with the table below before opening a PR.
 
@@ -38,10 +38,12 @@ familiar with the table below before opening a PR.
 | 7 | `ButtonNavigator::clampIndex` | `src/util/ButtonNavigator.h` | One-call list-state clamp: `clampIndex(current, total)`. Replaces every `std::clamp(selectedIndex, 0, total - 1)` and `std::max(0, size - 1)` site. |
 | 8 | `book_filter::` | `src/util/BookFilter.h` | Book-title normalization and safe fallback filename extraction. Use instead of inline `substr` / manual lowercase copies when building sort keys or display titles. |
 | 9 | `long_press::Button` | `src/util/LongPress.h` | Per-button long-press state machine. Replaces the old `held` + `longTriggered` boolean pairs and hard-coded `getHeldTime() >= N` checks. |
+| 10 | `BookStoreUtils::` | `src/util/BookStoreUtils.h` | Template helpers for book-store deduplication, path/bookId normalization, `findBookIndex`, and `fallbackTitleFromPath`. |
+| 11 | `CoverGenerator::` | `src/util/CoverGenerator.{h,cpp}` | EPUB/XTC/TXT cover thumbnail generation with heap guards, adaptive contain sizing, and per-format cache paths. |
 
-All 7 rendering/input utilities are **tested, building, and used in
+All 9 rendering/input and store utilities are **tested, building, and used in
 production**. They are the canonically correct way to write Steroids UI
-code. `ListLayout` is the foundation; `ListRenderHelper` and
+and book-store code. `ListLayout` is the foundation; `ListRenderHelper` and
 `OrderListActivity` both depend on it.
 
 In addition, two reusable **activities** are shared:
@@ -489,6 +491,9 @@ When merging a new upstream release, verify:
 - [ ] `src/util/PopupUtils.h` — Steroids-added.
 - [ ] `src/util/WiFiUtils.{h,cpp}` — Steroids-added (centralized WiFi lifecycle).
 - [ ] `src/util/ReadingStatsBackupManager.{h,cpp}` — Steroids-added.
+- [ ] `src/util/BookStoreUtils.h` — Steroids-added.
+- [ ] `src/util/CoverGenerator.{h,cpp}` — Steroids-added.
+- [ ] `src/components/LibraryPopupOverlay.h` — Steroids-added.
 
 **Pre-existing protected Steroids utilities (unchanged but still protected):**
 - [ ] `src/util/HeaderDateUtils.{h,cpp}` — Steroids-added.
@@ -496,13 +501,14 @@ When merging a new upstream release, verify:
 - [ ] `src/util/SleepScreenCache.{h,cpp}` — Steroids-added.
 - [ ] `src/util/SleepImageUtils.{h,cpp}` — Steroids-added.
 - [ ] `src/SilentRestart.h` — Steroids-added `silentRestart*` family.
-- [ ] `src/activities/reader/ReaderUtils.h` — Steroids button-action dispatch.
+- [ ] `src/activities/reader/ReaderUtils.h` — Steroids button-action dispatch + legacy long-press migration helpers.
 
 If upstream modifies an activity that uses these utils, **keep the
 Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
 `ListRenderHelper::` / `ListInputMapper::` / `OrderListActivity<>` /
 `ButtonNavigator::clampIndex` / `StringUtils::` / `PopupUtils::` /
-`WiFiUtils::` / `ReadingStatsBackup::` calls.
+`WiFiUtils::` / `ReadingStatsBackup::` / `BookStoreUtils::` /
+`CoverGenerator::` / `LibraryPopupOverlay` calls.
 
 ---
 
@@ -691,7 +697,82 @@ helpers for their respective domains:
 - `AchievementPopupUtils` (`src/util/AchievementPopupUtils.h`) — the
   on-reader achievement toast.
 
----
+### 12.7 `BookStoreUtils` (`src/util/BookStoreUtils.h`)
+
+Template helpers for book-store deduplication, path/bookId normalization,
+and index lookup. Replaces duplicated private helpers that used to live
+in `FavoritesStore`, `RecentBooksStore`, and similar modules.
+
+```cpp
+#include "util/BookStoreUtils.h"
+
+// Fallback title from path when metadata is missing.
+std::string title = BookStoreUtils::fallbackTitleFromPath(bookPath);
+
+// Find a book by stable bookId or normalized path.
+int index = BookStoreUtils::findBookIndex(books, path, bookId);
+
+// Normalize one entry and resolve missing bookId from ReadingStatsStore.
+BookStoreUtils::normalizeBook(book);
+
+// Deduplicate + merge metadata + optional max-size prune.
+BookStoreUtils::normalizeBooks(books, /*enforceMaxSize=*/true, 1000);
+```
+
+Use `normalizeBooks()` in every store reload path so recent/favorite/
+library lists share the same dedup semantics.
+
+### 12.8 `CoverGenerator` (`src/util/CoverGenerator.{h,cpp}`)
+
+Centralizes EPUB/XTC/TXT cover thumbnail generation. The utility owns
+cache-dir creation, per-format heap guards, and adaptive-contain sizing.
+
+```cpp
+#include "util/CoverGenerator.h"
+
+bool ok = CoverGenerator::generateCover(bookPath, coverWidth, coverHeight);
+```
+
+Key rules:
+- Check `ESP.getMaxAllocHeap()` before opening an EPUB; skip when it is
+  below the per-format guard to avoid OOM during thumb generation.
+- Reuse `LibraryIndex::thumbPathFor(...)` for the destination path so
+  cache invalidation remains consistent with the library index.
+- Do not call `generateCover()` from `loop()` without yielding/WDT reset;
+  cover generation must remain non-blocking.
+
+### 12.9 `ReaderUtils` long-press migration helpers (`src/activities/reader/ReaderUtils.h`)
+
+Two inline helpers map legacy long-press enums to the unified
+`BUTTON_ACTION` system:
+
+- `ReaderUtils::legacyLongPressToButtonAction(legacy)`
+- `ReaderUtils::legacyFrontLongPressToButtonAction(legacy)`
+
+Use them in settings migration and reader long-press dispatch so the
+fallback path is identical across `EpubReaderActivity`,
+`TxtReaderActivity`, and `XtcReaderActivity`.
+
+### 12.10 `LibraryPopupOverlay` (`src/components/LibraryPopupOverlay.h`)
+
+Reusable popup overlay for library-style context menus. It is drawn on
+top of the caller's rendered screen and supports:
+- Bold header/title with 12px corner radius and 80% panel width.
+- Optional row icons drawn at native `iconW × iconH`.
+- Inverted filled highlight for the focused row.
+- Scroll indicators when the item list exceeds `kMaxVisibleRows`.
+
+Use this instead of hand-rolled popup geometry in any library or
+home-screen overlay.
+
+### 12.11 Book context menu / homepage popup style
+
+The homepage book-context popup and the library popup share the same
+visual language: white rounded panel, bold header, filled highlight row,
+optional icon column, and centered action labels. New popups MUST match
+this style unless a different panel style is explicitly approved.
+
+### 12.12 Pre-existing Steroids utilities (kept unchanged)
 
 ## 13. Main / Loop / Boot Patterns
 
@@ -825,3 +906,55 @@ intentionally kept on the `Activity` base class (NOT marked for
 removal) for call-site brevity. New code MUST keep using them
 rather than calling `activityManager.goHome()` / `goToReader()`
 directly.
+
+### 13.8 Long-press detection must live in `loop()`, not in press-edge handlers
+
+A press-edge `setConfirmHandler` / `setBackHandler` callback sees
+`getHeldTime() == 0`. Any long-press behavior therefore MUST be polled
+inside `loop()` with `isPressed()` + `getHeldTime()` plus a static
+`longPressFired` flag reset on `wasReleased()`.
+
+```cpp
+void AppsActivity::loop() {
+  listInputMapper.loop(mappedInput);
+
+  static bool longPressFired = false;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressFired = false;
+  } else if (!longPressFired && /* target condition */) {
+    longPressFired = true;
+    // fire long-press action
+  }
+}
+```
+
+Use a named `constexpr` threshold instead of magic numbers; match
+existing screen constants such as `HomeActivity::RECENT_BOOK_LONG_PRESS_MS`.
+
+### 13.9 SleepActivity refresh order: BW base first, grayscale second
+
+When a deep-sleep image has both a BW base and a grayscale overlay, the
+order MUST be:
+1. `displaySleepGrayscaleBase(renderer)` — BW base with `HALF_REFRESH`.
+2. `renderBitmapGrayscaleOverlay(...)` — clears to black, sets
+   `GRAYSCALE_LSB`, draws bitmap, then calls `displaySleepBuffer()`.
+
+Never call `displayBuffer(HALF_REFRESH)` after the grayscale overlay;
+`renderBitmapGrayscaleOverlay()` already handles display. Duplicating
+the refresh causes visible ghosting on X3/X4.
+
+### 13.10 Non-blocking cover generation in list activities
+
+Long-running work such as cover generation MUST NOT block `loop()`.
+The canonical pattern is:
+
+- Track generation state in a struct with `pending`, `active`,
+  `slot`, `done`, `total`, and `pageStart`.
+- Process one slot per frame, then yield/WDT reset.
+- If the user changes page (`currentPage != pageStart`), cancel the
+  current batch and restart on the new page.
+- Force a full render when generation finishes so progress text and
+  newly generated covers appear immediately.
+
+This pattern keeps navigation, popups, and input responsive during
+cover generation.
