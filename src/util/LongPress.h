@@ -37,10 +37,10 @@ class Button {
  public:
   // Arm the detector (or refresh arm on continued press). Call this when
   // the button is currently held and you want to give the user a fresh
-  // long-press window.
+  // long-press window. Does not reset the fired state, so fired() still
+  // returns false after the threshold is reached.
   void arm() {
     armed_ = true;
-    fired_ = false;
   }
 
   // Mark the detector as "no longer pressed". Call on wasReleased.
@@ -55,6 +55,11 @@ class Button {
 
   // Has the long-press already fired for the current hold?
   bool hasFired() const { return fired_; }
+
+  // Was the detector armed or fired during the current press cycle?
+  // Useful for detecting "any directional button was held" without
+  // exposing internal state.
+  bool wasPressed() const { return armed_ || fired_; }
 
   // Atomically check the held-time threshold and fire. Returns true exactly
   // once per hold (subsequent calls in the same hold return false). The

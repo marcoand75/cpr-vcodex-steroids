@@ -224,8 +224,8 @@ void LibraryActivity::onEnter() {
   lastRenderedPage_ = -1;
   forceRender_ = true;
   popupMode_ = PopupMode::None;
-  upHeld_ = false; upLongTriggered_ = false;
-  downHeld_ = false; downLongTriggered_ = false;
+  upPress_.reset();
+  downPress_.reset();
   popupSpawnButton_ = -1;
   lastLayoutSetting_ = SETTINGS.libraryLayout;
   prevBorderIdx_ = -1;
@@ -394,10 +394,10 @@ void LibraryActivity::refreshPageCache() {
   // Works in normal mode AND inside a collection (where books have covers).
   // Skipped only when viewing the collections list.
   if (!collectionsMode_ || currentCollectionIdx_ >= 0) {
-    coverGenActive_ = true;
-    coverGenSlot_ = 0;
-    coverGenDone_ = 0;
-    coverGenTotal_ = 0;
+    coverGen_.active = true;
+    coverGen_.slot = 0;
+    coverGen_.done = 0;
+    coverGen_.total = 0;
   }
 }
 
@@ -459,8 +459,8 @@ void LibraryActivity::openSortPopup() {
   popupOverlay_.items.clear();
   popupOverlay_.selectedIndex = 0;
   popupOverlay_.startIndex = 0;
-  upHeld_ = downHeld_ = false;
-  upLongTriggered_ = downLongTriggered_ = false;
+  upPress_.reset();
+  downPress_.reset();
 
   struct { StrId id; const uint8_t* icon; int iconW; int iconH; CrossPointSettings::LIBRARY_SORT sort; } sorts[] = {
     {StrId::STR_SORT_TITLE_ASC, SortAscIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_TITLE_ASC},
@@ -491,8 +491,8 @@ void LibraryActivity::openFilterPopup() {
   popupOverlay_.items.clear();
   popupOverlay_.selectedIndex = 0;
   popupOverlay_.startIndex = 0;
-  upHeld_ = downHeld_ = false;
-  upLongTriggered_ = downLongTriggered_ = false;
+  upPress_.reset();
+  downPress_.reset();
 
   PopupItem allItem; allItem.label = I18N.get(StrId::STR_ALL_BOOKS);
   allItem.icon = LibraryNewIcon; allItem.iconW = 32; allItem.iconH = 32;
@@ -633,55 +633,55 @@ void LibraryActivity::beginTextSearch() {
 
 void LibraryActivity::loop() {
   // ---- Cover generation: one slot per frame, after grid is rendered -------
-  if (coverGenPending_) {
-    coverGenPending_ = false;
-    coverGenActive_ = true;
-    // Fall through to the generation loop below — coverGenSlot_/Done_/Total_
+  if (coverGen_.pending) {
+    coverGen_.pending = false;
+    coverGen_.active = true;
+    // Fall through to the generation loop below — coverGen_.slot/Done_/Total_
     // are already set by the callback.
   }
-  if (coverGenActive_) {
+  if (coverGen_.active) {
     const int total = totalBooks_;
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
     
     // First frame: count missing covers, let grid render first
-    if (coverGenSlot_ == 0 && coverGenTotal_ == 0) {
+    if (coverGen_.slot == 0 && coverGen_.total == 0) {
       for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
         if (pageCache_[i].id == 0) continue;
         std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
         if (!Storage.exists(thumbPath.c_str())) {
-          ++coverGenTotal_;
+          ++coverGen_.total;
         } else {
           // Validate existing cover: ensure the BMP is actually readable
           if (!isBookCoverReady(pageCache_[i].path)) {
             // Corrupt — delete and regenerate
             Storage.remove(thumbPath.c_str());
-            ++coverGenTotal_;
+            ++coverGen_.total;
           }
         }
       }
-      if (coverGenTotal_ == 0) {
-        coverGenActive_ = false;
+      if (coverGen_.total == 0) {
+        coverGen_.active = false;
         return;
       }
       // First frame: let the grid render without blocking; cover gen starts
       // on the next frame. Don't force another full render here — the grid
       // is already visible from the initial page render.
-      LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGenTotal_);
-      coverGenSlot_ = -1;
+      LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGen_.total);
+      coverGen_.slot = -1;
       requestUpdate();
       return;
     }
 
     // Second frame onward: process one slot
-    if (coverGenSlot_ == -1) coverGenSlot_ = 0;  // first processing frame
+    if (coverGen_.slot == -1) coverGen_.slot = 0;  // first processing frame
     
-    int slot = coverGenSlot_;
+    int slot = coverGen_.slot;
     if (slot < gridsPerPage_ && (pageStart + slot) < total && pageCache_[slot].id != 0) {
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
       if (!Storage.exists(thumbPath.c_str())) {
         yield(); esp_task_wdt_reset();
         LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
-                coverGenDone_ + 1, coverGenTotal_, pageCache_[slot].path,
+                coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
         // Temporarily move the selector to this book so the selection
@@ -701,7 +701,7 @@ void LibraryActivity::loop() {
 
         // Generate cover using Epub/Xtc parser
         if (generatePageCover(pageCache_[slot].path)) {
-          ++coverGenDone_;
+          ++coverGen_.done;
         }
 
         // Restore original selector and title/author
@@ -717,13 +717,13 @@ void LibraryActivity::loop() {
       }
     }
 
-    ++coverGenSlot_;
-    if (coverGenSlot_ >= gridsPerPage_ || (pageStart + coverGenSlot_) >= total) {
-      LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGenDone_, coverGenTotal_);
-      coverGenActive_ = false;
-      coverGenSlot_ = 0;
-      coverGenDone_ = 0;
-      coverGenTotal_ = 0;
+    ++coverGen_.slot;
+    if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
+      LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+      coverGen_.active = false;
+      coverGen_.slot = 0;
+      coverGen_.done = 0;
+      coverGen_.total = 0;
       // Force a full render at finish to ensure:
       // - All generated covers appear on screen
       // - The progress text "X/Y Loading..." disappears
@@ -775,11 +775,11 @@ void LibraryActivity::loop() {
 
   // ---- Empty library state ------------------------------------------------
   if (total <= 0) {
-    upHeld_ = false; upLongTriggered_ = false;
-    downHeld_ = false; downLongTriggered_ = false;
+    upPress_.reset();
+    downPress_.reset();
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      upHeld_ = false; downHeld_ = false;
-      upLongTriggered_ = false; downLongTriggered_ = false;
+      upPress_.reset();
+      downPress_.reset();
       // Silent restart to reclaim fragmented heap before returning.
       // Library browsing fragments the heap significantly (cache, thumbnails,
       // book index vectors). A full ESP.restart gives the system a clean slate.
@@ -794,28 +794,26 @@ void LibraryActivity::loop() {
       onGoHome();
     }
     if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
-      if (!upHeld_) { upHeld_ = true; upLongTriggered_ = false; }
-      if (!upLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        upLongTriggered_ = true;
+      if (!upPress_.armed()) upPress_.arm();
+      if (upPress_.fired(mappedInput.getHeldTime())) {
         popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Up);
         openSortPopup();
         return;
       }
     }
     if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
-      if (!downHeld_) { downHeld_ = true; downLongTriggered_ = false; }
-      if (!downLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        downLongTriggered_ = true;
+      if (!downPress_.armed()) downPress_.arm();
+      if (downPress_.fired(mappedInput.getHeldTime())) {
         popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Down);
         openFilterPopup();
         return;
       }
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-      upHeld_ = false; upLongTriggered_ = false;
+      upPress_.reset();
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-      downHeld_ = false; downLongTriggered_ = false;
+      downPress_.reset();
     }
     return;
   }
@@ -878,11 +876,11 @@ void LibraryActivity::loop() {
                         refreshPageCache();
                         // Defer generation by one frame so the grid is drawn
                         // before the generation loop blocks the renderer.
-                        coverGenActive_ = false;
-                        coverGenPending_ = true;
-                        coverGenSlot_ = 0;
-                        coverGenDone_ = 0;
-                        coverGenTotal_ = 0;
+                        coverGen_.active = false;
+                        coverGen_.pending = true;
+                        coverGen_.slot = 0;
+                        coverGen_.done = 0;
+                        coverGen_.total = 0;
                         forceRender_ = true;
                         requestUpdate();
                       });
@@ -896,11 +894,11 @@ void LibraryActivity::loop() {
                           deleteAllLibraryCovers();
                         }
                         refreshPageCache();
-                        coverGenActive_ = false;
-                        coverGenPending_ = true;
-                        coverGenSlot_ = 0;
-                        coverGenDone_ = 0;
-                        coverGenTotal_ = 0;
+                        coverGen_.active = false;
+                        coverGen_.pending = true;
+                        coverGen_.slot = 0;
+                        coverGen_.done = 0;
+                        coverGen_.total = 0;
                         forceRender_ = true;
                         requestUpdate();
                       });
@@ -977,11 +975,11 @@ void LibraryActivity::loop() {
       requestUpdate();
       return;
     }
-    if (upHeld_ || downHeld_ || leftHeld_ || rightHeld_) {
-      upHeld_ = false; downHeld_ = false;
-      upLongTriggered_ = false; downLongTriggered_ = false;
-      leftHeld_ = false; rightHeld_ = false;
-      leftLongTriggered_ = false; rightLongTriggered_ = false;
+    if (upPress_.wasPressed() || downPress_.wasPressed() || leftPress_.wasPressed() || rightPress_.wasPressed()) {
+      upPress_.reset();
+      downPress_.reset();
+      leftPress_.reset();
+      rightPress_.reset();
     } else {
       LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -997,42 +995,36 @@ void LibraryActivity::loop() {
   }
 
   // ---- Long-press Up/Down to open sort/filter popups ----------------------
-  if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
-    if (!upHeld_) { upHeld_ = true; upLongTriggered_ = false; }
-    if (!upLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        upLongTriggered_ = true;
+    if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
+      if (!upPress_.armed()) upPress_.arm();
+      if (upPress_.fired(mappedInput.getHeldTime())) {
         popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Up);
         openSortPopup();
         return;
+      }
     }
-  }
-  if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
-    if (!downHeld_) { downHeld_ = true; downLongTriggered_ = false; }
-    if (!downLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-        downLongTriggered_ = true;
+    if (mappedInput.isPressed(MappedInputManager::Button::Down)) {
+      if (!downPress_.armed()) downPress_.arm();
+      if (downPress_.fired(mappedInput.getHeldTime())) {
         popupSpawnButton_ = static_cast<int>(MappedInputManager::Button::Down);
         openFilterPopup();
         return;
+      }
     }
-  }
 
-  // ---- Long-press Left/Right for page turn ---------------------------------
-  if (mappedInput.isPressed(MappedInputManager::Button::Left)) {
-    if (!leftHeld_) { leftHeld_ = true; leftLongTriggered_ = false; }
-    if (!leftLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-      leftLongTriggered_ = true;
+    // ---- Long-press Left/Right for page turn ---------------------------------
+    if (mappedInput.isPressed(MappedInputManager::Button::Left)) {
+      if (!leftPress_.armed()) leftPress_.arm();
+      leftPress_.fired(mappedInput.getHeldTime());  // update long-press state for release handler
     }
-  }
-  if (mappedInput.isPressed(MappedInputManager::Button::Right)) {
-    if (!rightHeld_) { rightHeld_ = true; rightLongTriggered_ = false; }
-    if (!rightLongTriggered_ && mappedInput.getHeldTime() >= kLongPressMs) {
-      rightLongTriggered_ = true;
+    if (mappedInput.isPressed(MappedInputManager::Button::Right)) {
+      if (!rightPress_.armed()) rightPress_.arm();
+      rightPress_.fired(mappedInput.getHeldTime());  // update long-press state for release handler
     }
-  }
 
   // ---- Directional navigation / page turn on long-press release -----------
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    if (upHeld_ && !upLongTriggered_) {
+    if (upPress_.wasShortPress()) {
       int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
       int r = (selectorIndex_ - ps) / gridColumns_;
       if (r == 0) {
@@ -1062,11 +1054,11 @@ void LibraryActivity::loop() {
       }
       requestUpdate();
     }
-    upHeld_ = false; upLongTriggered_ = false;
+    upPress_.reset();
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (downHeld_ && !downLongTriggered_) {
+    if (downPress_.wasShortPress()) {
       int ps = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
       int pageItems = std::min(gridsPerPage_, total - ps);
       // Ceiling division: 5 items / 4 cols = 2 rows (not 1)
@@ -1088,13 +1080,13 @@ void LibraryActivity::loop() {
       }
       requestUpdate();
     }
-    downHeld_ = false; downLongTriggered_ = false;
+    downPress_.reset();
   }
 
   bool moved = false;
   // Left: long-press = previous page, short-press = previous book
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    if (leftHeld_ && leftLongTriggered_) {
+    if (leftPress_.hasFired()) {
       int prevPage = (selectorIndex_ / gridsPerPage_) - 1;
       if (prevPage < 0) prevPage = (total + gridsPerPage_ - 1) / gridsPerPage_ - 1;
       selectorIndex_ = prevPage * gridsPerPage_;
@@ -1111,11 +1103,11 @@ void LibraryActivity::loop() {
       }
       moved = true;
     }
-    leftHeld_ = false; leftLongTriggered_ = false;
+    leftPress_.reset();
   }
   // Right: long-press = next page, short-press = next book
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    if (rightHeld_ && rightLongTriggered_) {
+    if (rightPress_.hasFired()) {
       int nextPage = (selectorIndex_ / gridsPerPage_) + 1;
       int totalPages = (total + gridsPerPage_ - 1) / gridsPerPage_;
       if (nextPage >= totalPages) nextPage = 0;
@@ -1133,7 +1125,7 @@ void LibraryActivity::loop() {
       }
       moved = true;
     }
-    rightHeld_ = false; rightLongTriggered_ = false;
+    rightPress_.reset();
   }
   if (moved) {
     int curPage = selectorIndex_ / gridsPerPage_;
@@ -1150,6 +1142,76 @@ void LibraryActivity::loop() {
 // ============================================================================
 // SECTION 7: Rendering — full and partial
 // ============================================================================
+
+// Common info-line builder used by both the partial and full render paths.
+// The 50+ lines of switch/cachedInfo_/cachedSelTitle_/cachedSelAuthor_
+// rebuild used to live twice in render(); this is the single source.
+bool LibraryActivity::rebuildInfoCacheIfChanged(int curPageRaw, int total) {
+  const bool infoKeyChanged =
+      cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
+      cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
+      cachedInfoSearch_ != currentSearchText_ || cachedTotalBooks_ != totalBooks_ ||
+      cachedCollectionsMode_ != collectionsMode_ || cachedCollectionIdx_ != currentCollectionIdx_ ||
+      cachedCollectionName_ != currentCollectionName_;
+  if (!infoKeyChanged) return false;
+
+  cachedInfo_.clear();
+  switch (currentFilter_) {
+    case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
+    case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
+    case CrossPointSettings::LIBRARY_FILTER_UNREAD:     cachedInfo_ = tr(STR_UNREAD); break;
+    case CrossPointSettings::LIBRARY_FILTER_COMPLETED:  cachedInfo_ = tr(STR_COMPLETED); break;
+    case CrossPointSettings::LIBRARY_FILTER_HIDDEN:     cachedInfo_ = tr(STR_HIDDEN_FILTER); break;
+    default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS) : tr(STR_ALL_BOOKS); break;
+  }
+  if (collectionsMode_ && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
+    cachedInfo_ = currentCollectionName_;
+  }
+  const char* sortLabel = nullptr;
+  // Don't show sort label when in collections mode — the info line
+  // already says "Collections" or "Collections / Name".
+  if (!collectionsMode_) {
+    switch (currentSort_) {
+      case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
+      default: break;
+    }
+  }
+  if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
+  if (!currentSearchText_.empty()) {
+    cachedInfo_ += " [";
+    cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + "..." : currentSearchText_;
+    cachedInfo_ += "]";
+  }
+
+  const int pageWidth = renderer.getScreenWidth();
+  refreshSelectedTitleAuthor(selectorIndex_, total, pageWidth);
+
+  cachedInfoFilter_ = currentFilter_;
+  cachedInfoSort_ = currentSort_;
+  cachedInfoSearch_ = currentSearchText_;
+  cachedRenderSelector_ = selectorIndex_;
+  cachedRenderPage_ = curPageRaw;
+  cachedCollectionsMode_ = collectionsMode_;
+  cachedCollectionIdx_ = currentCollectionIdx_;
+  cachedCollectionName_ = currentCollectionName_;
+  return true;
+}
+
+void LibraryActivity::refreshSelectedTitleAuthor(int selectorIndex, int total, int pageWidth) {
+  if (selectorIndex < total) {
+    int slot = selectorIndex % gridsPerPage_;
+    cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(pageCache_[slot].path);
+    cachedSelAuthor_ = pageCache_[slot].author;
+    const int maxSelW = pageWidth - 16;  // 8px margin each side
+    cachedSelTitle_ = renderer.truncatedText(UI_10_FONT_ID, cachedSelTitle_.c_str(), maxSelW, EpdFontFamily::BOLD);
+  } else {
+    cachedSelTitle_.clear();
+    cachedSelAuthor_.clear();
+  }
+}
 
 void LibraryActivity::render(RenderLock&&) {
   esp_task_wdt_reset();
@@ -1193,63 +1255,7 @@ void LibraryActivity::render(RenderLock&&) {
       renderer.fillRect(0, selTitleY, pageWidth, lh * 2 + 1, false);
 
       // 3. Update cached text strings if selection/filter/sort/search changed.
-      const bool infoKeyChanged = cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
-                                  cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
-                                  cachedInfoSearch_ != currentSearchText_ || cachedTotalBooks_ != totalBooks_ ||
-                                  cachedCollectionsMode_ != collectionsMode_ || cachedCollectionIdx_ != currentCollectionIdx_ ||
-                                  cachedCollectionName_ != currentCollectionName_;
-      if (infoKeyChanged) {
-          cachedInfo_.clear();
-          switch (currentFilter_) {
-            case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
-            case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
-            case CrossPointSettings::LIBRARY_FILTER_UNREAD:     cachedInfo_ = tr(STR_UNREAD); break;
-            case CrossPointSettings::LIBRARY_FILTER_COMPLETED:  cachedInfo_ = tr(STR_COMPLETED); break;
-            case CrossPointSettings::LIBRARY_FILTER_HIDDEN:     cachedInfo_ = tr(STR_HIDDEN_FILTER); break;
-            default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS) : tr(STR_ALL_BOOKS); break;
-          }
-          if (collectionsMode_ && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
-            cachedInfo_ = currentCollectionName_;
-          }
-          const char* sortLabel = nullptr;
-          // Don't show sort label when in collections mode — the info line
-          // already says "Collections" or "Collections / Name".
-          if (!collectionsMode_) {
-            switch (currentSort_) {
-              case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
-              case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
-              case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
-              case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
-              default: break;
-            }
-          }
-          if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
-          if (!currentSearchText_.empty()) {
-            cachedInfo_ += " [";
-            cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + "..." : currentSearchText_;
-            cachedInfo_ += "]";
-          }
-
-          if (selectorIndex_ < total) {
-            int slot = selectorIndex_ % gridsPerPage_;
-            cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(pageCache_[slot].path);
-            cachedSelAuthor_ = pageCache_[slot].author;
-            const int maxSelW = pageWidth - 16;  // 8px margin each side
-            cachedSelTitle_ = renderer.truncatedText(UI_10_FONT_ID, cachedSelTitle_.c_str(), maxSelW, EpdFontFamily::BOLD);
-          } else {
-            cachedSelTitle_.clear();
-            cachedSelAuthor_.clear();
-          }
-
-          cachedInfoFilter_ = currentFilter_;
-          cachedInfoSort_ = currentSort_;
-          cachedInfoSearch_ = currentSearchText_;
-          cachedRenderSelector_ = selectorIndex_;
-          cachedRenderPage_ = curPageRaw;
-          cachedCollectionsMode_ = collectionsMode_;
-          cachedCollectionIdx_ = currentCollectionIdx_;
-          cachedCollectionName_ = currentCollectionName_;
-      }
+      rebuildInfoCacheIfChanged(curPageRaw, total);
 
       // 4. Draw new border (black).
       const int pageStart = curPageRaw * gridsPerPage_;
@@ -1309,62 +1315,7 @@ void LibraryActivity::render(RenderLock&&) {
   }
 
   // Rebuild cached header/title strings only when inputs change.
-  const bool infoKeyChanged =
-      cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
-      cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
-      cachedInfoSearch_ != currentSearchText_ || cachedTotalBooks_ != totalBooks_ ||
-      cachedCollectionsMode_ != collectionsMode_ || cachedCollectionIdx_ != currentCollectionIdx_ ||
-      cachedCollectionName_ != currentCollectionName_;
-  if (infoKeyChanged) {
-    cachedInfo_.clear();
-    switch (currentFilter_) {
-      case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: cachedInfo_ = tr(STR_FAVOURITES); break;
-      case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: cachedInfo_ = tr(STR_LATEST_READ); break;
-      case CrossPointSettings::LIBRARY_FILTER_UNREAD:     cachedInfo_ = tr(STR_UNREAD); break;
-      case CrossPointSettings::LIBRARY_FILTER_COMPLETED:  cachedInfo_ = tr(STR_COMPLETED); break;
-      case CrossPointSettings::LIBRARY_FILTER_HIDDEN:     cachedInfo_ = tr(STR_HIDDEN_FILTER); break;
-      default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS) : tr(STR_ALL_BOOKS); break;
-    }
-    if (collectionsMode_ && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
-      cachedInfo_ = currentCollectionName_;
-    }
-    const char* sortLabel = nullptr;
-    if (!collectionsMode_) {
-      switch (currentSort_) {
-        case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
-        case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
-        case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
-        default: break;
-      }
-    }
-    if (sortLabel && sortLabel[0]) { cachedInfo_ += " / "; cachedInfo_ += sortLabel; }
-    if (!currentSearchText_.empty()) {
-      cachedInfo_ += " [";
-      cachedInfo_ += currentSearchText_.size() > 20 ? currentSearchText_.substr(0, 20) + ".." : currentSearchText_;
-      cachedInfo_ += "]";
-    }
-
-    if (selectorIndex_ < total) {
-      int slot = selectorIndex_ % gridsPerPage_;
-      cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(pageCache_[slot].path);
-      cachedSelAuthor_ = pageCache_[slot].author;
-      const int maxSelW = pageWidth - 16;  // 8px margin each side
-      cachedSelTitle_ = renderer.truncatedText(UI_10_FONT_ID, cachedSelTitle_.c_str(), maxSelW, EpdFontFamily::BOLD);
-    } else {
-      cachedSelTitle_.clear();
-      cachedSelAuthor_.clear();
-    }
-
-    cachedInfoFilter_ = currentFilter_;
-    cachedInfoSort_ = currentSort_;
-    cachedInfoSearch_ = currentSearchText_;
-    cachedRenderSelector_ = selectorIndex_;
-    cachedRenderPage_ = curPageRaw;
-    cachedCollectionsMode_ = collectionsMode_;
-    cachedCollectionIdx_ = currentCollectionIdx_;
-    cachedCollectionName_ = currentCollectionName_;
-  }
+  rebuildInfoCacheIfChanged(curPageRaw, total);
 
   // Info line (filter/sort/search)
   cachedInfo_ = renderer.truncatedText(UI_10_FONT_ID, cachedInfo_.c_str(), pageWidth - 16, EpdFontFamily::REGULAR);
@@ -1391,9 +1342,9 @@ void LibraryActivity::render(RenderLock&&) {
     }
 
     // Cover generation progress text centered below author
-    if ((coverGenActive_ || coverGenPending_) && coverGenTotal_ > 0) {
+    if ((coverGen_.active || coverGen_.pending) && coverGen_.total > 0) {
       char covBuf[48];
-      snprintf(covBuf, sizeof(covBuf), "%d/%d %s", coverGenDone_ + 1, coverGenTotal_, tr(STR_LOADING_POPUP));
+      snprintf(covBuf, sizeof(covBuf), "%d/%d %s", coverGen_.done + 1, coverGen_.total, tr(STR_LOADING_POPUP));
       const int covW = renderer.getTextWidth(SMALL_FONT_ID, covBuf, EpdFontFamily::REGULAR);
       const int covY = selTitleY + lh * 2 - 4;  // moved up 8px to avoid grid overlap
       renderer.drawText(SMALL_FONT_ID, (pageWidth - covW) / 2, covY, covBuf, true, EpdFontFamily::BOLD);
@@ -1544,19 +1495,19 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     }
 
     // Progress bar for cover generation: drawn in WHITE on the black placeholder.
-    // The bar is only visible when coverGenActive_ is true and this tile
+    // The bar is only visible when coverGen_.active is true and this tile
     // corresponds to a slot that is being or has been processed.
-    if (coverGenActive_ || coverGenPending_) {
+    if (coverGen_.active || coverGen_.pending) {
       const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
       const int slot = (pageStart + i) - pageStart;  // local slot index
-      if (slot >= 0 && slot < gridsPerPage_ && slot <= coverGenSlot_ && coverGenTotal_ > 0) {
+      if (slot >= 0 && slot < gridsPerPage_ && slot <= coverGen_.slot && coverGen_.total > 0) {
         constexpr int kBarH = 8;
         const int barY = y + coverHeight_ - kBarH - 4;
         const int maxBarW = coverWidth_ - 6;
         // White outline
         renderer.drawRect(x + 3, barY, maxBarW, kBarH, false);
         // White fill: proportional to done / total
-        const int barW = (coverGenDone_ * maxBarW) / coverGenTotal_;
+        const int barW = (coverGen_.done * maxBarW) / coverGen_.total;
         if (barW > 0) {
           renderer.fillRect(x + 3, barY, barW, kBarH, false);
         }

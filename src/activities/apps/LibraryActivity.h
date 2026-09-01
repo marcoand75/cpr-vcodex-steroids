@@ -57,30 +57,27 @@ class LibraryActivity final : public Activity {
   int  currentCollectionIdx_ = -1;       // selected collection index (-1 = list of collections)
   std::string currentCollectionName_;    // name of currently opened collection
 
-  // Cover generation (one per frame, like HomeActivity carousel)
-  bool coverGenActive_ = false;          // cover generation loop is running
-  bool coverGenPending_ = false;         // start generation on next frame (after grid is visible)
-  bool coverGenLock_ = false;            // blocks input during single-cover generation to prevent state corruption
-  int  coverGenSlot_ = 0;               // current slot being processed (0..gridsPerPage_-1)
-  int  coverGenDone_ = 0;               // number of covers successfully generated
-  int  coverGenTotal_ = 0;              // total missing covers on this page
+  // Cover generation state (one slot per frame, like HomeActivity carousel)
+  struct CoverGenState {
+    bool active = false;   // cover generation loop is running
+    bool pending = false;  // start generation on next frame (after grid is visible)
+    int  slot = 0;         // current slot being processed (0..gridsPerPage_-1)
+    int  done = 0;         // number of covers successfully generated
+    int  total = 0;        // total missing covers on this page
+  };
+  CoverGenState coverGen_;
 
   enum class PopupMode { None, Sort, Filter };
   PopupMode popupMode_ = PopupMode::None;
   LibraryPopupOverlay popupOverlay_;
 
-  bool upHeld_ = false;
-  bool upLongTriggered_ = false;
-  bool downHeld_ = false;
-  bool downLongTriggered_ = false;
-  bool leftHeld_ = false;
-  bool leftLongTriggered_ = false;
-  bool rightHeld_ = false;
-  bool rightLongTriggered_ = false;
   int popupSpawnButton_ = -1;
   bool launchFromApps = false;
 
-  static constexpr unsigned long kLongPressMs = 800;
+  long_press::Button upPress_;
+  long_press::Button downPress_;
+  long_press::Button leftPress_;
+  long_press::Button rightPress_;
 
   void applyLayoutFromSettings();
   void ensureLayoutUpToDate();
@@ -103,11 +100,11 @@ class LibraryActivity final : public Activity {
   void selectPopupItem();
   void beginTextSearch();
 
-  // Rebuild cachedInfo_ / cachedSelTitle_ / cachedSelAuthor_ when the input
-  // key (selector, page, filter, sort, search, collection) changes. Returns
-  // true if the cache was rebuilt. Used by both the partial and full render
-  // paths so the visible info line stays consistent across them.
-  bool rebuildInfoCacheIfChanged(int curPageRaw, int total, int pageWidth);
+  // Rebuild cachedInfo_ when the input key (selector, page, filter, sort,
+  // search, collection) changes. Returns true if the cache was rebuilt.
+  // Used by both the partial and full render paths so the visible info
+  // line stays consistent across them.
+  bool rebuildInfoCacheIfChanged(int curPageRaw, int total);
 
   // Update only cachedSelTitle_ / cachedSelAuthor_ for the current
   // selectorIndex_, truncating the title to fit the screen. Used by the
