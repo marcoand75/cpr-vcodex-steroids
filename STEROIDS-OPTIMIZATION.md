@@ -779,10 +779,22 @@ enter deep sleep` reads top-to-bottom.
 All silent-reboot declarations are grouped in one anonymous
 namespace block right above the `silentRestart*()` wrappers:
 
-  - The 5 `SILENT_REBOOT_TARGET_*` constants.
-  - The 5 `silentReboot*` `RTC_NOINIT_ATTR` variables.
+  - The 4 `SILENT_REBOOT_TARGET_*` constants (`HOME`, `APPS`,
+    `PLUGIN`, `PLUGIN_BROWSER`). `SILENT_REBOOT_TARGET_READER` was
+    removed as dead code; the reader-resume path is handled by the
+    non-silent-reboot branch in `setup()` (the
+    `bootToHome = false` arm reads `APP_STATE.openEpubPath` and
+    routes to the reader).
+  - The 5 `silentReboot*` `RTC_NOINIT_ATTR` variables
+    (`silentRebootMagic`, `silentRebootTarget`, etc.).
   - `deepSleepInProgress` latch.
   - The `requestSilentRestart()` helper.
+
+The `deepSleepInProgress` guard is checked ONCE inside
+`requestSilentRestart()`. The `silentRestart*()` wrappers do NOT
+re-check it — that was previously 4-times-repeated dead code
+because the wrapper-level `if (deepSleepInProgress) return;` was
+short-circuited by the same check inside `requestSilentRestart()`.
 
 `silentRestart*()` and `requestSilentRestart()` MUST stay together.
 The "Definitions for SilentRestart.h" comment is on the namespace
