@@ -10,9 +10,18 @@
 #include "./FileBrowserActivity.h"
 #include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
+#include "util/ArenaAllocator.h"
+#include "util/ShortcutRegistry.h"
 
 struct RecentBook;
 struct Rect;
+
+// Lightweight shortcut descriptor used by HomeActivity's shortcut rows.
+// Stored inline in StaticVector so no heap allocation is needed per frame.
+struct HomeShortcutEntry {
+  const ShortcutDefinition* definition = nullptr;
+  bool isAppsHub = false;
+};
 
 class HomeActivity final : public Activity {
   ButtonNavigator buttonNavigator;
@@ -23,8 +32,9 @@ class HomeActivity final : public Activity {
   bool hasOpdsServers = false;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
-  uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
+  uint8_t* coverBuffer = nullptr;  // Arena-allocated buffer for cover image
   size_t coverBufferSize = 0;
+  size_t arenaCoverBufferCursor = 0;  // Arena cursor at cover buffer allocation
   int coverRectX = 0;
   int coverRectY = 0;
   int coverRectW = 0;
@@ -40,6 +50,9 @@ class HomeActivity final : public Activity {
   std::string carouselCoverLoadAttemptPath;
   bool carouselFramesReady = false;
   std::vector<RecentBook> recentBooks;
+  // Arena-backed shortcut entries (replaces per-frame std::vector).
+  mutable util::StaticVector<HomeShortcutEntry, 32> homeEntriesCache;
+  mutable util::StaticVector<HomeShortcutEntry, 32> carouselEntriesCache;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onAppsOpen();

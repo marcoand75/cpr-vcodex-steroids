@@ -61,6 +61,7 @@
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
+#include "util/ArenaAllocator.h"
 
 namespace {
 constexpr unsigned long RECENT_BOOK_LONG_PRESS_MS = 1000;
@@ -83,11 +84,6 @@ const char* getCarouselFrameCacheDir() {
 }
 constexpr uint32_t FNV1A_OFFSET = 2166136261UL;
 constexpr uint32_t FNV1A_PRIME = 16777619UL;
-
-struct HomeShortcutEntry {
-  const ShortcutDefinition* definition = nullptr;
-  bool isAppsHub = false;
-};
 
 std::string getRecentBookConfirmationLabel(const RecentBook& book) {
   return !book.title.empty() ? book.title : book.path;
@@ -214,9 +210,11 @@ RecentBook resolveFavoriteForHome(const FavoriteBook& favorite) {
   return book;
 }
 
-std::vector<HomeShortcutEntry> getHomeShortcutEntries(const bool hasOpdsServers) {
-  std::vector<HomeShortcutEntry> entries;
-  entries.push_back(HomeShortcutEntry{nullptr, true});
+// Fills `out` with the home shortcut entries. Returns the number of entries.
+// No heap allocation: uses the caller-provided StaticVector.
+int getHomeShortcutEntries(util::StaticVector<HomeShortcutEntry, 32>& out, bool hasOpdsServers) {
+  out.clear();
+  out.push_back(HomeShortcutEntry{nullptr, true});
 
   for (const auto& definition : getShortcutDefinitions()) {
     if (definition.id == ShortcutId::OpdsBrowser && !hasOpdsServers) {
@@ -224,24 +222,26 @@ std::vector<HomeShortcutEntry> getHomeShortcutEntries(const bool hasOpdsServers)
     }
     const auto location = static_cast<CrossPointSettings::SHORTCUT_LOCATION>(SETTINGS.*(definition.locationPtr));
     if (location == CrossPointSettings::SHORTCUT_HOME && getShortcutVisibility(definition)) {
-      entries.push_back(HomeShortcutEntry{&definition});
+      out.push_back(HomeShortcutEntry{&definition});
     }
   }
 
-  std::stable_sort(entries.begin(), entries.end(), [](const HomeShortcutEntry& lhs, const HomeShortcutEntry& rhs) {
+  std::stable_sort(out.begin(), out.end(), [](const HomeShortcutEntry& lhs, const HomeShortcutEntry& rhs) {
     const uint8_t lhsOrder = lhs.isAppsHub ? SETTINGS.appsHubShortcutOrder : getShortcutOrder(*lhs.definition);
     const uint8_t rhsOrder = rhs.isAppsHub ? SETTINGS.appsHubShortcutOrder : getShortcutOrder(*rhs.definition);
     return lhsOrder < rhsOrder;
   });
 
-  return entries;
+  return static_cast<int>(out.size());
 }
 
 // Builds the carousel shortcut list without truncating configured Home entries.
 // Settings is still injected if missing, and Apps remains pinned last so the
 // user always has an escape hatch even with aggressive shortcut customization.
-std::vector<HomeShortcutEntry> buildCarouselEntries(const std::vector<HomeShortcutEntry>& all) {
-  std::vector<HomeShortcutEntry> result;
+// Writes into `out` and returns the number of entries. No heap allocation.
+int buildCarouselEntries(util::StaticVector<HomeShortcutEntry, 32>& out,
+                         const util::StaticVector<HomeShortcutEntry, 32>& all) {
+  out.clear();
   HomeShortcutEntry appsEntry{nullptr, true};
   bool foundApps = false;
   bool foundSettings = false;
@@ -254,14 +254,14 @@ std::vector<HomeShortcutEntry> buildCarouselEntries(const std::vector<HomeShortc
       if (e.definition && e.definition->id == ShortcutId::Settings) {
         foundSettings = true;
       }
-      result.push_back(e);
+      out.push_back(e);
     }
   }
 
   if (!foundSettings) {
     for (const auto& def : getShortcutDefinitions()) {
       if (def.id == ShortcutId::Settings) {
-        result.push_back(HomeShortcutEntry{&def});
+        out.push_back(HomeShortcutEntry{&def});
         foundSettings = true;
         break;
       }
@@ -269,9 +269,9 @@ std::vector<HomeShortcutEntry> buildCarouselEntries(const std::vector<HomeShortc
   }
 
   if (foundApps) {
-    result.push_back(appsEntry);
+    out.push_back(appsEntry);
   }
-  return result;
+  return static_cast<int>(out.size());
 }
 
 std::string getHomeShortcutTitle(const HomeShortcutEntry& entry) {
@@ -445,6 +445,11 @@ std::string getCarouselFrameCachePathFromHash(const uint32_t hash) {
   return filename;
 }
 
+void getCarouselFrameCachePathFromHash(const uint32_t hash, char* out, size_t outSize) {
+  std::snprintf(out, outSize, "%s/%08lx.bin", getCarouselFrameCacheDir(),
+                static_cast<unsigned long>(hash));
+}
+
 int getHomeShortcutPageSize() {
   return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA
              ? LYRA_HOME_SHORTCUT_PAGE_SIZE
@@ -454,11 +459,11 @@ int getHomeShortcutPageSize() {
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
-  auto entries = getHomeShortcutEntries(hasOpdsServers);
+  int shortcutCount = getHomeShortcutEntries(homeEntriesCache, hasOpdsServers);
   if (isLyraCarouselTheme()) {
-    entries = buildCarouselEntries(entries);
+    shortcutCount = buildCarouselEntries(carouselEntriesCache, homeEntriesCache);
   }
-  return static_cast<int>(recentBooks.size()) + static_cast<int>(entries.size());
+  return static_cast<int>(recentBooks.size()) + shortcutCount;
 }
 
 void HomeActivity::loadRecentBooks(const int maxBooks) {
@@ -469,15 +474,18 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
   if (homeUsesFavorites()) {
     FAVORITES.ensureLoaded();
     const auto books = FAVORITES.getBooks();
-    std::vector<std::string> staleFavorites;
+    char staleFavorites[32][128];
+    int staleFavoriteCount = 0;
     const bool unlimited = (maxBooks <= 0);
     recentBooks.reserve(unlimited ? books.size() : std::min(static_cast<int>(books.size()), maxBooks));
 
     for (const FavoriteBook& book : books) {
       if (book.path.empty() || !Storage.exists(book.path.c_str())) {
         const std::string removalKey = getFavoriteRemovalKey(book);
-        if (!removalKey.empty()) {
-          staleFavorites.push_back(removalKey);
+        if (!removalKey.empty() && staleFavoriteCount < 32) {
+          std::strncpy(staleFavorites[staleFavoriteCount], removalKey.c_str(), sizeof(staleFavorites[0]) - 1);
+          staleFavorites[staleFavoriteCount][sizeof(staleFavorites[0]) - 1] = '\0';
+          ++staleFavoriteCount;
         }
         continue;
       }
@@ -487,8 +495,8 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
       }
     }
 
-    for (const std::string& key : staleFavorites) {
-      FAVORITES.removeBook(key);
+    for (int i = 0; i < staleFavoriteCount; ++i) {
+      FAVORITES.removeBook(staleFavorites[i]);
     }
     LOG_DBG("HOME", "loadRecentBooks: favorites end heap=%u maxA=%u books=%zu",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap(), recentBooks.size());
@@ -791,14 +799,15 @@ void HomeActivity::onEnter() {
 
   requestUpdate();
 }
-
 void HomeActivity::onExit() {
   Activity::onExit();
   coverBufferStored = false;  // invalidate before free
-  free(coverBuffer);
-  coverBuffer = nullptr;
-  coverBufferSize = 0;
-  // Log heap state after freeing the 63 KB cover buffer. The next activity
+  if (coverBuffer) {
+    util::g_activityArena.rewind(arenaCoverBufferCursor);
+    coverBuffer = nullptr;
+    coverBufferSize = 0;
+  }
+  // Log heap state after freeing the cover buffer. The next activity
   // (typically Library) can use this to schedule its scan with awareness of
   // fragmentation.
   LOG_DBG("HOME", "onExit: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -810,20 +819,21 @@ bool HomeActivity::storeCoverBuffer() {
   const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
   if (needed == 0) return false;
 
-  // Reuse an already-allocated buffer if it is large enough.  This avoids
-  // freeing a ~40 KB block on every store/restore cycle, which would leave
-  // a hole in the heap that later activities (Library cover generation) need.
-  if (needed > coverBufferSize) {
-    free(coverBuffer);
-    coverBuffer = static_cast<uint8_t*>(malloc(needed));
-    if (!coverBuffer) {
-      coverBufferSize = 0;
-      LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
-      return false;
-    }
-    coverBufferSize = needed;
+  // Release previous arena allocation by rewinding to the cursor before it.
+  if (coverBuffer) {
+    util::g_activityArena.rewind(arenaCoverBufferCursor);
+    coverBuffer = nullptr;
+    coverBufferSize = 0;
   }
-  // coverBufferSize >= needed: we can reuse.
+
+  arenaCoverBufferCursor = util::g_activityArena.cursor();
+  coverBuffer = static_cast<uint8_t*>(util::g_activityArena.push(needed));
+  if (!coverBuffer) {
+    arenaCoverBufferCursor = 0;
+    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
+    return false;
+  }
+  coverBufferSize = needed;
 
   if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, needed)) {
     // Keep the buffer allocated — a transient copy failure is not a reason
@@ -857,7 +867,8 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
   const int bookCount = static_cast<int>(recentBooks.size());
   const int safeBookIndex = wrapBookIndex(bookIndex, bookCount);
   const size_t bufferSize = renderer.getBufferSize();
-  const std::string cachePath = getCarouselFrameCachePathFromHash(getCachedCarouselFrameHash(safeBookIndex));
+  char cachePath[128];
+  getCarouselFrameCachePathFromHash(getCachedCarouselFrameHash(safeBookIndex), cachePath, sizeof(cachePath));
   const unsigned long dbgRead0 = millis();
 
   FsFile file;
@@ -868,7 +879,7 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
 
   if (file.size() != bufferSize) {
     file.close();
-    Storage.remove(cachePath.c_str());
+    Storage.remove(cachePath);
     LOG_DBG("HCR", "loadCarouselFrameFromStorage: MISS idx=%d (size mismatch)", safeBookIndex);
     return false;
   }
@@ -890,7 +901,7 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
   file.close();
 
   if (totalRead != bufferSize) {
-    Storage.remove(cachePath.c_str());
+    Storage.remove(cachePath);
     invalidateResidentCarouselFrame();
     LOG_DBG("HCR", "loadCarouselFrameFromStorage: MISS idx=%d (short read %zu/%zu)",
             safeBookIndex, totalRead, bufferSize);
@@ -921,7 +932,8 @@ bool HomeActivity::saveCarouselFrameToStorage(int bookIndex) {
   const int bookCount = static_cast<int>(recentBooks.size());
   const int safeBookIndex = wrapBookIndex(bookIndex, bookCount);
   const size_t bufferSize = renderer.getBufferSize();
-  const std::string cachePath = getCarouselFrameCachePathFromHash(getCachedCarouselFrameHash(safeBookIndex));
+  char cachePath[128];
+  getCarouselFrameCachePathFromHash(getCachedCarouselFrameHash(safeBookIndex), cachePath, sizeof(cachePath));
 
   Storage.mkdir("/.crosspoint");
   Storage.mkdir(getCarouselFrameCacheDir());
@@ -935,7 +947,7 @@ bool HomeActivity::saveCarouselFrameToStorage(int bookIndex) {
   file.close();
 
   if (written != bufferSize) {
-    Storage.remove(cachePath.c_str());
+    Storage.remove(cachePath);
     return false;
   }
 
@@ -1059,8 +1071,8 @@ void HomeActivity::pruneCarouselFrameCache() {
   const uint32_t prefix =
       getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
                                  renderer.getBufferSize(), renderer.isDarkMode());
-  std::vector<uint32_t> validHashes;
-  validHashes.reserve(recentBooks.size());
+  util::StaticVector<uint32_t, 32> validHashes;
+  validHashes.reserve(static_cast<size_t>(recentBooks.size()));
   for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
     validHashes.push_back(CarouselHash::fnv1aU32(prefix, static_cast<uint32_t>(i)));
   }
@@ -1080,14 +1092,15 @@ void HomeActivity::pruneCarouselFrameCache() {
     }
     f.getName(nb, sizeof(nb));
     f.close();
-    const std::string name = nb;
-    if (name.size() < 9 || name.compare(name.size() - 4, 4, ".bin") != 0) {
+    const size_t nameLen = std::strlen(nb);
+    if (nameLen < 9 || std::strcmp(nb + nameLen - 4, ".bin") != 0) {
       continue;
     }
-    const uint32_t h = static_cast<uint32_t>(std::strtoul(name.substr(0, 8).c_str(), nullptr, 16));
+    const uint32_t h = static_cast<uint32_t>(std::strtoul(nb, nullptr, 16));
     if (!std::binary_search(validHashes.begin(), validHashes.end(), h)) {
-      const std::string full = std::string(cacheDir) + "/" + name;
-      Storage.remove(full.c_str());
+      char full[128];
+      std::snprintf(full, sizeof(full), "%s/%s", cacheDir, nb);
+      Storage.remove(full);
     }
   }
   d.close();
@@ -1100,12 +1113,12 @@ void HomeActivity::loop() {
   }
 
   const int menuCount = getMenuItemCount();
-  auto homeEntries = getHomeShortcutEntries(hasOpdsServers);
-  if (isLyraCarouselTheme()) {
-    homeEntries = buildCarouselEntries(homeEntries);
-  }
+  const int shortcutCount = getHomeShortcutEntries(homeEntriesCache, hasOpdsServers);
+  const int carouselCount = isLyraCarouselTheme() ? buildCarouselEntries(carouselEntriesCache, homeEntriesCache) : shortcutCount;
+  const util::StaticVector<HomeShortcutEntry, 32>& homeEntries =
+      isLyraCarouselTheme() ? carouselEntriesCache : homeEntriesCache;
   const int recentCount = static_cast<int>(recentBooks.size());
-  const int homeCount = static_cast<int>(homeEntries.size());
+  const int homeCount = carouselCount;
   const int shortcutPageSize = getHomeShortcutPageSize();
 
   if (isLyraCarouselTheme()) {
@@ -1495,10 +1508,10 @@ void HomeActivity::render(RenderLock&&) {
                             std::bind(&HomeActivity::storeCoverBuffer, this));
   }
 
-  auto homeEntries = getHomeShortcutEntries(hasOpdsServers);
-  if (carouselTheme) {
-    homeEntries = buildCarouselEntries(homeEntries);
-  }
+  const int shortcutCount = getHomeShortcutEntries(homeEntriesCache, hasOpdsServers);
+  const int carouselCount = isLyraCarouselTheme() ? buildCarouselEntries(carouselEntriesCache, homeEntriesCache) : shortcutCount;
+  const util::StaticVector<HomeShortcutEntry, 32>& homeEntries =
+      isLyraCarouselTheme() ? carouselEntriesCache : homeEntriesCache;
   const int selectedHomeIndex = selectorIndex - static_cast<int>(recentBooks.size());
   const Rect shortcutsRect{
       0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.verticalSpacing, pageWidth,
@@ -1528,14 +1541,15 @@ void HomeActivity::render(RenderLock&&) {
     const int localSelectedIndex = (selectedHomeIndex >= pageStart && selectedHomeIndex < pageStart + pageItemCount)
                                        ? selectedHomeIndex - pageStart
                                        : -1;
-    const std::string sectionLabel =
-        std::string(tr(STR_SHORTCUTS_SECTION)) + " (" + std::to_string(homeEntries.size()) + ")";
-    const std::string pageLabel = std::to_string(currentPage + 1) + "/" + std::to_string(totalPages);
+    char sectionLabel[64];
+    snprintf(sectionLabel, sizeof(sectionLabel), "%s (%d)", tr(STR_SHORTCUTS_SECTION), static_cast<int>(homeEntries.size()));
+    char pageLabel[16];
+    snprintf(pageLabel, sizeof(pageLabel), "%d/%d", currentPage + 1, totalPages);
 
     GUI.drawSubHeader(
         renderer,
         Rect{metrics.contentSidePadding, shortcutsRect.y, pageWidth - metrics.contentSidePadding * 2, headerHeight},
-        sectionLabel.c_str(), pageLabel.c_str());
+        sectionLabel, pageLabel);
     GUI.drawButtonMenu(
         renderer, Rect{0, listTop, pageWidth, listHeight}, pageItemCount, localSelectedIndex,
         [&homeEntries, pageStart](const int index) { return getHomeShortcutTitle(homeEntries[pageStart + index]); },
@@ -1632,4 +1646,4 @@ void HomeActivity::drawCarouselRecentsPanel(GfxRenderer& renderer, const int tot
   snprintf(buf, sizeof(buf), "%s (%d)", tr(STR_CAROUSEL_RECENTS), totalBooks);
   const int textY = panelY + (panelH - lh) / 2;
   renderer.drawText(fontId, panelX + textLeft, textY, buf, true, EpdFontFamily::BOLD);
-}  // namespace GUI
+}
