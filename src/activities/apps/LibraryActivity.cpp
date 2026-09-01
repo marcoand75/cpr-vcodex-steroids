@@ -19,6 +19,7 @@
 #include "../util/ConfirmationActivity.h"
 #include "../util/KeyboardEntryActivity.h"
 #include "util/BookFilter.h"
+#include "util/CoverGenerator.h"
 #include "util/StringUtils.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
@@ -1571,58 +1572,6 @@ void LibraryActivity::deleteAllLibraryCovers() {
 }
 
 bool LibraryActivity::generatePageCover(const std::string& path) {
-  // Generates a cover thumbnail using the full Epub/Xtc parser (like HomeActivity).
-  // Returns true if a valid BMP was created at the expected thumb path.
-  if (path.empty()) return false;
-
-  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (thumbPath.empty()) return false;
-
-  // Ensure the cache directory exists (hash must match the Epub/Xtc cache path)
-  char cacheDir[64];
-  if (FsHelpers::hasEpubExtension(path)) {
-    const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
-  } else if (FsHelpers::hasXtcExtension(path)) {
-    const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
-  } else {
-    return false;  // TXT/MD not supported for cover generation
-  }
-  if (!Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
-
-  if (FsHelpers::hasEpubExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    Epub epub(path, "/.crosspoint");
-    if (!epub.load(true, true)) {
-      LOG_DBG("LIB", "CovGen: EPUB load FAIL %s", path.c_str());
-      return false;
-    }
-    if (ESP.getMaxAllocHeap() < 28 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    // Adaptive contain: the resulting BMP is never larger than the tile box, so
-    // the runtime drawBitmap() never needs to crop a "fill" (oversized) image,
-    // which produced out-of-range pixels on non-3:5 cover ratios.
-    const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
-    LOG_DBG("LIB", "CovGen: EPUB thumb gen=%d path=%s heap=%u maxA=%u",
-            ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return ok;
-  }
-
-  if (FsHelpers::hasXtcExtension(path)) {
-    if (ESP.getFreeHeap() < 20000) return false;
-    Xtc xtc(path, "/.crosspoint");
-    if (!xtc.load()) return false;
-    const bool ok = xtc.generateThumbBmp(coverWidth_, coverHeight_);
-    LOG_DBG("LIB", "CovGen: XTC thumb gen=%d path=%s heap=%u maxA=%u",
-            ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return ok;
-  }
-
-  return false;
+  // Delegates to CoverGenerator utility for consistent cover generation
+  return CoverGenerator::generateCover(path, coverWidth_, coverHeight_);
 }
