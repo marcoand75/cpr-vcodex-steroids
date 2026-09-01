@@ -25,6 +25,7 @@
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/ArenaAllocator.h"
 
 namespace {
 constexpr uint8_t AUTO_UI_REFRESH_DEBT_THRESHOLD = 4;
@@ -143,6 +144,13 @@ void ActivityManager::loop() {
           handler(pendingResult);
         }
 
+        // Arena was reset by exitActivity(); log the post-pop state.
+        LOG_DBG("ACT", "popActivity: new activity='%s' arena used=%u capacity=%u heap=%u maxA=%u",
+                     currentActivity->name,
+                     static_cast<unsigned>(util::g_activityArena.used()),
+                     static_cast<unsigned>(util::g_activityArena.capacity()),
+                     ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
         // Request an update to ensure the popped activity gets re-rendered
         if (pendingAction == PendingAction::None) {
           requestUpdate();
@@ -169,6 +177,10 @@ void ActivityManager::loop() {
           stackActivities.back()->onExit();
           stackActivities.pop_back();
         }
+        // Arena already reset by exitActivity(); log for traceability.
+        LOG_DBG("ACT", "replaceActivity: stack cleared, arena used=%u capacity=%u",
+                     static_cast<unsigned>(util::g_activityArena.used()),
+                     static_cast<unsigned>(util::g_activityArena.capacity()));
       } else if (pendingAction == PendingAction::Push) {
         // Notify the current activity that it is going into background so it
         // can release temporary memory (library entries, page caches, etc.)
@@ -179,6 +191,10 @@ void ActivityManager::loop() {
         // Move current activity to stack
         stackActivities.push_back(std::move(currentActivity));
         LOG_DBG("ACT", "Pushed to activity stack, new size = %zu", stackActivities.size());
+        // Reset scratch arena so the incoming activity gets maximum heap.
+        util::g_activityArena.reset();
+        LOG_DBG("ACT", "pushActivity: arena reset used=0 capacity=%u",
+                     static_cast<unsigned>(util::g_activityArena.capacity()));
       }
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
@@ -188,6 +204,12 @@ void ActivityManager::loop() {
 
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
+      LOG_DBG("ACT", "activity started: name='%s' arena used=%u maxUsed=%u capacity=%u heap=%u maxA=%u",
+                   currentActivity->name,
+                   static_cast<unsigned>(util::g_activityArena.used()),
+                   static_cast<unsigned>(util::g_activityArena.maxUsed()),
+                   static_cast<unsigned>(util::g_activityArena.capacity()),
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -210,6 +232,11 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
     currentActivity->onExit();
     currentActivity.reset();
   }
+  // Release all scratch arena allocations from the exited activity so the
+  // next activity starts with maximum available heap. This is O(1).
+  util::g_activityArena.reset();
+  LOG_DBG("ACT", "exitActivity: arena reset used=0 capacity=%u",
+               static_cast<unsigned>(util::g_activityArena.capacity()));
 }
 
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
