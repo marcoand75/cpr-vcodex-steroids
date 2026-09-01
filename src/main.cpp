@@ -301,39 +301,27 @@ void silentRestart() {
 }
 
 void silentRestartToHome() {
-  if (deepSleepInProgress) {
-    LOG_DBG("MAIN", "Silent restart skipped: deepSleepInProgress");
-    return;
-  }
   LOG_DBG("MAIN", "Silent restart (target=home, seamless — no popup)");
   // Skip the "Loading..." popup for a seamless transition.
   // The display.begin(true) in setup() will skip the white flash,
   // and the boot activity is skipped, so the user sees a brief
   // dark frame then Home appears — visually cleaner than the popup.
+  // The deepSleepInProgress guard is in requestSilentRestart() itself.
   requestSilentRestart(SilentRebootTarget::Home, true);
 }
 
 void silentRestartToApps() {
-  if (deepSleepInProgress) {
-    LOG_DBG("MAIN", "Silent restart to apps skipped: deepSleepInProgress");
-    return;
-  }
+  // The deepSleepInProgress guard is in requestSilentRestart() itself.
   requestSilentRestart(SilentRebootTarget::Apps, true);
 }
 
 void silentRestartToPluginBrowser() {
-  if (deepSleepInProgress) {
-    LOG_DBG("MAIN", "Silent restart to plugin browser skipped: deepSleepInProgress");
-    return;
-  }
+  // The deepSleepInProgress guard is in requestSilentRestart() itself.
   requestSilentRestart(SilentRebootTarget::PluginBrowser, true);
 }
 
 void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
-  if (deepSleepInProgress) {
-    LOG_DBG("MAIN", "silentRestartToPlugin skipped: deepSleepInProgress");
-    return;
-  }
+  // The deepSleepInProgress guard is in requestSilentRestart() itself.
   requestSilentRestart(SilentRebootTarget::Plugin, true, pluginName, fromApps, returnToPluginBrowser);
 }
 
