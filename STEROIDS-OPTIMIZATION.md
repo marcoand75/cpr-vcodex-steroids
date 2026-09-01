@@ -469,20 +469,38 @@ Never build with `-e gh_release` for verification — that is release-only.
 
 When merging a new upstream release, verify:
 
+**Rendering / input pipeline (§1-7):**
 - [ ] `src/util/TextOverlay.{h,cpp}` — Steroids-added, **never** overwrite from upstream.
 - [ ] `src/util/TextDrawer.h` — Steroids-added, **never** overwrite from upstream.
 - [ ] `src/activities/util/ListRenderHelper.h` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/ListInputMapper.h` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/ListLayout.h` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/OrderListActivity.h` — Steroids-added, **never** overwrite.
+
+**Reusable activities:**
 - [ ] `src/activities/util/ConfirmationActivity.{h,cpp}` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/FullScreenMessageActivity.{h,cpp}` — Steroids-added, **never** overwrite.
-- [ ] `src/util/ButtonNavigator.h` — Steroids-added, **never** overwrite. The `clampIndex` / `nextIndex` / `previousIndex` / `nextPageIndex` / `previousPageIndex` helpers are Steroids extensions to the upstream class.
+
+**Branch-introduced util modules (§12):**
+- [ ] `src/util/ButtonNavigator.h` — the `clampIndex` / `nextIndex` / `previousIndex` / `nextPageIndex` / `previousPageIndex` extensions are Steroids; the rest of the class is pre-existing.
+- [ ] `src/util/StringUtils.{h,cpp}` — Steroids-added.
+- [ ] `src/util/PopupUtils.h` — Steroids-added.
+- [ ] `src/util/WiFiUtils.{h,cpp}` — Steroids-added (centralized WiFi lifecycle).
+- [ ] `src/util/ReadingStatsBackupManager.{h,cpp}` — Steroids-added.
+
+**Pre-existing protected Steroids utilities (unchanged but still protected):**
+- [ ] `src/util/HeaderDateUtils.{h,cpp}` — Steroids-added.
+- [ ] `src/util/PngSleepRenderer.{h,cpp}` — Steroids-added; **never** take upstream `patch_pngdec.py` (incompatible).
+- [ ] `src/util/SleepScreenCache.{h,cpp}` — Steroids-added.
+- [ ] `src/util/SleepImageUtils.{h,cpp}` — Steroids-added.
+- [ ] `src/SilentRestart.h` — Steroids-added `silentRestart*` family.
+- [ ] `src/activities/reader/ReaderUtils.h` — Steroids button-action dispatch.
 
 If upstream modifies an activity that uses these utils, **keep the
 Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
 `ListRenderHelper::` / `ListInputMapper::` / `OrderListActivity<>` /
-`ButtonNavigator::clampIndex` calls.
+`ButtonNavigator::clampIndex` / `StringUtils::` / `PopupUtils::` /
+`WiFiUtils::` / `ReadingStatsBackup::` calls.
 
 ---
 
@@ -512,3 +530,161 @@ already provides:
 3. Build, run the affected screens on device.
 4. Commit named `refactor: <activity> -> <util>` with the diff stat and
    any behavior preservation notes (e.g. random-position cache reset).
+
+---
+
+## 12. Other Steroids Utilities (Branch-Introduced)
+
+The 7 utilities catalogued in §1 are the rendering/input pipeline. The
+branch additionally introduced (or significantly extended) these
+Steroids-specific utilities, all of which are also **protected from
+upstream overwrites** and should be reused instead of re-invented:
+
+### 12.1 `StringUtils` (`src/util/StringUtils.{h,cpp}`)
+
+Safe string helpers that replace the hand-rolled `strncpy + NUL` ritual
+which appeared in ~20 activities before this branch.
+
+```cpp
+#include "util/StringUtils.h"
+
+// Replace strncpy(buf, s.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+StringUtils::copyToFixedBuffer(buf, sizeof(buf), s);
+
+// Sanitize a string for use as a filename (replace invalid chars, trim).
+StringUtils::sanitizeFilename(s, 100);  // maxBytes = 100 default
+
+// Lowercase ASCII in-place.
+auto lower = StringUtils::toLowerAscii(s);
+```
+
+Use `StringUtils::copyToFixedBuffer` everywhere instead of the
+`strncpy` + manual `NUL`-terminate pattern. The "is the buffer really
+NUL-terminated?" bug is gone.
+
+### 12.2 `PopupUtils` (`src/util/PopupUtils.h`)
+
+Three inline popup helpers that replace the
+`requestUpdateAndWait + RenderLock + GUI.drawPopup + delay` ritual in
+SettingsActivity, ReadingStatsActivity, SyncDayActivity, and all reader
+timer toggle sites.
+
+```cpp
+#include "util/PopupUtils.h"
+
+// Blocking popup with optional progress bar.
+PopupUtils::showTransientPopup(*this, tr(STR_LOADING), 20 /*progress*/, 120 /*delayMs*/);
+
+// Reader timer toggle feedback.
+PopupUtils::showTimerPauseFeedback(renderer, /*nowPaused=*/true);
+
+// Generic error toast.
+PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE), 500);
+```
+
+### 12.3 `WiFiUtils` (`src/util/WiFiUtils.{h,cpp}`)
+
+Centralizes every WiFi radio lifecycle action. Replaces ~10 copies of
+the same `WiFi.disconnect() + softAPdisconnect() + WiFi.mode()` etc.
+sequences that used to live in WifiSelectionActivity, ClockSyncActivity,
+KOReaderAuthActivity, OtaUpdateActivity, FontDownloadActivity, and
+CrossPointWebServerActivity.
+
+```cpp
+#include "util/WiFiUtils.h"
+
+// Full shutdown before a non-network activity.
+WiFiUtils::wifiOff();
+
+// Disconnect + silent restart.
+WiFiUtils::gracefulDisconnectAndSilentRestart();
+
+// Prepare for STA scanning / connecting.
+WiFiUtils::enterStationMode();
+WiFiUtils::disableModemSleep();           // keep radio responsive on weak networks
+WiFiUtils::abortAutoConnectAndClearNvs();  // WifiSelectionActivity pre-scan
+
+// Web-server teardown.
+WiFiUtils::stopAp();
+
+// Deep-sleep / power-off paths.
+WiFiUtils::forceDisconnect();
+WiFiUtils::powerOff();
+```
+
+The `disableNvsAutoPersist()` helper is **critical** for the
+WifiCredentialStore: the Arduino core tries to auto-persist WiFi
+credentials in a hidden NVS partition, which would silently overwrite
+our on-SD store. Every WiFi boot path must call this once.
+
+### 12.4 `ReadingStatsBackupManager` (`src/util/ReadingStatsBackupManager.{h,cpp}`)
+
+Centralizes the path constants + day-ordinal helpers used by
+auto-backup, export, and import flows. Replaces inline `strncpy` +
+ad-hoc date math scattered across the reading-stats code paths.
+
+```cpp
+#include "util/ReadingStatsBackupManager.h"
+
+constexpr char READING_STATS_FILE_JSON[]        // "/.crosspoint/reading_stats.json"
+constexpr char READING_STATS_BACKUP_FILE_JSON[] // "/.crosspoint/reading_stats.json.bak"
+constexpr char READING_STATS_SUMMARY_JSON[]    // "/.crosspoint/summary.json"
+constexpr char READING_STATS_EXPORT_DIR[]      // "/exports"
+constexpr size_t MAX_READING_STATS_AUTO_BACKUPS = 30;
+
+// Use the helpers rather than the raw paths in any new code.
+auto path = ReadingStatsBackup::getAutoBackupPathForDayOrdinal(dayOrdinal);
+ReadingStatsBackup::pruneAutoBackupsToLimit(30);
+```
+
+The branch also exports `textWindowShowsReadingStatsData()` and
+`statsFileAppearsToHaveData()` for the data-validation pre-flight that
+runs before any import or import-preview.
+
+### 12.5 `ButtonNavigator` extensions (`src/util/ButtonNavigator.h`)
+
+The pre-existing `ButtonNavigator` class was extended with the
+`clampIndex` / `nextIndex` / `previousIndex` / `nextPageIndex` /
+`previousPageIndex` static helpers (see §7). These helpers are pure
+math (`int → int`); they are the canonical way to keep `selectedIndex`
+in range after a `reloadEntries()` or a sub-activity result handler.
+
+The class itself wraps `ButtonNavigator::onNext(…)` /
+`onNextPress(…)` / `onNextRelease(…)` / `onNextContinuous(…)` /
+`onPressAndContinuous(…)` — but in **new** code, prefer
+`ListInputMapper` (§5) which provides a single coherent setup that
+uses these internally.
+
+### 12.6 Pre-existing Steroids utilities (kept unchanged)
+
+These utilities were already in the codebase before the refactor branch
+and are NOT touched by this work, but they are still the canonical
+helpers for their respective domains:
+
+- `HeaderDateUtils` (`src/util/HeaderDateUtils.{h,cpp}`) — the
+  `drawHeaderWithDate(renderer, title, subtitle)` helper used by
+  Activities that show a date in the header strip.
+- `PngSleepRenderer` (`src/util/PngSleepRenderer.{h,cpp}`) — the
+  Steroids-specific PNG sleep/screensaver decoder. **Never** merge
+  upstream `patch_pngdec.py` (see STEROIDS-ALIGN-TO-UPSTREAM.md).
+- `SleepScreenCache` (`src/util/SleepScreenCache.{h,cpp}`) —
+  SleepScreenCache::load / save helpers for the 1-bit screen
+  pre-render cache.
+- `SleepImageUtils` (`src/util/SleepImageUtils.{h,cpp}`) — directory
+  resolution + image-listing helpers used by SleepActivity,
+  ScreenSaverActivity, and their previews.
+- `SilentRestart` (`src/SilentRestart.h`) — `silentRestart()`,
+  `silentRestartToHome()`, `silentRestartToApps()`,
+  `silentRestartToReader()`, `silentRestartToPluginBrowser()`,
+  `silentRestartToPlugin(name, fromApps, returnToPluginBrowser)`.
+  All non-trivial exits from network activities MUST go through one
+  of these to avoid heap fragmentation between sessions.
+- `ReaderUtils` (`src/activities/reader/ReaderUtils.h`) — button
+  action dispatch, legacy long-press migration, and reader-side
+  helpers.
+- `ShortcutRegistry` / `ShortcutUiMetadata`
+  (`src/util/ShortcutRegistry.{h,cpp}`,
+  `src/util/ShortcutUiMetadata.h`) — the shortcut config layer
+  used by the Apps hub + Home.
+- `AchievementPopupUtils` (`src/util/AchievementPopupUtils.h`) — the
+  on-reader achievement toast.
