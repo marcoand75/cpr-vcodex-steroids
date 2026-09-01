@@ -23,19 +23,29 @@
 ## 1. Overview
 
 Steroids has progressively de-duplicated ~1,500 lines of common rendering and
-input-mapping code into 5 shared headers / namespaces. Every Steroids
-contributor must be familiar with the table below before opening a PR.
+input-mapping code into 7 shared utilities, plus a small set of math
+helpers and reusable activity bases. Every Steroids contributor must be
+familiar with the table below before opening a PR.
 
 | # | Util | Path | When to use |
 |---|---|---|---|
 | 1 | `text_overlay::` | `src/util/TextOverlay.{h,cpp}` | Configurable text + box + outlined text overlay on top of an image (screensaver, sleep) |
 | 2 | `text_draw::` | `src/util/TextDrawer.h` | Stateless panel helpers: clipped text, right-aligned text, label+value row, progress bar, checkbox, percent math |
-| 3 | `ListRenderHelper::` | `src/activities/util/ListRenderHelper.h` | List rendering (header, list rows, empty state, hint hints) and the standard `drawEmptyCentered` helper |
-| 4 | `ListInputMapper::` | `src/util/ListInputMapper.h` | List input pipeline (back, confirm, nav) with press/continuous/release lambdas |
-| 5 | `OrderListActivity<>` | `src/activities/util/OrderListActivity.h` | CRTP base for "user can reorder entries" screens (Back/Up/Down with moveMode toggle) |
+| 3 | `ListLayout::` | `src/activities/util/ListLayout.h` | One-call `compute(renderer, hasHeader, hasSubtitle, extraReservedHeight)` returning `{contentTop, contentHeight, pageItems}` for any list-style screen. Used internally by every other List util. |
+| 4 | `ListRenderHelper::` | `src/activities/util/ListRenderHelper.h` | List rendering (header, list rows, empty state, hint hints) and the standard `drawEmptyCentered` helper |
+| 5 | `ListInputMapper::` | `src/activities/util/ListInputMapper.h` | List input pipeline (back, confirm, nav) with press/continuous/release lambdas |
+| 6 | `OrderListActivity<>` | `src/activities/util/OrderListActivity.h` | CRTP base for "user can reorder entries" screens (Back/Up/Down with moveMode toggle, plus an optional `handleConfirmHold` hook for hold-to-delete) |
+| 7 | `ButtonNavigator::clampIndex` | `src/util/ButtonNavigator.h` | One-call list-state clamp: `clampIndex(current, total)`. Replaces every `std::clamp(selectedIndex, 0, total - 1)` and `std::max(0, size - 1)` site. |
 
-All five are **tested, building, and used in production**. They are the
-canonically correct way to write Steroids UI code.
+All 7 rendering/input utilities are **tested, building, and used in
+production**. They are the canonically correct way to write Steroids UI
+code. `ListLayout` is the foundation; `ListRenderHelper` and
+`OrderListActivity` both depend on it.
+
+In addition, two reusable **activities** are shared:
+
+- `ConfirmationActivity` (`src/activities/util/ConfirmationActivity.{h,cpp}`) — yes/no dialog with a multi-line body. Always use it instead of an inline `loop()`-driven confirmation.
+- `FullScreenMessageActivity` (`src/activities/util/FullScreenMessageActivity.{h,cpp}`) — a transient text-only screen with configurable font style and refresh mode. Used for boot/error/loading messages that have no input.
 
 ---
 
@@ -350,7 +360,56 @@ implement them.
 
 ---
 
-## 7. Optimization Patterns (Heap & RAM)
+## 7. `ButtonNavigator::clampIndex` — List-State Clamp Helper
+
+### When to use
+You are clamping `selectedIndex` (or any other list cursor) into the valid
+`[0, totalItems)` range **after** the list has been rebuilt. Typical
+post-condition of a `reloadEntries()`, a result handler from a sub-activity
+(e.g. `startActivityForResult(...)`), or a filter change.
+
+### How to use
+```cpp
+#include "util/ButtonNavigator.h"
+
+selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
+```
+
+### Why not use `std::clamp` / `std::min` / `std::max`?
+- `std::clamp(selectedIndex, 0, totalItems - 1)` — silently wrong on `totalItems == 0` (becomes `0`, -1, but with an "off-by-one" risk if totalItems is `int` and `totalItems - 1` is negative).
+- `std::min(selectedIndex, totalItems - 1)` — overflow when `totalItems == 0`.
+- `std::max(0, totalItems - 1)` — loses the original `selectedIndex` if it was already valid.
+- `if (selectedIndex >= size) { selectedIndex = std::max(0, size - 1); }` — verbose, three lines, off-by-one-prone.
+
+`ButtonNavigator::clampIndex(current, total)` collapses all of the above
+into a single safe call:
+- Returns `0` when `total <= 0` (empty-list safe).
+- Returns `total - 1` when `current >= total`.
+- Returns `current` unchanged when `current` is in range.
+
+### Forbidden patterns
+The following manual patterns are now banned in Steroids list code (see §4
+for the full "Forbidden patterns" block):
+```cpp
+// BANNED:
+if (selectedIndex >= size) { selectedIndex = std::max(0, size - 1); }
+// or
+selectedIndex = std::clamp(selectedIndex, 0, size - 1);
+// USE INSTEAD:
+selectedIndex = ButtonNavigator::clampIndex(selectedIndex, size);
+```
+
+### See also
+- The `clampIndex` family in `ButtonNavigator` (header only):
+  `clampIndex`, `nextIndex`, `previousIndex`, `nextPageIndex`, `previousPageIndex`.
+- Used in every `OrderListActivity` consumer (ReaderMenuOrderActivity,
+  ShortcutOrderActivity, FavoritesOrderActivity) and in every
+  recently-migrated list screen (AppsActivity, OpdsServerListActivity,
+  ReaderMenuOrderActivity, …).
+
+---
+
+## 8. Optimization Patterns (Heap & RAM)
 
 ### 7.1 Skip font work on empty text
 Any user-configurable text overlay (screensaver, sleep, custom wallpaper)
@@ -388,7 +447,7 @@ rendering. New order screens are ~30 lines instead of ~120.
 
 ---
 
-## 8. Build & Footprint Reference
+## 9. Build & Footprint Reference
 
 After all refactors, the current footprint is:
 - **RAM 16.2% (53 180 B / 327 680 B)**
@@ -406,32 +465,35 @@ Never build with `-e gh_release` for verification — that is release-only.
 
 ---
 
-## 9. Pre-Merge Checklist (When Upgrading Upstream)
+## 10. Pre-Merge Checklist (When Upgrading Upstream)
 
 When merging a new upstream release, verify:
 
 - [ ] `src/util/TextOverlay.{h,cpp}` — Steroids-added, **never** overwrite from upstream.
 - [ ] `src/util/TextDrawer.h` — Steroids-added, **never** overwrite from upstream.
 - [ ] `src/activities/util/ListRenderHelper.h` — Steroids-added, **never** overwrite.
-- [ ] `src/util/ListInputMapper.h` — Steroids-added, **never** overwrite.
-- [ ] `src/activities/util/OrderListActivity.h` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/ListInputMapper.h` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/ListLayout.h` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/OrderListActivity.h` — Steroids-added, **never** overwrite.
 - [ ] `src/activities/util/ConfirmationActivity.{h,cpp}` — Steroids-added, **never** overwrite.
+- [ ] `src/activities/util/FullScreenMessageActivity.{h,cpp}` — Steroids-added, **never** overwrite.
+- [ ] `src/util/ButtonNavigator.h` — Steroids-added, **never** overwrite. The `clampIndex` / `nextIndex` / `previousIndex` / `nextPageIndex` / `previousPageIndex` helpers are Steroids extensions to the upstream class.
 
 If upstream modifies an activity that uses these utils, **keep the
 Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
-`ListRenderHelper::` / `ListInputMapper::` / `OrderListActivity<>` calls.
+`ListRenderHelper::` / `ListInputMapper::` / `OrderListActivity<>` /
+`ButtonNavigator::clampIndex` calls.
 
 ---
 
-## 10. Document Maintenance
+## 11. Document Maintenance
 
 This file is the **first thing** a new Steroids contributor must read.
 When adding a new shared util:
 1. Add a row to the table in §1.
-2. Add a full "How to use" section modeled on §2-6.
-3. Update the "Pre-Merge Checklist" in §9.
-4. Run the build command in §8 and verify the footprint delta.
+2. Add a full "How to use" section modeled on §2-7.
+3. Update the "Pre-Merge Checklist" in §10.
+4. Run the build command in §9 and verify the footprint delta.
 5. Add a commit named `feat: <util name>` with a description of the
    refactor and a list of migrated consumers.
 
@@ -439,7 +501,7 @@ When adding a new app / screen that uses an existing util:
 1. The util's "When to use" section already covers your use case.
 2. **Do not** add a new copy-pasted variant. Add a new section only if
    the new util has a distinctly different API surface from the
-   existing five.
+   existing seven.
 3. Reference this document in your PR description so reviewers know
    you used the canonical pattern.
 

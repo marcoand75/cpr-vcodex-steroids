@@ -22,7 +22,10 @@
 //  - void save()
 //  - void moveSelectedEntry(int delta)
 //  - const char* getTitle() const
-//  - std::string getEntryTitle(const Entry& entry) const
+//  - std::string getEntryTitle(Entry entry) const
+//
+// Note: pass Entry by value (not const&) so the override signature in derived
+// classes matches the existing call sites (e.g. ShortcutOrderActivity::getEntryTitle).
 //
 // Derived classes may override:
 //  - void render(RenderLock&&)         -- when a custom layout/header is needed (e.g. date header, icons)
