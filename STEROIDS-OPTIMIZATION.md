@@ -36,6 +36,8 @@ familiar with the table below before opening a PR.
 | 5 | `ListInputMapper::` | `src/activities/util/ListInputMapper.h` | List input pipeline (back, confirm, nav) with press/continuous/release lambdas |
 | 6 | `OrderListActivity<>` | `src/activities/util/OrderListActivity.h` | CRTP base for "user can reorder entries" screens (Back/Up/Down with moveMode toggle, plus an optional `handleConfirmHold` hook for hold-to-delete) |
 | 7 | `ButtonNavigator::clampIndex` | `src/util/ButtonNavigator.h` | One-call list-state clamp: `clampIndex(current, total)`. Replaces every `std::clamp(selectedIndex, 0, total - 1)` and `std::max(0, size - 1)` site. |
+| 8 | `book_filter::` | `src/util/BookFilter.h` | Book-title normalization and safe fallback filename extraction. Use instead of inline `substr` / manual lowercase copies when building sort keys or display titles. |
+| 9 | `long_press::Button` | `src/util/LongPress.h` | Per-button long-press state machine. Replaces the old `held` + `longTriggered` boolean pairs and hard-coded `getHeldTime() >= N` checks. |
 
 All 7 rendering/input utilities are **tested, building, and used in
 production**. They are the canonically correct way to write Steroids UI
