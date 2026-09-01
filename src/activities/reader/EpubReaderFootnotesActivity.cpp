@@ -8,6 +8,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 void EpubReaderFootnotesActivity::onEnter() {
   Activity::onEnter();
@@ -69,8 +70,7 @@ void EpubReaderFootnotesActivity::render(RenderLock&&) {
 
   if (footnotes.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, 90 + contentY, tr(STR_NO_FOOTNOTES));
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
@@ -99,8 +99,7 @@ void EpubReaderFootnotesActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, marginLeft, y + 4, label.c_str(), !isSelected);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), "", "");
 
   renderer.displayBuffer();
 }

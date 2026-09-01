@@ -66,7 +66,7 @@ void FlashcardsAppActivity::refreshCounts() {
       deckCount++;
     }
   }
-  selectedIndex = std::clamp(selectedIndex, 0, ACTION_COUNT - 1);
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
 }
 
 void FlashcardsAppActivity::openSelectedEntry() {
@@ -185,6 +185,6 @@ void FlashcardsAppActivity::render(RenderLock&&) {
         }
       });
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

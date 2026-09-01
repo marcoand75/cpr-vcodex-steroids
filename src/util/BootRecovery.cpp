@@ -201,6 +201,29 @@ void markBootCompleted() {
   }
 }
 
+namespace {
+SkipLogFn skipLogFn = nullptr;
+}  // namespace
+
+void setSkipLogFn(SkipLogFn fn) { skipLogFn = fn; }
+
+bool runBootStage(const BootStage stage, const bool shouldSkip, const char* const stageLabel,
+                  const std::function<void()>& loader) {
+  if (shouldSkip) {
+    if (skipLogFn != nullptr) {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "Skipping %s load due to recovery mode", stageLabel);
+      skipLogFn(msg);
+    }
+    return false;
+  }
+  enterStage(stage);
+  if (loader) {
+    loader();
+  }
+  return true;
+}
+
 BootStage getRecordedStage() {
   if (!isValidStage(recordedStageRaw)) {
     return BootStage::None;

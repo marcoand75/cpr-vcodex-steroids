@@ -6,6 +6,7 @@
 #include <I18n.h>
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "fontIds.h"
 #include "util/HeaderDateUtils.h"
 
 // Reusable rendering helpers for list-based activities.
@@ -26,17 +27,22 @@ inline void drawHeader(GfxRenderer& renderer, const char* title, const char* sub
 }
 
 // Draw standard button hints from mapped labels.
-inline void drawHints(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* btn1, const char* btn2,
+inline void drawHints(GfxRenderer& renderer, const MappedInputManager& mappedInput, const char* btn1, const char* btn2,
                       const char* btn3, const char* btn4) {
   const auto labels = mappedInput.mapLabels(btn1, btn2, btn3, btn4);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
 // Convenience: draw hints with localized strings.
-inline void drawHints(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* btn1, const char* btn2,
+inline void drawHints(GfxRenderer& renderer, const MappedInputManager& mappedInput, const char* btn1, const char* btn2,
                       const char* btn3, const char* btn4, const StrId& s1, const StrId& s2, const StrId& s3,
                       const StrId& s4) {
   drawHints(renderer, mappedInput, I18N.get(s1), I18N.get(s2), I18N.get(s3), I18N.get(s4));
+}
+
+// Standard list navigation hints: Back / Select / Up / Down.
+inline void drawStandardHints(GfxRenderer& renderer, const MappedInputManager& mappedInput) {
+  drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 }
 
 // Draw a standard list inside a computed layout rect.
@@ -61,6 +67,46 @@ inline void drawList(GfxRenderer& renderer, const Layout& layout, int itemCount,
                      const std::function<bool(int index)>& rowCompleted = nullptr) {
   drawList(renderer, layout.contentTop, layout.contentHeight, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon,
            rowValue, highlightValue, rowCompleted);
+}
+
+// Draw a standard list, or a centered empty-state message when itemCount is 0.
+template <typename Layout>
+inline void drawListOrEmpty(GfxRenderer& renderer, const Layout& layout, int itemCount, int selectedIndex,
+                            const std::function<std::string(int index)>& rowTitle, const char* emptyText,
+                            const std::function<std::string(int index)>& rowSubtitle = nullptr,
+                            const std::function<UIIcon(int index)>& rowIcon = nullptr,
+                            const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
+                            const std::function<bool(int index)>& rowCompleted = nullptr) {
+  if (itemCount == 0) {
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, emptyText);
+  } else {
+    drawList(renderer, layout, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue, highlightValue,
+             rowCompleted);
+  }
+}
+
+inline void drawListOrEmpty(GfxRenderer& renderer, int contentTop, int contentHeight, int itemCount, int selectedIndex,
+                            const std::function<std::string(int index)>& rowTitle, const char* emptyText,
+                            const std::function<std::string(int index)>& rowSubtitle = nullptr,
+                            const std::function<UIIcon(int index)>& rowIcon = nullptr,
+                            const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
+                            const std::function<bool(int index)>& rowCompleted = nullptr) {
+  if (itemCount == 0) {
+    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, emptyText);
+  } else {
+    drawList(renderer, contentTop, contentHeight, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue,
+             highlightValue, rowCompleted);
+  }
+}
+
+// Draw a centered empty-state message below the layout top.
+inline void drawEmptyCentered(GfxRenderer& renderer, int contentTop, const char* emptyText) {
+  renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, emptyText);
+}
+
+template <typename Layout>
+inline void drawEmptyCentered(GfxRenderer& renderer, const Layout& layout, const char* emptyText) {
+  renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, emptyText);
 }
 
 }  // namespace ListRenderHelper

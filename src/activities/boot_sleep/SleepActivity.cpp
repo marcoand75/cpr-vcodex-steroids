@@ -30,6 +30,8 @@
 #include "util/ReadingStatsAnalytics.h"
 #include "util/SleepImageUtils.h"
 #include "util/SleepScreenCache.h"
+#include "util/TextDrawer.h"
+#include "util/BookFilter.h"
 
 namespace {
 
@@ -105,24 +107,13 @@ void renderSleepGrayscaleOverlay(GfxRenderer& renderer, RenderFn&& renderFn) {
 }
 
 int percentOf(const uint64_t value, const uint64_t target) {
-  if (target == 0) {
-    return 0;
-  }
-  return static_cast<int>(std::min<uint64_t>(100, (value * 100ULL + target / 2ULL) / target));
+  return text_draw::percentOf(value, target);
 }
 
-std::string formatPercent(const int percent) { return std::to_string(std::clamp(percent, 0, 100)) + "%"; }
+std::string formatPercent(const int percent) { return text_draw::formatPercent(percent); }
 
 std::string formatBookTitleFromPath(const std::string& path) {
-  std::string name = path;
-  const size_t slash = name.find_last_of('/');
-  if (slash != std::string::npos) {
-    name = name.substr(slash + 1);
-  }
-  const size_t dot = name.find_last_of('.');
-  if (dot != std::string::npos && dot > 0) {
-    name = name.substr(0, dot);
-  }
+  std::string name = book_filter::filenameWithoutExtension(path);
   return name.empty() ? std::string(tr(STR_READING_TIME)) : name;
 }
 
@@ -191,45 +182,27 @@ std::vector<const ReadingBookStats*> getRecentSleepBooks(const size_t limit) {
 void drawTextClipped(const GfxRenderer& renderer, const int fontId, const int x, const int y, const std::string& text,
                      const int maxWidth, const bool black = true,
                      const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
-  renderer.drawText(fontId, x, y, renderer.truncatedText(fontId, text.c_str(), maxWidth, style).c_str(), black, style);
+  text_draw::drawTextClipped(renderer, fontId, x, y, text, maxWidth, black, style);
 }
 
 void drawRightText(const GfxRenderer& renderer, const int fontId, const int right, const int y, const std::string& text,
                    const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
-  renderer.drawText(fontId, right - renderer.getTextWidth(fontId, text.c_str(), style), y, text.c_str(), true, style);
+  text_draw::drawRightText(renderer, fontId, right, y, text, style);
 }
 
 void drawTextWithRightValue(const GfxRenderer& renderer, const int fontId, const int x, const int right, const int y,
                             const std::string& text, const std::string& value,
                             const EpdFontFamily::Style textStyle = EpdFontFamily::REGULAR,
                             const EpdFontFamily::Style valueStyle = EpdFontFamily::REGULAR) {
-  const int valueWidth = renderer.getTextWidth(fontId, value.c_str(), valueStyle);
-  const int textWidth = std::max(0, right - x - valueWidth - 8);
-  drawTextClipped(renderer, fontId, x, y, text, textWidth, true, textStyle);
-  drawRightText(renderer, fontId, right, y, value, valueStyle);
+  text_draw::drawTextWithRightValue(renderer, fontId, x, right, y, text, value, textStyle, valueStyle);
 }
 
 void drawProgressBar(const GfxRenderer& renderer, const Rect& rect, const int percent, const int lineWidth = 2) {
-  renderer.drawRect(rect.x, rect.y, rect.width, rect.height, lineWidth, true);
-  const int innerX = rect.x + lineWidth + 2;
-  const int innerY = rect.y + lineWidth + 2;
-  const int innerW = std::max(0, rect.width - 2 * (lineWidth + 2));
-  const int innerH = std::max(0, rect.height - 2 * (lineWidth + 2));
-  const int fillW = std::clamp((innerW * std::clamp(percent, 0, 100) + 50) / 100, 0, innerW);
-  if (fillW > 0 && innerH > 0) {
-    renderer.fillRect(innerX, innerY, fillW, innerH, true);
-  }
+  text_draw::drawProgressBar(renderer, rect, percent, lineWidth);
 }
 
 void drawCheckBox(const GfxRenderer& renderer, const int x, const int y, const bool checked) {
-  renderer.drawRect(x, y, 16, 16, 1, true);
-  if (!checked) {
-    return;
-  }
-
-  renderer.fillRect(x, y, 16, 16, true);
-  renderer.drawLine(x + 4, y + 9, x + 7, y + 12, 2, false);
-  renderer.drawLine(x + 7, y + 12, x + 12, y + 5, 2, false);
+  text_draw::drawCheckBox(renderer, x, y, checked);
 }
 
 void drawMetricPanel(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value) {
@@ -893,50 +866,40 @@ void SleepActivity::renderDefaultSleepScreen() const {
   displaySleepBuffer(renderer);
 }
 
+void renderBitmapGrayscaleOverlay(GfxRenderer& renderer, const Bitmap& bitmap, const BitmapPlacement& placement,
+                                 const int pageWidth, const int pageHeight) {
+  displaySleepGrayscaleBase(renderer);
+
+  bitmap.rewindToData();
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.copyGrayscaleLsbBuffers();
+
+  bitmap.rewindToData();
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
+}
+
 void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const std::string& sourcePath) const {
-  int x, y;
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
-  float cropX = 0;
-  float cropY = 0;
 
   LOG_DBG("SLP", "bitmap %d x %d, screen %d x %d", bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
-  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
-    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-    const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
+  const BitmapPlacement placement = getFullScreenBitmapPlacement(bitmap, pageWidth, pageHeight);
+  LOG_DBG("SLP", "drawing to %d x %d cropX=%.3f cropY=%.3f", placement.x, placement.y, placement.cropX, placement.cropY);
 
-    LOG_DBG("SLP", "bitmap ratio: %f, screen ratio: %f", ratio, screenRatio);
-    if (ratio > screenRatio) {
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        cropX = 1.0f - (screenRatio / ratio);
-        LOG_DBG("SLP", "Cropping bitmap x: %f", cropX);
-        ratio = (1.0f - cropX) * static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-      }
-      x = 0;
-      y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
-      LOG_DBG("SLP", "Centering with ratio %f to y=%d", ratio, y);
-    } else {
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        cropY = 1.0f - (ratio / screenRatio);
-        LOG_DBG("SLP", "Cropping bitmap y: %f", cropY);
-        ratio = static_cast<float>(bitmap.getWidth()) / ((1.0f - cropY) * static_cast<float>(bitmap.getHeight()));
-      }
-      x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
-      y = 0;
-      LOG_DBG("SLP", "Centering with ratio %f to x=%d", ratio, x);
-    }
-  } else {
-    x = (pageWidth - bitmap.getWidth()) / 2;
-    y = (pageHeight - bitmap.getHeight()) / 2;
-  }
-
-  LOG_DBG("SLP", "drawing to %d x %d", x, y);
   renderer.clearScreen();
 
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
 
-  renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
 
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
@@ -947,10 +910,8 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const std::str
   }
 
   if (hasGreyscale) {
-    renderSleepGrayscaleOverlay(renderer, [&]() {
-      bitmap.rewindToData();
-      renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
-    });
+    displaySleepBuffer(renderer);
+    renderBitmapGrayscaleOverlay(renderer, bitmap, placement, pageWidth, pageHeight);
   } else {
     displaySleepBuffer(renderer);
   }
@@ -1288,20 +1249,7 @@ void SleepActivity::cycleScreensaverFromDeepSleep(GfxRenderer& renderer) {
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 
   if (hasGreyscale) {
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
-    renderer.copyGrayscaleLsbBuffers();
-
-    bitmap.rewindToData();
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
-    renderer.copyGrayscaleMsbBuffers();
-
-    renderer.displayGrayBuffer();
-    renderer.setRenderMode(GfxRenderer::BW);
+    renderBitmapGrayscaleOverlay(renderer, bitmap, placement, pageWidth, pageHeight);
   }
 
   file.close();

@@ -36,6 +36,7 @@
 #include "util/StringUtils.h"
 #include "util/WikitextToMarkdown.h"
 #include "util/NetworkMemory.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 
@@ -309,14 +310,6 @@ void WikipediaActivity::freeBuffer() {
   LOG_DBG("WIKI", "Freed resources");
 }
 
-void WikipediaActivity::wifiOff() {
-  LOG_DBG("WIKI", "Turning off WiFi");
-  WiFi.disconnect(false);
-  delay(50);
-  WiFi.mode(WIFI_OFF);
-  delay(50);
-}
-
 void WikipediaActivity::openArticleFile() {
   if (!g_articleFilePath.empty() && !isFileOpen) {
     if (Storage.openFileForRead("WIKI", g_articleFilePath.c_str(), openFile)) {
@@ -353,7 +346,7 @@ void WikipediaActivity::onExit() {
   historyQueries.clear();
   cachedPageTitles.clear();
   freeBuffer();
-  wifiOff();
+  WiFiUtils::wifiOff();
 }
 
 void WikipediaActivity::loop() {
@@ -413,7 +406,7 @@ void WikipediaActivity::loop() {
               Storage.writeFile(HISTORY_FILE, content);
             }
             loadHistory();
-            if (selectedIndex >= static_cast<int>(historyQueries.size())) selectedIndex = std::max(0, static_cast<int>(historyQueries.size()) - 1);
+            selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(historyQueries.size()));
             requestUpdate();
           } else {
             currentQuery = historyQueries[selectedIndex]; searchInput = currentQuery; performSearch(currentQuery);
@@ -439,9 +432,7 @@ void WikipediaActivity::loop() {
                     LOG_ERR("WIKI", "Failed to delete cached page: %s", path.c_str());
                   }
                   loadCachedPages();
-                  if (currentSelection >= static_cast<int>(cachedPageTitles.size())) {
-                    selectedIndex = std::max(0, static_cast<int>(cachedPageTitles.size()) - 1);
-                  }
+                  selectedIndex = ButtonNavigator::clampIndex(currentSelection, static_cast<int>(cachedPageTitles.size()));
                   requestUpdate();
                 });
           } else {
@@ -623,8 +614,7 @@ void WikipediaActivity::renderSearchInput() {
     drawWrappedLine(langText, lineY, false);
   }
 
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -632,14 +622,12 @@ void WikipediaActivity::renderSearchHistory() {
   renderWikipediaHeader(tr(STR_RECENT_SEARCHES));
   auto layout = ListLayout::compute(renderer, true, false);
   if (historyQueries.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight,
-                               static_cast<int>(historyQueries.size()), selectedIndex,
-                               [this](int i) { return historyQueries[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(historyQueries.size()), selectedIndex,
+                               [this](int i) { return historyQueries[i]; });
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -647,29 +635,25 @@ void WikipediaActivity::renderCachedPages() {
   renderWikipediaHeader(tr(STR_CACHED_PAGES));
   auto layout = ListLayout::compute(renderer, true, false);
   if (cachedPageTitles.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight,
-                               static_cast<int>(cachedPageTitles.size()), selectedIndex,
-                               [this](int i) { return cachedPageTitles[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(cachedPageTitles.size()), selectedIndex,
+                               [this](int i) { return cachedPageTitles[i]; });
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
 void WikipediaActivity::renderResults() {
   auto layout = ListLayout::compute(renderer, true, false);
   renderWikipediaHeader(tr(STR_WIKIPEDIA));
-  int rc = static_cast<int>(searchResults.size());
-  if (rc == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight/2, tr(STR_WIKIPEDIA_NO_RESULTS));
+  if (searchResults.empty()) {
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + layout.contentHeight / 2, tr(STR_WIKIPEDIA_NO_RESULTS));
   } else {
-    ListRenderHelper::drawList(renderer, layout.contentTop, layout.contentHeight, rc, selectedIndex,
-                               [this](int i) { return searchResults[i]; }, nullptr, nullptr, nullptr, false, nullptr);
+    ListRenderHelper::drawList(renderer, layout, static_cast<int>(searchResults.size()), selectedIndex,
+                               [this](int i) { return searchResults[i]; });
   }
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -678,8 +662,7 @@ void WikipediaActivity::renderArticle() {
   if (!buf || textLength == 0) {
     LOG_DBG("WIKI", "renderArticle: empty buf=%p len=%zu", (void*)buf, textLength);
     renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight()/2, "Loading...");
-    auto lb = mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, nullptr);
-    GUI.drawButtonHints(renderer, lb.btn1, nullptr, nullptr, nullptr);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), nullptr, nullptr, nullptr);
     renderer.displayBuffer();
     return;
   }
@@ -759,8 +742,7 @@ void WikipediaActivity::renderArticle() {
     drawWrappedLine(tr(STR_WIKIPEDIA_DOWNLOAD_NOTE2), lineY, false);
   }
 
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, lb.btn1, lb.btn2, lb.btn3, lb.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 
@@ -768,8 +750,7 @@ void WikipediaActivity::renderError() {
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_WIKIPEDIA));
   renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight()/2 - 20, tr(STR_WIKIPEDIA_ERROR));
   if (!errorMessage.empty()) renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight()/2 + 10, errorMessage.c_str());
-  auto lb = mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, nullptr);
-  GUI.drawButtonHints(renderer, lb.btn1, nullptr, nullptr, nullptr);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), nullptr, nullptr, nullptr);
   renderer.displayBuffer();
 }
 
@@ -833,7 +814,7 @@ void WikipediaActivity::openArticleForReading(const std::string& title) {
   }
 
   // Disattiva il Wi-Fi prima di aprire il reader per liberare heap.
-  if (WiFi.status() == WL_CONNECTED) wifiOff();
+  if (WiFi.status() == WL_CONNECTED) WiFiUtils::wifiOff();
 
   // Quando il reader chiude, si torna SEMPRE al menu principale di Wikipedia.
   startActivityForResult(
@@ -1304,7 +1285,7 @@ bool WikipediaActivity::loadCachedArticle(const std::string& title) {
 void WikipediaActivity::loadCachedPages() {
   cachedPageTitles.clear();
   Storage.mkdir(CACHE_DIR);
-  auto files = Storage.listFiles(CACHE_DIR, 200, /*includeDirectories=*/true);
+  auto files = Storage.listFiles(CACHE_DIR, 200);
   for (auto& f : files) {
     std::string name = f.c_str();
     // New format: per-article directories named wiki_<hash> containing article.md

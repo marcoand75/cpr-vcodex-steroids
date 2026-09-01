@@ -18,6 +18,8 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
+#include "util/WiFiUtils.h"
 #include "network/HttpDownloader.h"
 
 FontDownloadActivity::FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -72,7 +74,7 @@ HttpDownloader::DownloadError downloadToFileWithRetries(const std::string& url, 
 void FontDownloadActivity::onEnter() {
   Activity::onEnter();
   READING_STATS.releaseMemoryForNetwork();
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
@@ -83,9 +85,7 @@ void FontDownloadActivity::onExit() {
   releaseManifestMemory();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 
@@ -114,7 +114,7 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
 
   // Font downloads are large enough that modem sleep can produce avoidable
   // stalls on weak networks. Restore the normal Wi-Fi state on exit.
-  WiFi.setSleep(false);
+  WiFiUtils::disableModemSleep();
   delay(250);
 
   {
@@ -733,8 +733,7 @@ void FontDownloadActivity::render(RenderLock&&) {
         [](int index) -> std::string { return fontManifestSource(index).description; }, nullptr,
         [this](int index) -> std::string { return index == sourceIndex_ ? tr(STR_SELECTED) : ""; }, true);
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawStandardHints(renderer, mappedInput);
   } else if (state_ == LOADING_MANIFEST) {
     renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_LOADING_FONT_LIST));
     renderer.drawCenteredText(SMALL_FONT_ID, centerY + lineHeight + metrics.verticalSpacing,
@@ -742,8 +741,7 @@ void FontDownloadActivity::render(RenderLock&&) {
   } else if (state_ == FAMILY_LIST) {
     if (families_.empty()) {
       renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_NO_FONTS_AVAILABLE));
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     } else {
       GUI.drawList(
           renderer,
@@ -777,12 +775,12 @@ void FontDownloadActivity::render(RenderLock&&) {
             return f.installed && !f.hasUpdate;
           });
 
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK),
-                                                isSelectedFamilyDeletable()      ? tr(STR_DELETE)
-                                                : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
-                                                                                 : tr(STR_DOWNLOAD),
-                                                tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      const char* familyActionLabel =
+          isSelectedFamilyDeletable()      ? tr(STR_DELETE)
+          : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
+                                           : tr(STR_DOWNLOAD);
+      ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), familyActionLabel, tr(STR_DIR_UP),
+                                  tr(STR_DIR_DOWN));
     }
   } else if (state_ == DOWNLOADING) {
     const auto& family = families_[downloadingFamilyIndex_];
@@ -802,20 +800,17 @@ void FontDownloadActivity::render(RenderLock&&) {
         Rect{metrics.contentSidePadding, barY, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
         static_cast<int>(progress * 100), 100);
 
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_CANCEL), "", "", "");
   } else if (state_ == COMPLETE) {
     renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_FONT_INSTALLED), true, EpdFontFamily::BOLD);
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
   } else if (state_ == ERROR) {
     renderer.drawCenteredText(UI_10_FONT_ID, centerY - lineHeight, tr(STR_FONT_INSTALL_FAILED), true,
                               EpdFontFamily::BOLD);
     if (!errorMessage_.empty()) {
       renderer.drawCenteredText(UI_10_FONT_ID, centerY + metrics.verticalSpacing, errorMessage_.c_str());
     }
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_RETRY), "", "");
   }
 
   renderer.displayBuffer(state_ == COMPLETE || state_ == ERROR ? HalDisplay::FULL_REFRESH : HalDisplay::FAST_REFRESH);

@@ -14,6 +14,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ReadingStatsAnalytics.h"
 
@@ -305,30 +306,14 @@ void ReadingStatsActivity::confirmRemoveSelectedBook() {
 
 void ReadingStatsActivity::guardBackReturn() { waitForBackRelease = true; }
 
-void ReadingStatsActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
-  requestUpdateAndWait();
-
-  {
-    RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
-    if (progress >= 0) {
-      GUI.fillPopupProgress(renderer, popupRect, progress);
-    }
-  }
-
-  if (delayMs > 0) {
-    delay(delayMs);
-  }
-}
-
 void ReadingStatsActivity::createDueAutoBackupWithFeedback() {
   if (!READING_STATS.isAutoBackupDue()) {
     return;
   }
 
-  showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+  PopupUtils::showTransientPopup(*this,tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
   const bool backupReady = READING_STATS.createDueAutoBackup();
-  showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+  PopupUtils::showTransientPopup(*this,backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                      backupReady ? 100 : -1, backupReady ? 350 : 700);
   requestUpdate(true);
 }
@@ -475,7 +460,6 @@ void ReadingStatsActivity::render(RenderLock&&) {
         }
     }
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawStandardHints(renderer, mappedInput);
     renderer.displayBuffer();
 }

@@ -32,6 +32,7 @@ class Activity {
   explicit Activity(std::string name, GfxRenderer& renderer, MappedInputManager& mappedInput)
       : name(std::move(name)), renderer(renderer), mappedInput(mappedInput) {}
   virtual ~Activity() = default;
+  GfxRenderer& getRenderer() const { return renderer; }
   virtual void onEnter();
   virtual void onExit();
   virtual void loop() {}
@@ -68,8 +69,11 @@ class Activity {
   // Finish this activity and return to the previous one on the stack (if any)
   void finish();
 
-  // Convenience method to facilitate API transition to ActivityManager
-  // TODO: remove this in near future
+  // Convenience forwarders to ActivityManager. Widely used across the
+  // codebase (OpdsBookBrowser, RecentBooks, HomeActivity, FileBrowser,
+  // ScreenSaverActivity, LibraryActivity, ReadingStatsDetail, etc.) — the
+  // methods are intentionally kept on Activity to keep call sites short
+  // and to make the activity lifecycle a single point of contact.
   void onGoHome();
   void onSelectBook(const std::string& path);
 };

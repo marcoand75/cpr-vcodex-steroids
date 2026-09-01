@@ -12,7 +12,9 @@
 #include "WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/NetworkMemory.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -58,9 +60,7 @@ void CalibreConnectActivity::onExit() {
   MDNS.end();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 
@@ -234,8 +234,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
       renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, msg.c_str());
     }
 
-    const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_EXIT), "", "", "");
   }
   renderer.displayBuffer();
 }

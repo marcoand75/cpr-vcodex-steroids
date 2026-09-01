@@ -14,17 +14,9 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/TimeUtils.h"
-
-namespace {
-  void wifiOff() {
-    TimeUtils::stopNtp();
-    WiFi.disconnect(false);
-    delay(100);
-    WiFi.mode(WIFI_OFF);
-    delay(100);
-  }
-}
+#include "util/WiFiUtils.h"
 
 void ClockSyncActivity::onEnter() {
   Activity::onEnter();
@@ -38,7 +30,7 @@ void ClockSyncActivity::onEnter() {
     return;
   }
 
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   openWifiSelection();
 }
 
@@ -46,7 +38,7 @@ void ClockSyncActivity::onExit() {
   Activity::onExit();
 
   if (!wifiConnectedOnEnter && connectedInActivity) {
-    wifiOff();
+    WiFiUtils::wifiOff();
   }
 }
 
@@ -151,8 +143,7 @@ void ClockSyncActivity::render(RenderLock&&) {
   }
 
   if (state != SYNCING) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
   }
 
   renderer.displayBuffer();

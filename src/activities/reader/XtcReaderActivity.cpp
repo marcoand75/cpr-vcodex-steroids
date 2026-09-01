@@ -28,6 +28,7 @@
 #include "util/AchievementPopupUtils.h"
 #include "util/BookIdentity.h"
 #include "util/CompletedBookMover.h"
+#include "util/PopupUtils.h"
 
 namespace {
 constexpr unsigned long goHomeMs = 1000;
@@ -256,10 +257,7 @@ void XtcReaderActivity::loop() {
     }
     // Fall back to legacy frontLongPressBehavior
     if (act == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.frontLongPressBehavior) {
-        case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        default: break;
-      }
+      act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
     }
     if (handleButtonAction(act, prevTriggered, nextTriggered, dir)) {
       return;
@@ -279,10 +277,7 @@ void XtcReaderActivity::loop() {
     }
     // Fall back to legacy longPressButtonBehavior
     if (sideAct == CrossPointSettings::BTN_ACTION_OFF) {
-      switch (SETTINGS.longPressButtonBehavior) {
-        case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: sideAct = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-        default: break;
-      }
+      sideAct = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
     }
     if (handleButtonAction(sideAct, prevTriggered, nextTriggered, sideDir)) {
       return;
@@ -696,9 +691,7 @@ void XtcReaderActivity::handleSelectLongPress() {
   if (action == CrossPointSettings::BTN_ACTION_READING_TIME) {
     const bool nowPaused = !READING_STATS.isReadingPaused();
     READING_STATS.setReadingPaused(nowPaused);
-    GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
     requestUpdate();
   }
 }
@@ -756,10 +749,8 @@ bool XtcReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION act
     case CrossPointSettings::BTN_ACTION_READING_TIME: {
       const bool nowPaused = !READING_STATS.isReadingPaused();
       READING_STATS.setReadingPaused(nowPaused);
-      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-      renderer.displayBuffer();
-      delay(500);
-      requestUpdate();
+    PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
+    requestUpdate();
       return true;
     }
 

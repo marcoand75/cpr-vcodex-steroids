@@ -10,7 +10,10 @@
 #include <memory>
 #include <new>
 
+#include <I18n.h>
 #include "MappedInputManager.h"
+#include "components/UITheme.h"
+#include "util/AchievementPopupUtils.h"
 
 namespace ReaderUtils {
 
@@ -147,6 +150,39 @@ inline CrossPointSettings::BUTTON_ACTION shortPwrBtnToReaderAction(const CrossPo
     case CrossPointSettings::SHORT_PWRBTN::SPWBTN_ORIENTATION:       return CrossPointSettings::BTN_ACTION_ORIENTATION;
     case CrossPointSettings::SHORT_PWRBTN::SPWBTN_DARK_MODE:         return CrossPointSettings::BTN_ACTION_DARK_MODE;
     case CrossPointSettings::SHORT_PWRBTN::SPWBTN_READER_SETTINGS:   return CrossPointSettings::BTN_ACTION_READER_SETTINGS;
+    default: return CrossPointSettings::BTN_ACTION_OFF;
+  }
+}
+
+// Migration helpers: map legacy long-press enums to unified BUTTON_ACTION.
+// Centralized here so all three reader activities use the same fallback mapping.
+inline CrossPointSettings::BUTTON_ACTION legacyLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case CrossPointSettings::LONG_PRESS_OFF:               return CrossPointSettings::BTN_ACTION_OFF;
+    case CrossPointSettings::LONG_PRESS_BOOKMARK:          return CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    case CrossPointSettings::LONG_PRESS_CLIPPING:          return CrossPointSettings::BTN_ACTION_ADD_CLIPPING;
+    case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP:      return CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+    case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE:return CrossPointSettings::BTN_ACTION_ORIENTATION;
+    case CrossPointSettings::LONG_PRESS_FONTSIZE:          return CrossPointSettings::BTN_ACTION_FONTSIZE;
+    case CrossPointSettings::LONG_PRESS_DICTIONARY:        return CrossPointSettings::BTN_ACTION_DICTIONARY;
+    case CrossPointSettings::LONG_PRESS_DARK_MODE:         return CrossPointSettings::BTN_ACTION_DARK_MODE;
+    case CrossPointSettings::LONG_PRESS_FULL_REFRESH:      return CrossPointSettings::BTN_ACTION_FULL_REFRESH;
+    case CrossPointSettings::LONG_PRESS_READER_SETTINGS:   return CrossPointSettings::BTN_ACTION_READER_SETTINGS;
+    default: return CrossPointSettings::BTN_ACTION_OFF;
+  }
+}
+
+inline CrossPointSettings::BUTTON_ACTION legacyFrontLongPressToButtonAction(uint8_t legacy) {
+  switch (legacy) {
+    case CrossPointSettings::FRONT_LONG_PRESS_OFF:         return CrossPointSettings::BTN_ACTION_OFF;
+    case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK:    return CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK;
+    case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING:    return CrossPointSettings::BTN_ACTION_ADD_CLIPPING;
+    case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP:return CrossPointSettings::BTN_ACTION_CHAPTER_SKIP;
+    case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: return CrossPointSettings::BTN_ACTION_ORIENTATION;
+    case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE:    return CrossPointSettings::BTN_ACTION_FONTSIZE;
+    case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY:  return CrossPointSettings::BTN_ACTION_DICTIONARY;
+    case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE:   return CrossPointSettings::BTN_ACTION_DARK_MODE;
+    case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH:return CrossPointSettings::BTN_ACTION_FULL_REFRESH;
     default: return CrossPointSettings::BTN_ACTION_OFF;
   }
 }
@@ -338,4 +374,17 @@ inline bool isIncreaseDirection(const ButtonDirection dir) {
       return false;
   }
 }
+
+// Show bookmark toggle feedback, checking achievements first.
+// Returns true if an achievement popup was shown (caller should skip its own popup).
+inline bool showBookmarkToggleFeedback(GfxRenderer& renderer, bool addedBookmark) {
+  const bool showedAchievement = showPendingAchievementPopups(renderer);
+  if (!showedAchievement) {
+    GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
+    renderer.displayBuffer();
+    delay(500);
+  }
+  return showedAchievement;
+}
+
 }  // namespace ReaderUtils

@@ -131,7 +131,7 @@ constexpr int kProgSegH = 24;
 constexpr int kProgSegGap = 4;
 constexpr int kProgSegCount = 15;
 
-int lastCarouselSelectorIndex = -1;
+int marcoand75LastSelectorIndex = -1;
 
 const uint8_t* iconForName(UIIcon icon) {
   switch (icon) {
@@ -416,7 +416,7 @@ void drawReadRibbon(GfxRenderer& renderer, int coverX, int coverY, int coverW, i
 
 }  // namespace
 
-void LyraMarcoand75Theme::setPreRenderIndex(int index) { lastCarouselSelectorIndex = index; }
+void LyraMarcoand75Theme::setPreRenderIndex(int index) { marcoand75LastSelectorIndex = index; }
 
 void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                                                const std::vector<RecentBook>& recentBooks,
@@ -428,9 +428,9 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
   const int bookCount = static_cast<int>(recentBooks.size());
   const bool inCarouselRow = selectorIndex < bookCount;
-  int centerIdx = inCarouselRow ? selectorIndex : (lastCarouselSelectorIndex >= 0 ? lastCarouselSelectorIndex : 0);
+  int centerIdx = inCarouselRow ? selectorIndex : (marcoand75LastSelectorIndex >= 0 ? marcoand75LastSelectorIndex : 0);
   centerIdx = std::max(0, std::min(centerIdx, bookCount - 1));
-  if (centerIdx != lastCarouselSelectorIndex) { coverRendered = false; coverBufferStored = false; }
+  if (centerIdx != marcoand75LastSelectorIndex) { coverRendered = false; coverBufferStored = false; }
 
   const int screenW = renderer.getScreenWidth();
   const int centerTileY = rect.y + kCoverTopPad;
@@ -566,7 +566,7 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   };
 
   if (!coverRendered) {
-    lastCarouselSelectorIndex = centerIdx;
+    marcoand75LastSelectorIndex = centerIdx;
 
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
     const int panelX   = rect.x + 8;

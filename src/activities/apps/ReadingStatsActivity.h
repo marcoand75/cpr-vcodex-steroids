@@ -2,6 +2,7 @@
 
 #include "../Activity.h"
 #include "util/ButtonNavigator.h"
+#include "util/PopupUtils.h"
 
 struct ReadingBookStats;
 
@@ -13,7 +14,6 @@ class ReadingStatsActivity final : public Activity {
   void openSelectedEntry();
   void confirmRemoveSelectedBook();
   void guardBackReturn();
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void createDueAutoBackupWithFeedback();
 
  public:

@@ -11,8 +11,10 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/NetworkMemory.h"
 #include "util/TimeUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 void prepareMemoryBeforeAuthNetwork(GfxRenderer& renderer, const char* stage) {
@@ -67,13 +69,7 @@ void KOReaderAuthActivity::performAuthentication() {
   // reading-stats reload re-parses summary.json and needs the largest possible
   // contiguous heap. Reloading while the stack is still connected can OOM and
   // crash the device (free heap drops to near zero mid-parse).
-  TimeUtils::stopNtp();
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(100);
-    WiFi.mode(WIFI_OFF);
-    delay(100);
-  }
+  WiFiUtils::wifiOff();
   restoreMemoryAfterAuthNetwork(renderer, "after_authenticate_restore");
 
   {
@@ -123,13 +119,7 @@ void KOReaderAuthActivity::onExit() {
   // settings menu) and, because RAM does not survive the reboot while the
   // boot-time credential load is skipped on silent restarts, would also leave
   // the KOReader settings blank on the next boot.
-  TimeUtils::stopNtp();
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(100);
-    WiFi.mode(WIFI_OFF);
-    delay(100);
-  }
+  WiFiUtils::wifiOff();
 }
 
 void KOReaderAuthActivity::render(RenderLock&&) {
@@ -160,8 +150,7 @@ void KOReaderAuthActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
   renderer.displayBuffer();
 }
 

@@ -26,6 +26,8 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
+#include "util/PopupUtils.h"
+#include "util/StringUtils.h"
 #include "DictionaryHistoryActivity.h"
 #include "DictionaryWordSelectActivity.h"
 #include "KOReaderCredentialStore.h"
@@ -663,78 +665,55 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-   // ====== SIDE BUTTON long-press (Up/Down) — per-directional config ======
-   // Falls back to legacy longPressButtonBehavior if per-directional not set.
-   if (longPress && !fromFrontButton) {
+    // ====== SIDE BUTTON long-press (Up/Down) — per-directional config ======
+    // Falls back to legacy longPressButtonBehavior if per-directional not set.
+    if (longPress && !fromFrontButton) {
       if (upBtn || downBtn) {
         CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
         ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
         if (upBtn) {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
-       } else {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
-       }
-       // If per-directional behavior is OFF (0), fall back to legacy config
-       if (act == CrossPointSettings::BTN_ACTION_OFF) {
-         // Map legacy longPressButtonBehavior to BUTTON_ACTION
-         switch (SETTINGS.longPressButtonBehavior) {
-           case CrossPointSettings::LONG_PRESS_BOOKMARK:  act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-           case CrossPointSettings::LONG_PRESS_CLIPPING:  act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-           case CrossPointSettings::LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-           case CrossPointSettings::LONG_PRESS_ORIENTATION_CHANGE: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-           case CrossPointSettings::LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-           case CrossPointSettings::LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-           case CrossPointSettings::LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-           case CrossPointSettings::LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-           case CrossPointSettings::LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-           default: break;
-         }
-       }
-       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
-       if (handled) {
-         return;
-       }
-       // Fall through to default: normal page turn
-     }
-   }
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
+        } else {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
+        }
+        // If per-directional behavior is OFF (0), fall back to legacy config
+        if (act == CrossPointSettings::BTN_ACTION_OFF) {
+          act = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
+        }
+        const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+        if (handled) {
+          return;
+        }
+        // Fall through to default: normal page turn
+      }
+    }
 
-   // ====== FRONT BUTTON long-press (Left/Right) — per-directional config ======
-   // Falls back to legacy frontLongPressBehavior if per-directional not set.
-   if (frontLongPress) {
-     if (leftBtn || rightBtn) {
-       CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+    // ====== FRONT BUTTON long-press (Left/Right) — per-directional config ======
+    // Falls back to legacy frontLongPressBehavior if per-directional not set.
+    if (frontLongPress) {
+      if (leftBtn || rightBtn) {
+        CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
         ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
-       if (leftBtn) {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
-       } else {
-         act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
-         dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
-       }
-       // If per-directional behavior is OFF (0), fall back to legacy config
-       if (act == CrossPointSettings::BTN_ACTION_OFF) {
-         switch (SETTINGS.frontLongPressBehavior) {
-           case CrossPointSettings::FRONT_LONG_PRESS_BOOKMARK: act = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_CLIPPING: act = CrossPointSettings::BTN_ACTION_ADD_CLIPPING; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_CHAPTER_SKIP: act = CrossPointSettings::BTN_ACTION_CHAPTER_SKIP; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_ORIENTATION: act = CrossPointSettings::BTN_ACTION_ORIENTATION; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_FONTSIZE: act = CrossPointSettings::BTN_ACTION_FONTSIZE; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_DICTIONARY: act = CrossPointSettings::BTN_ACTION_DICTIONARY; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_DARK_MODE: act = CrossPointSettings::BTN_ACTION_DARK_MODE; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_FULL_REFRESH: act = CrossPointSettings::BTN_ACTION_FULL_REFRESH; break;
-           case CrossPointSettings::FRONT_LONG_PRESS_READER_SETTINGS: act = CrossPointSettings::BTN_ACTION_READER_SETTINGS; break;
-           default: break;
-         }
-       }
-       const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
-       if (handled) {
-         return;
-       }
-       // Fall through to default: normal page turn
-     }
-   }
+        if (leftBtn) {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
+        } else {
+          act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
+          dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
+        }
+        // If per-directional behavior is OFF (0), fall back to legacy config
+        if (act == CrossPointSettings::BTN_ACTION_OFF) {
+          act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
+        }
+        const bool handled = handleButtonAction(act, prevTriggered, nextTriggered, dir);
+        if (handled) {
+          return;
+        }
+        // Fall through to default: normal page turn
+      }
+    }
 
   // No current section, attempt to rerender the book
   if (!section) {
@@ -825,12 +804,7 @@ bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION ac
       if (addedBookmark && epub && !READING_STATS.shouldIgnorePath(epub->getPath())) {
         ACHIEVEMENTS.recordBookmarkAdded();
       }
-      const bool showedAchievement = showPendingAchievementPopups(renderer);
-      if (!showedAchievement) {
-        GUI.drawPopup(renderer, addedBookmark ? tr(STR_BOOKMARK_ADDED) : tr(STR_BOOKMARK_REMOVED));
-        renderer.displayBuffer();
-        delay(500);
-      }
+      const bool showedAchievement = ReaderUtils::showBookmarkToggleFeedback(renderer, addedBookmark);
       requestUpdate();
       return true;
     }
@@ -917,9 +891,7 @@ bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION ac
     {
       const bool nowPaused = !READING_STATS.isReadingPaused();
       READING_STATS.setReadingPaused(nowPaused);
-      GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));
-      renderer.displayBuffer();
-      delay(500);
+      PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
       requestUpdate();
       return true;
     }
@@ -1005,12 +977,7 @@ void EpubReaderActivity::saveCurrentPageBookmark() {
     ACHIEVEMENTS.recordBookmarkAdded();
   }
 
-  const bool showedAchievement = showPendingAchievementPopups(renderer);
-  if (!showedAchievement) {
-    GUI.drawPopup(renderer, tr(STR_BOOKMARK_ADDED));
-    renderer.displayBuffer();
-    delay(500);
-  }
+  const bool showedAchievement = ReaderUtils::showBookmarkToggleFeedback(renderer, addedBookmark);
   requestUpdate();
 }
 
@@ -1077,9 +1044,7 @@ void EpubReaderActivity::enterClippingMode() {
 
   extractClippingWords(page, marginLeft, marginTop);
   if (clippingWords.empty()) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     return;
   }
 
@@ -1396,9 +1361,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   }
 
   if (!clippingStartMarkSet || clippingStartWordIndex < 0 || clippingEndWordIndex < 0 || clippingStartRow < 0 || clippingEndRow < 0) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     exitClippingMode();
     requestUpdate();
     return;
@@ -1422,8 +1385,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.timestamp = static_cast<uint32_t>(millis() / 1000);
 
   const std::string chapterTitle = getStatsChapterTitle(*epub, currentSpineIndex);
-  strncpy(clipping.chapterTitle, chapterTitle.c_str(), sizeof(clipping.chapterTitle) - 1);
-  clipping.chapterTitle[sizeof(clipping.chapterTitle) - 1] = '\0';
+  StringUtils::copyToFixedBuffer(clipping.chapterTitle, sizeof(clipping.chapterTitle), chapterTitle);
 
   std::string selectedText;
   auto page = section->loadPageFromSectionFile();
@@ -1473,9 +1435,7 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.selectedText = selectedText;
 
   if (clipping.selectedText.empty()) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    renderer.displayBuffer();
-    delay(500);
+    PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     exitClippingMode();
     requestUpdate();
     return;
@@ -1783,8 +1743,7 @@ void EpubReaderActivity::loadBookReaderSettings() {
   SETTINGS.textDarkness = snap.textDarkness;
   SETTINGS.readerRefreshMode = snap.readerRefreshMode;
   SETTINGS.imageRendering = snap.imageRendering;
-  std::strncpy(SETTINGS.sdFontFamilyName, snap.sdFontFamilyName.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
-  SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+  StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), snap.sdFontFamilyName);
   hasPerBookSettingsOverride = true;
 }
 

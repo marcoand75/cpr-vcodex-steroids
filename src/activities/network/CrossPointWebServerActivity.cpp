@@ -18,8 +18,10 @@
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/NetworkMemory.h"
 #include "util/QrUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 // AP Mode configuration
@@ -112,13 +114,11 @@ void CrossPointWebServerActivity::onExit() {
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (isApMode) {
       LOG_DBG("WEBACT", "Stopping WiFi AP...");
-      WiFi.softAPdisconnect(true);
+      WiFiUtils::stopAp();
     } else {
       LOG_DBG("WEBACT", "Disconnecting WiFi (graceful)...");
-      WiFi.disconnect(false);
+      WiFiUtils::gracefulDisconnectAndSilentRestart();
     }
-    delay(30);
-    silentRestart();
   }
 
   LOG_DBG("WEBACT", "Free heap at onExit end: %d bytes", ESP.getFreeHeap());
@@ -156,7 +156,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   if (mode == NetworkMode::JOIN_NETWORK) {
     // STA mode - launch WiFi selection
     LOG_DBG("WEBACT", "Turning on WiFi (STA mode)...");
-    WiFi.mode(WIFI_STA);
+    WiFiUtils::enterStationMode();
 
     state = WebServerActivityState::WIFI_SELECTION;
     LOG_DBG("WEBACT", "Launching WifiSelectionActivity...");
@@ -209,7 +209,7 @@ void CrossPointWebServerActivity::startAccessPoint() {
   LOG_DBG("WEBACT", "Free heap before AP start: %d bytes", ESP.getFreeHeap());
 
   // Configure and start the AP
-  WiFi.mode(WIFI_AP);
+  WiFiUtils::enterApMode();
   delay(100);
 
   if (!WiFi.softAPConfig(AP_LOCAL_IP, AP_GATEWAY, AP_SUBNET, AP_DHCP_START, AP_LOCAL_IP)) {
@@ -307,12 +307,10 @@ void CrossPointWebServerActivity::requestReboot() {
   stopWebServer();
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (isApMode) {
-      WiFi.softAPdisconnect(true);
+      WiFiUtils::stopAp();
     } else {
-      WiFi.disconnect(false);
+      WiFiUtils::gracefulDisconnectAndSilentRestart();
     }
-    delay(30);
-    silentRestart();
   }
   renderer.clearScreen();
   renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, "Rebooting device...");
@@ -527,8 +525,7 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_EXIT), "", "", "");
 }
 
 void CrossPointWebServerActivity::renderWifiIndicator(int subHeaderTop) const {

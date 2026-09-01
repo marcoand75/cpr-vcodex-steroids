@@ -16,6 +16,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/BookIdentity.h"
 
@@ -150,7 +151,7 @@ void BookmarksAppActivity::refreshEntries() {
   }
 
   if (selectedIndex >= static_cast<int>(entries.size())) {
-    selectedIndex = std::max(0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
   }
 }
 
@@ -217,39 +218,38 @@ void BookmarksAppActivity::onEnter() {
   READING_STATS.ensureLoaded();
   refreshEntries();
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->entries.size()));
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<BookmarksAppActivity*>(ctx);
+    if (self->entries.empty()) return;
+    if (self->mappedInput.getHeldTime() >= DELETE_BOOKMARKS_HOLD_MS) {
+      self->confirmDeleteSelectedBook();
+      return;
+    }
+    self->openSelectedBook();
+  }, this, false);
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void BookmarksAppActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (mappedInput.getHeldTime() >= DELETE_BOOKMARKS_HOLD_MS) {
-      confirmDeleteSelectedBook();
-      return;
-    }
-
-    openSelectedBook();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    if (entries.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(entries.size()));
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void BookmarksAppActivity::render(RenderLock&&) {
@@ -278,8 +278,8 @@ void BookmarksAppActivity::render(RenderLock&&) {
                  [this](const int index) { return std::to_string(entries[index].bookmarks.size()); });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), entries.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasEntries = !entries.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasEntries ? tr(STR_OPEN) : "", tr(STR_DIR_UP),
+                              tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

@@ -14,21 +14,15 @@
 #include "activities/settings/TimeZoneSelectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 #include "util/TimeZoneRegistry.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr int ACTION_COUNT = 4;
 constexpr int HELP_TEXT_LINE_HEIGHT = 18;
-
-void wifiOff() {
-  TimeUtils::stopNtp();
-  WiFi.disconnect(false);
-  delay(100);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
-}
 
 int drawWrappedHelpLine(GfxRenderer& renderer, const int left, const int top, const int width, const char* text) {
   int currentTop = top;
@@ -92,7 +86,7 @@ void SyncDayActivity::onEnter() {
   syncing = false;
   lastSyncSucceeded = false;
   lastSyncFailed = false;
-  selectedIndex = std::clamp(selectedIndex, 0, ACTION_COUNT - 1);
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
   requestUpdate();
 }
 
@@ -100,7 +94,13 @@ void SyncDayActivity::onExit() {
   Activity::onExit();
 
   if (!wifiConnectedOnEnter && connectedInActivity) {
-    wifiOff();
+    WiFiUtils::wifiOff();
+  }
+
+  if (returnTarget_ == SilentRebootTarget::Home) {
+    silentRestartToHome();
+  } else if (returnTarget_ == SilentRebootTarget::Apps) {
+    silentRestartToApps();
   }
 }
 
@@ -195,8 +195,7 @@ void SyncDayActivity::render(RenderLock&&) {
   }
   drawHowItWorksText(renderer, sidePadding, infoTop, infoWidth);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
 
   renderer.displayBuffer();
 }
@@ -280,30 +279,14 @@ void SyncDayActivity::syncTime() {
   }
 }
 
-void SyncDayActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
-  requestUpdateAndWait();
-
-  {
-    RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
-    if (progress >= 0) {
-      GUI.fillPopupProgress(renderer, popupRect, progress);
-    }
-  }
-
-  if (delayMs > 0) {
-    delay(delayMs);
-  }
-}
-
 void SyncDayActivity::createDueReadingStatsBackupWithFeedback() {
   if (!READING_STATS.isAutoBackupDue()) {
     return;
   }
 
-  showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+  PopupUtils::showTransientPopup(*this,tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
   const bool backupReady = READING_STATS.createDueAutoBackup();
-  showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+  PopupUtils::showTransientPopup(*this,backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                      backupReady ? 100 : -1, backupReady ? 350 : 700);
 }
 

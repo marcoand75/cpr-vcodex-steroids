@@ -551,6 +551,12 @@ words from chapter start to the beginning of `page`. Bookmarks store
   enables e.g. "Library root directory" on-device.
 - **List-activity helpers** — shared `ListInputMapper`, `ListLayout`, `ListRenderHelper`
   (≈1,350 lines de-duplicated).
+- **Shared text & overlay utilities** — `text_draw::` (panel text, right-align,
+  clipped, progress bar, checkbox, percent math) and `text_overlay::` (screensaver
+  text with position, style, panel, random-position cache, heap-saving empty-text
+  short-circuit) extracted from `SleepActivity` and `ScreenSaverActivity`. See
+  [STEROIDS-OPTIMIZATION.md](STEROIDS-OPTIMIZATION.md) for the canonical
+  reference and usage patterns.
 - **Book-Store deduplication** — `BookStoreUtils.h` shared by Favorites/Recent.
 - **Performance & memory** — inventory caching, system-dir exclusion, zero-size
   thumbnail cleanup, font-decompressor lazy init (saves ~48 KB), `freeUnusedRenderMemory()`,
@@ -781,15 +787,16 @@ migrated to `selectLongPressBehavior`.
   `src/ReadingStatsStore.cpp`, the EPUB parser/renderer files, web server + HTML,
   i18n yaml, the LyraMarcoand75 theme, and the screensaver/sleep `main.cpp` logic.
 
-### 10. Relationship Between the Two Steroids Definition Files
+### 10. Relationship Between the Steroids Definition Files
 
-There are **exactly two** Steroids definition files. Keep it that way — do not
+There are **three** Steroids definition files. Keep it that way — do not
 reintroduce standalone `STEROIDS-LIBRARY.md` or `STEROIDS-APP-ICON-THEME.md`:
 
 | File | Role |
 |------|------|
 | **`STEROIDS-ADDICTIONS.md`** | All Steroids apps, screensaver/sleep/deep-sleep handling, and every enhancement (this file: app catalog §2, icon/theme guide §3, Wikipedia §5, library §6, bookmarks & clippings §7). |
 | **`STEROIDS-ALIGN-TO-UPSTREAM.md`** | Instructions for merging a new upstream release into Steroids while preserving everything in this file. |
+| **`STEROIDS-OPTIMIZATION.md`** | **Single source of truth for the shared utility procedures** (`text_overlay::`, `text_draw::`, `ListRenderHelper::`, `ListInputMapper::`, `OrderListActivity<>`). Mandatory line-guida for adding new screens and refactoring existing ones. Lists the protected util files that must never be overwritten by upstream merges. |
 
 ## 12. Steroids Settings Storage
 

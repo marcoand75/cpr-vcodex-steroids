@@ -76,7 +76,7 @@ void NetworkModeSelectionActivity::render(RenderLock&&) {
                              [](int index) { return std::string(I18N.get(menuDescs[index])); },
                              [](int index) { return menuIcons[index]; });
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }
 

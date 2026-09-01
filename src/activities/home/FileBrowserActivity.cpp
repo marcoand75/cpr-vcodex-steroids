@@ -14,6 +14,7 @@
 #include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/BookCacheUtils.h"
 
 namespace {
@@ -458,10 +459,9 @@ void FileBrowserActivity::render(RenderLock&&) {
   }
 
   // Help text
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), files.empty() ? "" : tr(STR_OPEN),
-                            files.empty() ? "" : tr(STR_DIR_UP), files.empty() ? "" : tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasFiles = !files.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasFiles ? tr(STR_OPEN) : "",
+                              hasFiles ? tr(STR_DIR_UP) : "", hasFiles ? tr(STR_DIR_DOWN) : "");
 
   renderer.displayBuffer();
 }

@@ -14,6 +14,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 
@@ -42,6 +43,37 @@ void BookStatsActionsActivity::onEnter() {
   startDateApplyFailed = false;
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<BookStatsActionsActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<BookStatsActionsActivity*>(ctx);
+    if (self->selectedIndex == ACTION_ADJUST_READING_TIME) {
+      self->openAdjustment();
+      return;
+    }
+    if (self->selectedIndex == ACTION_MODIFY_START_DATE) {
+      self->openStartDateSelection();
+      return;
+    }
+    self->confirmResetBookStats();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<BookStatsActionsActivity*>(ctx);
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, ACTION_COUNT);
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, ACTION_COUNT);
+    }
+    self->startDateApplyFailed = false;
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavReleaseAndContinuous(onNav, onNav, this);
 }
 
 void BookStatsActionsActivity::openAdjustment() {
@@ -112,30 +144,7 @@ void BookStatsActionsActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (selectedIndex == ACTION_ADJUST_READING_TIME) {
-      openAdjustment();
-      return;
-    }
-    if (selectedIndex == ACTION_MODIFY_START_DATE) {
-      openStartDateSelection();
-      return;
-    }
-    confirmResetBookStats();
-    return;
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, ACTION_COUNT);
-    startDateApplyFailed = false;
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, ACTION_COUNT);
-    startDateApplyFailed = false;
-    requestUpdate();
-  });
+  listInputMapper.loop(mappedInput);
 }
 
 void BookStatsActionsActivity::render(RenderLock&&) {
@@ -167,7 +176,6 @@ void BookStatsActionsActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, hintTop, hint.c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

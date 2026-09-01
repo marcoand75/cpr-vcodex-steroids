@@ -29,8 +29,10 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "OpdsServerStore.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutUiMetadata.h"
+#include "util/LongPress.h"
 #include "WikipediaActivity.h"
 #include "QuickCardsActivity.h"
 
@@ -45,6 +47,10 @@ std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItem
   const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
   return std::to_string(currentPage) + "/" + std::to_string(totalPages) + " | " + std::to_string(totalItems);
 }
+
+// Long-press threshold for the library context-menu. Match HomeActivity's
+// RECENT_BOOK_LONG_PRESS_MS (1500ms) for consistent cross-screen behavior.
+constexpr unsigned long LIBRARY_LONG_PRESS_MS = 1500;
 }  // namespace
 
 void AppsActivity::onEnter() {
@@ -64,52 +70,67 @@ void AppsActivity::onEnter() {
   ACHIEVEMENTS.ensureLoaded();
   rebuildShortcutSubtitles();
   requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    self->onGoHome();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    self->openSelectedApp();
+  }, this, false);
+
+  auto onNavPress = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    }
+    self->requestUpdate();
+  };
+
+  auto onNavContinuous = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    } else {
+      self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavPressAndContinuous(onNavPress, onNavContinuous, this);
 }
 
 void AppsActivity::loop() {
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
+  listInputMapper.loop(mappedInput);
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    onGoHome();
-    return;
+  // Long-press detect: if the user is currently holding Confirm on the
+  // library shortcut for >= LIBRARY_LONG_PRESS_MS, open the library context
+  // menu. We can't do this from the setConfirmHandler (which fires on the
+  // press edge where getHeldTime is 0), so we poll isPressed+getHeldTime
+  // each frame. LongPress::Button makes sure we fire the menu exactly
+  // once per hold, even if the held duration is checked many times.
+  static long_press::Button confirmPress_;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    confirmPress_.reset();
+  } else if (confirmPress_.fired(mappedInput.getHeldTime(), LIBRARY_LONG_PRESS_MS)) {
+    if (appShortcuts.size() > selectedIndex &&
+        appShortcuts[selectedIndex] && appShortcuts[selectedIndex]->id == ShortcutId::Library) {
+      startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                               rebuildShortcutSubtitles();
+                               selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
+                               requestUpdate();
+                             });
+    }
   }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    openSelectedApp();
-    return;
-  }
-
-  buttonNavigator.onNextPress([this] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousPress([this] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, pageItems] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::nextPageIndex(selectedIndex, static_cast<int>(appShortcuts.size()), pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, pageItems] {
-    if (appShortcuts.empty()) {
-      return;
-    }
-    selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, static_cast<int>(appShortcuts.size()), pageItems);
-    requestUpdate();
-  });
 }
 
 void AppsActivity::render(RenderLock&&) {
@@ -128,7 +149,7 @@ void AppsActivity::render(RenderLock&&) {
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
 
   if (appShortcuts.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_ENTRIES));
+    ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_ENTRIES));
   } else {
     GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(appShortcuts.size()),
                  selectedIndex,
@@ -140,8 +161,7 @@ void AppsActivity::render(RenderLock&&) {
                  [this](const int index) { return appShortcuts[index]->icon; });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   renderer.displayBuffer();
 }
@@ -219,12 +239,12 @@ void AppsActivity::openSelectedApp() {
       activityManager.goToFileTransfer();
       return;
     case ShortcutId::Library:
-      if (mappedInput.getHeldTime() >= 1000) {
-        startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
-                               [this](const ActivityResult&) { requestUpdate(); });
-      } else {
-        activityManager.goToLibrary(true);
-      }
+      // Direct launch of the library. The library context menu is reached via
+      // long-press on the confirm button — see AppsActivity::loop() which
+      // polls isPressed+getHeldTime each frame. We must NOT branch on
+      // getHeldTime() here: openSelectedApp() is called from a press-edge
+      // setConfirmHandler (useRelease=false), where getHeldTime() is always 0.
+      activityManager.goToLibrary(true);
       return;
     case ShortcutId::ScreenClean:
       activity = std::make_unique<ScreenCleanActivity>(renderer, mappedInput);
@@ -246,11 +266,7 @@ void AppsActivity::openSelectedApp() {
                               [this](const ActivityResult&) {
                                 appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
                                 rebuildShortcutSubtitles();
-                                if (!appShortcuts.empty()) {
-                                  selectedIndex = std::min(selectedIndex, static_cast<int>(appShortcuts.size()) - 1);
-                                } else {
-                                  selectedIndex = 0;
-                                }
+                                selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
                                 requestUpdate();
                               });
        return;
@@ -265,11 +281,7 @@ void AppsActivity::openSelectedApp() {
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
     appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
     rebuildShortcutSubtitles();
-    if (!appShortcuts.empty()) {
-      selectedIndex = std::min(selectedIndex, static_cast<int>(appShortcuts.size()) - 1);
-    } else {
-      selectedIndex = 0;
-    }
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
     requestUpdate();
   });
 }

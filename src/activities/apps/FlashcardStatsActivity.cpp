@@ -9,6 +9,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -44,7 +45,7 @@ void FlashcardStatsActivity::reloadDecks() {
   if (decks.empty()) {
     selectedIndex = 0;
   } else {
-    selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(decks.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(decks.size()));
   }
 }
 
@@ -121,7 +122,7 @@ void FlashcardStatsActivity::render(RenderLock&&) {
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FLASHCARDS), tr(STR_STATISTICS));
 
   if (decks.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_NO_ENTRIES));
+    ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_ENTRIES));
   } else {
     GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(decks.size()), selectedIndex,
                  [this](const int index) { return decks[index].title; },
@@ -129,8 +130,8 @@ void FlashcardStatsActivity::render(RenderLock&&) {
                  [](const int) { return UIIcon::Library; });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), decks.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasDecks = !decks.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasDecks ? tr(STR_OPEN) : "", tr(STR_DIR_UP),
+                              tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

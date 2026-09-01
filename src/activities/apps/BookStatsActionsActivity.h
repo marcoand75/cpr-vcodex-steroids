@@ -3,10 +3,10 @@
 #include <string>
 
 #include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class BookStatsActionsActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
   std::string bookPath;
   std::string bookTitle;
   int selectedIndex = 0;

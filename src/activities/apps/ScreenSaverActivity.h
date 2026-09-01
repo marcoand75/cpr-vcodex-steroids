@@ -28,10 +28,10 @@ class ScreenSaverActivity final : public Activity {
   unsigned long getIntervalMs() const;
   int getMinBatteryPercent() const;
   bool isWakeButtonPressed() const;
-  void drawTextOverlay();
-  // Resolve the overlay fontId and style for the current screenSaverFontSize
-  // setting. Used by both drawTextOverlay() and the pre-decode glyph prewarm.
-  void getOverlayFont(int& fontId, EpdFontFamily::Style& style) const;
+
+  // drawTextOverlay() and getOverlayFont() have been replaced by the
+  // text_overlay::draw() / text_overlay::resolveFontFromSize() helpers in
+  // src/activities/util/TextOverlay.h.
 
  public:
   explicit ScreenSaverActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToCaller = false)

@@ -19,7 +19,7 @@ constexpr int ACTION_COUNT = 2;
 
 void FavoritesAppActivity::refreshEntries() {
   favoriteCount = static_cast<int>(FAVORITES.getBooks().size());
-  selectedIndex = std::clamp(selectedIndex, 0, ACTION_COUNT - 1);
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
 }
 
 void FavoritesAppActivity::openSelectedEntry() {
@@ -112,6 +112,6 @@ void FavoritesAppActivity::render(RenderLock&&) {
     renderer.drawCenteredText(SMALL_FONT_ID, layout.contentTop + layout.contentHeight - 14, tr(STR_NO_FAVORITES));
   }
 
-  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

@@ -8,7 +8,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <WiFi.h>
+#include "util/WiFiUtils.h"
 #include <cctype>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+
+#include "util/StringUtils.h"
 
 #include "AchievementsStore.h"
 #include "CrossPointSettings.h"
@@ -570,10 +572,10 @@ void CrossPointWebServer::begin() {
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
-  WiFi.setSleep(false);
+  WiFiUtils::disableModemSleep();
   // Default varies by ESP32 core version. The activity's loss-recovery loop
   // relies on driver retries during transient disconnects.
-  WiFi.setAutoReconnect(true);
+  WiFiUtils::setAutoReconnect(true);
 
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.
@@ -2138,28 +2140,23 @@ void CrossPointWebServer::handlePostSettings() {
             saveKOReader = true;
             break;
           case WebDynamicSetting::LibraryRootDir:
-            strncpy(SETTINGS.libraryRootDir, val.c_str(), sizeof(SETTINGS.libraryRootDir) - 1);
-            SETTINGS.libraryRootDir[sizeof(SETTINGS.libraryRootDir) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverText:
-            strncpy(SETTINGS.screenSaverText, val.c_str(), sizeof(SETTINGS.screenSaverText) - 1);
-            SETTINGS.screenSaverText[sizeof(SETTINGS.screenSaverText) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverDir:
-            strncpy(SETTINGS.screenSaverDirectory, val.c_str(), sizeof(SETTINGS.screenSaverDirectory) - 1);
-            SETTINGS.screenSaverDirectory[sizeof(SETTINGS.screenSaverDirectory) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::ScreenSaverReaderDir:
-            strncpy(SETTINGS.screenSaverReaderDir, val.c_str(), sizeof(SETTINGS.screenSaverReaderDir) - 1);
-            SETTINGS.screenSaverReaderDir[sizeof(SETTINGS.screenSaverReaderDir) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverReaderDir, sizeof(SETTINGS.screenSaverReaderDir), val);
             saveSettings = true;
             break;
           case WebDynamicSetting::SdFontFamily:
-            strncpy(SETTINGS.sdFontFamilyName, val.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
-            SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+            StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), val);
             saveSettings = true;
             break;
           default:
@@ -2755,8 +2752,7 @@ void CrossPointWebServer::handlePostSteroidsSettings() {
   auto applyString = [&](const char* key, char* dest, size_t maxLen) {
     if (doc[key].is<const char*>()) {
       const char* val = doc[key].as<const char*>();
-      strncpy(dest, val, maxLen - 1);
-      dest[maxLen - 1] = '\0';
+      StringUtils::copyToFixedBuffer(dest, maxLen, std::string(val));
       applied++;
     }
   };

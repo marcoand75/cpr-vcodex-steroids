@@ -2,19 +2,22 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <I18n.h>
+
+#include <optional>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "Epub.h"
 #include "EpubReaderActivity.h"
 #include "KOReaderCredentialStore.h"
-#include "ReadingStatsStore.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
 #include "Xtc.h"
 #include "XtcReaderActivity.h"
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
+#include "components/UITheme.h"
 
 bool ReaderActivity::isXtcFile(const std::string& path) { return FsHelpers::hasXtcExtension(path); }
 
@@ -26,13 +29,16 @@ bool ReaderActivity::isTxtFile(const std::string& path) {
 bool ReaderActivity::isBmpFile(const std::string& path) { return FsHelpers::hasBmpExtension(path); }
 
 std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
-  if (!Storage.exists(path.c_str())) {
-    LOG_ERR("READER", "File does not exist: %s", path.c_str());
-    return nullptr;
-  }
-
   auto epub = std::unique_ptr<Epub>(new Epub(path, "/.crosspoint"));
-  if (epub->load(true, SETTINGS.embeddedStyle == 0)) {
+  const bool uncached = !Storage.exists((epub->getCachePath() + "/book.bin").c_str());
+  if (uncached) GUI.drawPopup(renderer, tr(STR_INDEXING));
+  bool loaded = false;
+  {
+    std::optional<GfxRenderer::FrameBufferLoan> loan;
+    if (uncached) loan.emplace(renderer);
+    loaded = epub->load(true, SETTINGS.embeddedStyle == 0);
+  }
+  if (loaded) {
     return epub;
   }
 
@@ -41,11 +47,6 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
 }
 
 std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
-  if (!Storage.exists(path.c_str())) {
-    LOG_ERR("READER", "File does not exist: %s", path.c_str());
-    return nullptr;
-  }
-
   auto xtc = std::unique_ptr<Xtc>(new Xtc(path, "/.crosspoint"));
   if (xtc->load()) {
     return xtc;
@@ -56,11 +57,6 @@ std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
 }
 
 std::unique_ptr<Txt> ReaderActivity::loadTxt(const std::string& path) {
-  if (!Storage.exists(path.c_str())) {
-    LOG_ERR("READER", "File does not exist: %s", path.c_str());
-    return nullptr;
-  }
-
   auto txt = std::unique_ptr<Txt>(new Txt(path, "/.crosspoint"));
   if (txt->load()) {
     return txt;
@@ -81,8 +77,8 @@ void ReaderActivity::onGoToEpubReader(std::unique_ptr<Epub> epub) {
   currentBookPath = epubPath;
 
   auto& sync = APP_STATE.koReaderSyncSession;
-  const bool canAutoPull = SETTINGS.koSyncAutoPullOnOpen && KOREADER_STORE.hasCredentials() && !initialBookmark.enabled &&
-                           !sync.active;
+  const bool canAutoPull =
+      SETTINGS.koSyncAutoPullOnOpen && KOREADER_STORE.hasCredentials() && !initialBookmark.enabled && !sync.active;
   if (canAutoPull) {
     sync.clear();
     sync.active = true;
@@ -102,7 +98,10 @@ void ReaderActivity::onGoToEpubReader(std::unique_ptr<Epub> epub) {
 
   activityManager.replaceActivity(std::make_unique<EpubReaderActivity>(
       renderer, mappedInput, std::move(epub), initialBookmark.enabled ? initialBookmark.spineIndex : -1,
-      initialBookmark.enabled ? static_cast<int>(initialBookmark.page) : -1));
+      initialBookmark.enabled ? static_cast<int>(initialBookmark.page) : -1,
+      initialBookmark.enabled && initialBookmark.hasVisibleTextOffset
+          ? std::optional<uint32_t>(initialBookmark.visibleTextOffset)
+          : std::nullopt));
 }
 
 void ReaderActivity::onGoToBmpViewer(const std::string& path) {
@@ -123,8 +122,6 @@ void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
 
 void ReaderActivity::onEnter() {
   Activity::onEnter();
-
-  READING_STATS.ensureLoaded();
 
   if (initialBookPath.empty()) {
     goToLibrary();  // Start from root when entering via Browse

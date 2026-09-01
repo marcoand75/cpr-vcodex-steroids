@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "../../util/ButtonNavigator.h"
 #include "../Activity.h"
+#include "../util/ListInputMapper.h"
 
 class BookContextMenuActivity final : public Activity {
  public:
@@ -49,5 +49,5 @@ class BookContextMenuActivity final : public Activity {
   const std::vector<MenuItem> menuItems;
   const std::string bookTitle;
   int selectedIndex = 0;
-  ButtonNavigator buttonNavigator;
+  ListInputMapper listInputMapper;
 };

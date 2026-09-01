@@ -14,6 +14,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -294,9 +295,9 @@ void FavoritesBrowserActivity::render(RenderLock&&) {
   }
   renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, pathY, pathDisplay);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), files.empty() ? "" : tr(STR_DIR_UP),
-                                            files.empty() ? "" : tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasFiles = !files.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), hasFiles ? tr(STR_DIR_UP) : "",
+                              hasFiles ? tr(STR_DIR_DOWN) : "");
   renderer.displayBuffer();
 }
 

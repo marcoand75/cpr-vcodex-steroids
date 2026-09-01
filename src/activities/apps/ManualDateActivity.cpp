@@ -12,6 +12,7 @@
 #include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 
@@ -151,8 +152,8 @@ void ManualDateActivity::render(RenderLock&&) {
   const std::string hint = renderer.truncatedText(UI_10_FONT_ID, tr(STR_SET_DATE_HINT), hintWidth);
   renderer.drawText(UI_10_FONT_ID, sidePadding, hintTop, hint.c_str());
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_LEFT),
+                              tr(STR_DIR_RIGHT));
 
   renderer.displayBuffer();
 }

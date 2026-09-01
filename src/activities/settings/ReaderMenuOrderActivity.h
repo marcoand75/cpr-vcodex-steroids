@@ -4,31 +4,22 @@
 
 #include "activities/Activity.h"
 #include "util/ReaderMenuRegistry.h"
-#include "../util/ListInputMapper.h"
+#include "../util/OrderListActivity.h"
 
-class ReaderMenuOrderActivity final : public Activity {
-   public:
-    explicit ReaderMenuOrderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-        : Activity("ReaderMenuOrder", renderer, mappedInput) {}
+class ReaderMenuOrderActivity final : public OrderListActivity<ReaderMenuOrderActivity, const ReaderMenuItemDefinition*> {
+ public:
+  explicit ReaderMenuOrderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+      : OrderListActivity("ReaderMenuOrder", renderer, mappedInput) {}
 
-    void onEnter() override;
-    void onExit() override;
-    void loop() override;
-    void render(RenderLock&&) override;
+  void reloadEntries() override;
+  void save() override;
+  void moveSelectedEntry(int delta) override;
 
-    std::vector<const ReaderMenuItemDefinition*> entries;
-    int selectedIndex = 0;
-    bool moveMode = false;
+  const char* getTitle() const override {
+    return tr(STR_READER_MENU_ORDER);
+  }
 
-private:
-     void reloadEntries();
-   public:
-     void moveSelectedEntry(int delta);
-
-    ListInputMapper listInputMapper;
-    const char* getTitle() const;
-
-    static void onBack(void* ctx);
-    static void onConfirm(void* ctx);
-    static void onNav(void* ctx, int delta);
+  std::string getEntryTitle(const ReaderMenuItemDefinition* entry) const override {
+    return std::string(I18N.get(entry->nameId));
+  }
 };

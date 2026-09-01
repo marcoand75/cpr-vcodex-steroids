@@ -6,7 +6,7 @@
 
 #include "../Activity.h"
 #include "I18n.h"
-#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
 class LibraryContextMenuActivity final : public Activity {
  public:
@@ -31,7 +31,7 @@ class LibraryContextMenuActivity final : public Activity {
   std::vector<MenuItem> items_;
   int selectedIndex_ = 0;
   bool confirmed_ = false;
-  ButtonNavigator buttonNavigator_;
+  ListInputMapper listInputMapper_;
 
   void onConfirm();
 };

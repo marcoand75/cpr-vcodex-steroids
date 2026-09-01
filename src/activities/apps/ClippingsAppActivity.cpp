@@ -16,6 +16,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/BookIdentity.h"
 
@@ -88,7 +89,7 @@ void ClippingsAppActivity::refreshEntries() {
     });
   }
   if (selectedIndex >= static_cast<int>(entries.size()))
-    selectedIndex = std::max(0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
 }
 
 void ClippingsAppActivity::openSelectedBook() {
@@ -182,7 +183,8 @@ void ClippingsAppActivity::render(RenderLock&&) {
                  [](const int) { return UIIcon::Book; },
                  [this](const int index) { return std::to_string(entries[index].clippings.size()); });
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), entries.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasEntries = !entries.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasEntries ? tr(STR_OPEN) : "", tr(STR_DIR_UP),
+                              tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

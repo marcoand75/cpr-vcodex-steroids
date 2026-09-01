@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../Activity.h"
+#include "SilentRestart.h"
 #include "util/ButtonNavigator.h"
+#include "util/PopupUtils.h"
 
 class SyncDayActivity final : public Activity {
   bool wifiConnectedOnEnter = false;
@@ -9,6 +11,7 @@ class SyncDayActivity final : public Activity {
   bool syncing = false;
   bool lastSyncSucceeded = false;
   bool lastSyncFailed = false;
+  SilentRebootTarget returnTarget_ = SilentRebootTarget::Home;
   ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
 
@@ -16,15 +19,15 @@ class SyncDayActivity final : public Activity {
   void openManualDateSelection();
   void openTimeZoneSelection();
   void syncTime();
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void createDueReadingStatsBackupWithFeedback();
   void createSyncDateBackupIfDayChanged(uint32_t previousTimestamp, uint32_t currentTimestamp);
   bool isWifiConnected() const;
   std::string getStatusMessage() const;
 
  public:
-  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("SyncDay", renderer, mappedInput) {}
+  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                           SilentRebootTarget returnTarget = SilentRebootTarget::Home)
+      : Activity("SyncDay", renderer, mappedInput), returnTarget_(returnTarget) {}
 
   void onEnter() override;
   void onExit() override;

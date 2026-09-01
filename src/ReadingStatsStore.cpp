@@ -15,307 +15,22 @@
 #include "CrossPointState.h"
 #include "util/BookIdentity.h"
 #include "util/CprVcodexLogs.h"
+#include "util/ReadingStatsBackupManager.h"
+#include "util/StringUtils.h"
 #include "util/TimeUtils.h"
 
+using namespace ReadingStatsBackup;
+
 namespace {
-constexpr char READING_STATS_FILE_JSON[] = "/.crosspoint/reading_stats.json";
-constexpr char READING_STATS_SUMMARY_JSON[] = "/.crosspoint/summary.json";
-constexpr char READING_STATS_BACKUP_FILE_JSON[] = "/.crosspoint/reading_stats.json.bak";
-constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
-constexpr char READING_STATS_BACKUP_EXPORT_PREFIX[] = "/exports/stats_backup_";
-constexpr char READING_STATS_BACKUP_EXPORT_FILE_PREFIX[] = "stats_backup_";
-constexpr size_t MAX_READING_STATS_AUTO_BACKUPS = 30;
 constexpr unsigned long MAX_READING_GAP_MS = 30UL * 60UL * 1000UL;
 constexpr unsigned long SESSION_HEARTBEAT_MS = 60UL * 1000UL;
 constexpr unsigned long DEFERRED_SAVE_INTERVAL_MS = 30UL * 1000UL;
-constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 constexpr size_t MAX_SESSION_LOG_ENTRIES = 256;
+constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 
 uint8_t clampPercent(const uint8_t percent) { return std::min<uint8_t>(percent, 100); }
 
 bool countsForStreak(const ReadingDayStats& day) { return day.readingMs >= getDailyReadingGoalMs(); }
-
-bool textWindowShowsReadingStatsData(const std::string& text) {
-  static constexpr const char* DATA_ARRAY_KEYS[] = {
-      "\"readingDays\":[",
-      "\"legacyReadingDays\":[",
-      "\"sessionLog\":[",
-      "\"books\":[",
-  };
-
-  for (const char* key : DATA_ARRAY_KEYS) {
-    size_t pos = 0;
-    while ((pos = text.find(key, pos)) != std::string::npos) {
-      size_t valuePos = pos + std::strlen(key);
-      while (valuePos < text.size() &&
-             (text[valuePos] == ' ' || text[valuePos] == '\n' || text[valuePos] == '\r' || text[valuePos] == '\t')) {
-        ++valuePos;
-      }
-      if (valuePos < text.size() && text[valuePos] != ']') {
-        return true;
-      }
-      pos = valuePos;
-    }
-  }
-  return false;
-}
-
-bool statsFileAppearsToHaveData(const char* path) {
-  if (!path || !Storage.exists(path)) {
-    return false;
-  }
-
-  HalFile file;
-  if (!Storage.openFileForRead("RST", path, file)) {
-    return false;
-  }
-
-  char buffer[256];
-  std::string window;
-  window.reserve(512);
-  while (true) {
-    const int readBytes = file.read(buffer, sizeof(buffer));
-    if (readBytes <= 0) {
-      break;
-    }
-    window.append(buffer, static_cast<size_t>(readBytes));
-    if (textWindowShowsReadingStatsData(window)) {
-      file.close();
-      return true;
-    }
-    if (window.size() > 512) {
-      window.erase(0, window.size() - 256);
-    }
-  }
-
-  file.close();
-  return false;
-}
-
-bool copyFileViaTemp(const char* moduleName, const char* sourcePath, const char* targetPath) {
-  if (!sourcePath || !targetPath || !Storage.exists(sourcePath)) {
-    return false;
-  }
-
-  const std::string tempPath = std::string(targetPath) + ".tmp";
-  if (Storage.exists(tempPath.c_str())) {
-    Storage.remove(tempPath.c_str());
-  }
-
-  HalFile source;
-  if (!Storage.openFileForRead(moduleName, sourcePath, source)) {
-    return false;
-  }
-
-  HalFile target;
-  if (!Storage.openFileForWrite(moduleName, tempPath.c_str(), target)) {
-    source.close();
-    return false;
-  }
-
-  char buffer[512];
-  bool ok = true;
-  while (true) {
-    const int readBytes = source.read(buffer, sizeof(buffer));
-    if (readBytes < 0) {
-      ok = false;
-      break;
-    }
-    if (readBytes == 0) {
-      break;
-    }
-    const size_t written = target.write(buffer, static_cast<size_t>(readBytes));
-    if (written != static_cast<size_t>(readBytes)) {
-      ok = false;
-      break;
-    }
-  }
-
-  target.flush();
-  target.close();
-  source.close();
-
-  if (!ok) {
-    Storage.remove(tempPath.c_str());
-    return false;
-  }
-
-  if (Storage.exists(targetPath) && !Storage.remove(targetPath)) {
-    Storage.remove(tempPath.c_str());
-    return false;
-  }
-
-  if (!Storage.rename(tempPath.c_str(), targetPath)) {
-    Storage.remove(tempPath.c_str());
-    return false;
-  }
-
-  return true;
-}
-
-std::string formatBackupDateFromDayOrdinal(const uint32_t dayOrdinal) {
-  int year = 0;
-  unsigned month = 0;
-  unsigned day = 0;
-  if (!TimeUtils::getDateFromDayOrdinal(dayOrdinal, year, month, day)) {
-    return "";
-  }
-
-  char buffer[16];
-  std::snprintf(buffer, sizeof(buffer), "%04d-%02u-%02u", year, month, day);
-  return std::string(buffer);
-}
-
-std::string getAutoBackupPathForDayOrdinal(const uint32_t dayOrdinal) {
-  const std::string dateText = formatBackupDateFromDayOrdinal(dayOrdinal);
-  return dateText.empty() ? std::string() : std::string(READING_STATS_BACKUP_EXPORT_PREFIX) + dateText;
-}
-
-bool autoBackupFileHasDataForDayOrdinal(const uint32_t dayOrdinal) {
-  const std::string backupPath = getAutoBackupPathForDayOrdinal(dayOrdinal);
-  return !backupPath.empty() && statsFileAppearsToHaveData(backupPath.c_str());
-}
-
-bool parseAutoBackupDayOrdinal(const char* name, uint32_t& dayOrdinal) {
-  if (!name || std::strncmp(name, READING_STATS_BACKUP_EXPORT_FILE_PREFIX,
-                            std::strlen(READING_STATS_BACKUP_EXPORT_FILE_PREFIX)) != 0) {
-    return false;
-  }
-
-  int year = 0;
-  unsigned month = 0;
-  unsigned day = 0;
-  int consumed = 0;
-  if (std::sscanf(name, "stats_backup_%4d-%2u-%2u%n", &year, &month, &day, &consumed) != 3 || name[consumed] != '\0') {
-    return false;
-  }
-
-  if (!TimeUtils::getTimestampForLocalDate(year, month, day, nullptr)) {
-    return false;
-  }
-
-  dayOrdinal = TimeUtils::getDayOrdinalForDate(year, month, day);
-  return dayOrdinal != 0;
-}
-
-uint32_t getLatestAutoBackupDayOrdinal() {
-  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
-  if (!dir || !dir.isDirectory()) {
-    if (dir) {
-      dir.close();
-    }
-    return 0;
-  }
-
-  uint32_t latestDayOrdinal = 0;
-  char name[256];
-  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
-      entry.close();
-      continue;
-    }
-
-    entry.getName(name, sizeof(name));
-    entry.close();
-
-    uint32_t dayOrdinal = 0;
-    if (!parseAutoBackupDayOrdinal(name, dayOrdinal)) {
-      continue;
-    }
-
-    const std::string backupPath = std::string(READING_STATS_EXPORT_DIR) + "/" + name;
-    if (statsFileAppearsToHaveData(backupPath.c_str())) {
-      latestDayOrdinal = std::max(latestDayOrdinal, dayOrdinal);
-    }
-  }
-  dir.close();
-  return latestDayOrdinal;
-}
-
-size_t countAutoBackupFiles() {
-  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
-  if (!dir || !dir.isDirectory()) {
-    if (dir) {
-      dir.close();
-    }
-    return 0;
-  }
-
-  size_t count = 0;
-  char name[256];
-  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
-      entry.close();
-      continue;
-    }
-
-    entry.getName(name, sizeof(name));
-    entry.close();
-
-    uint32_t dayOrdinal = 0;
-    if (parseAutoBackupDayOrdinal(name, dayOrdinal)) {
-      ++count;
-    }
-  }
-  dir.close();
-  return count;
-}
-
-bool findOldestAutoBackupPath(std::string& oldestPath) {
-  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
-  if (!dir || !dir.isDirectory()) {
-    if (dir) {
-      dir.close();
-    }
-    return false;
-  }
-
-  uint32_t oldestDayOrdinal = 0;
-  char name[256];
-  for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
-      entry.close();
-      continue;
-    }
-
-    entry.getName(name, sizeof(name));
-    entry.close();
-
-    uint32_t dayOrdinal = 0;
-    if (!parseAutoBackupDayOrdinal(name, dayOrdinal)) {
-      continue;
-    }
-    if (oldestDayOrdinal == 0 || dayOrdinal < oldestDayOrdinal) {
-      oldestDayOrdinal = dayOrdinal;
-      oldestPath = std::string(READING_STATS_EXPORT_DIR) + "/" + name;
-    }
-  }
-  dir.close();
-  return oldestDayOrdinal != 0 && !oldestPath.empty();
-}
-
-void pruneAutoBackupsToLimit(const size_t maxBackups) {
-  while (countAutoBackupFiles() > maxBackups) {
-    std::string oldestPath;
-    if (!findOldestAutoBackupPath(oldestPath)) {
-      break;
-    }
-    if (!Storage.remove(oldestPath.c_str())) {
-      LOG_ERR("RST", "Failed to prune old reading stats backup %s", oldestPath.c_str());
-      break;
-    }
-    LOG_DBG("RST", "Pruned old reading stats backup %s", oldestPath.c_str());
-  }
-}
-
-std::string toLowerAscii(std::string value) {
-  for (char& c : value) {
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
-    }
-  }
-  return value;
-}
 
 bool isRootIfFoundPath(const std::string& normalizedPath) {
   if (normalizedPath.size() <= 1 || normalizedPath.front() != '/') {
@@ -325,7 +40,7 @@ bool isRootIfFoundPath(const std::string& normalizedPath) {
     return false;
   }
 
-  const std::string lowerName = toLowerAscii(normalizedPath.substr(1));
+  const std::string lowerName = StringUtils::toLowerAscii(normalizedPath.substr(1));
   return lowerName == "if_found.txt" || lowerName == "if_found.txt.txt";
 }
 
@@ -908,18 +623,18 @@ bool ReadingStatsStore::prepareInternalBackup() const {
     return true;
   }
 
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     internalBackupPrepared = true;
     return true;
   }
 
-  if (!statsFileAppearsToHaveData(READING_STATS_FILE_JSON)) {
+  if (!ReadingStatsBackup::statsFileAppearsToHaveData(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     internalBackupPrepared = true;
     return true;
   }
 
   Storage.mkdir("/.crosspoint");
-  const bool copied = copyFileViaTemp("RST", READING_STATS_FILE_JSON, READING_STATS_BACKUP_FILE_JSON);
+  const bool copied = ReadingStatsBackup::copyFileViaTemp("RST", ReadingStatsBackup::READING_STATS_FILE_JSON, ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON);
   if (copied) {
     LOG_DBG("RST", "Prepared reading stats backup");
     internalBackupPrepared = true;
@@ -931,21 +646,21 @@ bool ReadingStatsStore::prepareInternalBackup() const {
 }
 
 bool ReadingStatsStore::refreshInternalBackupFromMain() const {
-  const std::string tempPath = std::string(READING_STATS_BACKUP_FILE_JSON) + ".tmp";
+  const std::string tempPath = std::string(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON) + ".tmp";
   if (Storage.exists(tempPath.c_str())) {
     Storage.remove(tempPath.c_str());
   }
 
-  if (!Storage.exists(READING_STATS_FILE_JSON) || !statsFileAppearsToHaveData(READING_STATS_FILE_JSON)) {
-    if (Storage.exists(READING_STATS_BACKUP_FILE_JSON)) {
-      Storage.remove(READING_STATS_BACKUP_FILE_JSON);
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON) || !ReadingStatsBackup::statsFileAppearsToHaveData(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
+    if (Storage.exists(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON)) {
+      Storage.remove(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON);
     }
     internalBackupPrepared = true;
     return true;
   }
 
   Storage.mkdir("/.crosspoint");
-  const bool copied = copyFileViaTemp("RST", READING_STATS_FILE_JSON, READING_STATS_BACKUP_FILE_JSON);
+  const bool copied = ReadingStatsBackup::copyFileViaTemp("RST", ReadingStatsBackup::READING_STATS_FILE_JSON, ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON);
   if (copied) {
     internalBackupPrepared = true;
   }
@@ -953,11 +668,11 @@ bool ReadingStatsStore::refreshInternalBackupFromMain() const {
 }
 
 bool ReadingStatsStore::restoreInternalBackupToMain(const char* reason) const {
-  if (!statsFileAppearsToHaveData(READING_STATS_BACKUP_FILE_JSON)) {
+  if (!ReadingStatsBackup::statsFileAppearsToHaveData(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON)) {
     return false;
   }
 
-  const bool restored = copyFileViaTemp("RST", READING_STATS_BACKUP_FILE_JSON, READING_STATS_FILE_JSON);
+  const bool restored = ReadingStatsBackup::copyFileViaTemp("RST", ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON, ReadingStatsBackup::READING_STATS_FILE_JSON);
   if (restored) {
     internalBackupPrepared = false;
     std::string message = "Restored reading stats backup";
@@ -1001,20 +716,20 @@ bool ReadingStatsStore::maybeCreateAutoBackup(const bool force) const {
     return false;
   }
 
-  const uint32_t latestBackupDay = getLatestAutoBackupDayOrdinal();
+  const uint32_t latestBackupDay = ReadingStatsBackup::getLatestAutoBackupDayOrdinal();
   if (force && latestBackupDay != 0 && dayOrdinal < latestBackupDay) {
     return false;
   }
 
-  const std::string backupPath = getAutoBackupPathForDayOrdinal(dayOrdinal);
+  const std::string backupPath = ReadingStatsBackup::getAutoBackupPathForDayOrdinal(dayOrdinal);
   if (backupPath.empty()) {
     return false;
   }
 
-  Storage.mkdir(READING_STATS_EXPORT_DIR);
+  Storage.mkdir(ReadingStatsBackup::READING_STATS_EXPORT_DIR);
   const bool saved = JsonSettingsIO::saveReadingStats(*this, backupPath.c_str());
   if (saved) {
-    pruneAutoBackupsToLimit(MAX_READING_STATS_AUTO_BACKUPS);
+    ReadingStatsBackup::pruneAutoBackupsToLimit(ReadingStatsBackup::MAX_READING_STATS_AUTO_BACKUPS);
     APP_STATE.lastReadingStatsBackupDayOrdinal = dayOrdinal;
     APP_STATE.saveToFile();
     LOG_DBG("RST", "Auto-backed up reading stats to %s", backupPath.c_str());
@@ -1040,7 +755,7 @@ bool ReadingStatsStore::isAutoBackupDue() const {
     return false;
   }
 
-  const uint32_t latestBackupDay = getLatestAutoBackupDayOrdinal();
+  const uint32_t latestBackupDay = ReadingStatsBackup::getLatestAutoBackupDayOrdinal();
   if (latestBackupDay != 0) {
     if (dayOrdinal <= latestBackupDay) {
       return false;
@@ -1058,7 +773,7 @@ bool ReadingStatsStore::createDueAutoBackup() const {
   return maybeCreateAutoBackup(true);
 }
 
-bool ReadingStatsStore::hasAutoBackups() const { return getLatestAutoBackupDayOrdinal() != 0; }
+bool ReadingStatsStore::hasAutoBackups() const { return ReadingStatsBackup::getLatestAutoBackupDayOrdinal() != 0; }
 
 bool ReadingStatsStore::ensureAutoBackupForEnabledSetting() const {
   if (SETTINGS.getReadingStatsAutoBackupIntervalDays() == 0) {
@@ -1072,7 +787,7 @@ bool ReadingStatsStore::ensureAutoBackupForEnabledSetting() const {
   }
 
   if (dayOrdinal != 0 && APP_STATE.lastReadingStatsBackupDayOrdinal == dayOrdinal &&
-      autoBackupFileHasDataForDayOrdinal(dayOrdinal)) {
+      ReadingStatsBackup::autoBackupFileHasDataForDayOrdinal(dayOrdinal)) {
     return true;
   }
 
@@ -1085,7 +800,7 @@ bool ReadingStatsStore::ensureAutoBackupForEnabledSetting() const {
 }
 
 int ReadingStatsStore::clearAutoBackups() const {
-  auto dir = Storage.open(READING_STATS_EXPORT_DIR);
+  auto dir = Storage.open(ReadingStatsBackup::READING_STATS_EXPORT_DIR);
   if (!dir || !dir.isDirectory()) {
     if (dir) {
       dir.close();
@@ -1107,12 +822,12 @@ int ReadingStatsStore::clearAutoBackups() const {
 
     entry.getName(name, sizeof(name));
     entry.close();
-    if (std::strncmp(name, READING_STATS_BACKUP_EXPORT_FILE_PREFIX,
-                     std::strlen(READING_STATS_BACKUP_EXPORT_FILE_PREFIX)) != 0) {
+    if (std::strncmp(name, ReadingStatsBackup::READING_STATS_BACKUP_EXPORT_FILE_PREFIX,
+                     std::strlen(ReadingStatsBackup::READING_STATS_BACKUP_EXPORT_FILE_PREFIX)) != 0) {
       continue;
     }
 
-    const std::string backupPath = std::string(READING_STATS_EXPORT_DIR) + "/" + name;
+    const std::string backupPath = std::string(ReadingStatsBackup::READING_STATS_EXPORT_DIR) + "/" + name;
     if (Storage.remove(backupPath.c_str())) {
       ++removedCount;
     }
@@ -1128,7 +843,7 @@ int ReadingStatsStore::clearAutoBackups() const {
 }
 
 bool ReadingStatsStore::persistToFile(const char* path) const {
-  if (persistenceSuspended && path != nullptr && std::strcmp(path, READING_STATS_FILE_JSON) == 0) {
+  if (persistenceSuspended && path != nullptr && std::strcmp(path, ReadingStatsBackup::READING_STATS_FILE_JSON) == 0) {
     if (!skippedSaveLogged) {
       LOG_ERR("RST", "Skipping reading stats save because loading was skipped in recovery mode");
       CPR_VCODEX_LOG_EVENT("RST", "Skipped reading stats save after recovery-mode load skip");
@@ -1139,7 +854,7 @@ bool ReadingStatsStore::persistToFile(const char* path) const {
   }
 
   Storage.mkdir("/.crosspoint");
-  if (path != nullptr && std::strcmp(path, READING_STATS_FILE_JSON) == 0) {
+  if (path != nullptr && std::strcmp(path, ReadingStatsBackup::READING_STATS_FILE_JSON) == 0) {
     prepareInternalBackup();
   }
 
@@ -1147,8 +862,8 @@ bool ReadingStatsStore::persistToFile(const char* path) const {
   if (saved) {
     dirty = false;
     lastSaveMs = millis();
-    if (path != nullptr && std::strcmp(path, READING_STATS_FILE_JSON) == 0) {
-      if (!Storage.exists(READING_STATS_BACKUP_FILE_JSON) && hasAnyStats()) {
+    if (path != nullptr && std::strcmp(path, ReadingStatsBackup::READING_STATS_FILE_JSON) == 0) {
+      if (!Storage.exists(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON) && hasAnyStats()) {
         refreshInternalBackupFromMain();
       }
       maybeCreateAutoBackup(false);
@@ -1729,7 +1444,7 @@ void ReadingStatsStore::preloadHomeSummary() {
   // No summary.json yet (e.g. first boot after an upgrade from a version that
   // predates this feature). Load the full store once, generate the summary,
   // then drop the store so the boot stays memory-light.
-  if (Storage.exists(READING_STATS_FILE_JSON) && ensureLoaded()) {
+  if (Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON) && ensureLoaded()) {
     saveSummaryJSON();
     releaseMemoryForNetwork();
   }
@@ -1906,9 +1621,9 @@ void ReadingStatsStore::reset() {
   persistenceSuspended = false;
   skippedSaveLogged = false;
   internalBackupPrepared = true;
-  const std::string backupTempPath = std::string(READING_STATS_BACKUP_FILE_JSON) + ".tmp";
-  if (Storage.exists(READING_STATS_BACKUP_FILE_JSON)) {
-    Storage.remove(READING_STATS_BACKUP_FILE_JSON);
+  const std::string backupTempPath = std::string(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON) + ".tmp";
+  if (Storage.exists(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON)) {
+    Storage.remove(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON);
   }
   if (Storage.exists(backupTempPath.c_str())) {
     Storage.remove(backupTempPath.c_str());
@@ -1951,7 +1666,7 @@ bool ReadingStatsStore::createSyncDateBackup(const uint32_t epochSeconds) const 
   // exactly these "stats_*_YYYY-MM-DD" files, so a ".json" suffix would make
   // this backup invisible to the import procedure.
   const std::string path = std::string("/exports/stats_syncdate_") + dateBuf;
-  Storage.mkdir(READING_STATS_EXPORT_DIR);
+  Storage.mkdir(ReadingStatsBackup::READING_STATS_EXPORT_DIR);
   // exportToFile overwrites an existing file with the same name.
   const bool saved = exportToFile(path);
   if (saved) {
@@ -2043,13 +1758,13 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
 }
 
 bool ReadingStatsStore::saveToFile() const {
-  if (!dirty && Storage.exists(READING_STATS_FILE_JSON)) {
+  if (!dirty && Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     return true;
   }
   if (activeSession.active && !shouldSaveDeferred()) {
     return true;
   }
-  const bool saved = persistToFile(READING_STATS_FILE_JSON);
+  const bool saved = persistToFile(ReadingStatsBackup::READING_STATS_FILE_JSON);
   if (saved) {
     // Also refresh the summary JSON so the Home can read it without loading
     // the full store.
@@ -2059,18 +1774,18 @@ bool ReadingStatsStore::saveToFile() const {
 }
 
 bool ReadingStatsStore::loadFromFile() {
-  const std::string tempPath = std::string(READING_STATS_FILE_JSON) + ".tmp";
-  if (!Storage.exists(READING_STATS_FILE_JSON) && Storage.exists(tempPath.c_str())) {
-    if (Storage.rename(tempPath.c_str(), READING_STATS_FILE_JSON)) {
+  const std::string tempPath = std::string(ReadingStatsBackup::READING_STATS_FILE_JSON) + ".tmp";
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON) && Storage.exists(tempPath.c_str())) {
+    if (Storage.rename(tempPath.c_str(), ReadingStatsBackup::READING_STATS_FILE_JSON)) {
       LOG_DBG("RST", "Recovered reading_stats.json from interrupted temp file");
     }
   }
 
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     restoreInternalBackupToMain("missing main file");
   }
 
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     return false;
   }
 
@@ -2081,7 +1796,7 @@ bool ReadingStatsStore::loadFromFile() {
   // callers can defer; Home keeps working through the lightweight summary.json
   // fallback and ensureLoaded()/the next boot retries with more heap.
   FsFile sizeFile;
-  if (Storage.openFileForRead("RST", READING_STATS_FILE_JSON, sizeFile)) {
+  if (Storage.openFileForRead("RST", ReadingStatsBackup::READING_STATS_FILE_JSON, sizeFile)) {
     const uint32_t fileSize = static_cast<uint32_t>(sizeFile.size());
     sizeFile.close();
     const uint32_t neededHeap = fileSize * 2 + 32768u;
@@ -2095,7 +1810,7 @@ bool ReadingStatsStore::loadFromFile() {
   auto loadMainFile = [this]() -> bool {
     const int ls0Free = static_cast<int>(ESP.getFreeHeap());
     const int ls0Max = static_cast<int>(ESP.getMaxAllocHeap());
-    const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, READING_STATS_FILE_JSON);
+    const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, ReadingStatsBackup::READING_STATS_FILE_JSON);
     LOG_DBG("HCR-FRAG", "RST loadReadingStatsFromFile: loaded=%d free=%d->%d maxA=%d->%d frag=%d", loaded ? 1 : 0,
             ls0Free, static_cast<int>(ESP.getFreeHeap()), ls0Max, static_cast<int>(ESP.getMaxAllocHeap()),
             static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
@@ -2141,7 +1856,7 @@ bool ReadingStatsStore::loadFromFile() {
   bool loaded = loadMainFile();
   if (!loaded && restoreInternalBackupToMain("main load failure")) {
     loaded = loadMainFile();
-  } else if (loaded && !hasAnyStats() && statsFileAppearsToHaveData(READING_STATS_BACKUP_FILE_JSON) &&
+  } else if (loaded && !hasAnyStats() && ReadingStatsBackup::statsFileAppearsToHaveData(ReadingStatsBackup::READING_STATS_BACKUP_FILE_JSON) &&
              restoreInternalBackupToMain("empty main file")) {
     loaded = loadMainFile();
   }
@@ -2227,7 +1942,7 @@ bool ReadingStatsStore::saveSummaryJSON() const {
 
   String serialized;
   serializeJson(doc, serialized);
-  if (!Storage.writeFile(READING_STATS_SUMMARY_JSON, serialized)) {
+  if (!Storage.writeFile(ReadingStatsBackup::READING_STATS_SUMMARY_JSON, serialized)) {
     LOG_ERR("RST", "Failed to write summary JSON (%u bytes)", serialized.length());
     return false;
   }
@@ -2240,11 +1955,11 @@ bool ReadingStatsStore::saveSummaryJSON() const {
 }
 
 bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
-  if (!Storage.exists(READING_STATS_SUMMARY_JSON)) {
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_SUMMARY_JSON)) {
     return false;
   }
 
-  const String json = Storage.readFile(READING_STATS_SUMMARY_JSON);
+  const String json = Storage.readFile(ReadingStatsBackup::READING_STATS_SUMMARY_JSON);
   if (json.isEmpty()) {
     return false;
   }
@@ -2335,7 +2050,7 @@ bool ReadingStatsStore::releaseMemoryForNetwork() {
 }
 
 bool ReadingStatsStore::reloadAfterNetwork() {
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
+  if (!Storage.exists(ReadingStatsBackup::READING_STATS_FILE_JSON)) {
     return true;
   }
 

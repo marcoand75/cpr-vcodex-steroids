@@ -8,6 +8,7 @@
 
 #include "../Activity.h"
 #include "util/ButtonNavigator.h"
+#include "util/LongPress.h"
 
 struct KeyDef {
   char primary;
@@ -66,12 +67,9 @@ class KeyboardEntryActivity : public Activity {
   bool cursorMode = false;
   bool togglePos = false;
   size_t cursorPos = 0;
-  bool upHeld = false;
-  bool upLongHandled = false;
-  bool downHeld = false;
-  bool downLongHandled = false;
-  bool rightHeld = false;
-  bool rightLongHandled = false;
+  long_press::Button upPress_;
+  long_press::Button downPress_;
+  long_press::Button rightPress_;
   size_t savedCursorPos = 0;
   size_t rightStartCursorPos = 0;
 

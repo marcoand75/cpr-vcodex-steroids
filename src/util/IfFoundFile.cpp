@@ -2,19 +2,12 @@
 
 #include <HalStorage.h>
 
+#include "util/StringUtils.h"
+
 #include <algorithm>
 #include <cstdint>
 
 namespace {
-std::string toLowerAscii(std::string value) {
-  for (char& c : value) {
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
-    }
-  }
-  return value;
-}
-
 std::string basenameFromRootEntry(std::string value) {
   std::replace(value.begin(), value.end(), '\\', '/');
   const auto slash = value.find_last_of('/');
@@ -25,7 +18,7 @@ std::string basenameFromRootEntry(std::string value) {
 }
 
 bool isIfFoundCandidate(const std::string& filename) {
-  const std::string lower = toLowerAscii(basenameFromRootEntry(filename));
+  const std::string lower = StringUtils::toLowerAscii(basenameFromRootEntry(filename));
   return lower == "if_found" || lower == "if_found.txt" || lower == "if_found.txt.txt";
 }
 

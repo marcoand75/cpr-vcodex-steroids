@@ -20,6 +20,7 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
+  std::optional<uint32_t> pendingVisibleTextOffset;
   uint32_t pendingClippingAbsoluteStart = UINT32_MAX;
   std::string pendingClippingText;       // text content for text-search fallback
   uint32_t pendingBookmarkAbsoluteStart = UINT32_MAX;
@@ -29,6 +30,7 @@ class EpubReaderActivity final : public Activity {
   std::string pendingAnchor;
   int initialBookmarkSpineIndex = -1;
   int initialBookmarkPage = -1;
+  std::optional<uint32_t> initialBookmarkVisibleTextOffset;
   int pagesUntilFullRefresh = 0;
   int cachedSpineIndex = 0;
   int cachedChapterTotalPageCount = 0;
@@ -196,11 +198,13 @@ class EpubReaderActivity final : public Activity {
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
-                              int initialBookmarkSpineIndex = -1, int initialBookmarkPage = -1)
+                              int initialBookmarkSpineIndex = -1, int initialBookmarkPage = -1,
+                              std::optional<uint32_t> initialBookmarkVisibleTextOffset = std::nullopt)
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
         initialBookmarkSpineIndex(initialBookmarkSpineIndex),
-        initialBookmarkPage(initialBookmarkPage) {}
+        initialBookmarkPage(initialBookmarkPage),
+        initialBookmarkVisibleTextOffset(initialBookmarkVisibleTextOffset) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

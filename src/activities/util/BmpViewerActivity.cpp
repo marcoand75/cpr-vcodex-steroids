@@ -11,6 +11,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
     : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
@@ -101,8 +102,6 @@ void BmpViewerActivity::onEnter() {
       bool hasNext = (siblingImages.size() > 1 && currentImageIndex != -1 &&
                       currentImageIndex < static_cast<int>(siblingImages.size()) - 1);
 
-      const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_SLEEP_COVER), (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
       GUI.fillPopupProgress(renderer, popupRect, 50);
 
       renderer.clearScreen();
@@ -111,7 +110,8 @@ void BmpViewerActivity::onEnter() {
       renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
 
       // Draw UI hints on the base layer
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SET_SLEEP_COVER),
+                                  (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
       // Single pass for non-grayscale images
 
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -120,8 +120,7 @@ void BmpViewerActivity::onEnter() {
       // Handle file parsing error
       renderer.clearScreen();
       renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Invalid BMP File");
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     }
 
@@ -130,8 +129,7 @@ void BmpViewerActivity::onEnter() {
     // Handle file open error
     renderer.clearScreen();
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Could not open file");
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   }
 }

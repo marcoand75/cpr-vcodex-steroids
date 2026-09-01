@@ -14,10 +14,12 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr int PAGE_ITEMS = 23;
@@ -62,9 +64,7 @@ void OpdsBookBrowserActivity::onExit() {
   navigationHistory.clear();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 
@@ -155,8 +155,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
 
   if (state == BrowserState::CHECK_WIFI || state == BrowserState::LOADING) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, statusMessage.c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
@@ -164,8 +163,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   if (state == BrowserState::ERROR) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 20, tr(STR_ERROR_MSG));
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, errorMessage.c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_RETRY), "", "");
     renderer.displayBuffer();
     return;
   }
@@ -186,8 +184,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   const char* confirmLabel =
       (!entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK) ? tr(STR_DOWNLOAD) : tr(STR_OPEN);
   const char* searchLabel = (!searchTemplate.empty() && selectorIndex == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, searchLabel, tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), confirmLabel, searchLabel, tr(STR_DIR_DOWN));
 
   if (entries.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NO_ENTRIES));

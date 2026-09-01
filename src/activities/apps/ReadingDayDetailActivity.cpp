@@ -9,6 +9,7 @@
 #include "ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -27,7 +28,7 @@ void drawMetricCard(GfxRenderer& renderer, const Rect& rect, const char* label, 
 void ReadingDayDetailActivity::refreshEntries() {
   entries = ReadingStatsAnalytics::getBooksReadOnDay(dayOrdinal);
   if (selectedIndex >= static_cast<int>(entries.size())) {
-    selectedIndex = std::max(0, static_cast<int>(entries.size()) - 1);
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(entries.size()));
   }
 }
 
@@ -130,8 +131,8 @@ void ReadingDayDetailActivity::render(RenderLock&&) {
                  [this](const int index) { return ReadingStatsAnalytics::formatDurationHm(entries[index].readingMs); });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), entries.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const bool hasEntries = !entries.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasEntries ? tr(STR_OPEN) : "", tr(STR_DIR_UP),
+                              tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

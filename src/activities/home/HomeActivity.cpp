@@ -47,6 +47,7 @@
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/WikipediaActivity.h"
 #include "activities/apps/QuickCardsActivity.h"
+#include "util/BookFilter.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/home/BookContextMenuActivity.h"
 #include "activities/home/BookMetadataActivity.h"
@@ -56,6 +57,7 @@
 #include "components/themes/lyra/LyraMarcoand75Theme.h"
 #include "components/PanelDrawHelper.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -91,19 +93,12 @@ std::string getRecentBookConfirmationLabel(const RecentBook& book) {
   return !book.title.empty() ? book.title : book.path;
 }
 
-std::string getBookTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
-}
-
 bool homeUsesFavorites() { return SETTINGS.homeBookSource == CrossPointSettings::HOME_BOOKS_FAVORITES; }
 
 RecentBook toRecentBook(const FavoriteBook& book) {
   RecentBook recentBook{book.bookId, book.path, book.title, book.author, book.coverBmpPath};
   if (recentBook.title.empty()) {
-    recentBook.title = getBookTitleFromPath(recentBook.path);
+    recentBook.title = book_filter::filenameWithoutExtension(recentBook.path);
   }
   return recentBook;
 }
@@ -320,6 +315,7 @@ int wrapBookIndex(int index, int bookCount) {
   return index % bookCount;
 }
 
+namespace CarouselHash {
 uint32_t fnv1aByte(uint32_t hash, const uint8_t value) { return (hash ^ value) * FNV1A_PRIME; }
 
 uint32_t fnv1aString(uint32_t hash, const std::string& value) {
@@ -340,6 +336,7 @@ uint32_t fnv1aU64(uint32_t hash, const uint64_t value) {
   hash = fnv1aU32(hash, static_cast<uint32_t>(value & 0xFFFFFFFFULL));
   return fnv1aU32(hash, static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFULL));
 }
+}  // namespace CarouselHash
 
 // Theme-aware helpers for cover dimensions
 int getCarouselCenterCoverW() {
@@ -374,12 +371,12 @@ bool hasCarouselUsableThumb(const RecentBook& book) {
 
 uint32_t hashCarouselThumbState(uint32_t hash, const RecentBook& book) {
   if (book.coverBmpPath.empty()) {
-    return fnv1aByte(hash, 0);
+    return CarouselHash::fnv1aByte(hash, 0);
   }
   const std::string centerCoverPath = getCarouselCenterThumbPath(book);
   const std::string legacyCoverPath = getCarouselLegacyThumbPath(book);
-  hash = fnv1aByte(hash, Storage.exists(centerCoverPath.c_str()) ? 1 : 0);
-  return fnv1aByte(hash, Storage.exists(legacyCoverPath.c_str()) ? 1 : 0);
+  hash = CarouselHash::fnv1aByte(hash, Storage.exists(centerCoverPath.c_str()) ? 1 : 0);
+  return CarouselHash::fnv1aByte(hash, Storage.exists(legacyCoverPath.c_str()) ? 1 : 0);
 }
 
 uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
@@ -394,22 +391,22 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
 uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const int screenWidth,
                                     const int screenHeight, const size_t bufferSize, const bool darkMode) {
   uint32_t hash = FNV1A_OFFSET;
-  hash = fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
-  hash = fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(screenHeight));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(bufferSize));
-  hash = fnv1aU32(hash, darkMode ? 1U : 0U);
-  hash = fnv1aU32(hash, static_cast<uint32_t>(SETTINGS.homeBookSource));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(books.size()));
+  hash = CarouselHash::fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
+  hash = CarouselHash::fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
+  hash = CarouselHash::fnv1aU32(hash, static_cast<uint32_t>(screenHeight));
+  hash = CarouselHash::fnv1aU32(hash, static_cast<uint32_t>(bufferSize));
+  hash = CarouselHash::fnv1aU32(hash, darkMode ? 1U : 0U);
+  hash = CarouselHash::fnv1aU32(hash, static_cast<uint32_t>(SETTINGS.homeBookSource));
+  hash = CarouselHash::fnv1aU32(hash, static_cast<uint32_t>(books.size()));
 
   for (const RecentBook& book : books) {
-    hash = fnv1aString(hash, book.bookId);
-    hash = fnv1aString(hash, book.path);
-    hash = fnv1aString(hash, book.title);
-    hash = fnv1aString(hash, book.author);
-    hash = fnv1aString(hash, book.coverBmpPath);
+    hash = CarouselHash::fnv1aString(hash, book.bookId);
+    hash = CarouselHash::fnv1aString(hash, book.path);
+    hash = CarouselHash::fnv1aString(hash, book.title);
+    hash = CarouselHash::fnv1aString(hash, book.author);
+    hash = CarouselHash::fnv1aString(hash, book.coverBmpPath);
     hash = hashCarouselThumbState(hash, book);
-    hash = fnv1aByte(hash, getCarouselBookProgressPercent(book));
+    hash = CarouselHash::fnv1aByte(hash, getCarouselBookProgressPercent(book));
   }
 
   // The cached frame also renders the global stats panel (today / goal / streak
@@ -417,10 +414,10 @@ uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const 
   // when they change (reading, day rollover, manual/auto clock sync). Without
   // this a stale frame is reused after a date change and the Home panel shows
   // yesterday's numbers even though summary.json was already regenerated.
-  hash = fnv1aU64(hash, READING_STATS.getTodayReadingMs());
-  hash = fnv1aU64(hash, getDailyReadingGoalMs());
-  hash = fnv1aU32(hash, READING_STATS.getCurrentStreakDays());
-  hash = fnv1aU32(hash, READING_STATS.getBooksFinishedCount());
+  hash = CarouselHash::fnv1aU64(hash, READING_STATS.getTodayReadingMs());
+  hash = CarouselHash::fnv1aU64(hash, getDailyReadingGoalMs());
+  hash = CarouselHash::fnv1aU32(hash, READING_STATS.getCurrentStreakDays());
+  hash = CarouselHash::fnv1aU32(hash, READING_STATS.getBooksFinishedCount());
 
   return hash;
 }
@@ -436,7 +433,7 @@ uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int ce
   // and silently break the cached-frame keys. This ordering also changed the
   // hash key vs. the previous ordering, intentionally invalidating the old .bin
   // frames once (they are regenerated on first render after the update).
-  return fnv1aU32(
+  return CarouselHash::fnv1aU32(
       getCarouselFramePrefixHash(books, screenWidth, screenHeight, bufferSize, darkMode),
       static_cast<uint32_t>(centerIdx));
 }
@@ -1062,10 +1059,12 @@ void HomeActivity::pruneCarouselFrameCache() {
   const uint32_t prefix =
       getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
                                  renderer.getBufferSize(), renderer.isDarkMode());
-  std::set<uint32_t> validHashes;
+  std::vector<uint32_t> validHashes;
+  validHashes.reserve(recentBooks.size());
   for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
-    validHashes.insert(fnv1aU32(prefix, static_cast<uint32_t>(i)));
+    validHashes.push_back(CarouselHash::fnv1aU32(prefix, static_cast<uint32_t>(i)));
   }
+  std::sort(validHashes.begin(), validHashes.end());
   invalidateCarouselFrameHash();
 
   auto d = Storage.open(cacheDir);
@@ -1086,7 +1085,7 @@ void HomeActivity::pruneCarouselFrameCache() {
       continue;
     }
     const uint32_t h = static_cast<uint32_t>(std::strtoul(name.substr(0, 8).c_str(), nullptr, 16));
-    if (validHashes.find(h) == validHashes.end()) {
+    if (!std::binary_search(validHashes.begin(), validHashes.end(), h)) {
       const std::string full = std::string(cacheDir) + "/" + name;
       Storage.remove(full.c_str());
     }
@@ -1559,9 +1558,9 @@ void HomeActivity::render(RenderLock&&) {
   }
   LOG_DBG("HCR", "render drawButtonMenu/icons: %ums", static_cast<int>(millis() - dbgMenu0));
 
-  const auto labels = carouselTheme ? mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT))
-                                    : mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, "", tr(STR_SELECT),
+                              carouselTheme ? tr(STR_DIR_LEFT) : tr(STR_DIR_UP),
+                              carouselTheme ? tr(STR_DIR_RIGHT) : tr(STR_DIR_DOWN));
   LOG_DBG("HCR", "render pre-displayBuffer cumulative (post-carousel): %ums total=%ums",
           static_cast<int>(millis() - dbgMenu0), static_cast<int>(millis() - dbgRender0));
 

@@ -15,13 +15,15 @@ class ReaderActivity final : public Activity {
     bool enabled = false;
     int spineIndex = 0;
     uint32_t page = 0;
+    bool hasVisibleTextOffset = false;
+    uint32_t visibleTextOffset = 0;
   };
 
  private:
   std::string initialBookPath;
   std::string currentBookPath;  // Track current book path for navigation
   EpubBookmarkLaunch initialBookmark;
-  static std::unique_ptr<Epub> loadEpub(const std::string& path);
+  std::unique_ptr<Epub> loadEpub(const std::string& path);
   static std::unique_ptr<Xtc> loadXtc(const std::string& path);
   static std::unique_ptr<Txt> loadTxt(const std::string& path);
   static bool isXtcFile(const std::string& path);

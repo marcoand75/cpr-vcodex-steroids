@@ -17,7 +17,9 @@
 #include "CrossPointState.h"
 #include "util/BookIdentity.h"
 #include "util/CprVcodexLogs.h"
+#include "util/StringUtils.h"
 #include "util/TimeUtils.h"
+#include "util/BookFilter.h"
 
 namespace {
 constexpr char FLASHCARDS_INDEX_FILE[] = "/.crosspoint/flashcards_index.json";
@@ -89,13 +91,6 @@ void trimAsciiInPlace(std::string& value) {
   if (begin > 0) {
     value.erase(0, begin);
   }
-}
-
-std::string toLowerAscii(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
-  return value;
 }
 
 std::string normalizeField(const std::string& value) {
@@ -415,10 +410,7 @@ uint32_t FlashcardsStore::getReferenceDayOrdinal() const {
 }
 
 std::string FlashcardsStore::getTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
+  return book_filter::filenameWithoutExtension(path);
 }
 
 std::vector<FlashcardDeckRecord> FlashcardsStore::getRecentDecks() const {
@@ -672,7 +664,7 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
       firstRow = false;
       bool hasNamedHeader = false;
       for (int index = 0; index < static_cast<int>(row.size()); ++index) {
-        const std::string field = toLowerAscii(trimAscii(row[index]));
+        const std::string field = StringUtils::toLowerAscii(trimAscii(row[index]));
         if (field == "id" || field == "card_id") {
           idColumn = index;
           hasNamedHeader = true;
@@ -754,7 +746,7 @@ bool FlashcardsStore::loadDeckCard(const FlashcardDeck& deck, const int cardInde
       firstRow = false;
       bool hasNamedHeader = false;
       for (int index = 0; index < static_cast<int>(row.size()); ++index) {
-        const std::string field = toLowerAscii(trimAscii(row[index]));
+        const std::string field = StringUtils::toLowerAscii(trimAscii(row[index]));
         if (field == "id" || field == "card_id") {
           idColumn = index;
           hasNamedHeader = true;

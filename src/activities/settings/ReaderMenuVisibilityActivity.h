@@ -3,24 +3,23 @@
 #include <vector>
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
 #include "util/ReaderMenuRegistry.h"
+#include "../util/ListInputMapper.h"
 
 class ReaderMenuVisibilityActivity final : public Activity {
  public:
-   explicit ReaderMenuVisibilityActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-       : Activity("ReaderMenuVisibility", renderer, mappedInput) {}
+  explicit ReaderMenuVisibilityActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+      : Activity("ReaderMenuVisibility", renderer, mappedInput) {}
 
-   void onEnter() override;
-   void loop() override;
-   void render(RenderLock&&) override;
+  void onEnter() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 
  private:
-   ButtonNavigator buttonNavigator;
-   std::vector<const ReaderMenuItemDefinition*> entries;
-   int selectedIndex = 0;
-   bool waitForConfirmRelease = false;
+  ListInputMapper listInputMapper;
+  std::vector<const ReaderMenuItemDefinition*> entries;
+  int selectedIndex = 0;
 
-   void reloadEntries();
-   void toggleSelectedEntry();
+  void reloadEntries();
+  void toggleSelectedEntry();
 };

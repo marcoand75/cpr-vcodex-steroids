@@ -8,6 +8,7 @@
 #include "ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/ButtonNavigator.h"
 #include "util/NextBookFinder.h"
 
@@ -80,6 +81,5 @@ void EndOfBookOptions::render(GfxRenderer& renderer, const MappedInputManager& i
                  return index < static_cast<int>(names.size()) ? displayName(names[index])
                                                                : std::string(tr(STR_EOB_HOME));
                });
-  const auto labels = input.mapLabels(tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, input, tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 }

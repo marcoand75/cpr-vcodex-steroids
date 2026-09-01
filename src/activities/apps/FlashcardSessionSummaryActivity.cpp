@@ -6,6 +6,7 @@
 #include "AppMetricCard.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
 namespace {
@@ -75,7 +76,6 @@ void FlashcardSessionSummaryActivity::render(RenderLock&&) {
   drawMetricCard(renderer, Rect{sidePadding + cardWidth + METRIC_CARD_GAP, currentY, cardWidth, METRIC_CARD_HEIGHT},
                  tr(STR_SESSIONS), std::to_string(summary.sessionCount));
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_DONE), "", "");
   renderer.displayBuffer();
 }

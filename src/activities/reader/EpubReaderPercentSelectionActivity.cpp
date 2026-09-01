@@ -6,6 +6,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 // Fine/coarse slider step sizes for percent adjustments.
@@ -87,8 +88,7 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
   renderer.drawCenteredText(SMALL_FONT_ID, barY + 30, tr(STR_PERCENT_STEP_HINT), true);
 
   // Button hints follow the current front button layout.
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "-", "+");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), "-", "+");
 
   renderer.displayBuffer();
 }

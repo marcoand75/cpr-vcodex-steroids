@@ -10,6 +10,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 constexpr const char* PAGE_LABEL = "Page ";
@@ -172,8 +173,7 @@ void BookmarksActivity::render(RenderLock&&) {
   if (totalItems == 0) {
     // Empty state: centered message + button hints
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_NO_BOOKMARKS), true, EpdFontFamily::BOLD);
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     renderer.displayBuffer();
     return;
   }
@@ -196,7 +196,6 @@ void BookmarksActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, contentX + 20, displayY, label.c_str(), !isSelected);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
   renderer.displayBuffer();
 }

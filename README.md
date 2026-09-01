@@ -1,15 +1,10 @@
-<img width="2048" height="1143" alt="Image001" src="https://github.com/user-attachments/assets/56fffc8e-4fae-40f4-8ed5-9b9755002980" />
-
-<img width="1023" height="644" alt="e5b50277-04b1-4c62-9f23-3b51c947ef0b" src="https://github.com/user-attachments/assets/f93e6962-332f-4d47-9d58-cbf81428ce19" />
-
-<img width="1684" height="390" alt="Screenshot 2026-08-01 221426" src="https://github.com/user-attachments/assets/80641a63-ed4a-48d9-af12-69ad6038d76e" />
-
-
-> **CPR-vCodex Steroids is a personal fork of [CPR-vCodex](https://github.com/franssjz/cpr-vcodex)** (itself a fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)), focused on enriching the reading experience with a feature-rich library manager, enhanced visual themes, productivity tools, and deeper device customization — while inheriting all the reading analytics, statistics, and stability work from upstream CPR-vCodex.
+> **CPR-vCodex is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)**, focused on improving reading consistency, long-term reading habits, and overall reader experience without sacrificing simplicity or performance.
 >
-> Think of it as CPR-vCodex on overdrive: same solid reading foundation, but with a full e-book library browser, cyber-style carousel data panels, dual-mode e-ink screensaver, contextual book menus, reading pace tracking in the status bar, and a collection of quality-of-life improvements designed for daily use on the Xteink X4.
+> Instead of only tracking progress, this fork focuses on the full reading journey — consistency, habits, milestones, statistics, customization, and personal reading identity.
+>
+> The project adds optional layers such as reading streaks, detailed analytics, achievements, heatmaps, Sync Day tracking, session history, and deeper personalization, while still allowing the interface to remain clean and distraction-free if preferred.
 
-# CPR-vCodex Steroids
+# CPR-vCodex
 
 <p align="center">
   <img src="./docs/images/500x100.png" alt="CPR-vCodex logo" width="500" />
@@ -22,474 +17,6 @@
 <p align="center">
   <img src="./docs/images/screenshots.png" alt="CPR-vCodex overview" width="1000" />
 </p>
-
-## What's different in CPR-vCodex Steroids
-
-This fork builds on top of CPR-vCodex, inheriting **all** upstream features: reading analytics suite (stats, heatmaps, day detail, reading profile, goals, streaks, achievements), Sync Day, dictionary support, flashcards, bookmarks, SD-card fonts, KOReader Sync, Bionic Reading, dark mode, and more.  
-
-On top of that, Steroids adds a substantial set of original features developed across multiple releases:
-
-> **Steroids at a glance** — every tangible improvement vs upstream, with a brief
-> description of each (details in the sections below):
->
-> - **📚 Full E-Book Library** — a scalable grid library (collections/series,
->   covers, filters, full-text search, incremental sync) reading EPUB/XTC/TXT/MD.
-> - **🖼️ Cover & grayscale rendering** — a shared, contrast-correct 2-bit gray
->   pipeline (gamma + error-diffusion dithering, `int16_t` safety) for covers,
->   screensaver/sleep and in-book images.
-> - **🗺️ Lyra Cyber-style Home** — data panels, reading-time ETA badges,
->   priority ribbons, and the custom LyraMarcoand75 theme.
-> - **🛡️ Screensaver / Sleep** — dual-mode e-ink screensaver (folder picker,
->   transparent PNG compositing, reader + general), shutdown safe power-button
->   handling, and a truly random shuffle.
-> - **📊 Reading time in status bar** — pace-based "time left" estimates.
-> - **🔖 Bookmarks & ✂️ Clippings** — layout-independent (absolute word index);
->   bookmarks highlight the page and jump accurately; an in-app clippings
->   preview lets you read a highlight without leaving your book.
-> - **📖 Wikipedia app** — search, summarised preview, and full-article reading
->   (wikitext → markdown), in your device language; each article is cached in its
->   own per-article folder for instant offline reopen and crash-safe recovery.
-> - **📚 Dictionary** — multi-dictionary lookup with per-dictionary labels, reorderable
->   active list, orphan IFO cleanup on delete, and a reading-progress indicator in the
->   word-selection overlay. Failover and manual modes are preserved from upstream, but
->   the active-dictionary list is now fully interactive.
-> - **🟢 Guide dots & 📐 EPUB render modes** — optional word guides and
->   Default/Balanced/Light rendering with isolated caches.
-> - **🕹️ Configurable Long-Press** — independent per-button actions for Up/Down (side) and Left/Right (front) long-press, plus expanded short power-button and Select long-press. Each button can be set to one of 14 `BUTTON_ACTION` values (Bookmark, Clipping, Chapter Skip, Orientation, Font Size, Dictionary, Dark Mode, Full Refresh, Quick Settings, Lookup Word, Bookmark Store, Clipping Store, Reading Timer, Off) via a reusable popup selector — replacing the old single legacy enum.
-> - **🌐 Web portal & OTA** — split device/app/steroids settings, dynamic fonts, Steroids
->   branding, fork OTA manifest.
-> - **⚙️ System & i18n** — on-device STRING settings, clock/DS3231 X3 support,
->   Italian translation overhaul, safety/memory optimizations.
-> - **🧹 Settings JSON split** — 43 Steroids-only settings in dedicated
->   `settings-steroids.json`, leaving upstream `settings.json` byte-identical
->   (zero merge conflicts). Dedicated `JsonSettingsIOSteroids.cpp` code file.
-> - **🔄 Silent restart** — seamless `ESP.restart()` on Back-to-Home from
->   Library/Wikipedia/Apps hub reclaims fragmented heap; `maxAlloc` rises from ~70 KB
->   to ~105 KB. Boot skips 4 stages (~1088ms saved) on silent reboot. Context-aware
->   routing: Library/Wikipedia launched from Apps return to Apps; others return to Home.
-> - **🏠 Home memory fast path** — the Home renders its global stats panel and
->   per-book carousel badges from a lightweight `summary.json` snapshot, keeping
->   the ~41 KB full reading-stats store out of RAM at boot (loaded lazily only
->   when a screen actually needs it).
-> - **📈 Home daily average & trend** — the Home global stats panel shows today's
->   reading time alongside the historical daily average in parentheses, with a
->   trend symbol indicating whether today is below, above, or within ±3% of the
->   average. The average is computed from all stored reading days except today and
->   updates after the first reading of any book.
-> - **💾 SdCardFont fragmentation-resistant storage** — ported from upstream 1.5.0.20:
->   4 KiB chunked bitmap storage replaces single-buffer allocation, eliminating
->   large contiguous allocation failures on the 380 KB ESP32-C3 heap. Includes
->   CJK fallback font resolution, TextGetter prewarm callback, FrameBufferLoan
->   for section builds, and FontDecompressor raw-buffer refactor.
-> - **💾 Pre-migration backup** — original unified `settings.json` backed up
->   to `/.crosspoint/settings-steroids.json.bak` before one-shot migration.
-> - **🃏 Quick Cards** — image, QR code, and barcode viewer for quick-reference
->   cards stored in `/cards/` on SD. BMP/JPEG/PNG images with auto-scaling and
->   caching, structured QR field parsing (Wi‑Fi, vCard, MeCard, geo, email, phone,
->   SMS, OTP, calendar, URL), and Code‑128 barcodes. Multi-line QR payloads are
->   preserved correctly; barcodes require even-length digit input. Cyberpunk panel UI.
-> - **🕹️ Select Long Press** — expanded to 14 `BUTTON_ACTION` options (was 3). During reading, the Select button long-press can toggle bookmark, add/view clippings, lookup word, open dictionary, change orientation/font size, toggle dark mode, force refresh, open quick settings, toggle reading timer, or off. TXT/XTC readers restrict to Reading Timer and Off only. Status bar `|| PAUSED` indicator for reading timer mode.
-> - **⚡ Power Button Actions** — short power-button press expanded from 5 to 16 options, covering the same `BUTTON_ACTION` values plus legacy IGNORE/SLEEP/PAGE_TURN/FORCE_REFRESH/TOGGLE_STATUS_BAR. Enables actions like adding a bookmark or toggling dark mode directly from the power button during reading.
-> - **📐 Settings dividers** — thin separators group related settings within each
->   tab (Display, Reader, Controls, System).
-> - **🖥️ Multi-device (X3/X4)** — freeink-sdk replacing open-x4-sdk; runtime
->   X3/X4 board detection with SPI mutex; UC8279/UC8179 panel controller
->   fingerprinting; Build flags `-DFREEINK_DEVICE_X4=1 -DFREEINK_DEVICE_X3=1`.
-> - **🕐 X4 clock cleanup** — clock settings hidden on X4 hardware (no DS3231 RTC).
-
----
-
-### 📚 Full E-Book Library v2
-
-A complete library browser with grid-based navigation, on-demand cover generation, collections/series support, and content discovery — rewritten for scalability.
-
-- **Configurable grid layout** — 2×2, 3×3, 4×4 adjustable from Settings
-- **Scalable index** — fixed-record binary database (`library.dat`) with external merge-sort indices; constant ~11 KB RAM regardless of library size; supports 3000+ books
-- **Collections/Series** — extracts Calibre `calibre:series` / `calibre:series_index` and EPUB3 `belongs-to-collection` metadata; browse by collection name with per-collection paginated book grid
-- **On-demand cover generation** — per-page EPUB/XTC cover rendering with progress indicator, matching Home screen quality; 4×4 XTC buffer fix for small thumbnails
-- **Format support** — EPUB, XTC, TXT, and Markdown files
-- **Accent-insensitive sorting** — titles and authors sort naturally regardless of diacritics
-- **Content filters** — **All Books**, **Favourites**, **Latest Read**, **Unread**, **Completed** with live header indicator; **full-text search** with accent-folded substring matching
-- **Ribbon badges** — favourite (♥ 24×24), completed (✓), recently opened (●) on every tile
-- **Sort/Filter popups** — restyled 80%-wide white rounded panels with bold header, separator, icon rows, and scroll indicators; long-press Up/Down opens them instantly
-- **Incremental startup sync** — scan_state.dat comparison with zero e-ink refreshes; instant open when nothing changed; dynamic progress bar (~10 updates during full scan)
-- **Configurable library root** — choose which SD directory to scan (default: root), editable on-device via STRING setting
-- **Cover management** — delete individual cover thumbnails, all covers on the current page, or wipe the entire cover cache; covers regenerate automatically
-- **Library maintenance** in `Settings → Apps → Library`: **Rebuild Library** (clear cache + full rescan)
-- **Per-book title display** — currently highlighted book's title shown below the filter/sort bar
-- **Incremental grid redraw** — tile selection within a page uses lighter redraw (only previous/current tiles + title line) instead of full grid repaint
-- **First↔last page navigation** — wrap-around properly refreshes page cache and selector stays on valid positions
-
-#### Library Performance & Robustness
-
-- **Constant RAM footprint** — ~11 KB fixed (page cache + sort buffer + I/O), freeing ~40 KB vs old vector-based approach
-- **Streaming scan** — file sizes from directory entries, no per-file `Storage.open()`; binary search replacement for hash map (zero extra RAM)
-- **EPUB cover generation** — relaxed heap guard (32 KB contiguous); JPEG/PNG decode with adaptive subsampling
-- **XTC thumbnail downscaling** — streaming row-buffered with configurable source rows per destination row (8 max, up from 4 for 4×4 grid compatibility)
-- **Per-format memory guards** — EPUB requires 40 KB free + 30 KB contiguous, XTC needs 20 KB, TXT/Markdown need 16 KB; insufficient memory skips the book gracefully
-- **Indexing depth limit** — directory walker capped at 8 levels
-- **Watchdog safety** — `yield()` and hardware WDT resets during SD walking, cover generation, and sorting
-- **Sort performance** — title/author keys pre-normalized (accent-stripped, lowercased) once per book instead of on every comparison
-
-### 📖 Book Context Menu & Metadata Viewer
-
-A rich 9–12 item contextual menu available on long-press from both the Home Lyra Carousel and the Library grid.
-
-- **Open book** — opens the selected ebook directly
-- **Reading Stats** — navigates to per-book reading statistics
-- **View Metadata** — dedicated metadata viewer showing title, author, publisher, date, identifier, subject, language, and description (parsed from EPUB OPF)
-- **Add/Remove from Favorites** — toggles favorite status
-- **Mark as finished / not finished** — toggles completion state via reading stats
-- **Delete Book Cache** (EPUB only) — clears the EPUB cache directory
-- **Delete cover thumbnail** — removes the selected book's library cover
-- **Delete page covers** — removes all covers on the current grid page
-- **Delete all library covers** — wipes the entire cover cache directory
-- **Reindex Library** — forces a full library rescan
-- **Clear theme cache** — deletes all `*.bin` files from the carousel cache directory
-- **Filter switching** — quickly change library filter (All / Favourites / Latest Read) from the menu
-
-The metadata viewer parses additional EPUB OPF fields: `dc:publisher`, `dc:description`, `dc:date`, `dc:identifier`, `dc:subject`, `dc:rights`, `dc:contributor`.
-
-Popup visual style unified with Library sort/filter overlays: white background, bold title + separator, inline layout, 32×32 native icons, scroll indicator triangles.
-
-### 🎨 Lyra Carousel & Theme Enhancements
-
-Substantial visual and informational improvements to the Lyra Carousel home theme and its variants.
-
-#### Cyber-style Data Panel (LyraCarouselTheme)
-- **Detailed book info panel** replacing the simple title/author text below covers
-- Layout: title + author, scanline separator, two-column data grid:
-  - **Book**: Time, Sessions, Progress, ETA
-  - **Stats**: Today, Goal, Streak, Finished
-- **Segment progress bar** at panel bottom, or **COMPLETED** label for finished books
-- Increased column gaps, panel height, and internal row spacing for balanced e-ink rendering
-- Wider progress bar segments (8px → 14px)
-- All data panel labels use i18n (`STR_HOME_PANEL_*` keys, English + Italian; other 21 languages fall back to English)
-- Configurable book count — shows ALL books on homepage
-
-#### Estimated Reading Time
-- **Remaining time estimate** appended to progress badges on all Lyra-based themes (e.g. `"35% ~2h 15m"`)
-- Uses the same reading stats logic as the analytics screen
-- Requires at least 10 minutes of reading and 5% progress before showing
-- Rounds to 5-minute increments for clean display
-- Present on: LyraCarouselTheme (center cover badge, redrawn every frame), LyraTheme, and LyraCustomTheme (beside progress bar)
-- **Book time-left failover**: when pace data is unavailable but ≥10 min reading recorded, a linear time-vs-progress estimate is used
-
-#### Priority Ribbon Badges on Covers
-- **Completed ribbon** — black triangle top-right with white checkmark for finished books
-- **Favorite ribbon** — black triangle top-left with white heart
-- **Opened indicator** — black bottom band with two white dots for previously opened books
-- Badges scaled (22px → 36px triangles, 8px → 12px band) for e-ink visibility
-
-#### LyraMarcoand75 Custom Theme
-- A distinct theme variant with its own cover sizing, styling, and badge placement
-- **Separate carousel cache per theme** — cache directories are now theme-specific, preventing cross-theme cache corruption
-
-#### Carousel Frame-Cache Pruning
-- Out-of-date cached frames (e.g. with stale reading statistics) are automatically removed, keeping the cache bounded
-- Returning home after finishing a book forces a fresh render so updated progress/stats appear immediately
-
-#### Theme Cache Management
-- Long-press context menu item to **Clear theme cache** (available in both Home and Library)
-- Deletes all `*.bin` files from `/.crosspoint/home-carousel-cache/`
-- Invalidates resident carousel frame and frame hash for immediate regeneration
-
-### 🛡️ Screensaver & Sleep System
-
-A comprehensive dual-mode screensaver system built on transparent PNG compositing, with separate configuration for general use and in-book reading.
-
-#### Screensaver App & General Screensaver
-- **General screensaver** folder with sequential/shuffle order, configurable from `Settings > Screensaver`
-- **Folder picker with preview** — choose a photo folder from a browsable list instead of typing the path by hand
-- **Automatic sleep bypass** — screensaver mode keeps the display refreshed without triggering full sleep cycles
-- **Battery-protection deep sleep** — engages after a configurable timeout to prevent battery drain
-- **Wake-on-any-button** or **single custom button** wake-up
-- **Sleep screen rotation** with a short power button press — rotates the displayed sleep image without full wake
-- Fix: 4-gray-level BMP cycling now respects refresh settings correctly
-
-#### Reader Screensaver (In-Book)
-- **Separate reader screensaver** folder and sequential/shuffle order (`Settings > Screensaver (reading)`), used only when screensaver is triggered from inside a book
-- **Launch from reader menu** — while reading, press Select and choose "Screensaver" to start the screensaver; any button exits back to the exact page
-- **Replace sleep with screensaver** — when enabled, long-press the power button while reading launches the screensaver instead of deep sleep; the reader activity stays on the stack for instant return
-- Battery-minimum checks respected: below threshold, normal deep sleep is used
-- Outside reading, the power button behaves as normal sleep
-
-#### Screensaver Reading Stats Fix
-- Screensaver time is **no longer counted toward reading statistics** — the reading session timer is correctly reset every time the screensaver is dismissed
-
-#### Transparent PNG Compositing (Unified)
-- **Snapshot-based background** — before any sleep or screensaver image is drawn, the current framebuffer is saved to SD (`/.crosspoint/screensaver-caller.tmp` for screensaver, `/.crosspoint/last_reader_page.bin` for sleep)
-- On every image change, the snapshot is restored before drawing the new transparent PNG, guaranteeing transparent areas always show the original calling content
-- **File-based framebuffer cache** — replaces in-memory 48 KB `std::vector` with SD file, removing persistent heap pressure
-- **Heap-friendly PNG decoder** — SD font caches cleared before PNG decoding, maximizing contiguous free space for the ~44 KB decoder
-
-#### Exit & Transitions
-- **No forced full refresh** on screensaver exit — underlying activity re-renders with its natural refresh mode
-- **Immediate render notification** sent on exit, eliminating visible blank gaps
-
-### 📊 Reading Time Left in Status Bar
-
-Pace-based time-remaining estimates displayed directly in the reader status bar.
-
-- **Configurable** from `Settings > Reader > Customise Status Bar > Time Left`: Hide / Chapter / Book
-- Pace is learned from natural page turns (pauses >3 min are excluded from the average)
-- Per-book pace tracking — each book keeps its own pace, estimates remain accurate across book switches
-- Display format: short labels like "45 min" or "2h 10m"
-- Positioned on the left side of the status bar, next to the battery icon
-
-### 🎯 Custom App Icons
-
-Hand-crafted monochrome icons designed for e-ink clarity:
-- **Library** — bookshelf icon
-- **Sleep** — "Zzz" icon
-- **Screen Clean** — monitor icon
-- **Reading Heatmap** — calendar icon
-
-Homepage icon visibility fixes applied across all themes (Base, Lyra, LyraCarousel, LyraMarcoand75). Resized corner ribbons on library covers for better proportion.
-
-### 🖼️ Boot & Sleep Logo
-
-- Custom "Steroids" boot and sleep logo at 350×96 pixels, replacing the upstream CrossPoint branding
-- Included `scripts/convert_logo.py` for reusable PNG/SVG → C bitmap header conversion
-
-### ⚙️ STRING-Type Setting Support
-
-Added on-device STRING setting support to `SettingsActivity`. Previously, STRING settings were web-only; the device UI only handled TOGGLE, ENUM, VALUE, ACTION, and SECTION types.
-
-- Display current value via `getSettingValueText`
-- Edit via `KeyboardEntryActivity` on Confirm
-- Enables the "Library root directory" setting to be changed directly from the device
-
-### ⚡ Performance & Memory Optimizations
-
-Several targeted optimizations to keep the library and UI responsive on the ESP32-C3 (~380 KB usable RAM):
-
-- **Inventory caching** — metadata scan results are cached, avoiding repeated SD traversal
-- **System directory exclusion** — skips `.`, `crosspoint`, `sleep*`, `font*`, `dictionaries`, `exports` during scan
-- **Zero-size thumbnail cleanup** — periodic (once/day) removal of corrupted cover files
-
-#### Heap Optimizations (v1.3.0.35)
-
-- 🧠 **Font decompressor lazy init** — the 48 KB pool (4 page buffers + 32 KB inflate ring buffer) is no longer allocated at boot. Most rendering uses SD-card fonts (pre-decompressed), and the decompressor only initialises when a compressed font group is actually needed. Saves ~48 KB of heap from boot until first use.
-- 🗑️ **GfxRenderer freeUnusedRenderMemory()** — new public method that releases BW grayscale buffer chunks (up to 48 KB), rowBuf_, and polyBuf_. Called before cover generation and screensaver to maximise contiguous heap.
-- 📚 **LibraryActivity background memory release** — when a reader or screensaver is pushed on top of the library, the library releases its entry vectors (30–60 KB), page title cache, and cover state. Data is reloaded automatically when the library becomes active again.
-- 🔄 **LibraryCache vector capacity retained** — removed `shrink_to_fit()` calls in `sync()` and `scan()`. Keeping capacity reduces reallocation churn and heap fragmentation during repeated scans.
-- 📉 **Lowered heap guards for cover generation** — relaxed the minimum MaxAllocHeap / FreeHeap thresholds for EPUB cover creation (from 32/28 KB to 28/24 KB), allowing cover generation in tighter memory conditions.
-- 🚀 **Full CPU speed during cover generation** — `HalPowerManager::Lock` inserted in the library's cover-generation loop, forcing 160 MHz instead of 40 MHz low-power mode. Cover generation time reduced ~4×.
-- 🏠 **Home reading-stats summary fast path** — the Home screen no longer loads the
-  full `reading_stats.json` store (~41 KB) at boot. A small derived
-  `/.crosspoint/summary.json` (global stats + per-book home badges) is written on
-  every stats change and read at boot, so the dashboard, carousel badges and read
-  ribbon render with the store kept on SD. Measured: ~109 KB → ~149 KB free RAM at
-  Home.
-- 💤 **Boot lazy-loading of stores** — reading stats, favorites, flashcards, hidden
-  books and achievements load on demand instead of at boot; JSON stores are
-  deserialized from a file stream (no whole-file `String`), and Home books are
-  capped at 10.
-
-#### PNG Decoder Stability (v1.3.0.35)
-
-- 🖼️ **Heap-safe PNG decoder** — the ~58 KB `PNG` object is allocated once on heap and kept alive for the entire screensaver session. Font caches and decompressor are freed before allocation so contiguous heap is maximised (up to +48 KB via `fontDecompressor.deinit()`).
-- 🚫 **No BSS, no arena, no reboot** — allocation uses plain `malloc()` with careful lifetime management; no permanent BSS overhead, no arena pool, no silent reboot tricks.
-- ♻️ **Release on exit** — `PngSleepRenderer::releaseDecoder()` frees the decoder when the screensaver exits, returning the heap to its pre-screensaver state.
-
-#### Screensaver & Image Handling (v1.3.0.35)
-
-- 🛡️ **Duplicate pushActivity guard** — repeated power-button double-push storms no longer overwrite the pending activity, preventing a crash race that previously triggered `abort()` inside the PNG decoder.
-- **Redundant `Storage.exists()` removal** — eliminated from the scan hot loop
-- **Heap exhaustion fix** — cover-generation loops now respect memory budget, preventing stuck-state hangs
-- **Corrupted favorite heart icon fix** — drawn at native 32×32 size instead of mismatch-scaled dimensions
-- **Library RAM reduction** — device no longer collects thousands of excess file paths during scanning, preventing reboots with 1000+ books
-- **Safer cache deletion** — `removeBook()` checks free memory before loading/saving the cache, preventing double-footprint crashes
-
-### 🔧 Core Refactoring
-
-- **List-Activity helpers** — all list-based screens (Settings, App selectors, Network mode, etc.) now share `ListInputMapper`, `ListLayout`, and `ListRenderHelper`, eliminating ~1,350 lines of duplicated code and fixing double-advance on quick taps, inverted delta mapping, and missing continuous navigation
-- **Book-Store deduplication** — `FavoritesStore` and `RecentBooksStore` share `BookStoreUtils.h` template header, cutting ~162 lines of duplicated algorithms
-
-### ✂️ Clipping (Highlights) System
-
-A full highlight system, ported from the CrossInk fork, that lets you select and save text passages while reading.
-
-- **Create a clipping**: Open the reader menu and tap "Create Clipping". Navigate with arrow keys, press **Confirm** to mark the start of the selection, move the cursor, and press **Confirm** again to save.
-- **View & manage clippings**: The "View Clippings" menu entry shows a list of all saved clippings. Individual clippings can be deleted.
-- **Jump to a clipping**: Select a clipping from the list and the reader navigates directly to that page — the passage is highlighted on screen.
-- **Persistent across sessions**: Clippings are saved to `/.crosspoint/clippings/epub_<hash>.bin`. Close and reopen the book — your clippings are still there.
-- **Export to file**: Every clipping is automatically appended to `/My Clippings.txt` in Kindle-style format (book title, author, page number, chapter, and the selected text).
-- **Dedicated selection UI**: The cursor word appears **inverted** (black background, white text) — same style as dictionary word lookup. Selected words show a light gray background with fully readable text.
-- **Anti-aliasing compatible**: Highlights render correctly even with text anti-aliasing enabled, without display refresh conflicts or crashes.
-- **Paragraph-aware**: Selection cursor navigates correctly across paragraph gaps; descending letters (g, q, y, p, j) are fully covered by the highlight rectangle.
-
-### 🌐 Web Portal & OTA Improvements
-
-- **Unified web portal navigation** — Device and App settings split into separate pages; dynamic font loading; white logo for clean appearance; unified navigation bar across all portal pages.
-- **Steroids branding** — Web portal homepage updated with Steroids branding, boot logo, and author information.
-- **OTA fix** — Older dev builds (dev5) could not detect newer dev builds (dev6, dev7) as updates. Version comparison fixed; release manifest updated to point to fork release assets.
-
-### 🛡️ Screensaver Font Size Options
-
-- Two additional font sizes for the reading dashboard sleep overlay: **X-Small** and **X-Large**, rendered with the Bookerly font family.
-- Provides more flexibility for users who prefer compact or prominent stats overlays on their sleep screen.
-
-### 🎯 Reader Menu Icons Fix
-
-- All reader context menu icons that were displaying **corrupted or blank** have been corrected:
-  - Switched from 32×32 icon arrays (which were being read with the wrong stride, producing garbled output) to proper **24×24 native arrays**.
-  - Replaced 4 blank icons (QR Code, Go to %, Screenshot, Delete Cache) with proper SVG-sourced graphics.
-  - Added new dedicated icons for the two clipping menu entries: a paperclip for "Create Clipping" and a document-with-clip for "View Clippings".
-
-### 🔖 Bookmarks — Layout-Independent + Page Highlight
-
-Bookmarks now survive font, size, alignment, and Guide Dot spacing changes, and display a visible highlight on the bookmarked page.
-
-- **Absolute word index (v4)**: each bookmark saves the first word's position from chapter start, invariant to any layout change. New bookmarks automatically store this index.
-- **Page highlight**: bookmarked pages show the anchor word highlighted with a light-gray dither background — no icon clutter. New v4 bookmarks highlight the exact anchor word; old v3 bookmarks text-match the saved snippet on the current page (requiring ≥3 consecutive token matches, skipping leading quotes/punctuation).
-- **Jump resolution**: selecting a bookmark from the list resolves to the correct page even after layout changes, using the absolute index or snippet text-matching across the section.
-- **Backward compatible**: existing v1-v3 bookmarks continue to work via snippet-based text matching; the stored page number is used only as a fallback.
-
-### 🟢 Guide Dots
-
-A reading mode that inserts a visible bullet (`•`) between words, with configurable minimum spacing.
-
-- **Toggle**: Quick Settings, Settings → Reading, and Web portal — "Guide Dots" on/off.
-- **Dots Spacing**: Standard (16px minimum gap) and Large (32px). Changing the spacing triggers automatic section cache invalidation and rebuild with new line breaks.
-- **Layout-integrated**: expanded gaps are precomputed and used consistently by the DP line-breaker, X-position loop, and justification — no text overflow.
-- **Rendering**: bullet `•` (U+2022) drawn centered in every gap between non-attached words, using absolute X positions. Works correctly with all alignment modes (left, center, right, justify, book-style).
-
-### 📐 EPUB Render Modes (Default / Balanced / Light)
-
-- Global setting with 3 modes: **Default**, **Balanced**, **Light**.
-- Quick Settings, Settings → Reading, and Web portal expose the toggle.
-- **Isolated caches**: each mode uses a separate section cache file (e.g. `sections/1_balanced.bin`), so switching modes never invalidates another mode's cache.
-- **Fallback chain**: if building a section fails for the chosen mode, the reader falls back: Default → Balanced → Light; Balanced → Light; Light → only Light.
-- Silent next-chapter indexing respects the current render mode.
-
-### 🌐 Section Cache v44 — EPUB Format Bump
-
-- Bumped `SECTION_FILE_VERSION` from 35 to 44. Added `SECTION_CACHE_MAGIC` (0x535843FF) for unambiguous format detection.
-- New cache-busting header fields: `bionicReadingEnabled`, `guideReadingEnabled`, `renderMode`.
-- Added `liLutOffset` for future KOReader list-item navigation.
-- All accessor functions share a single `HEADER_FIELDS_SIZE` constant (27 bytes), eliminating duplicated offset calculations — fixes the infinite rebuild loop caused by mismatched `pageCount` stride.
-- All existing v35 EPUB caches invalidate automatically on first boot (magic mismatch → clearCache → rebuild).
-
-### 📱 Clippings App (Standalone)
-
-A dedicated app for browsing saved clippings across all books, accessible from the Home page and Apps Hub.
-
-- **Book list**: scans Reading Stats, Recent Books, and Favorites for books with saved clippings. Displays clipping count per book.
-- **Open**: confirm opens the in-reader clippings list; individual clippings can be deleted or jumped to.
-- **Delete all**: long-hold Confirm triggers a delete-all-clippings confirmation dialog.
-- **Configurable**: registered in `ShortcutRegistry` with location, order, and visibility settable via Settings → Shortcuts.
-- **Icon**: 32×32 paperclip icon (`ClipIcon32`) rendered in the LyraMarcoand75 home theme and Apps Hub.
-
-### 🕹️ Configurable Long-Press (Side + Front Buttons, Power Button, Select Button)
-
-Replaces the single `longPressButtonBehavior` (side buttons) and `frontLongPressBehavior` (front buttons) with independently configurable per-button actions. Each button now supports the full `BUTTON_ACTION` enum (14 actions):
-
-- **Long-press Up** — side button Up (default: Chapter Skip)
-- **Long-press Down** — side button Down (default: Chapter Skip)
-- **Long-press Left** — front button Left (default: Off)
-- **Long-press Right** — front button Right (default: Off)
-- **Short power button** — expanded from 5 to 16 options (original 5 plus all `BUTTON_ACTION` values except `READING_TIME`)
-- **Select long-press** — expanded from 3 to 14 `BUTTON_ACTION` options (TXT/XTC readers restrict to `READING_TIME` and `OFF` only)
-
-A reusable `ButtonActionSelectorActivity` popup (with circular wrap-around navigation) fires from Settings → Controls for all 6 settings.
-
-**Backward compatibility:** legacy `longPressButtonBehavior` and `frontLongPressBehavior` fields are migrated to per-directional settings on first load. If a per-directional setting is `OFF` and the legacy field is non-default, the legacy value is used as fallback for both Up+Down (side) or Left+Right (front) buttons. The `selectLongPress` legacy enum is similarly migrated to `selectLongPressBehavior`.
-
-### 🇮🇹 Italian Translation Overhaul
-
-- 924 keys fully aligned with English: 84 new translations, 14 corrections, 15 long strings shortened for on-screen fit.
-- New sections covered: clippings, guide dots, EPUB render modes, dots spacing, long-press options, screen saver (80 keys), library app descriptions.
-- Corrections: "> 30 metri" → "> 30 min", "Invisibile" → "Non visto", "Disattivato" → "OFF", "Manual" → "Manuale", "Crisp" → "Nitido", "Add" → "Aggiungi".
-
----
-
-## Feature Summary Table
-
-| Feature | Category | Description |
-|---|---|---|
-| Full Library App | 📚 Library | Grid-based browser with configurable columns, per-page covers, metadata cache, search, and filters |
-| Library Cache | 📚 Library | Binary metadata cache on SD for instant re-open; automatic invalidation |
-| Favourites & Latest Read | 📚 Library | Content filters with live header indicator, sort/filter popups, and context-menu switching |
-| Incremental Sync | 📚 Library | On-the-fly SD walk on startup detects new/removed books; depth-limited directory walk |
-| Configurable Root Dir | 📚 Library | Choose library scan directory from device Settings (STRING type) |
-| Book Context Menu | 📖 Navigation | 9–12 item long-press menu with stats, metadata, favorites, cache, and cover ops |
-| Metadata Viewer | 📖 Navigation | EPUB OPF metadata viewer (title, author, publisher, date, subject, language, description) |
-| Library Maintenance | 📚 Library | Rebuild Library (clear cache + rescan) and Clear Corrupt Covers from Settings |
-| Data Panel | 🎨 Theme | Cyber-style two-column book/stats panel on Lyra Carousel home |
-| Reading Time ETA | 🎨 Theme | Estimated remaining time on cover badges (e.g. "35% ~2h 15m") — all Lyra themes |
-| Priority Ribbons | 🎨 Theme | Completed ✓, Favorite ♥, and Opened indicators as triangle/band overlays |
-| LyraMarcoand75 Theme | 🎨 Theme | Custom theme variant with per-theme cover caching |
-| Carousel Cache Pruning | 🎨 Theme | Auto-removal of stale cached frames; fresh render on book completion |
-| Theme Cache Clearing | 🎨 Theme | Context menu item to clear carousel cache; per-theme cache separation |
-| General Screensaver | 🛡️ Screensaver | Low-power screensaver with folder picker, battery-protection deep sleep, folder preview |
-| Reader Screensaver | 🛡️ Screensaver | Separate image directory/ordering for in-book screensaver; launch from reader menu or power-button replacement |
-| Transparent PNG Compositing | 🛡️ Screensaver | SD-based framebuffer snapshot for clean transparent overlay rendering; heap-friendly decoder |
-| Reading Stats Fix | 🛡️ Screensaver | Screensaver time excluded from reading statistics |
-| Reading Time in Status Bar | 📊 Reading | Pace-based chapter/book time-left estimate in reader status bar |
-| Boot & Sleep Logo | 🖼️ Branding | Custom "Steroids" logo replacing CrossPoint branding |
-| Custom App Icons | 🎯 UI | Bookshelf, Zzz, monitor, calendar icons with theme-wide visibility fixes |
-| STRING Settings | ⚙️ System | On-device edit support for STRING-type settings |
-| Performance Optimizations | ⚡ Performance | Inventory caching, directory exclusion, heap fixes, 150× XTC speedup, batch e-ink rendering, per-format memory guards, watchdog safety |
-| EPUB Cover Overhaul | ⚡ Performance | Relaxed heap guard, adaptive JPEG subsampling, metadata pre-extraction, empty cover detection |
-| Core Refactoring | 🔧 Code | List-activity helpers (~1350 fewer lines), book-store deduplication |
-| Lexend Optional | ⚡ Performance | Build flag to exclude Lexend font, reducing firmware size |
-| **Clipping (Highlights)** | ✂️ Reading | Select text passages, save as clippings, view list, jump to page, persisted between sessions, exported to `/My Clippings.txt`, layout-independent via absolute word indices |
-| **Bookmarks v4** | 🔖 Reading | Absolute word index for layout-independent bookmarks; page-level highlight rendering; v3 text-match fallback; jump resolution |
-| **Guide Dots** | 🟢 Reading | Bullet markers between words with configurable spacing (Standard 16px / Large 32px); layout-integrated gap expansion |
-| **EPUB Render Modes** | 📐 Reading | Default / Balanced / Light modes with isolated caches per mode; automatic fallback chain |
-| **Section Cache v44** | 🌐 System | EPUB format bump with magic header, new cache-busting fields, offset calculation fix |
-| **Clippings App** | 📱 Apps | Standalone app for browsing clippings per book; configurable Home/Apps Hub shortcut |
-| **Configurable Long-Press** | 🕹️ Controls | Independent per-button actions for Up/Down (side) and Left/Right (front) long-press, plus expanded short power-button (16 options) and Select long-press (14 options). All use the unified `BUTTON_ACTION` enum via a popup selector. Backward-compatible migration from legacy enums. |
-| **Italian Translations** | 🇮🇹 i18n | 924 keys aligned with English; 84 new + 14 corrected translations; long strings shortened |
-| **Reader Menu Icons Fixed** | 🎯 UI | All 32×32 menu icons replaced with proper 24×24 versions; 4 blank icons regenerated from SVGs (QR, percent, screenshot, delete cache); 2 new clipping icons |
-| **Screensaver Font Sizes** | 🛡️ Screensaver | X-Small and X-Large font sizes added using Bookerly for the reading dashboard overlay |
-| **OTA Fix** | ⚙️ System | OTA update detection fixed for newer dev builds; manifest updated for fork release assets |
-| **Web Portal** | 🌐 Web | Unified navigation with split device/app/steroids settings, dynamic fonts, white logo, Steroids branding |
-| **Steroids Settings JSON Split** | 🧹 Settings | 37 Steroids-only settings in dedicated `settings-steroids.json` + `JsonSettingsIOSteroids.cpp`; upstream `JsonSettingsIO.cpp` byte-identical (zero merge conflicts); pre-migration backup at `settings-steroids.json.bak` |
-| **Silent Restart** | 🔄 Heap | Seamless `ESP.restart()` on Back-to-Home from Library/Wikipedia; maxAlloc ~70KB → ~105KB; boot skips 4 stages (~1088ms saved); no popup, no white flash |
-| **Wikipedia App** | 📖 Apps | Search Wikipedia, summary preview, and full-article reading — wikitext converted to markdown and cached per-article in `/.crosspoint/wikipedia-cache/wiki_<hash>/` (`article.md` + `title.txt` + `index.bin` + `progress.bin`) for offline reopen; dedicated `WikiTxtReaderActivity` |
-| **Dictionary** | 📖 Apps | Multi-dictionary lookup with per-dictionary labels, reorderable active list with stored lookup order, orphan IFO/IDX/DICT cleanup on delete, reading-progress indicator in word-selection overlay; failover/manual modes preserved from upstream |
-| **Per-Language Wikipedia** | 📖 Apps | Request base URL follows the selected UI language (`it`, `fr`, `de`, `sl`, …) instead of a hardcoded `it.wikipedia.org` |
-| **Clippings Preview Panel** | ✂️ Reading | Single press on a clipping opens a readable preview (chapter, page, full text); Select again jumps to the book — lets you read a highlight without leaving your place |
-| **Grayscale Image Pipeline** | 🖼️ Rendering | Shared 2-bit gray config: gamma LUT (1.5) + empiric thresholds 50/120/200, error-diffusion dithering (`int16_t`, overflow-safe buffers), better midtone contrast on covers and screensaver/sleep images |
-| **SdCardFont Fragmented Storage** | 💾 Fonts | 4 KiB chunked bitmap storage from upstream 1.5.0.20; eliminates large contiguous allocations on 380 KB RAM heap; CJK fallback font resolution |
-| **Reader Status Bar Overlap Fix** | 📊 Reading | Centered book/chapter title reserves the battery, percentage, time-left and clock before centering — a long title can no longer overlap the battery |
-| **Home Daily Average & Trend** | 📊 Reading | Global stats panel shows today's reading time with the historical daily average in parentheses and a trend symbol: down arrow when below average, up arrow when above, equal sign when within ±3% of the average; average updates after the first reading of any book |
-
-All CPR-vCodex upstream features (reading stats, heatmaps, achievements, dictionaries, flashcards, bookmarks, SD fonts, KOReader Sync, Bionic Reading, dark mode, sync day, etc.) are **fully included**. This fork only adds the features listed above without removing or degrading any upstream functionality.
-
-The firmware is built and tested on the **Xteink X4** (ESP32-C3, ~380 KB usable RAM).
-
-## Discussion & Development
-
-The development and feature discussion for CPR-vCodex Steroids takes place in the [upstream CPR-vCodex PR #118](https://github.com/franssjz/cpr-vcodex/pull/118).
-
----
-
-## At a glance
-
-| Item | Value |
-|---|---|
-| Project | `CPR-vCodex Steroids` |
-| Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current upstream base | [`1.5.0.20-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.20-cpr-vcodex) |
-| Current Steroids build | Synced with upstream `1.5.0.20` + Steroids features: e-book library, Wikipedia app (per-language, per-article offline cache), clippings preview, bookmarks v4, guide dots, library, carousel, web portal (3 settings pages), screensaver (random shuffle, safe wake), per-directional configurable long-press (Up/Down/Left/Right, 14 `BUTTON_ACTION` options, popup selector), expanded short power-button (16 options) and Select long-press (14 options), EPUB render modes, reworked 2-bit grayscale image pipeline, OTA fixes, time/clock X3 support, EndOfBook options, silent restart (heap reclamation), Home reading-stats summary fast path, Home daily average & trend indicator, boot lazy-loading of stores, settings JSON split (43 fields, zero merge conflicts), SdCardFont fragmentation-resistant storage (chunked 4 KiB bitmap), CJK fallback font resolution, WifiCredentialStore security hardening, OPDS browser persistent Apps visibility, timestamped crash reports in `/logs/`, hardened OPDS HTTP fetch/parser error handling |
-| Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
-| Changelog | [CHANGELOG.md](./CHANGELOG.md) |
-| GitHub Releases | [Releases page](https://github.com/marcoand75/cpr-vcodex-steroids/releases) |
-| Base firmware line | `CrossPoint Reader 1.5.0` |
-| Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
-| Intentional upstream exclusions | Unsupported upstream theme variants such as `RoundedRaff` remain out of the supported vCodex theme list; other upstream UI/config changes are adapted selectively to preserve the existing X4 workflow. |
-
----
-
-# ⬇️ Upstream CPR-vCodex Documentation
-
-The sections below are the upstream CPR-vCodex README, preserved for reference. All Steroids-specific content is above this line.
-
----
 
 ## What's different in this fork
 
@@ -504,12 +31,17 @@ Some of the main additions include:
 - per-book statistics tools, including reading-time correction, start-date editing, and per-book stats reset
 - StarDict dictionary support from the SD card, with selectable monolingual and translation dictionaries, per-language folders, reader word lookup, suggestions, and lookup history
 - offline Flashcards with CSV decks, multiple study modes, recents, stats, and session summaries
-- EPUB bookmarks with explicit reader-menu actions plus a global bookmarks app
+- unified EPUB Highlights for selected text and saved pages, with a global Highlights app and backward-compatible bookmark storage
+- repagination-resistant EPUB page marks and highlights, stored with visible-text anchors in BookmarkStore v5 while retaining v1-v4 migration
+- highlight matching that survives layout-inserted hyphens, split ellipses, and non-breaking-space fragments without confusing authored hyphens
 - customizable Home and Apps shortcuts, reader quick settings, reading layouts, themes, and Lyra Carousel workflow improvements
 - enhanced sleep tools, including custom image directories, cover/custom stats screens, sleep previews, cached sleep frames, and configurable clean sleep refresh
-- downloadable and manually installable SD-card fonts, including vCodex-only families such as `ChareInk`
+- downloadable and manually installable SD-card fonts, including vCodex families such as `ChareInk` and `Lexend`
+- improved EPUB image handling for packed low-depth PNGs, scaled images and SVG image references, with low-memory band rendering and decode placeholders
+- native EPUB ruby annotations for Chinese/Japanese reading aids, improved CJK line breaking, and SD-font CJK fallback for book lists and chapter titles
 - Screen Clean, SD firmware update, Auto Flash, reading stats editor, and other maintenance/workflow utilities
-- KOReader Sync, OPDS filename options, reader refresh controls, Bionic Reading, text darkness, dark mode, and other reader quality-of-life settings
+- named KOReader Sync profiles with optional metadata, ask/smart synchronization behavior and per-profile account registration
+- OPDS filename options, reader refresh controls, Bionic Reading, text darkness, dark mode, and other reader quality-of-life settings
 - carefully selected upstream CrossPoint improvements and fixes adapted without dropping vCodex-specific behavior
 
 The philosophy of this fork is simple: keep the firmware fast, stable, and focused on reading, while making the device feel more rewarding and personal for people who read every day.
@@ -518,23 +50,37 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 
 | Item | Value |
 |---|---|
-| Project | `CPR-vCodex Steroids` |
-| Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex Steroids) build | [`1.5.0.11-cpr-vcodex-steroids`](https://github.com/marcoand75/cpr-vcodex-steroids/releases/tag/1.5.0.11-cpr-vcodex-steroids) |
+| Project | `CPR-vCodex` |
+| Device | `Xteink X4` (personally tested); `Xteink X3` UC8253/UC8279d runtime support, with broader physical feedback requested |
+| Current release (CPR-vCodex) build | [`1.5.0.23-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.5.0.23-cpr-vcodex) |
+| Release hardware stack | `freeink-sdk` [`a485dc46`](https://github.com/Free-Ink/freeink-sdk/commit/a485dc46ef5fb2283e4bdb674002ddbef97a9268), with runtime X3/X4 and X3 UC8253/UC8279d detection. |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
-| Current release sync | Stability release on the same selected CrossPoint Reader baseline through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) and `open-x4-sdk` [`198ad26`](https://github.com/crosspoint-reader/community-sdk/commit/198ad267219c25c8ab84418b806c66f1fb5216a3); larger upstream UI/config rewrites remain intentionally deferred. |
-| Current release fixes | Restores decorative EPUB chapter images that were incorrectly suppressed by accessibility-only markup. |
-| Latest release notes | - EPUB images marked with `role="presentation"`, `role="none"`, or `aria-hidden="true"` remain visually rendered; those attributes affect accessibility semantics rather than visual display.<br>- CSS `display:none` and the reader image setting remain the visual controls.<br>- The existing repeated-image limit remains active to protect EPUB indexing memory, and the section-cache version was bumped so affected books rebuild automatically. |
+| Current release sync | Selected CrossPoint Reader 1.5 changes reviewed through `master` [`95a847c7`](https://github.com/crosspoint-reader/crosspoint-reader/commit/95a847c7210a5060cf0bb5a20fbc855869d735f2) and `develop` [`93d572fc`](https://github.com/crosspoint-reader/crosspoint-reader/commit/93d572fc), plus targeted CrossInk improvements, manually adapted to retain the vCodex band renderer, KOReader profiles, reading statistics, highlights, themes, ruby, Lyra, and SD-card fonts. Release `1.5.0.22` additionally adopts CrossPoint's pinned `freeink-sdk` hardware layer and the isolated SD recovery entry from [`5717374e`](https://github.com/crosspoint-reader/crosspoint-reader/commit/5717374e4be88b3d30f45626bf796ceb3687c836). |
+| Current release focus | Supports original and newer X3 panels through runtime detection, modernizes the X3/X4 hardware layer, and provides a deterministic SD recovery path for USB-locked devices. |
+| Latest release notes | - One firmware selects X4, X3 UC8253, or X3 UC8279d hardware at boot.<br>- Battery, USB wake, GPIO wake, and deep sleep use runtime board profiles while preserving X4's battery latch and X3's RTC/fuel gauge.<br>- Holding `UP + POWER` at wake enters the SD firmware picker directly; the blind-recovery sequence is documented in `USER_GUIDE.md`. |
 | Base firmware line | `CrossPoint Reader 1.5.0` |
-| Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
-| Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
+| Latest official commit reviewed | `master` through [`95a847c7`](https://github.com/crosspoint-reader/crosspoint-reader/commit/95a847c7210a5060cf0bb5a20fbc855869d735f2) and `develop` through [`93d572fc`](https://github.com/crosspoint-reader/crosspoint-reader/commit/93d572fc) |
+| Latest official commit incorporated | Release `1.5.0.22` retains the selected CrossPoint Reader changes incorporated through `1.5.0.21`, migrates the hardware layer to CrossPoint's pinned `freeink-sdk`, and restores the isolated SD recovery entry; FUI, settings-persistence, touch, and RTL rewrites remain intentionally deferred. |
 | Intentional upstream exclusions | Unsupported upstream theme variants such as `RoundedRaff` remain out of the supported vCodex theme list; other upstream UI/config changes are adapted selectively to preserve the existing X4 workflow. |
+
+## Froze in Update Complete (Soft Bricked?) — X3 recovery
+
+Some USB-locked Xteink X3 units with the newer UC8279d display controller appeared to remain frozen on the previous or `Update Complete` screen after installing older CPR-vCodex releases. The device was not actually bricked: the firmware continued running, but the unsupported display controller prevented the screen from refreshing.
+
+Affected users have successfully recovered devices running CPR-vCodex `1.5.0.3` and `1.5.0.9` by blindly opening the SD firmware updater and installing `1.5.0.22`, which detects both the original UC8253 and newer UC8279d X3 panels at boot.
+
+> [!IMPORTANT]
+> This emergency procedure is intended for an X3 whose display is already frozen on an older CPR-vCodex release. Do not use the blind sequence for a normally working device; use the visible `Settings > System > SD Card Firmware Update` flow instead. Back up the card first or use a separate clean FAT32 recovery card, and do not interrupt the device or remove the microSD while firmware validation or flashing is in progress.
+
+- [XTEINK X3 — vCodex Unfreeze procedure (PDF)](https://github.com/user-attachments/files/31417306/XTEINK.X3.-.vCodex.Unfreeze.procedure.pdf) consolidates the physical-button sequence, required waits, SD-card preparation, and final confirmation used for the successful recoveries.
+- [Froze in Update Complete (Soft Bricked?) — issue #193](https://github.com/franssjz/cpr-vcodex/issues/193) contains the complete investigation and the step-by-step discussion with affected users, including their questions, screenshots, clarifications, and successful recovery reports.
 
 ## Web tools
 
-- [Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html) installs the latest CPR-vCodex firmware from Chrome or Edge using Web Serial.
+- [Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html) installs the latest CPR-vCodex firmware on ESP32-C3 Xteink X3 and X4 devices from Chrome or Edge using Web Serial. X4 Pro is a distinct ESP32-S3 device and is not currently supported; the flasher recognizes its partition table and stops before writing.
 - [Reading Stats Editor](https://franssjz.github.io/cpr-vcodex/reading-stats-editor/) edits exported reading stats locally in the browser. No upload, no server.
+- Device web settings treat the KOReader password as write-only: the stored value is never returned to the browser, which only indicates that a password is already configured.
 
 ## SD card DICTIONARIES
 
@@ -560,6 +106,8 @@ SD:/
 ```
 
 Each language or dictionary group lives in `dictionaries/<language>/`. The directory name is the visible language/group label, so names such as `spanish`, `english`, `english-spanish`, or `en-es` are all valid. Each directory may contain one or more dictionaries.
+
+The root folder is resolved case-insensitively, so `/Dictionaries`, `/DICTIONARIES`, and `/dictionaries` all work; CPR-vCodex keeps using the exact capitalization already present on the card.
 
 For every StarDict dictionary, the required files are:
 
@@ -596,9 +144,15 @@ If you know reliable public dictionary links for more languages, please contact 
 
 ## SD card fonts
 
-`CPR-vCodex` supports extra `.cpfont` families stored on the microSD card. The built-in reader fonts still work as usual, and downloaded SD fonts appear in `Settings > Reader > Font Family` after the firmware discovers them.
+`CPR-vCodex` supports extra `.cpfont` families stored on the microSD card. The built-in reader fonts still work as usual, and downloaded SD fonts such as Lexend appear in `Settings > Reader > Font Family` after the firmware discovers them.
+
+Font discovery is lazy while the built-in font is selected, and the active SD font plus its catalog are released before Wi-Fi startup to leave more contiguous RAM for the radio. Both `/.fonts` and `/fonts` are resolved case-insensitively, including installs and deletion.
 
 SD-card font rendering keeps a fast per-glyph advance cache when it is complete, and falls back to direct glyph measurement when an external font cache is missing an entry. Browser File Transfer downloads also preserve the advertised response size so downloaded files do not fail with content-length mismatch errors.
+
+CJK-capable families can also provide 8, 10, and 12 pt files. CPR-vCodex uses those as size-matched fallbacks for Chinese, Japanese, and Korean text in the File Browser, Recent Books, and EPUB chapter list, and preloads each visible screen in one SD pass to avoid per-glyph reads.
+
+The File Transfer EPUB optimizer includes an optional `Remove embedded fonts` advanced setting. It is off by default so the optimized book remains portable to readers that honor publisher fonts; enabling it removes font files, matching OPF/encryption entries, and `@font-face` rules because CPR-vCodex renders with its selected built-in or SD-card font.
 
 Device download:
 
@@ -607,14 +161,14 @@ Device download:
 3. Select a family and download it.
 4. Return to `Reader Font Family` and choose the newly installed font.
 
-Manual install from GitHub is faster when Wi-Fi on the device is slow. The CPR-vCodex package contains only
-vCodex-only additions; use the CrossPoint source/package for common families:
+Manual install from GitHub is faster when Wi-Fi on the device is slow. The CPR-vCodex package contains
+vCodex-specific additions; use the CrossPoint source/package for other common families:
 
 1. Download [`all-fonts.zip`](https://github.com/franssjz/cpr-vcodex/releases/download/sd-fonts-m1-b4/all-fonts.zip) from the latest CPR-vCodex SD font package.
 2. Extract it into the root of the microSD card. The archive creates `fonts/<Family>/*.cpfont`.
 3. Reinsert the card, restart the device, and select the font under `Settings > Reader > Font Family`.
 
-Manual single-family install also works. Download the four files for a family from [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4), create `fonts/<Family>/` on the microSD card, and copy the matching `Family_12.cpfont`, `Family_14.cpfont`, `Family_16.cpfont`, and `Family_18.cpfont` files there.
+Manual single-family install also works. Download all `.cpfont` files for a family from [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4), create `fonts/<Family>/` on the microSD card, and copy the matching files there.
 
 Recommended microSD layout:
 
@@ -626,6 +180,12 @@ SD:/
       ChareInk_14.cpfont
       ChareInk_16.cpfont
       ChareInk_18.cpfont
+    Lexend/
+      Lexend_10.cpfont
+      Lexend_12.cpfont
+      Lexend_14.cpfont
+      Lexend_16.cpfont
+      Lexend_18.cpfont
 ```
 
 ## Flashcards study modes
@@ -673,16 +233,16 @@ This project is **not affiliated with Xteink**.
 - `Sync Day` for coherent day-based stats on hardware without a trustworthy sleep RTC
 - `Lyra Carousel` Home theme, originally created by [zgredex](https://github.com/zgredex), adapted to this fork by [erickosanchezj](https://github.com/erickosanchezj), limited to 3 books for smoother X4 navigation, with a sliding bottom shortcut row so every configured Home action remains reachable
 - experimental X3-only `Tilt Page Turn`, hidden unless the QMI8658 IMU is detected and disabled by default
-- downloadable SD-card fonts from CrossPoint plus vCodex-only families such as `ChareInk`
+- downloadable SD-card fonts from CrossPoint plus vCodex families such as `ChareInk` and `Lexend`
 - SD-card firmware update from Settings for local `.bin` flashing without a browser
 - configurable long-press side-button behavior: `Off`, `Chapter skip`, or `Orientation change`
-- EPUB bookmarks plus a global bookmarks app
+- EPUB Highlights for selected text and saved pages, plus a global Highlights app
 - context-aware screenshot filenames that include the current book title when available
 - KOReader Sync compatibility improvements, including Calibre-Web-Automated `/kosync` support
 - configurable OPDS download filename format: `Author - Title` or `Title - Author`
 - configurable `Home` and `Apps` shortcuts
 - `Flashcards` with offline CSV decks, session summary, recents, stats and settings
-- `Text Darkness`, `Bionic Reading`, `Reader Refresh Mode`, `Lexend`, `X Small`
+- `Text Darkness`, `Bionic Reading`, `Reader Refresh Mode`, downloadable `Lexend`, `X Small`
 - `Sleep` tools with directory selection, preview, cache, sequential and shuffle behavior
 - `Dark Mode (Experimental)`
 - Vietnamese UI support and synchronized translation coverage across all shipped languages
@@ -760,12 +320,12 @@ That is enough to start using the core `vcodex` additions: coherent day-based an
 | `SD card fonts` | download, upload, or manually install extra `.cpfont` families from the SD card | [Settings](#settings) |
 | `SD firmware update` | select a `.bin` from the SD card and flash it locally from Settings | [Settings](#settings) |
 | `Long-press button behavior` | choose `Off`, `Chapter skip`, or `Orientation change` for reader side-button holds | [Settings](#settings) |
-| `Bookmarks` | EPUB bookmarks plus a global bookmarks app | [Bookmarks](#bookmarks) |
+| `Highlights` | selected EPUB text and saved pages in one backward-compatible app | [Highlights](#highlights) |
 | `Sleep tools` | folder selection, preview, cache, sequential and shuffle behavior | [Sleep](#sleep) |
 | `Text Darkness` | global `Normal / Dark / Extra Dark` text rendering control, based on the idea first seen in `crosspet` | [Settings](#settings) |
 | `Bionic Reading` | `Off / Normal / Subtle` EPUB focus-reading modes with stable text weight in BW and anti-aliased rendering | [Settings](#settings) |
 | `Reader Refresh Mode` | `Auto / Fast / Half / Full` | [Settings](#settings) |
-| `Lexend` | additional reader font family | [Settings](#settings) |
+| `Lexend` | downloadable SD-card reader font family | [Settings](#settings) |
 | `Dark Mode (Experimental)` | optional white-on-black UI and reader presentation | [Settings](#settings) |
 | `ReadMe` | on-device quick guide for the main fork features | [ReadMe](#readme) |
 | `If found, please return me` | lost-device contact screen from `/if_found.txt` on the SD card | [If found, please return me](#if-found-please-return-me) |
@@ -919,20 +479,35 @@ How it works:
 - common filename/encoding variants are tolerated, including case differences, `if_found.txt.txt`, UTF-8 BOM, and UTF-16 text files
 - if the file does not exist, the app shows a fallback message explaining how to create it
 
-## Bookmarks
+## Highlights
 
-Bookmarks are implemented for EPUB and work in two ways:
+Highlights are implemented for EPUB as one feature with two entry types:
 
-- inside the reader
-- from the global `Apps > Bookmarks` screen
+- text highlights for a selected phrase
+- page marks, preserving the behavior and data of the previous Bookmarks feature
 
 Supported flow:
 
-- long-press `Select` inside EPUB reading to toggle bookmark
-- open the reader menu and choose `View bookmarks`
-- open the reader menu and choose `Save bookmark` to save the current page without removing an existing bookmark
-- reopen a book directly at a saved bookmark from the global bookmarks app
-- delete individual bookmarks or all bookmarks for one book
+- open the reader menu and choose `Highlight text`; select the first and last word, then save
+- long-press `Select` inside EPUB reading to toggle a page mark
+- use `Save page mark` when the current page should be kept without toggling it
+- open `View highlights` or the global `Apps > Highlights` screen to browse both types together
+- reopen a book at the saved page and delete individual entries or all highlights for one book
+
+Existing `bookmarks.bin` files remain readable. They are upgraded in place only when
+the user next changes the book's Highlights, and all old bookmarks become page-mark
+entries rather than being discarded. Format v5 adds a visible Unicode-codepoint anchor
+to new page marks and text highlights, so reopening them remains tied to the same content
+after changing font size, margins, line spacing, or orientation.
+
+Highlights also recognize words split by a layout-inserted hyphen and adjacent ellipsis/NBSP fragments after reflow. A hyphen authored in the EPUB remains part of the text and is never silently discarded by matching.
+
+The text-selection and on-page highlighting behavior is adapted from
+[CrossInk](https://github.com/uxjulia/CrossInk) by
+[Julia Nguyen (`uxjulia`)](https://github.com/uxjulia), beginning with CrossInk
+commit [`b4d0ee1`](https://github.com/uxjulia/CrossInk/commit/b4d0ee190480fb3c9a175f09daab9dede3ca467a)
+and incorporating relevant later robustness fixes through
+[`ffda6de`](https://github.com/uxjulia/CrossInk/commit/ffda6de71554a53f60b861ef08ad6770426b4ac5).
 
 ## Flashcards
 
@@ -975,6 +550,7 @@ It supports:
 - preview
 - sequential vs shuffle order
 - persistent selected directory
+- case-insensitive default folders such as `/Sleep`, `/sleep`, and `/.Sleep`
 - cached sleep framebuffers
 - reduced repetition through recent-wallpaper tracking
 - `Reading Dashboard` sleep mode with daily goal, streak, reading totals, and achievement progress
@@ -992,7 +568,7 @@ Useful reader/display additions include:
 | Display | `UI Theme`, sleep-screen controls, `Dark Mode (Experimental)`, `Sunlight Fading Fix` |
 | Controls | `Side Button Layout`, `Long-press button behavior`, `Short Power Button Click`, `Tilt Page Turn` |
 | Status bar | EPUB/status-bar fields, battery visibility, `XTC Status Bar` |
-| System | `SD Card Firmware Update`, OTA update check, cache clearing, language, OPDS servers |
+| System | `Hide File Extension`, `SD Card Firmware Update`, OTA update check, cache clearing, language, OPDS servers |
 | Date | `Display Day`, `Date Format`, `Time Zone`, `Sync Day` reminder behavior |
 | Reading stats | `Daily Goal`, `Show after reading`, `Reset Reading Stats`, `Export Reading Stats`, `Import Reading Stats` |
 | Achievements | `Enable achievements`, `Achievement popups`, `Reset achievements`, `Sync with prev. stats` |
@@ -1003,9 +579,9 @@ Useful reader/display additions include:
 Font notes:
 
 - `Bookerly` and `Noto Sans` have full regular/bold/italic coverage in the compiled sizes
-- `Lexend` is available as an extra reader family
+- `Lexend` is available as a downloadable SD-card reader family
 - `Lexend` italic and bold-italic still use safe fallbacks rather than separate real italic assets
-- `Manage Fonts` downloads common SD-card font families from CrossPoint and vCodex-only additions from CPR-vCodex release assets, currently `ChareInk`
+- `Manage Fonts` downloads common SD-card font families from CrossPoint and CPR-vCodex additions, currently `ChareInk` and `Lexend`
 
 ## What requires Sync Day
 
@@ -1038,8 +614,15 @@ Important artifacts include:
 - `/.crosspoint/reading_stats.json`
 - `/.crosspoint/achievements.json`
 - `/.crosspoint/recent.json`
-- per-book `bookmarks.bin`
-- `/exports/*.json` for reading stats export/import
+- per-book `bookmarks.bin`, now a versioned Highlights store that retains legacy page bookmarks
+- `/exports/stats_exported` for manual Reading Stats export/import
+- `/exports/stats_backup_YYYY-MM-DD` for automatic dated Reading Stats backups (every 7 days by default)
+
+### Recovering Reading Stats after 1.5.0.1 or 1.5.0.2
+
+Update to `1.5.0.23-cpr-vcodex` before resetting or deleting any data. In most cases the existing `/.crosspoint/reading_stats.json` will load automatically after the update because the affected releases rejected the file without overwriting it.
+
+If the displayed totals are still incomplete or incorrect, open `Settings > Apps > Reading Stats > Import Reading Stats` and select the newest suitable dated backup under `/exports/stats_backup_YYYY-MM-DD`. Those weekly backups appear directly in the import list and do not need to be renamed. If the only copy is on a computer, place it on the SD card as exactly `/exports/stats_exported` (without a `.json` extension), then import it. Try older dated backups newest-first if necessary, and preserve a copy of the SD card before cleaning or resetting statistics.
 
 This is one of the main reasons the fork was rebuilt on a cleaner upstream-derived base instead of continuing to patch the older fork in place.
 
@@ -1050,8 +633,8 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.5.0`
-- current release build style: `1.5.0.0-cpr-vcodex-steroids`
-- packaged artifact style: `artifacts/<version>-cpr-vcodex-steroids.bin`
+- current release build style: `1.5.0.23-cpr-vcodex`
+- packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
 
@@ -1112,20 +695,21 @@ artifacts/<version>-cpr-vcodex.bin
 
 Versioning rules:
 
-- release builds: `1.3.0.<release>-cpr-vcodex.bin`
-- dev builds: `1.3.0.<release>.dev<build>-cpr-vcodex.bin`
+- release builds: `1.5.0.<release>-cpr-vcodex.bin`
+- dev builds: `1.5.0.<release>.dev<build>-cpr-vcodex.bin`
 
 Release publishing:
 
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.35-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.5.0.23-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.35-cpr-vcodex`
+- push a stable tag named like `1.5.0.23-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
-  name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
+  name matches the tag, and attaches the flashable `<tag>.bin`, build metadata,
+  and firmware-budget reports to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not
   from a local counter file
 - the auto-flash sync workflow then mirrors that published release asset into
@@ -1136,12 +720,14 @@ python scripts/pre_release_check.py --tag 1.3.0.35-cpr-vcodex
 Huge credit goes to:
 
 - the **CrossPoint Reader** project for the upstream base
-- **[franssjz](https://github.com/franssjz)** for **CPR-vCodex**, the upstream fork this project builds upon
 - the Xteink X4 community around the firmware ecosystem
 - [zgredex](https://github.com/zgredex) for the original `Lyra Carousel` Home theme
 - [erickosanchezj](https://github.com/erickosanchezj) for adapting `Lyra Carousel` to CPR-vCodex
+- [Julia Nguyen (`uxjulia`)](https://github.com/uxjulia) and her
+  [CrossInk](https://github.com/uxjulia/CrossInk) fork for the original clipping/highlighting feature adapted into
+  CPR-vCodex Highlights
 - Which-Estimate4566 for the logo artwork used in the docs
 
 ---
 
-CPR-vCodex Steroids is **not affiliated with Xteink or any manufacturer of the X4 hardware**.
+CPR-vCodex is **not affiliated with Xteink or any manufacturer of the X4 hardware**.

@@ -10,6 +10,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
+#include "util/LongPress.h"
 
 const char* const KeyboardEntryActivity::shiftString[2] = {"shift", "SHIFT"};
 
@@ -27,8 +28,9 @@ void KeyboardEntryActivity::onEnter() {
   delPressCount = 0;
   hintVisible = false;
   hintShowTime = 0;
-  rightHeld = false;
-  rightLongHandled = false;
+  upPress_.reset();
+  downPress_.reset();
+  rightPress_.reset();
   savedCursorPos = 0;
   rightStartCursorPos = 0;
   requestUpdate();
@@ -192,21 +194,18 @@ void KeyboardEntryActivity::loop() {
   const int totalRows = getTotalRowCount();
 
   if (!cursorMode && mappedInput.wasPressed(MappedInputManager::Button::Up)) {
-    upHeld = true;
-    upLongHandled = false;
+    upPress_.arm();
   }
 
-  if (upHeld && !upLongHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  if (upPress_.fired(mappedInput.getHeldTime(), LONG_PRESS_MS)) {
     cursorMode = true;
-    upLongHandled = true;
     hintVisible = true;
     hintShowTime = millis();
     requestUpdate();
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    if (upHeld && !upLongHandled && !cursorMode) {
+    if (upPress_.wasShortPress() && !cursorMode) {
       bool wasBottom = isBottomRow(selectedRow);
       const int contentCols = getContentColCount();
       selectedRow = ButtonNavigator::previousIndex(selectedRow, totalRows);
@@ -219,26 +218,24 @@ void KeyboardEntryActivity::loop() {
       if (selectedCol > maxCol) selectedCol = maxCol;
       requestUpdate();
     }
-    upHeld = false;
-    upLongHandled = false;
+    upPress_.reset();
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
-    downHeld = true;
     if (cursorMode) {
       togglePos = false;
       passwordVisible = false;
       cursorMode = false;
       hintVisible = false;
-      downLongHandled = true;
+      downPress_.reset();
       requestUpdate();
     } else {
-      downLongHandled = false;
+      downPress_.arm();
     }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (downHeld && !downLongHandled && !cursorMode) {
+    if (downPress_.wasShortPress() && !cursorMode) {
       bool wasBottom = isBottomRow(selectedRow);
       const int contentCols = getContentColCount();
       selectedRow = ButtonNavigator::nextIndex(selectedRow, totalRows);
@@ -251,8 +248,7 @@ void KeyboardEntryActivity::loop() {
       if (selectedCol > maxCol) selectedCol = maxCol;
       requestUpdate();
     }
-    downHeld = false;
-    downLongHandled = false;
+    downPress_.reset();
   }
 
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] {
@@ -277,8 +273,7 @@ void KeyboardEntryActivity::loop() {
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
     if (cursorMode && inputType == InputType::Password && !togglePos) {
-      rightHeld = true;
-      rightLongHandled = false;
+      rightPress_.arm();
       rightStartCursorPos = cursorPos;
     }
   }
@@ -290,28 +285,24 @@ void KeyboardEntryActivity::loop() {
     requestUpdate();
   });
 
-  if (rightHeld && !rightLongHandled && mappedInput.isPressed(MappedInputManager::Button::Right) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+  if (rightPress_.fired(mappedInput.getHeldTime(), LONG_PRESS_MS)) {
     if (cursorMode && inputType == InputType::Password && !togglePos) {
       savedCursorPos = rightStartCursorPos;
       togglePos = true;
-      rightLongHandled = true;
       requestUpdate();
     }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     if (cursorMode && inputType == InputType::Password) {
-      rightHeld = false;
-      rightLongHandled = false;
+      rightPress_.reset();
     }
     if (cursorMode && !togglePos && cursorPos < text.length()) {
       cursorPos++;
       requestUpdate();
     }
     if (cursorMode) return;
-    rightHeld = false;
-    rightLongHandled = false;
+    rightPress_.reset();
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {

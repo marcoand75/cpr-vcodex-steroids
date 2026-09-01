@@ -4,31 +4,25 @@
 
 #include "activities/Activity.h"
 #include "util/ShortcutRegistry.h"
-#include "../util/ListInputMapper.h"
+#include "../util/OrderListActivity.h"
 
-class ShortcutOrderActivity final : public Activity {
+class ShortcutOrderActivity final : public OrderListActivity<ShortcutOrderActivity, ShortcutOrderEntry> {
  public:
-  ShortcutOrderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, ShortcutOrderGroup group)
-      : Activity("ShortcutOrder", renderer, mappedInput), group(group) {}
+  explicit ShortcutOrderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, ShortcutOrderGroup group)
+      : OrderListActivity("ShortcutOrder", renderer, mappedInput), group(group) {}
 
-  void onEnter() override;
-  void onExit() override;
-  void loop() override;
-  void render(RenderLock&&) override;
+  void reloadEntries() override;
+  void save() override;
+  void moveSelectedEntry(int delta) override;
 
-  std::vector<ShortcutOrderEntry> entries;
-  int selectedIndex = 0;
-  bool moveMode = false;
+  const char* getTitle() const override {
+    return group == ShortcutOrderGroup::Home ? tr(STR_ORDER_HOME_SHORTCUTS) : tr(STR_ORDER_APPS_SHORTCUTS);
+  }
 
-  void reloadEntries();
-  void moveSelectedEntry(int delta);
+  std::string getEntryTitle(ShortcutOrderEntry entry) const override {
+    return entry.isAppsHub ? std::string(tr(STR_APPS)) : std::string(I18N.get(entry.definition->nameId));
+  }
 
  private:
   ShortcutOrderGroup group;
-  ListInputMapper listInputMapper;
-  const char* getTitle() const;
-
-  static void onBack(void* ctx);
-  static void onConfirm(void* ctx);
-  static void onNav(void* ctx, int delta);
 };

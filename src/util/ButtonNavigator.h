@@ -41,6 +41,13 @@ class ButtonNavigator final {
   [[nodiscard]] static int nextIndex(int currentIndex, int totalItems);
   [[nodiscard]] static int previousIndex(int currentIndex, int totalItems);
 
+  [[nodiscard]] static int clampIndex(int currentIndex, int totalItems) {
+    if (totalItems <= 0) return 0;
+    if (currentIndex < 0) return 0;
+    if (currentIndex >= totalItems) return totalItems - 1;
+    return currentIndex;
+  }
+
   [[nodiscard]] static int nextPageIndex(int currentIndex, int totalItems, int itemsPerPage);
   [[nodiscard]] static int previousPageIndex(int currentIndex, int totalItems, int itemsPerPage);
 
