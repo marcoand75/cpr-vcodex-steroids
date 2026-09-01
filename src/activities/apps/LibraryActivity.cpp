@@ -399,6 +399,7 @@ void LibraryActivity::refreshPageCache() {
     coverGen_.slot = 0;
     coverGen_.done = 0;
     coverGen_.total = 0;
+    coverGen_.pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
   }
 }
 
@@ -633,106 +634,81 @@ void LibraryActivity::beginTextSearch() {
 // ============================================================================
 
 void LibraryActivity::loop() {
-  // ---- Cover generation: one slot per frame, after grid is rendered -------
+  // ---- Cover generation: one slot per frame, non-blocking -------------------
   if (coverGen_.pending) {
     coverGen_.pending = false;
     coverGen_.active = true;
-    // Fall through to the generation loop below — coverGen_.slot/Done_/Total_
-    // are already set by the callback.
   }
   if (coverGen_.active) {
     const int total = totalBooks_;
-    const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-    
-    // First frame: count missing covers, let grid render first
-    if (coverGen_.slot == 0 && coverGen_.total == 0) {
-      for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
-        if (pageCache_[i].id == 0) continue;
-        std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
-        if (!Storage.exists(thumbPath.c_str())) {
-          ++coverGen_.total;
-        } else {
-          // Validate existing cover: ensure the BMP is actually readable
-          if (!isBookCoverReady(pageCache_[i].path)) {
-            // Corrupt — delete and regenerate
-            Storage.remove(thumbPath.c_str());
-            ++coverGen_.total;
-          }
-        }
-      }
-      if (coverGen_.total == 0) {
-        coverGen_.active = false;
-        return;
-      }
-      // First frame: let the grid render without blocking; cover gen starts
-      // on the next frame. Don't force another full render here — the grid
-      // is already visible from the initial page render.
-      LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGen_.total);
-      coverGen_.slot = -1;
-      requestUpdate();
-      return;
-    }
+    const int currentPage = total > 0 ? (selectorIndex_ / gridsPerPage_) : 0;
 
-    // Second frame onward: process one slot
-    if (coverGen_.slot == -1) coverGen_.slot = 0;  // first processing frame
-    
-    int slot = coverGen_.slot;
-    if (slot < gridsPerPage_ && (pageStart + slot) < total && pageCache_[slot].id != 0) {
-      std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
-      if (!Storage.exists(thumbPath.c_str())) {
-        yield(); esp_task_wdt_reset();
-        LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
-                coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
-                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-
-        // Temporarily move the selector to this book so the selection
-        // frame, title and author update to show which book is being processed.
-        // Save originals for restoration after generation.
-        const int savedSelector = selectorIndex_;
-        const std::string savedSelTitle = cachedSelTitle_;
-        const std::string savedSelAuthor = cachedSelAuthor_;
-        selectorIndex_ = pageStart + slot;
-        cachedSelTitle_ = pageCache_[slot].title;
-        cachedSelAuthor_ = pageCache_[slot].author[0] ? std::string(pageCache_[slot].author) : std::string{};
-
-        // Let the render show the updated selector + title/author + grid
-        // with placeholders. The cover generation happens after this.
-        forceRender_ = true;
-        requestUpdate();
-
-        // Generate cover using Epub/Xtc parser
-        if (generatePageCover(pageCache_[slot].path)) {
-          ++coverGen_.done;
-        }
-
-        // Restore original selector and title/author
-        selectorIndex_ = savedSelector;
-        cachedSelTitle_ = savedSelTitle;
-        cachedSelAuthor_ = savedSelAuthor;
-
-        // Force full render after EVERY cover so the new BMP appears on
-        // screen immediately (covers the progress bar). Without forceRender
-        // the render early-out would skip the update (same page, same selector).
-        forceRender_ = true;
-        requestUpdate();
-      }
-    }
-
-    ++coverGen_.slot;
-    if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
-      LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+    // If the user changed page during generation, cancel current work
+    // and restart on the new page on the next frame.
+    if (coverGen_.pageStart != currentPage) {
       coverGen_.active = false;
+      coverGen_.pending = true;
       coverGen_.slot = 0;
       coverGen_.done = 0;
       coverGen_.total = 0;
-      // Force a full render at finish to ensure:
-      // - All generated covers appear on screen
-      // - The progress text "X/Y Loading..." disappears
-      // - Power-save wake renders don't leave stale frames
-      forceRender_ = true;
-      requestUpdate();
+      coverGen_.pageStart = -1;
+    } else {
+      // First frame: count missing covers, let grid render first
+      if (coverGen_.slot == 0 && coverGen_.total == 0) {
+        for (int i = 0; i < gridsPerPage_ && (coverGen_.pageStart + i) < total; ++i) {
+          if (pageCache_[i].id == 0) continue;
+          std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
+          if (!Storage.exists(thumbPath.c_str())) {
+            ++coverGen_.total;
+          } else {
+            if (!isBookCoverReady(pageCache_[i].path)) {
+              Storage.remove(thumbPath.c_str());
+              ++coverGen_.total;
+            }
+          }
+        }
+        if (coverGen_.total == 0) {
+          coverGen_.active = false;
+          coverGen_.pageStart = -1;
+        } else {
+          LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGen_.total);
+          coverGen_.slot = -1;
+          requestUpdate();
+        }
+      }
+      // Second frame onward: process one slot
+      else if (coverGen_.slot != 0 || coverGen_.total != 0) {
+        if (coverGen_.slot == -1) coverGen_.slot = 0;
+
+        int slot = coverGen_.slot;
+        if (slot < gridsPerPage_ && (coverGen_.pageStart + slot) < total && pageCache_[slot].id != 0) {
+          std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
+          if (!Storage.exists(thumbPath.c_str())) {
+            yield(); esp_task_wdt_reset();
+            LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
+                    coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
+                    ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+            // Generate cover using CoverGenerator utility
+            if (generatePageCover(pageCache_[slot].path)) {
+              ++coverGen_.done;
+            }
+          }
+        }
+
+        ++coverGen_.slot;
+        if (coverGen_.slot >= gridsPerPage_ || (coverGen_.pageStart + coverGen_.slot) >= total) {
+          LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+          coverGen_.active = false;
+          coverGen_.slot = 0;
+          coverGen_.done = 0;
+          coverGen_.total = 0;
+          coverGen_.pageStart = -1;
+          forceRender_ = true;
+          requestUpdate();
+        }
+      }
     }
-    return;  // block input while generating covers
   }
 
   // ---- Popup input handling -----------------------------------------------
@@ -778,6 +754,12 @@ void LibraryActivity::loop() {
   if (total <= 0) {
     upPress_.reset();
     downPress_.reset();
+    coverGen_.active = false;
+    coverGen_.pending = false;
+    coverGen_.slot = 0;
+    coverGen_.done = 0;
+    coverGen_.total = 0;
+    coverGen_.pageStart = -1;
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       upPress_.reset();
       downPress_.reset();
@@ -882,6 +864,7 @@ void LibraryActivity::loop() {
                         coverGen_.slot = 0;
                         coverGen_.done = 0;
                         coverGen_.total = 0;
+                        coverGen_.pageStart = -1;
                         forceRender_ = true;
                         requestUpdate();
                       });
@@ -900,6 +883,7 @@ void LibraryActivity::loop() {
                         coverGen_.slot = 0;
                         coverGen_.done = 0;
                         coverGen_.total = 0;
+                        coverGen_.pageStart = -1;
                         forceRender_ = true;
                         requestUpdate();
                       });
