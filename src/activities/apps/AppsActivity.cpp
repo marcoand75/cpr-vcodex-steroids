@@ -46,6 +46,10 @@ std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItem
   const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
   return std::to_string(currentPage) + "/" + std::to_string(totalPages) + " | " + std::to_string(totalItems);
 }
+
+// Long-press threshold for the library context-menu. Match HomeActivity's
+// RECENT_BOOK_LONG_PRESS_MS (1500ms) for consistent cross-screen behavior.
+constexpr unsigned long LIBRARY_LONG_PRESS_MS = 1500;
 }  // namespace
 
 void AppsActivity::onEnter() {
@@ -104,6 +108,29 @@ void AppsActivity::onEnter() {
 
 void AppsActivity::loop() {
   listInputMapper.loop(mappedInput);
+
+  // Long-press detect: if the user is currently holding Confirm on the
+  // library shortcut for >= LIBRARY_LONG_PRESS_MS, open the library context
+  // menu. We can't do this from the setConfirmHandler (which fires on the
+  // press edge where getHeldTime is 0), so we poll isPressed+getHeldTime
+  // each frame. A static local flag makes sure we fire the menu exactly
+  // once per hold, even if the held duration is checked many times.
+  static bool longPressFired = false;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressFired = false;
+  } else if (!longPressFired && appShortcuts.size() > selectedIndex &&
+             appShortcuts[selectedIndex] && appShortcuts[selectedIndex]->id == ShortcutId::Library &&
+             mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+             mappedInput.getHeldTime() >= LIBRARY_LONG_PRESS_MS) {
+    longPressFired = true;
+    startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
+                           [this](const ActivityResult&) {
+                             appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                             rebuildShortcutSubtitles();
+                             selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
+                             requestUpdate();
+                           });
+  }
 }
 
 void AppsActivity::render(RenderLock&&) {
@@ -212,12 +239,12 @@ void AppsActivity::openSelectedApp() {
       activityManager.goToFileTransfer();
       return;
     case ShortcutId::Library:
-      if (mappedInput.getHeldTime() >= 1000) {
-        startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
-                               [this](const ActivityResult&) { requestUpdate(); });
-      } else {
-        activityManager.goToLibrary(true);
-      }
+      // Direct launch of the library. The library context menu is reached via
+      // long-press on the confirm button — see AppsActivity::loop() which
+      // polls isPressed+getHeldTime each frame. We must NOT branch on
+      // getHeldTime() here: openSelectedApp() is called from a press-edge
+      // setConfirmHandler (useRelease=false), where getHeldTime() is always 0.
+      activityManager.goToLibrary(true);
       return;
     case ShortcutId::ScreenClean:
       activity = std::make_unique<ScreenCleanActivity>(renderer, mappedInput);
