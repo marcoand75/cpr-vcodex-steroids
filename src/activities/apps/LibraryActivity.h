@@ -64,7 +64,6 @@ class LibraryActivity final : public Activity {
     int  slot = 0;         // current slot being processed (0..gridsPerPage_-1)
     int  done = 0;         // number of covers successfully generated
     int  total = 0;        // total missing covers on this page
-    int  pageStart = -1;   // page start index when generation began
   };
   CoverGenState coverGen_;
 
