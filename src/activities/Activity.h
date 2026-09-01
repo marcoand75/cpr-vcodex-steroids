@@ -69,8 +69,11 @@ class Activity {
   // Finish this activity and return to the previous one on the stack (if any)
   void finish();
 
-  // Convenience method to facilitate API transition to ActivityManager
-  // TODO: remove this in near future
+  // Convenience forwarders to ActivityManager. Widely used across the
+  // codebase (OpdsBookBrowser, RecentBooks, HomeActivity, FileBrowser,
+  // ScreenSaverActivity, LibraryActivity, ReadingStatsDetail, etc.) — the
+  // methods are intentionally kept on Activity to keep call sites short
+  // and to make the activity lifecycle a single point of contact.
   void onGoHome();
   void onSelectBook(const std::string& path);
 };

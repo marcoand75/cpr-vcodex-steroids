@@ -927,6 +927,99 @@ void setup() {
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
+// Power button state machine: short press, long press, release.
+//
+// Split into 3 sub-functions (onPressEdge / onLongPressHold / onReleaseEdge)
+// for readability. The static state lives at file scope so it survives across
+// loop iterations.
+//
+//   press edge  → record start time; if a screen saver is active, remember it
+//                 so the release edge suppresses the shortPwrBtn action.
+//   hold >= configured duration → if reader + screenSaverReplaceSleep + battery
+//                                  ok, push the replacement screensaver.
+//                                otherwise enterDeepSleep() (does not return).
+//   release edge → follow shortPwrBtn (FORCE_REFRESH here, TOGGLE_STATUS_BAR
+//                 and PAGE_TURN inside the reader activity's loop()).
+//                 Suppress the release action when a screen saver is the
+//                 current activity (the wake-key event is consumed by the
+//                 screen-saver activity itself, not by the main loop).
+
+namespace {
+
+// Persistent state for the power-button state machine. Lives at namespace
+// scope so the values survive across loop() iterations; using a struct keeps
+// the per-field resets in one place.
+struct PowerButtonState {
+  unsigned long downMs = 0;
+  // True when the press started while a screen saver was active. Suppresses
+  // the release-edge shortPwrBtn action so the wake-key event is consumed
+  // entirely by the screen-saver logic.
+  bool suppressNextRelease = false;
+};
+
+PowerButtonState& powerButtonState() {
+  static PowerButtonState s;
+  return s;
+}
+
+// Returns true if the caller MUST return from loop() (because we entered
+// deep sleep or pushed the replacement screensaver). The caller is expected
+// to return immediately on true.
+bool handlePowerButtonPressEdge() {
+  if (!gpio.wasPressed(HalGPIO::BTN_POWER)) return false;
+  auto& s = powerButtonState();
+  s.downMs = millis();
+  if (activityManager.isScreenSaverActive()) {
+    s.suppressNextRelease = true;
+  }
+  return false;
+}
+
+// Long-press detection: while the button is held past the configured
+// duration, fire either the replacement screensaver (reader + battery ok)
+// or deep sleep. Returns true when the caller must return.
+bool handlePowerButtonLongPressHold() {
+  auto& s = powerButtonState();
+  if (s.downMs == 0) return false;
+  // While a screen saver is already active, the screen-saver activity
+  // handles wake-button events itself (it calls finish() or onGoHome() and
+  // returns to the previous activity), so we skip the long-press detection
+  // entirely.
+  if (activityManager.isScreenSaverActive()) return false;
+  if (!gpio.isPressed(HalGPIO::BTN_POWER)) return false;
+  if (millis() - s.downMs < SETTINGS.getPowerButtonDuration()) return false;
+
+  if (canStartReplacementScreenSaver()) {
+    startReplacementScreenSaver();
+    s.downMs = 0;
+    return true;
+  }
+  enterDeepSleep();
+  s.downMs = 0;
+  return true;  // enterDeepSleep() does not return, but if it ever does we
+                // still want the loop to bail out.
+}
+
+void handlePowerButtonReleaseEdge() {
+  auto& s = powerButtonState();
+  // Suppress the release-edge shortPwrBtn action when a screen saver is
+  // involved (the wake-key event is consumed by the screen-saver logic).
+  if (s.suppressNextRelease || activityManager.isScreenSaverActive()) {
+    s.suppressNextRelease = false;
+    s.downMs = 0;
+    return;
+  }
+  // FORCE_REFRESH: redraw the screen on every short press.
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH &&
+      mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
+    LOG_DBG("MAIN", "Manual screen refresh triggered");
+    RenderLock lock;
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  }
+}
+
+}  // namespace
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
@@ -1024,67 +1117,11 @@ void loop() {
     return;
   }
 
-  // Power button state tracking for short/long press distinction.
-  // Short press follows shortPwrBtn setting; long press always deep sleeps
-  // (or starts screensaver if screen-saver-replace-sleep is configured).
-  static unsigned long powerBtnDownMs = 0;
-  // Set to true while the screen saver is active so that the release-edge
-  // shortPwrBtn handlers (FORCE_REFRESH, TOGGLE_STATUS_BAR, PAGE_TURN)
-  // are suppressed when the screen saver is dismissed by the power button.
-  static bool powerBtnInScreensaver = false;
-
-  // On press edge: start tracking press duration.
-  // If a screen saver is active, remember it so the release edge can be
-  // suppressed (prevents shortPwrBtn action firing after the wake button
-  // dismisses the screen saver).
-  if (gpio.wasPressed(HalGPIO::BTN_POWER)) {
-    powerBtnDownMs = millis();
-    if (activityManager.isScreenSaverActive()) {
-      powerBtnInScreensaver = true;
-    }
-  }
-
-  // Long press detection: held >= configured duration → screensaver (if
-  // configured for reader activity) or deep sleep, regardless of shortPwrBtn.
-  // While a screen saver is already active we skip this check so the screen
-  // saver activity can handle wake-button events itself (it calls finish()
-  // or onGoHome() and returns to the previous activity).
-  if (powerBtnDownMs > 0 && !activityManager.isScreenSaverActive() &&
-      gpio.isPressed(HalGPIO::BTN_POWER)) {
-    if (millis() - powerBtnDownMs >= SETTINGS.getPowerButtonDuration()) {
-      if (canStartReplacementScreenSaver()) {
-        startReplacementScreenSaver();
-        powerBtnDownMs = 0;
-        return;
-      }
-      enterDeepSleep();
-      powerBtnDownMs = 0;
-      return;
-    }
-  }
-
-   // Short press release edge: follow shortPwrBtn settings.
-   // Non-SLEEP modes do not deep sleep on press; they fall through to the
-   // release-edge handlers below (FORCE_REFRESH in main loop,
-   // TOGGLE_STATUS_BAR and PAGE_TURN in the reader activity loop).
-   // If the press started while a screen saver was active, suppress the
-   // release-edge shortPwrBtn action so the wake-key event stays
-   // consumed entirely by the screen saver logic. We also suppress when a
-   // screen saver is still the current activity at release, so launches from
-   // Home/Apps (which can push the activity slightly later than the press
-   // edge is sampled) never trigger the short-press action on wake.
-   if (powerBtnInScreensaver || activityManager.isScreenSaverActive()) {
-     powerBtnInScreensaver = false;
-     powerBtnDownMs = 0;
-   } else {
-     // Refresh screen when power button is short-pressed with FORCE_REFRESH setting.
-     if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH &&
-         mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
-       LOG_DBG("MAIN", "Manual screen refresh triggered");
-       RenderLock lock;
-       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-     }
-   }
+  // Power button state machine. Each phase returns a "must return" flag so
+  // the loop structure stays flat and easy to follow.
+  if (handlePowerButtonPressEdge()) return;
+  if (handlePowerButtonLongPressHold()) return;
+  handlePowerButtonReleaseEdge();
 
   // Refresh the battery icon when USB is plugged or unplugged.
   // Placed after sleep guards so we never queue a render that won't be processed.
