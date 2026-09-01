@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <EpdFontFamily.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
 
 // Shared text/panel drawing helpers extracted from SleepActivity's
@@ -66,6 +68,19 @@ inline void drawProgressBar(const GfxRenderer& renderer, const Rect& rect, const
   if (fillW > 0 && innerH > 0) {
     renderer.fillRect(innerX, innerY, fillW, innerH, true);
   }
+}
+
+// Integer percent rounded to nearest (0..100) from value/target.
+// Returns 0 if target is zero (avoids divide-by-zero in dashboards).
+inline int percentOf(const uint64_t value, const uint64_t target) {
+  if (target == 0) return 0;
+  return static_cast<int>(std::clamp((value * 100 + target / 2) / target,
+                                      static_cast<uint64_t>(0), static_cast<uint64_t>(100)));
+}
+
+// Format a percent (0..100) into a string with the trailing "%" sign.
+inline std::string formatPercent(const int percent) {
+  return std::to_string(std::clamp(percent, 0, 100)) + "%";
 }
 
 }  // namespace text_draw

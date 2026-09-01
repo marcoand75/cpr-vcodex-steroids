@@ -106,13 +106,10 @@ void renderSleepGrayscaleOverlay(GfxRenderer& renderer, RenderFn&& renderFn) {
 }
 
 int percentOf(const uint64_t value, const uint64_t target) {
-  if (target == 0) {
-    return 0;
-  }
-  return static_cast<int>(std::min<uint64_t>(100, (value * 100ULL + target / 2ULL) / target));
+  return text_draw::percentOf(value, target);
 }
 
-std::string formatPercent(const int percent) { return std::to_string(std::clamp(percent, 0, 100)) + "%"; }
+std::string formatPercent(const int percent) { return text_draw::formatPercent(percent); }
 
 std::string formatBookTitleFromPath(const std::string& path) {
   std::string name = path;
