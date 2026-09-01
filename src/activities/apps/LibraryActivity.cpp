@@ -18,6 +18,7 @@
 #include "../home/BookContextMenuActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "../util/KeyboardEntryActivity.h"
+#include "util/BookFilter.h"
 #include "util/StringUtils.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
@@ -126,59 +127,11 @@ void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
   }
 }
 
-// ---- String normalization (zero-allocation for sort/search) ---------------
-
-char normalizeChar(unsigned char c) {
-  switch (c) {
-    case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: return 'a';
-    case 0xC8: case 0xC9: case 0xCA: case 0xCB: return 'e';
-    case 0xCC: case 0xCD: case 0xCE: case 0xCF: return 'i';
-    case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: return 'o';
-    case 0xD9: case 0xDA: case 0xDB: case 0xDC: return 'u';
-    case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: return 'a';
-    case 0xE8: case 0xE9: case 0xEA: case 0xEB: return 'e';
-    case 0xEC: case 0xED: case 0xEE: case 0xEF: return 'i';
-    case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: return 'o';
-    case 0xF9: case 0xFA: case 0xFB: case 0xFC: return 'u';
-    case 0xD1: case 0xF1: return 'n';
-    case 0xC7: case 0xE7: return 'c';
-    default: break;
-  }
-  return static_cast<char>(std::tolower(c));
-}
-
-std::string normalizeForSort(const std::string& s) {
-  std::string out;
-  out.reserve(s.size());
-  for (size_t i = 0; i < s.size(); ++i) {
-    out.push_back(normalizeChar(static_cast<unsigned char>(s[i])));
-  }
-  return out;
-}
-
-static int compareNormalized(const std::string& a, const std::string& b) {
-  const size_t na = a.size();
-  const size_t nb = b.size();
-  const size_t n = std::min(na, nb);
-  for (size_t i = 0; i < n; ++i) {
-    const char ca = normalizeChar(static_cast<unsigned char>(a[i]));
-    const char cb = normalizeChar(static_cast<unsigned char>(b[i]));
-    if (ca != cb) return (ca < cb) ? -1 : 1;
-  }
-  if (na != nb) return (na < nb) ? -1 : 1;
-  return 0;
-}
-
-std::string filenameWithoutExtension(const std::string& path) {
-  std::string name = path;
-  const size_t lastSlash = name.find_last_of('/');
-  if (lastSlash != std::string::npos) name = name.substr(lastSlash + 1);
-  const size_t lastDot = name.find_last_of('.');
-  if (lastDot != std::string::npos && lastDot > 0) name = name.substr(0, lastDot);
-  return name;
-}
-
 // ---- Filter predicate ------------------------------------------------------
+//
+// The 3 filter modes that don't need extra data plumbing (All / Favourites /
+// LatestRead) are kept inline; the FAVOURITES / LATEST_READ check uses the
+// process-global stores. CrossPointSettings is required for the enum.
 
 static bool includeBookByFilter(const LibraryCache::Entry& e, CrossPointSettings::LIBRARY_FILTER filter) {
   switch (filter) {
@@ -879,7 +832,7 @@ void LibraryActivity::loop() {
         if (collectionsMode_ && currentCollectionIdx_ < 0) {
           return;  // no context menu on collections list items
         }
-        const std::string title = pageCache_[slot].title[0] ? pageCache_[slot].title : filenameWithoutExtension(path);
+        const std::string title = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(path);
         const bool isEpub = FsHelpers::hasEpubExtension(std::string_view{path.c_str()});
         const bool isFav = FAVORITES.isFavorite(path);
         const auto* stats = READING_STATS.findBook(path);
@@ -1279,7 +1232,7 @@ void LibraryActivity::render(RenderLock&&) {
 
           if (selectorIndex_ < total) {
             int slot = selectorIndex_ % gridsPerPage_;
-            cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : filenameWithoutExtension(pageCache_[slot].path);
+            cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(pageCache_[slot].path);
             cachedSelAuthor_ = pageCache_[slot].author;
             const int maxSelW = pageWidth - 16;  // 8px margin each side
             cachedSelTitle_ = renderer.truncatedText(UI_10_FONT_ID, cachedSelTitle_.c_str(), maxSelW, EpdFontFamily::BOLD);
@@ -1394,7 +1347,7 @@ void LibraryActivity::render(RenderLock&&) {
 
     if (selectorIndex_ < total) {
       int slot = selectorIndex_ % gridsPerPage_;
-      cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : filenameWithoutExtension(pageCache_[slot].path);
+      cachedSelTitle_ = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(pageCache_[slot].path);
       cachedSelAuthor_ = pageCache_[slot].author;
       const int maxSelW = pageWidth - 16;  // 8px margin each side
       cachedSelTitle_ = renderer.truncatedText(UI_10_FONT_ID, cachedSelTitle_.c_str(), maxSelW, EpdFontFamily::BOLD);
@@ -1472,7 +1425,7 @@ void LibraryActivity::render(RenderLock&&) {
       for (int i = 0; i < pageCount; ++i) {
         const int idx = pageStart + i;
         std::string t(pageCache_[i].title);
-        if (t.empty()) t = filenameWithoutExtension(pageCache_[i].path);
+        if (t.empty()) t = book_filter::filenameWithoutExtension(pageCache_[i].path);
         pageTitleCache_.push_back(renderer.wrappedText(SMALL_FONT_ID, t.c_str(),
                                                        coverWidth_ - 2 * kCoverTextPad, 3, EpdFontFamily::BOLD));
       }
