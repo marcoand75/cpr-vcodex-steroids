@@ -509,7 +509,7 @@ Steroids activity** and re-apply the `text_overlay::` / `text_draw::` /
 This file is the **first thing** a new Steroids contributor must read.
 When adding a new shared util:
 1. Add a row to the table in §1.
-2. Add a full "How to use" section modeled on §2-7 and §12.
+2. Add a full "How to use" section modeled on §2-7 and §12-13.
 3. Update the "Pre-Merge Checklist" in §10.
 4. Run the build command in §9 and verify the footprint delta.
 5. Add a commit named `feat: <util name>` with a description of the
