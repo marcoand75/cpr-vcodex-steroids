@@ -101,6 +101,82 @@ static bool copyVerifiedJsonTempToTarget(const char* moduleName, const std::stri
   return true;
 }
 
+static bool promoteJsonTempFile(const char* moduleName, const char* tempPath, const char* targetPath,
+                         const size_t expectedSize) {
+  if (Storage.exists(targetPath) && !Storage.remove(targetPath)) {
+    Storage.remove(tempPath);
+    LOG_ERR(moduleName, "Could not remove JSON file before replace: %s", targetPath);
+    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Could not remove JSON file before replace: ") + targetPath);
+    return false;
+  }
+
+  if (!Storage.rename(tempPath, targetPath)) {
+    LOG_ERR(moduleName, "Could not rename JSON temp file to final path: %s; trying checked copy", targetPath);
+    CPR_VCODEX_LOG_EVENT(moduleName, std::string("JSON temp rename failed; trying checked copy for ") + targetPath);
+
+    if (!copyVerifiedJsonTempToTarget(moduleName, tempPath, targetPath, expectedSize)) {
+      LOG_ERR(moduleName, "Could not promote JSON temp file to final path: %s", targetPath);
+      CPR_VCODEX_LOG_EVENT(moduleName,
+                           std::string("Could not promote JSON temp file; kept it for recovery: ") + tempPath);
+      return false;
+    }
+
+    Storage.remove(tempPath);
+    LOG_DBG(moduleName, "Recovered JSON replacement via checked copy: %s", targetPath);
+    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Recovered JSON replacement via checked copy: ") + targetPath);
+  }
+
+  return true;
+}
+
+class JsonStreamWriter {
+ public:
+  explicit JsonStreamWriter(HalFile& file) : file_(file) {}
+
+  void literal(const char* text) {
+    if (!ok_ || !text) return;
+    const size_t length = std::strlen(text);
+    expectedBytes_ += length;
+    const size_t written = file_.write(text, length);
+    writtenBytes_ += written;
+    if (written != length) ok_ = false;
+  }
+
+  void value(const std::string& text) { writeScalar(JsonString(text.data(), text.size(), true)); }
+
+  template <typename T>
+  void value(const T value) {
+    writeScalar(value);
+  }
+
+  bool ok() const { return ok_; }
+  size_t expectedBytes() const { return expectedBytes_; }
+  size_t writtenBytes() const { return writtenBytes_; }
+
+ private:
+  template <typename T>
+  void writeScalar(const T value) {
+    if (!ok_) return;
+
+    JsonDocument scalar;
+    if (!scalar.set(value) || scalar.overflowed()) {
+      ok_ = false;
+      return;
+    }
+
+    const size_t expected = measureJson(scalar);
+    const size_t written = serializeJson(scalar, file_);
+    expectedBytes_ += expected;
+    writtenBytes_ += written;
+    if (written != expected) ok_ = false;
+  }
+
+  HalFile& file_;
+  size_t expectedBytes_ = 0;
+  size_t writtenBytes_ = 0;
+  bool ok_ = true;
+};
+
 static bool saveJsonDocumentToFile(const char* moduleName, const char* path, const JsonDocument& doc) {
   const std::string targetPath = path ? path : "";
   const std::string tempPath = targetPath + ".tmp";
@@ -143,32 +219,7 @@ static bool saveJsonDocumentToFile(const char* moduleName, const char* path, con
     return false;
   }
 
-  if (Storage.exists(targetPath.c_str()) && !Storage.remove(targetPath.c_str())) {
-    Storage.remove(tempPath.c_str());
-    LOG_ERR(moduleName, "Could not remove JSON file before replace: %s", targetPath.c_str());
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Could not remove JSON file before replace: ") + targetPath);
-    return false;
-  }
-
-  if (!Storage.rename(tempPath.c_str(), targetPath.c_str())) {
-    LOG_ERR(moduleName, "Could not rename JSON temp file to final path: %s; trying checked copy", targetPath.c_str());
-    CPR_VCODEX_LOG_EVENT(moduleName,
-                         std::string("JSON temp rename failed; trying checked copy for ") + targetPath);
-
-    if (!copyVerifiedJsonTempToTarget(moduleName, tempPath, targetPath, expected)) {
-      LOG_ERR(moduleName, "Could not promote JSON temp file to final path: %s", targetPath.c_str());
-      CPR_VCODEX_LOG_EVENT(moduleName,
-                           std::string("Could not promote JSON temp file; kept it for recovery: ") + tempPath);
-      return false;
-    }
-
-    Storage.remove(tempPath.c_str());
-    LOG_DBG(moduleName, "Recovered JSON replacement via checked copy: %s", targetPath.c_str());
-    CPR_VCODEX_LOG_EVENT(moduleName,
-                         std::string("Recovered JSON replacement via checked copy: ") + targetPath);
-  }
-
-  return true;
+  return promoteJsonTempFile(moduleName, tempPath.c_str(), targetPath.c_str(), written);
 }
 
 static bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocument& doc) {

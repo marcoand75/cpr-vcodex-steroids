@@ -41,7 +41,7 @@ void PluginBrowserActivity::scanPlugins() {
   pluginList_.clear();
   selectedIndex_ = 0;
 
-  std::vector<String> files = Storage.listFiles("/custom", 100, false);
+  std::vector<String> files = Storage.listFiles("/custom", 100);
 
   for (const String& name : files) {
     // Check for .lua extension

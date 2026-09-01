@@ -1,8 +1,8 @@
 # SD Card Fonts
 
-CPR-vCodex supports loading additional fonts from the SD card. Common
-downloadable families are provided by CrossPoint, while the CPR-vCodex source is
-reserved for vCodex-only additions such as ChareInk.
+CPR-vCodex Steroids supports loading additional fonts from the SD card. Common
+downloadable families are provided by CrossPoint, while the CPR-vCodex Steroids source
+provides vCodex-specific additions such as ChareInk and Lexend.
 
 ## Installing Fonts
 
@@ -10,27 +10,27 @@ There are three ways to install fonts.
 
 ### Option 1: Download from device
 
-1. Connect your CPR-vCodex reader to WiFi
+1. Connect your CPR-vCodex Steroids reader to WiFi
 2. Go to **Settings > Reader > Manage Fonts**
 3. Browse available font families and tap to download
 4. Downloaded fonts appear immediately in **Settings > Reader > Font Family**
 
 ### Option 2: Upload via web browser
 
-1. Connect your CPR-vCodex reader to WiFi
+1. Connect your CPR-vCodex Steroids reader to WiFi
 2. Open the web interface in your browser (shown on the WiFi screen)
 3. Navigate to the **Fonts** tab
 4. Upload `.cpfont` files using the upload form
 
 ### Option 3: Manual SD card copy
 
-For the fastest full vCodex-only install, download
-[`all-fonts.zip`](https://github.com/franssjz/cpr-vcodex/releases/download/sd-fonts-m1-b4/all-fonts.zip)
+For the fastest full CPR-vCodex Steroids font install, download
+[`all-fonts.zip`](https://github.com/marcoand75/CPR-vCodex Steroids-steroids/releases/download/sd-fonts-m1-b4/all-fonts.zip)
 and extract it into the root of the microSD card. It creates the ready-to-use
 `/fonts/<family>/*.cpfont` tree.
 
 For a single family, download the `.cpfont` files for the family you want from
-the [CPR-vCodex SD font release](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4),
+the [CPR-vCodex Steroids SD font release](https://github.com/marcoand75/CPR-vCodex Steroids-steroids/releases/tag/sd-fonts-m1-b4),
 then create a folder with the family name and copy its `.cpfont` files to one
 of two locations on your SD card:
 
@@ -51,22 +51,28 @@ SD Card Root/
 |       |-- ChareInk_16.cpfont
 |       `-- ChareInk_18.cpfont
 `-- fonts/                      Visible root (equally valid)
+    |-- Lexend/
+    |   |-- Lexend_10.cpfont
+    |   |-- Lexend_12.cpfont
+    |   |-- Lexend_14.cpfont
+    |   |-- Lexend_16.cpfont
+    |   `-- Lexend_18.cpfont
     `-- MyFont/
         |-- MyFont_12.cpfont
         `-- ...
 ```
 
-Insert the SD card and power on your CPR-vCodex reader. The installed families
+Insert the SD card and power on your CPR-vCodex Steroids reader. The installed families
 will appear under **Settings > Reader > Font Family**.
 
 ## Available Pre-Built Fonts
 
-The current list of CPR-vCodex-only pre-built fonts is maintained in
-`lib/EpdFont/scripts/sd-fonts.yaml` and published as CPR-vCodex release assets:
+The current list of CPR-vCodex Steroids-only pre-built fonts is maintained in
+`lib/EpdFont/scripts/sd-fonts.yaml` and published as CPR-vCodex Steroids release assets:
 
-- Stable device manifest: https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4
-- Manual vCodex-only package: https://github.com/franssjz/cpr-vcodex/releases/download/sd-fonts-m1-b4/all-fonts.zip
-- Device manifest: https://github.com/franssjz/cpr-vcodex/releases/download/sd-fonts-m1-b4/fonts.json
+- Stable device manifest: https://github.com/marcoand75/CPR-vCodex Steroids-steroids/releases/tag/sd-fonts-m1-b4
+- Manual CPR-vCodex Steroids font package: https://github.com/marcoand75/CPR-vCodex Steroids-steroids/releases/download/sd-fonts-m1-b4/all-fonts.zip
+- Device manifest: https://github.com/marcoand75/CPR-vCodex Steroids-steroids/releases/download/sd-fonts-m1-b4/fonts.json
 
 The `sd-fonts-m<META>-b<BIN>` tag is tied to the manifest schema and `.cpfont`
 binary format supported by the firmware. When either format changes, update the
@@ -115,6 +121,7 @@ To convert your own TrueType/OpenType fonts:
 | `armenian` | Armenian |
 | `ethiopic` | Ethiopic + Extended |
 | `vietnamese` | Vietnamese subset (o/u horn and combining marks) |
+| `ipa-chars` | IPA Extensions + Spacing Modifier Letters (phonetic transcription) |
 | `punctuation` | General punctuation (U+2000-U+206F) |
 | `cjk` | CJK Unified Ideographs + Hiragana + Katakana + Fullwidth |
 | `hangul` | Korean Hangul syllables + Jamo + Compatibility Jamo |

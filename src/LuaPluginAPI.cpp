@@ -489,7 +489,7 @@ static int l_fs_listDir(lua_State* L) {
   if (!Storage.exists(dir.c_str())) {
     return 1;
   }
-  std::vector<String> files = Storage.listFiles(dir.c_str(), 100, true);
+  std::vector<String> files = Storage.listFiles(dir.c_str(), 100);
   for (size_t i = 0; i < files.size(); i++) {
     lua_pushinteger(L, static_cast<lua_Integer>(i + 1));
     lua_pushstring(L, files[i].c_str());

@@ -1285,7 +1285,7 @@ bool WikipediaActivity::loadCachedArticle(const std::string& title) {
 void WikipediaActivity::loadCachedPages() {
   cachedPageTitles.clear();
   Storage.mkdir(CACHE_DIR);
-  auto files = Storage.listFiles(CACHE_DIR, 200, /*includeDirectories=*/true);
+  auto files = Storage.listFiles(CACHE_DIR, 200);
   for (auto& f : files) {
     std::string name = f.c_str();
     // New format: per-article directories named wiki_<hash> containing article.md
