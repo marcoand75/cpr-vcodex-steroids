@@ -53,6 +53,7 @@
 #include "util/CprVcodexLogs.h"
 #include "util/ScreenshotUtil.h"
 #include "util/TimeUtils.h"
+#include "util/ArenaAllocator.h"
 
 MappedInputManager mappedInputManager(gpio);
 GfxRenderer renderer(display);
@@ -60,6 +61,14 @@ ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+
+// Activity scratch arena — 64 KB contiguous buffer, no heap fragmentation.
+// HomeActivity and future activities use this for temporary vectors, strings,
+// and cover buffers. Reset in O(1) on activity switch.
+static uint8_t g_activityArenaBuffer[64 * 1024];
+namespace util {
+Arena g_activityArena(g_activityArenaBuffer, sizeof(g_activityArenaBuffer), ArenaAlign::_8);
+}
 
 // Fonts
 #ifndef OMIT_BOOKERLY
