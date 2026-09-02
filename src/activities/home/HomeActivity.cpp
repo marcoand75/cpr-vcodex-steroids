@@ -58,6 +58,7 @@
 #include "components/PanelDrawHelper.h"
 #include "fontIds.h"
 #include "../util/ListRenderHelper.h"
+#include "util/BookCacheUtils.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -1327,9 +1328,7 @@ void HomeActivity::loop() {
                   return;
                 }
                 case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_CACHE): {
-                  Epub epub(selectedBook.path, "/.crosspoint");
-                  epub.load(false, true);
-                  epub.clearCache();
+                  clearBookCache(selectedBook.path);
                   break;
                 }
                 case static_cast<int>(BookContextMenuActivity::MenuAction::CLEAR_THEME_CACHE): {
