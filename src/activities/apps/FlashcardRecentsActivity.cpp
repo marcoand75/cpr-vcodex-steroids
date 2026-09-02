@@ -119,6 +119,11 @@ void FlashcardRecentsActivity::loop() {
   });
 }
 
+void FlashcardRecentsActivity::freeBackgroundMemory() {
+  decks.clear();
+  LOG_DBG("ACT", "FlashcardRecents freeBackgroundMemory: decks=%zu", decks.size());
+}
+
 void FlashcardRecentsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 

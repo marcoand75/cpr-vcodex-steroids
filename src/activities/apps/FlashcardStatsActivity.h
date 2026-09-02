@@ -20,4 +20,5 @@ class FlashcardStatsActivity final : public Activity {
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
+  void freeBackgroundMemory() override;
 };
