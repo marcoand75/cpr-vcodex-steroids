@@ -205,7 +205,7 @@ void ActivityManager::loop() {
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
       LOG_DBG("ACT", "activity started: name='%s' arena used=%u maxUsed=%u capacity=%u heap=%u maxA=%u",
-                   currentActivity->name,
+                   currentActivity->name.c_str(),
                    static_cast<unsigned>(util::g_activityArena.used()),
                    static_cast<unsigned>(util::g_activityArena.maxUsed()),
                    static_cast<unsigned>(util::g_activityArena.capacity()),

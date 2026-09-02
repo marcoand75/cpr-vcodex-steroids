@@ -1014,6 +1014,8 @@ void HomeActivity::invalidateCarouselFrameHash() {
   cachedCarouselFrameHashIndex = -1;
   cachedCarouselFrameHash = 0;
   cachedCarouselFrameHashValid = false;
+  cachedCarouselFramePrefixHash = 0;
+  cachedCarouselFramePrefixValid = false;
 }
 
 void HomeActivity::requestFreshHomeRender(const bool immediate) {
@@ -1029,13 +1031,24 @@ uint32_t HomeActivity::getCachedCarouselFrameHash(const int bookIndex) {
   }
 
   const int safeBookIndex = wrapBookIndex(bookIndex, static_cast<int>(recentBooks.size()));
-  if (!cachedCarouselFrameHashValid || cachedCarouselFrameHashIndex != safeBookIndex) {
-    cachedCarouselFrameHash =
-        getCarouselFrameHash(recentBooks, safeBookIndex, renderer.getScreenWidth(), renderer.getScreenHeight(),
-                             renderer.getBufferSize(), renderer.isDarkMode());
-    cachedCarouselFrameHashIndex = safeBookIndex;
-    cachedCarouselFrameHashValid = true;
+  if (cachedCarouselFrameHashValid && cachedCarouselFrameHashIndex == safeBookIndex) {
+    return cachedCarouselFrameHash;
   }
+
+  // Compute the expensive per-book prefix only once, then derive each frame
+  // key by appending the center index. This turns O(N) SD accesses into O(1)
+  // for every index after the first lookup in a render pass.
+  if (!cachedCarouselFramePrefixValid) {
+    cachedCarouselFramePrefixHash =
+        getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                   renderer.getBufferSize(), renderer.isDarkMode());
+    cachedCarouselFramePrefixValid = true;
+  }
+
+  cachedCarouselFrameHash = CarouselHash::fnv1aU32(cachedCarouselFramePrefixHash,
+                                                   static_cast<uint32_t>(safeBookIndex));
+  cachedCarouselFrameHashIndex = safeBookIndex;
+  cachedCarouselFrameHashValid = true;
   return cachedCarouselFrameHash;
 }
 
