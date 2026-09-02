@@ -69,6 +69,7 @@ class EpubReaderActivity final : public Activity {
   bool clippingStartMarkSet = false;
   bool pendingReadingStatsLoad = false;
   bool pendingReadingStatsLoadDelayed = false;
+  bool pendingReadingStatsReload = false;
 
   struct ClippingWordInfo {
     std::string text;
@@ -213,4 +214,5 @@ class EpubReaderActivity final : public Activity {
   void render(RenderLock&& lock) override;
   bool isReaderActivity() const override { return true; }
   ScreenshotInfo getScreenshotInfo() const override;
+  void freeBackgroundMemory() override;
 };

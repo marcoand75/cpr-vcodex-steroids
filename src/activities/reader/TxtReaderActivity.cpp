@@ -341,6 +341,12 @@ void TxtReaderActivity::onExit() {
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
+void TxtReaderActivity::freeBackgroundMemory() {
+  READING_STATS.saveToFile();
+  READING_STATS.releaseMemoryForNetwork();
+  pendingReadingStatsReload = true;
+}
+
 void TxtReaderActivity::loop() {
   READING_STATS.tickActiveSession();
   const unsigned long nowMs = millis();
@@ -355,6 +361,12 @@ void TxtReaderActivity::loop() {
 
   if (pendingReadingStatsLoadDelayed) {
     pendingReadingStatsLoadDelayed = false;
+    READING_STATS.ensureLoaded();
+    READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
+  }
+
+  if (pendingReadingStatsReload) {
+    pendingReadingStatsReload = false;
     READING_STATS.ensureLoaded();
     READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
   }

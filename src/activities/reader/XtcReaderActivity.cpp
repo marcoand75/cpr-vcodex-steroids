@@ -146,6 +146,12 @@ void XtcReaderActivity::onExit() {
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
+void XtcReaderActivity::freeBackgroundMemory() {
+  READING_STATS.saveToFile();
+  READING_STATS.releaseMemoryForNetwork();
+  pendingReadingStatsReload = true;
+}
+
 void XtcReaderActivity::loop() {
   READING_STATS.tickActiveSession();
   if (!xtc) {
@@ -164,6 +170,14 @@ void XtcReaderActivity::loop() {
 
   if (pendingReadingStatsLoadDelayed) {
     pendingReadingStatsLoadDelayed = false;
+    READING_STATS.ensureLoaded();
+    READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
+                               xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
+                               getChapterProgressForStats(*xtc, currentPage));
+  }
+
+  if (pendingReadingStatsReload) {
+    pendingReadingStatsReload = false;
     READING_STATS.ensureLoaded();
     READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
                                xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
