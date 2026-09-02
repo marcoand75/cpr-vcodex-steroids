@@ -395,6 +395,11 @@ void FlashcardReviewActivity::onExit() {
   Activity::onExit();
 }
 
+void FlashcardReviewActivity::freeBackgroundMemory() {
+  wrappedLines.clear();
+  LOG_DBG("ACT", "FlashcardReview freeBackgroundMemory: wrappedLines=%zu", wrappedLines.size());
+}
+
 void FlashcardReviewActivity::loop() {
   if (!loaded) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
