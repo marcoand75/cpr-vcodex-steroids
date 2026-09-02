@@ -252,6 +252,11 @@ void BookmarksAppActivity::loop() {
   listInputMapper.loop(mappedInput);
 }
 
+void BookmarksAppActivity::freeBackgroundMemory() {
+  entries.clear();
+  LOG_DBG("ACT", "BookmarksApp freeBackgroundMemory: entries=%zu", entries.size());
+}
+
 void BookmarksAppActivity::render(RenderLock&&) {
   renderer.clearScreen();
 

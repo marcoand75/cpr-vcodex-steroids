@@ -175,6 +175,13 @@ void FileBrowserActivity::onExit() {
   fileNameBuffer.reset();
 }
 
+void FileBrowserActivity::freeBackgroundMemory() {
+  files.clear();
+  completedFileStates.clear();
+  fileNameBuffer.reset();
+  LOG_DBG("ACT", "FileBrowser freeBackgroundMemory: files=%zu", files.size());
+}
+
 // To avoid traversing directories twice (once for cache clearing, once for deletion),
 // we do both in one pass here, instead of using Storage.removeDir
 bool FileBrowserActivity::removeDirFile(const std::string& fullPath) {

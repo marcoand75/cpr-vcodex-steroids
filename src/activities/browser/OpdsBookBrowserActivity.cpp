@@ -68,6 +68,17 @@ void OpdsBookBrowserActivity::onExit() {
   }
 }
 
+void OpdsBookBrowserActivity::freeBackgroundMemory() {
+  entries.clear();
+  navigationHistory.clear();
+  currentPath.clear();
+  searchTemplate.clear();
+  errorMessage.clear();
+  statusMessage.clear();
+  LOG_DBG("ACT", "OpdsBookBrowser freeBackgroundMemory: entries=%zu history=%zu",
+               entries.size(), navigationHistory.size());
+}
+
 void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::WIFI_SELECTION || state == BrowserState::SEARCH_INPUT) {
     return;
