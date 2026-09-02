@@ -10,6 +10,7 @@
 #include "fontIds.h"
 #include "../util/ListRenderHelper.h"
 #include "util/BookCacheUtils.h"
+#include "../reader/ProgressFile.h"
 
 void ClearCacheActivity::onEnter() {
   Activity::onEnter();
@@ -94,6 +95,34 @@ void ClearCacheActivity::render(RenderLock&&) {
   }
 }
 
+namespace {
+std::string preserveProgressFromCacheDir(const std::string& cacheDir) {
+  const std::string legacyPath = cacheDir + "/progress.bin";
+  FsFile f;
+  if (!Storage.openFileForRead("CLEAR_CACHE", legacyPath, f)) {
+    return {};
+  }
+  std::string data;
+  data.resize(64);
+  const int read = f.read(data.data(), static_cast<int>(data.size()));
+  if (read <= 0) {
+    return {};
+  }
+  data.resize(static_cast<size_t>(read));
+  return data;
+}
+
+bool restoreProgressToCacheDir(const std::string& cacheDir, const std::string& data) {
+  if (data.empty()) {
+    return true;
+  }
+  const std::string legacyPath = cacheDir + "/progress.bin";
+  return ProgressFile::writeAtomicPath("CLEAR_CACHE", legacyPath,
+                                       reinterpret_cast<const uint8_t*>(data.data()),
+                                       static_cast<int>(data.size()));
+}
+}  // namespace
+
 void ClearCacheActivity::clearCache() {
   LOG_DBG("CLEAR_CACHE", "Clearing cache...");
 
@@ -122,7 +151,11 @@ void ClearCacheActivity::clearCache() {
 
       file.close();  // Close before attempting to delete
 
+      const std::string progressData = preserveProgressFromCacheDir(fullPath.c_str());
+
       if (Storage.removeDir(fullPath.c_str())) {
+        // Restore legacy progress file so reading position survives cache clear.
+        restoreProgressToCacheDir(fullPath.c_str(), progressData);
         clearedCount++;
       } else {
         LOG_ERR("CLEAR_CACHE", "Failed to remove: %s", fullPath.c_str());
@@ -167,3 +200,4 @@ void ClearCacheActivity::loop() {
     return;
   }
 }
+
