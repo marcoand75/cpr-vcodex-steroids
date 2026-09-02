@@ -423,7 +423,8 @@ uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const 
 }
 
 uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int centerIdx, const int screenWidth,
-                              const int screenHeight, const size_t bufferSize, const bool darkMode) {
+                              const int screenHeight, const size_t bufferSize, const bool darkMode,
+                              const uint32_t precomputedPrefixHash, const int precomputedPrefixBookCount) {
   // IMPORTANT: the per-book loop MUST come BEFORE centerIdx. FNV-1a is not
   // commutative/associative, so this ordering lets pruneCarouselFrameCache
   // compute the (expensive) per-book prefix ONCE per pass instead of for every
@@ -433,9 +434,17 @@ uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int ce
   // and silently break the cached-frame keys. This ordering also changed the
   // hash key vs. the previous ordering, intentionally invalidating the old .bin
   // frames once (they are regenerated on first render after the update).
-  return CarouselHash::fnv1aU32(
-      getCarouselFramePrefixHash(books, screenWidth, screenHeight, bufferSize, darkMode),
-      static_cast<uint32_t>(centerIdx));
+  //
+  // When precomputedPrefixHash is non-zero and precomputedPrefixBookCount matches
+  // the current book count, the expensive O(N) prefix is skipped and the cached
+  // value is folded with centerIdx directly — turning each per-book hash lookup
+  // into a single O(1) FNV-1a combine.
+  const uint32_t prefixHash =
+      (precomputedPrefixHash != 0 &&
+       precomputedPrefixBookCount == static_cast<int>(books.size()))
+          ? precomputedPrefixHash
+          : getCarouselFramePrefixHash(books, screenWidth, screenHeight, bufferSize, darkMode);
+  return CarouselHash::fnv1aU32(prefixHash, static_cast<uint32_t>(centerIdx));
 }
 
 std::string getCarouselFrameCachePathFromHash(const uint32_t hash) {
@@ -764,6 +773,25 @@ void HomeActivity::onEnter() {
     invalidateCarouselFrameHash();
     carouselFramesReady = false;
     pruneCarouselFrameCache();
+
+    // Pre-compute the expensive carousel prefix hash once here so the first
+    // render pass does not pay the per-book SD / stats cost inside drawRecentBookCover.
+    cachedCarouselFramePrefixHash =
+        getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                   renderer.getBufferSize(), renderer.isDarkMode());
+    cachedCarouselFramePrefixValid = true;
+    cachedCarouselFramePrefixBookCount = static_cast<int>(recentBooks.size());
+
+    // Pre-compute every per-book frame hash (prefix + centerIdx) up front so
+    // render-time getCachedCarouselFrameHash() hits are pure O(1) cache lookups
+    // with no SD/stats work. Without this, the first call per book index still
+    // pays the O(N) prefix loop inside getCarouselFrameHash().
+    carouselPerBookHashes.clear();
+    carouselPerBookHashes.reserve(recentBooks.size());
+    for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+      carouselPerBookHashes.push_back(
+          CarouselHash::fnv1aU32(cachedCarouselFramePrefixHash, static_cast<uint32_t>(i)));
+    }
   }
 
   if (READING_STATS.isHomeInvalidationRequested()) {
@@ -998,6 +1026,7 @@ void HomeActivity::invalidateCarouselFrameHash() {
   cachedCarouselFrameHashIndex = -1;
   cachedCarouselFrameHash = 0;
   cachedCarouselFrameHashValid = false;
+  carouselPerBookHashes.clear();
 }
 
 void HomeActivity::requestFreshHomeRender(const bool immediate) {
@@ -1014,9 +1043,23 @@ uint32_t HomeActivity::getCachedCarouselFrameHash(const int bookIndex) {
 
   const int safeBookIndex = wrapBookIndex(bookIndex, static_cast<int>(recentBooks.size()));
   if (!cachedCarouselFrameHashValid || cachedCarouselFrameHashIndex != safeBookIndex) {
-    cachedCarouselFrameHash =
-        getCarouselFrameHash(recentBooks, safeBookIndex, renderer.getScreenWidth(), renderer.getScreenHeight(),
-                             renderer.getBufferSize(), renderer.isDarkMode());
+    // If onEnter() pre-computed all per-book hashes, use the cached value for
+    // this index directly — avoids calling getCarouselFrameHash() (and therefore
+    // getCarouselFramePrefixHash()) entirely on the hot render path.
+    if (!carouselPerBookHashes.empty() &&
+        safeBookIndex >= 0 && safeBookIndex < static_cast<int>(carouselPerBookHashes.size()) &&
+        cachedCarouselFramePrefixValid &&
+        cachedCarouselFramePrefixBookCount == static_cast<int>(recentBooks.size())) {
+      cachedCarouselFrameHash = carouselPerBookHashes[safeBookIndex];
+    } else {
+      cachedCarouselFrameHash =
+          getCarouselFrameHash(recentBooks, safeBookIndex, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                               renderer.getBufferSize(), renderer.isDarkMode(),
+                               cachedCarouselFramePrefixValid ? cachedCarouselFramePrefixHash : 0,
+                               cachedCarouselFramePrefixValid
+                                   ? cachedCarouselFramePrefixBookCount
+                                   : -1);
+    }
     cachedCarouselFrameHashIndex = safeBookIndex;
     cachedCarouselFrameHashValid = true;
   }
@@ -1418,12 +1461,12 @@ void HomeActivity::loop() {
           case ShortcutId::Plugins:
             activityManager.goToPluginBrowser();
             break;
-          case ShortcutId::OpdsBrowser:
-           onOpdsBrowserOpen();
-          break;
-      }
-    }
-  }
+           case ShortcutId::OpdsBrowser:
+            onOpdsBrowserOpen();
+           break;
+       }
+     }
+   }
 }
 
 void HomeActivity::render(RenderLock&&) {

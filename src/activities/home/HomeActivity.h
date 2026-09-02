@@ -37,6 +37,10 @@ class HomeActivity final : public Activity {
   int cachedCarouselFrameHashIndex = -1;
   uint32_t cachedCarouselFrameHash = 0;
   bool cachedCarouselFrameHashValid = false;
+  uint32_t cachedCarouselFramePrefixHash = 0;
+  bool cachedCarouselFramePrefixValid = false;
+  int cachedCarouselFramePrefixBookCount = 0;
+  std::vector<uint32_t> carouselPerBookHashes;
   std::string carouselCoverLoadAttemptPath;
   bool carouselFramesReady = false;
   std::vector<RecentBook> recentBooks;

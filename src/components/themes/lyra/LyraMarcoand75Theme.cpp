@@ -477,57 +477,43 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     }
 
     bool hasCover = false;
-    std::string thumbPath;
 
     if (!book.coverBmpPath.empty()) {
-      // FIX: Ripristinata la ricerca originale delle cover per evitare problemi di percorso
-      thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, sw, sh);
-      if (!Storage.exists(thumbPath.c_str())) {
-        thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath,
-                                                kFiveCoverCenterW, kFiveCoverCenterH);
-      }
-      if (!Storage.exists(thumbPath.c_str())) {
-        thumbPath = UITheme::getCoverThumbPath(
-            book.coverBmpPath, LyraMarcoand75Metrics::values.homeCoverHeight);
-      }
-      if (!Storage.exists(thumbPath.c_str())) {
-        thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath,
-                                                LyraMarcoand75Theme::kCenterCoverW, 
-                                                LyraMarcoand75Theme::kCenterCoverH);
-      }
-      
-      FsFile file;
-      if (Storage.openFileForRead("HOME", thumbPath, file)) {
-        Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          const float bmpRatio  = static_cast<float>(bitmap.getWidth())
-                                  / static_cast<float>(bitmap.getHeight());
-          const float tileRatio = static_cast<float>(sw) / static_cast<float>(sh);
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kFiveCoverCenterW, kFiveCoverCenterH);
+      if (Storage.exists(thumbPath.c_str())) {
+        FsFile file;
+        if (Storage.openFileForRead("HOME", thumbPath, file)) {
+          Bitmap bitmap(file);
+          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+            const float bmpRatio  = static_cast<float>(bitmap.getWidth())
+                                    / static_cast<float>(bitmap.getHeight());
+            const float tileRatio = static_cast<float>(sw) / static_cast<float>(sh);
 
-          // Allineamento reale a libri sovrapposti per tutte le cover laterali.
-          if (bmpRatio > tileRatio) {
-            int drawH = sh;
-            int drawW = static_cast<int>(drawH * bmpRatio);
-            int drawX = isLeft ? sx : (sx + sw - drawW);
-            int drawY = sy;
-            // Disegna l'immagine scalata in altezza
-            renderer.drawBitmap(bitmap, drawX, drawY, drawW, drawH, 0.0f, 0.0f);
-            
-            // Copre la parte in eccesso con il bianco per simulare il taglio netto
-            if (isLeft) {
-              renderer.fillRect(sx + sw, sy, drawW - sw + 2, sh, false);
+            // Allineamento reale a libri sovrapposti per tutte le cover laterali.
+            if (bmpRatio > tileRatio) {
+              int drawH = sh;
+              int drawW = static_cast<int>(drawH * bmpRatio);
+              int drawX = isLeft ? sx : (sx + sw - drawW);
+              int drawY = sy;
+              // Disegna l'immagine scalata in altezza
+              renderer.drawBitmap(bitmap, drawX, drawY, drawW, drawH, 0.0f, 0.0f);
+              
+              // Copre la parte in eccesso con il bianco per simulare il taglio netto
+              if (isLeft) {
+                renderer.fillRect(sx + sw, sy, drawW - sw + 2, sh, false);
+              } else {
+                renderer.fillRect(drawX - 2, sy, sx - drawX + 2, sh, false);
+              }
             } else {
-              renderer.fillRect(drawX - 2, sy, sx - drawX + 2, sh, false);
+              // Cover verticali: taglio centrato classico
+              const float cropX = 0.0f;
+              const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+              renderer.drawBitmap(bitmap, sx, sy, sw, sh, cropX, cropY);
             }
-          } else {
-            // Cover verticali: taglio centrato classico
-            const float cropX = 0.0f;
-            const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
-            renderer.drawBitmap(bitmap, sx, sy, sw, sh, cropX, cropY);
+            hasCover = true;
           }
-          hasCover = true;
+          file.close();
         }
-        file.close();
       }
     }
 
