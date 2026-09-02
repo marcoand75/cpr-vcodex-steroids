@@ -222,6 +222,9 @@ bool ScreenSaverActivity::isWakeButtonPressed() const {
 
 void ScreenSaverActivity::onEnter() {
   Activity::onEnter();
+  // Start each screensaver session with a clean PNG decoder state so a prior
+  // failed image does not leave corrupted allocations behind.
+  PngSleepRenderer::releaseDecoder();
   loadImages();
 
   int batPct = static_cast<int>(powerManager.getBatteryPercentage());

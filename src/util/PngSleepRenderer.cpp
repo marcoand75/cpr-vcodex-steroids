@@ -220,7 +220,13 @@ bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRend
 
   rc = png->decode(&ctx, 0);
   png->close();
-  return rc == PNG_SUCCESS;
+  if (rc != PNG_SUCCESS) {
+    // Release the decoder on decode failure so the next image starts from a
+    // clean heap state instead of reusing a potentially corrupted decoder.
+    s_png.reset();
+    return false;
+  }
+  return true;
 }
 
 void PngSleepRenderer::releaseDecoder() {
