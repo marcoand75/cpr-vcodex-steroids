@@ -123,12 +123,16 @@ void XtcReaderActivity::onEnter() {
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(), stableBookId);
+
+  // Trigger first update BEFORE loading reading stats so the reader screen
+  // appears promptly. Reading stats are loaded lazily afterwards.
+  requestUpdate();
+
+  // Load reading stats and start session AFTER the reader is visible.
+  READING_STATS.ensureLoaded();
   READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
                              xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
                              getChapterProgressForStats(*xtc, currentPage));
-
-  // Trigger first update
-  requestUpdate();
 }
 
 void XtcReaderActivity::onExit() {
@@ -137,8 +141,9 @@ void XtcReaderActivity::onExit() {
   ReaderUtils::requestReaderUiTransitionRefresh(renderer);
 
   APP_STATE.readerActivityLoadCount = 0;
-  READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+  READING_STATS.releaseMemoryForNetwork();
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
   xtc.reset();
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }

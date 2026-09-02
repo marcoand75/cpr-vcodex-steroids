@@ -313,10 +313,14 @@ void TxtReaderActivity::onEnter() {
   APP_STATE.openEpubPath = filePath;
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(filePath, fileName, "", "", stableBookId);
-  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
 
-  // Trigger first update
+  // Trigger first update BEFORE loading reading stats so the reader screen
+  // appears promptly. Reading stats are loaded lazily afterwards.
   requestUpdate();
+
+  // Load reading stats and start session AFTER the reader is visible.
+  READING_STATS.ensureLoaded();
+  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
 }
 
 void TxtReaderActivity::onExit() {
@@ -330,8 +334,9 @@ void TxtReaderActivity::onExit() {
   decltype(pageOffsets)().swap(pageOffsets);
   decltype(currentPageLines)().swap(currentPageLines);
   APP_STATE.readerActivityLoadCount = 0;
-  READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+  READING_STATS.releaseMemoryForNetwork();
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
   txt.reset();
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }

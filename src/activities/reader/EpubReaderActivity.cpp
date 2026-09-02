@@ -394,13 +394,19 @@ void EpubReaderActivity::onEnter() {
   APP_STATE.openEpubPath = epub->getPath();
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(), stableBookId);
+
+  // Trigger first update BEFORE loading reading stats so the reader screen
+  // appears promptly. Reading stats are loaded lazily afterwards.
+  requestUpdate();
+
+  // Load reading stats and start session AFTER the reader is visible.
+  // This keeps the initial reader setup fast and avoids fragmenting maxA
+  // before the EPUB/cache/font allocations are in place.
+  READING_STATS.ensureLoaded();
   READING_STATS.beginSession(
       epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getCoverBmpPath(),
       clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, 0.0f) * 100.0f + 0.5f)),
       getStatsChapterTitle(*epub, currentSpineIndex), 0);
-
-  // Trigger first update
-  requestUpdate();
 }
 
 void EpubReaderActivity::onExit() {
@@ -417,8 +423,9 @@ void EpubReaderActivity::onExit() {
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
-  READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+  READING_STATS.releaseMemoryForNetwork();
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
   bookmarkStore.save();
   invalidateCurrentOverlayPageCache();
   section.reset();
