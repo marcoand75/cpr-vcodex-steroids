@@ -42,8 +42,6 @@ class TxtReaderActivity final : public Activity {
   bool pendingForceFullRefresh = false;
   bool waitingForConfirmSecondClick = false;
   unsigned long firstConfirmClickMs = 0UL;
-  bool pendingReadingStatsLoad = false;
-  bool pendingReadingStatsLoadDelayed = false;
 
   // Cached settings for cache validation (different fonts/margins require re-indexing)
   int cachedFontId = 0;
@@ -83,5 +81,4 @@ class TxtReaderActivity final : public Activity {
   void render(RenderLock&&) override;
   bool isReaderActivity() const override { return true; }
   ScreenshotInfo getScreenshotInfo() const override;
-  void freeBackgroundMemory() override;
 };

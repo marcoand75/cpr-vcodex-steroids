@@ -314,13 +314,13 @@ void TxtReaderActivity::onEnter() {
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(filePath, fileName, "", "", stableBookId);
 
-  // Defer reading stats load until after the first render so the reader
-  // appears promptly and heap fragmentation from stats parsing does not
-  // affect the initial setup.
-  pendingReadingStatsLoad = true;
-
-  // Trigger first update
+  // Trigger first update BEFORE loading reading stats so the reader screen
+  // appears promptly. Reading stats are loaded lazily afterwards.
   requestUpdate();
+
+  // Load reading stats and start session AFTER the reader is visible.
+  READING_STATS.ensureLoaded();
+  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
 }
 
 void TxtReaderActivity::onExit() {
@@ -341,31 +341,9 @@ void TxtReaderActivity::onExit() {
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
-void TxtReaderActivity::freeBackgroundMemory() {
-  // Do NOT release reading stats here: they are needed for session tracking
-  // while reading, and reloading them afterward may fail due to heap pressure.
-  // Release other heavy reader state instead.
-  decltype(pageOffsets)().swap(pageOffsets);
-  decltype(currentPageLines)().swap(currentPageLines);
-}
-
 void TxtReaderActivity::loop() {
   READING_STATS.tickActiveSession();
   const unsigned long nowMs = millis();
-
-  // Defer reading stats load until after the first render so the reader
-  // appears promptly and heap fragmentation from stats parsing does not
-  // affect the initial setup.
-  if (pendingReadingStatsLoad) {
-    pendingReadingStatsLoad = false;
-    pendingReadingStatsLoadDelayed = true;
-  }
-
-  if (pendingReadingStatsLoadDelayed) {
-    pendingReadingStatsLoadDelayed = false;
-    READING_STATS.ensureLoaded();
-    READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
-  }
 
   if (waitingForConfirmSecondClick && ReaderUtils::hasNonConfirmNavigationInput(mappedInput)) {
     waitingForConfirmSecondClick = false;
