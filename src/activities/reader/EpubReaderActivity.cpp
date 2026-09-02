@@ -395,18 +395,13 @@ void EpubReaderActivity::onEnter() {
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(), stableBookId);
 
-  // Trigger first update BEFORE loading reading stats so the reader screen
-  // appears promptly. Reading stats are loaded lazily afterwards.
-  requestUpdate();
+  // Defer reading stats load until after the first render so the reader
+  // appears promptly and heap fragmentation from stats parsing does not
+  // affect the initial setup.
+  pendingReadingStatsLoad = true;
 
-  // Load reading stats and start session AFTER the reader is visible.
-  // This keeps the initial reader setup fast and avoids fragmenting maxA
-  // before the EPUB/cache/font allocations are in place.
-  READING_STATS.ensureLoaded();
-  READING_STATS.beginSession(
-      epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getCoverBmpPath(),
-      clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, 0.0f) * 100.0f + 0.5f)),
-      getStatsChapterTitle(*epub, currentSpineIndex), 0);
+  // Trigger first update
+  requestUpdate();
 }
 
 void EpubReaderActivity::onExit() {
@@ -485,6 +480,25 @@ void EpubReaderActivity::loop() {
   if (ReaderUtils::shouldToggleStatusBar(mappedInput)) {
     toggleTemporaryStatusBar();
     return;
+  }
+
+  // Defer reading stats load until after the first render so the initial
+  // reader setup is not slowed down by stats parsing fragmentation.
+  if (pendingReadingStatsLoad) {
+    pendingReadingStatsLoad = false;
+    // Stats will be loaded on the next loop iteration, after the first render.
+    pendingReadingStatsLoadDelayed = true;
+    // Do not return here - continue with the rest of loop() so user input
+    // is still processed normally.
+  }
+
+  if (pendingReadingStatsLoadDelayed) {
+    pendingReadingStatsLoadDelayed = false;
+    READING_STATS.ensureLoaded();
+    READING_STATS.beginSession(
+        epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getCoverBmpPath(),
+        clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, 0.0f) * 100.0f + 0.5f)),
+        getStatsChapterTitle(*epub, currentSpineIndex), 0);
   }
 
   // Short power button with expanded reader actions (beyond IGNORE/SLEEP/etc.)

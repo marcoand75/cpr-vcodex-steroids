@@ -124,15 +124,13 @@ void XtcReaderActivity::onEnter() {
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(), stableBookId);
 
-  // Trigger first update BEFORE loading reading stats so the reader screen
-  // appears promptly. Reading stats are loaded lazily afterwards.
-  requestUpdate();
+  // Defer reading stats load until after the first render so the reader
+  // appears promptly and heap fragmentation from stats parsing does not
+  // affect the initial setup.
+  pendingReadingStatsLoad = true;
 
-  // Load reading stats and start session AFTER the reader is visible.
-  READING_STATS.ensureLoaded();
-  READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
-                             xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
-                             getChapterProgressForStats(*xtc, currentPage));
+  // Trigger first update
+  requestUpdate();
 }
 
 void XtcReaderActivity::onExit() {
@@ -155,6 +153,22 @@ void XtcReaderActivity::loop() {
   }
 
   const unsigned long nowMs = millis();
+
+  // Defer reading stats load until after the first render so the reader
+  // appears promptly and heap fragmentation from stats parsing does not
+  // affect the initial setup.
+  if (pendingReadingStatsLoad) {
+    pendingReadingStatsLoad = false;
+    pendingReadingStatsLoadDelayed = true;
+  }
+
+  if (pendingReadingStatsLoadDelayed) {
+    pendingReadingStatsLoadDelayed = false;
+    READING_STATS.ensureLoaded();
+    READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
+                               xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
+                               getChapterProgressForStats(*xtc, currentPage));
+  }
 
   if (waitingForConfirmSecondClick && ReaderUtils::hasNonConfirmNavigationInput(mappedInput)) {
     waitingForConfirmSecondClick = false;

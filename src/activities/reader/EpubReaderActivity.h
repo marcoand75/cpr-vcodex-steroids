@@ -67,6 +67,8 @@ class EpubReaderActivity final : public Activity {
   int clippingStartRow = -1;
   int clippingEndRow = -1;
   bool clippingStartMarkSet = false;
+  bool pendingReadingStatsLoad = false;
+  bool pendingReadingStatsLoadDelayed = false;
 
   struct ClippingWordInfo {
     std::string text;

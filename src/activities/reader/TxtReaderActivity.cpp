@@ -314,13 +314,13 @@ void TxtReaderActivity::onEnter() {
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(filePath, fileName, "", "", stableBookId);
 
-  // Trigger first update BEFORE loading reading stats so the reader screen
-  // appears promptly. Reading stats are loaded lazily afterwards.
-  requestUpdate();
+  // Defer reading stats load until after the first render so the reader
+  // appears promptly and heap fragmentation from stats parsing does not
+  // affect the initial setup.
+  pendingReadingStatsLoad = true;
 
-  // Load reading stats and start session AFTER the reader is visible.
-  READING_STATS.ensureLoaded();
-  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
+  // Trigger first update
+  requestUpdate();
 }
 
 void TxtReaderActivity::onExit() {
@@ -344,6 +344,20 @@ void TxtReaderActivity::onExit() {
 void TxtReaderActivity::loop() {
   READING_STATS.tickActiveSession();
   const unsigned long nowMs = millis();
+
+  // Defer reading stats load until after the first render so the reader
+  // appears promptly and heap fragmentation from stats parsing does not
+  // affect the initial setup.
+  if (pendingReadingStatsLoad) {
+    pendingReadingStatsLoad = false;
+    pendingReadingStatsLoadDelayed = true;
+  }
+
+  if (pendingReadingStatsLoadDelayed) {
+    pendingReadingStatsLoadDelayed = false;
+    READING_STATS.ensureLoaded();
+    READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
+  }
 
   if (waitingForConfirmSecondClick && ReaderUtils::hasNonConfirmNavigationInput(mappedInput)) {
     waitingForConfirmSecondClick = false;
