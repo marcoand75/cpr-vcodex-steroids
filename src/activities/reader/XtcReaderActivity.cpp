@@ -147,9 +147,9 @@ void XtcReaderActivity::onExit() {
 }
 
 void XtcReaderActivity::freeBackgroundMemory() {
-  READING_STATS.saveToFile();
-  READING_STATS.releaseMemoryForNetwork();
-  pendingReadingStatsReload = true;
+  // Do NOT release reading stats here: they are needed for session tracking
+  // while reading, and reloading them afterward may fail due to heap pressure.
+  // Release other heavy reader state instead.
 }
 
 void XtcReaderActivity::loop() {
@@ -170,14 +170,6 @@ void XtcReaderActivity::loop() {
 
   if (pendingReadingStatsLoadDelayed) {
     pendingReadingStatsLoadDelayed = false;
-    READING_STATS.ensureLoaded();
-    READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
-                               xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),
-                               getChapterProgressForStats(*xtc, currentPage));
-  }
-
-  if (pendingReadingStatsReload) {
-    pendingReadingStatsReload = false;
     READING_STATS.ensureLoaded();
     READING_STATS.beginSession(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getCoverBmpPath(),
                                xtc->calculateProgress(currentPage), getChapterTitleForStats(*xtc, currentPage),

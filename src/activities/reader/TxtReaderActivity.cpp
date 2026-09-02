@@ -342,9 +342,11 @@ void TxtReaderActivity::onExit() {
 }
 
 void TxtReaderActivity::freeBackgroundMemory() {
-  READING_STATS.saveToFile();
-  READING_STATS.releaseMemoryForNetwork();
-  pendingReadingStatsReload = true;
+  // Do NOT release reading stats here: they are needed for session tracking
+  // while reading, and reloading them afterward may fail due to heap pressure.
+  // Release other heavy reader state instead.
+  decltype(pageOffsets)().swap(pageOffsets);
+  decltype(currentPageLines)().swap(currentPageLines);
 }
 
 void TxtReaderActivity::loop() {
@@ -361,12 +363,6 @@ void TxtReaderActivity::loop() {
 
   if (pendingReadingStatsLoadDelayed) {
     pendingReadingStatsLoadDelayed = false;
-    READING_STATS.ensureLoaded();
-    READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
-  }
-
-  if (pendingReadingStatsReload) {
-    pendingReadingStatsReload = false;
     READING_STATS.ensureLoaded();
     READING_STATS.beginSession(txt->getPath(), txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
   }

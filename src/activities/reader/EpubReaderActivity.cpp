@@ -428,11 +428,10 @@ void EpubReaderActivity::onExit() {
 }
 
 void EpubReaderActivity::freeBackgroundMemory() {
-  // Release reading stats memory before screen saver or other overlay so the
-  // PNG decoder / other allocations can find a contiguous heap block.
-  READING_STATS.saveToFile();
-  READING_STATS.releaseMemoryForNetwork();
-  pendingReadingStatsReload = true;
+  // Do NOT release reading stats here: they are needed for session tracking
+  // while reading, and reloading them afterward may fail due to heap pressure.
+  // Release other heavy reader state instead.
+  invalidateCurrentOverlayPageCache();
 }
 
 bool EpubReaderActivity::extractInlineImage(void* context, const char* sourcePath,
@@ -502,15 +501,6 @@ void EpubReaderActivity::loop() {
 
   if (pendingReadingStatsLoadDelayed) {
     pendingReadingStatsLoadDelayed = false;
-    READING_STATS.ensureLoaded();
-    READING_STATS.beginSession(
-        epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getCoverBmpPath(),
-        clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, 0.0f) * 100.0f + 0.5f)),
-        getStatsChapterTitle(*epub, currentSpineIndex), 0);
-  }
-
-  if (pendingReadingStatsReload) {
-    pendingReadingStatsReload = false;
     READING_STATS.ensureLoaded();
     READING_STATS.beginSession(
         epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getCoverBmpPath(),

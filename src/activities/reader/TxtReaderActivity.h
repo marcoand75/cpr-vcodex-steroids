@@ -44,7 +44,6 @@ class TxtReaderActivity final : public Activity {
   unsigned long firstConfirmClickMs = 0UL;
   bool pendingReadingStatsLoad = false;
   bool pendingReadingStatsLoadDelayed = false;
-  bool pendingReadingStatsReload = false;
 
   // Cached settings for cache validation (different fonts/margins require re-indexing)
   int cachedFontId = 0;

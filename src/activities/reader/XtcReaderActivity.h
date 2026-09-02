@@ -27,7 +27,6 @@ class XtcReaderActivity final : public Activity {
   unsigned long firstConfirmClickMs = 0UL;
   bool pendingReadingStatsLoad = false;
   bool pendingReadingStatsLoadDelayed = false;
-  bool pendingReadingStatsReload = false;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
