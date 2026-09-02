@@ -652,14 +652,13 @@ void setup() {
 
   // ===========================================================================
   // PHASE 1 — Hardware init
-  //   - Bring up HalSystem and detect the board.
-  //   - Hold the power rails BEFORE any probe (BoardConfig::selectDevice is
-  //     a fallback; HalGPIO::begin() may re-select X3 if the probe confirms it).
+  //   - Bring up HalSystem and latch power rails before any probe.
+  //   - HalGPIO::begin() will detect the board (X3 vs X4) and re-select the
+  //     matching profile if the fingerprint confirms it.
   //   - Start the RTC, tilt sensor, and power manager.
   // ===========================================================================
   HalSystem::begin();
 
-  BoardConfig::selectDevice(BoardConfig::Board::XteinkX4);
   BoardConfig::holdPowerRails();
 
   // Snapshot the silent-reboot routing BEFORE zeroing RTC_NOINIT.

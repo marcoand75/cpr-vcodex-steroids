@@ -23,7 +23,7 @@ void HalPowerManager::begin() {
     if (!Wire.begin(gauge.i2cSda, gauge.i2cScl, gauge.i2cHz)) {
       LOG_ERR("PWR", "Failed to initialize I2C sensor bus");
     }
-    Wire.setTimeOut(6);
+    Wire.setTimeOut(20);
   } else if (BoardConfig::ACTIVE.batteryAdc >= 0) {
     pinMode(BoardConfig::ACTIVE.batteryAdc, INPUT);
   }
