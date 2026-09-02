@@ -134,6 +134,11 @@ void ReadingStatsActivity::onExit() {
   Activity::onExit();
 }
 
+void ReadingStatsActivity::freeBackgroundMemory() {
+  selectedBookPath.clear();
+  LOG_DBG("ACT", "ReadingStats freeBackgroundMemory: selectedBookPath cleared");
+}
+
 void ReadingStatsActivity::loop() {
     const int bookCount = static_cast<int>(READING_STATS.getBooks().size());
     const int selectableCount = bookCount + 1; // 0 for details, 1+ for books

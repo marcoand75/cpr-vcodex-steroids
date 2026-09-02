@@ -166,6 +166,11 @@ void ClippingsAppActivity::loop() {
   });
 }
 
+void ClippingsAppActivity::freeBackgroundMemory() {
+  entries.clear();
+  LOG_DBG("ACT", "ClippingsApp freeBackgroundMemory: entries=%zu", entries.size());
+}
+
 void ClippingsAppActivity::render(RenderLock&&) {
   renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();

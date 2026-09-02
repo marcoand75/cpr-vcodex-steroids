@@ -133,6 +133,13 @@ void AppsActivity::loop() {
   }
 }
 
+void AppsActivity::freeBackgroundMemory() {
+  appShortcuts.clear();
+  shortcutSubtitles.clear();
+  LOG_DBG("ACT", "Apps freeBackgroundMemory: shortcuts=%zu subtitles=%zu",
+               appShortcuts.size(), shortcutSubtitles.size());
+}
+
 void AppsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 

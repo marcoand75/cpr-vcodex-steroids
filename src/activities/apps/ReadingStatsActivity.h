@@ -26,6 +26,7 @@ class ReadingStatsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
+  void freeBackgroundMemory() override;
 
  private:
   std::string selectedBookPath;

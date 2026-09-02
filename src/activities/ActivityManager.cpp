@@ -146,7 +146,7 @@ void ActivityManager::loop() {
 
         // Arena was reset by exitActivity(); log the post-pop state.
         LOG_DBG("ACT", "popActivity: new activity='%s' arena used=%u capacity=%u heap=%u maxA=%u",
-                     currentActivity->name,
+                     currentActivity->name.c_str(),
                      static_cast<unsigned>(util::g_activityArena.used()),
                      static_cast<unsigned>(util::g_activityArena.capacity()),
                      ESP.getFreeHeap(), ESP.getMaxAllocHeap());
