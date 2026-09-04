@@ -2027,8 +2027,6 @@ bool ReadingStatsStore::releaseMemoryForNetwork() {
     return false;
   }
 
-  books.clear();
-  books.shrink_to_fit();
   legacyReadingDays.clear();
   legacyReadingDays.shrink_to_fit();
   readingDays.clear();
