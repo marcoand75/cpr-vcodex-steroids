@@ -2994,9 +2994,16 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   auto* fcm = renderer.getFontCacheManager();
   fcm->resetStats();
 
-  // Font prewarm: scan pass accumulates text, then prewarm, then real render
+  // Font prewarm: scan pass accumulates text, then prewarm, then real render.
+  // Use clearOnDestroy=false so the font cache survives into the tiled
+  // grayscale strips below — otherwise each strip reloads glyphs from SD
+  // (groups_accessed=0) and allocates a fresh bitmap, fragmenting the
+  // 320KB heap until the grayscale scratch allocation fails and the
+  // system asserts. The cache is naturally reused across all 5 render
+  // passes (BW + image AA + tiled + LSB + MSB) and cleared by the
+  // next page's PrewarmScope constructor or on reader exit.
   const auto heapBefore = MemoryBudget::snapshot();
-  auto scope = fcm->createPrewarmScope();
+  auto scope = fcm->createPrewarmScope(/*clearOnDestroy=*/false);
   page->renderText(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop, true);
   scope.endScanAndPrewarm();
   const auto heapAfter = MemoryBudget::snapshot();
@@ -3062,19 +3069,22 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const auto tDisplay = millis();
 
   const bool needsGrayscale = enableTextAA || enableImageGrayscaleOnly;
-  {
-    const auto mem = MemoryBudget::snapshot();
-    LOG_DBG("ERS", "pre-tiled-grayscale: free=%u maxAlloc=%u needsGrayscale=%d",
-            mem.freeHeap, mem.maxAllocHeap, needsGrayscale ? 1 : 0);
+  // Guard: skip tiled grayscale when maxAlloc is too low for the 8KB scratch.
+  // With clearOnDestroy=false on the prewarm scope, the font cache is now
+  // reused across strips so this is rarely needed, but it prevents the
+  // crash if memory is already critically low (e.g. after a bad page load).
+  const uint32_t freeBeforeTiled = ESP.getFreeHeap();
+  const uint32_t maxAllocBeforeTiled = ESP.getMaxAllocHeap();
+  const bool canTiledGrayscale = needsGrayscale && maxAllocBeforeTiled >= 16384;
+  if (maxAllocBeforeTiled > 1024) {
+    LOG_DBG("ERS", "pre-tiled-grayscale: free=%u maxAlloc=%u needsGrayscale=%d canTiled=%d",
+            freeBeforeTiled, maxAllocBeforeTiled, needsGrayscale ? 1 : 0, canTiledGrayscale ? 1 : 0);
   }
   ReaderUtils::TiledGrayscaleTimings tiledTimings;
   const bool tiledGrayscale =
-      needsGrayscale && ReaderUtils::renderTiledGrayscale(
-                           renderer, "ERS",
+      canTiledGrayscale && ReaderUtils::renderTiledGrayscale(
+                            renderer, "ERS",
                             [&]() {
-                              static int stripIdx = 0;
-                              const auto memBefore = MemoryBudget::snapshot();
-                              LOG_DBG("ERS", "tiled-strip[%d] start: free=%u maxAlloc=%u", stripIdx, memBefore.freeHeap, memBefore.maxAllocHeap);
                               if (enableImageGrayscaleOnly) {
                                 page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
                               } else {
@@ -3083,16 +3093,13 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                                 renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
                               }
                               renderStatusBar();
-                              const auto memAfter = MemoryBudget::snapshot();
-                              LOG_DBG("ERS", "tiled-strip[%d] end: free=%u maxAlloc=%u", stripIdx, memAfter.freeHeap, memAfter.maxAllocHeap);
-                              ++stripIdx;
                             },
                            &tiledTimings);
 
   if (tiledGrayscale) {
-    {
-      const auto mem = MemoryBudget::snapshot();
-      LOG_DBG("ERS", "post-tiled-grayscale: free=%u maxAlloc=%u", mem.freeHeap, mem.maxAllocHeap);
+    const uint32_t maxAllocAfter = ESP.getMaxAllocHeap();
+    if (maxAllocAfter > 1024) {
+      LOG_DBG("ERS", "post-tiled-grayscale: free=%u maxAlloc=%u", ESP.getFreeHeap(), maxAllocAfter);
     }
     const auto tEnd = millis();
     fcm->logStats("gray");
