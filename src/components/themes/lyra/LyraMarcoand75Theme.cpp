@@ -299,10 +299,16 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
   }
 
   {
-    const int colW = (pw - gap) / 2;
+    // BOOK STATS column is 48px narrower and GLOBAL STATS 48px wider so the
+    // right column's longer rows (today + daily average + trend icon, goal +
+    // checkmark) stay readable. Combined width still fills the panel exactly.
+    constexpr int statsWidthShift = 48;
+    const int halfW = (pw - gap) / 2;
+    const int bookColW = std::max(1, halfW - statsWidthShift);
+    const int globalColW = halfW + statsWidthShift;
     const int h2 = lh * 5 + 2 * pad + 6;
     // ── Left: BOOK STATS ──
-    drawCyberPanel(r, px, curY, colW, h2, inCar);
+    drawCyberPanel(r, px, curY, bookColW, h2, inCar);
     int ly = curY + pad;
     r.drawText(dataFont, px + textLeft, ly, tr(STR_HOME_PANEL_BOOK), true, EpdFontFamily::BOLD);
     ly += lh + 2;
@@ -327,8 +333,8 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
     r.drawText(dataFont, px + textLeft, ly, buf, true);
 
     // ── Right: GLOBAL STATS ──
-    const int rightX = px + colW + gap;
-    drawCyberPanel(r, rightX, curY, colW, h2, inCar);
+    const int rightX = px + bookColW + gap;
+    drawCyberPanel(r, rightX, curY, globalColW, h2, inCar);
     int ry = curY + pad;
     r.drawText(dataFont, rightX + textLeft, ry, tr(STR_HOME_PANEL_STATS), true, EpdFontFamily::BOLD);
     ry += lh + 2;
