@@ -13,13 +13,12 @@
 class DictionaryWordSelectActivity final : public Activity {
  public:
   DictionaryWordSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::shared_ptr<Page> page,
-                               int readerFontId, int marginLeft, int marginTop, int progressPercent = -1)
-      : Activity("DictionaryWordSelect", renderer, mappedInput),
-        page(std::move(page)),
-        readerFontId(readerFontId),
-        marginLeft(marginLeft),
-        marginTop(marginTop),
-        progressPercent(progressPercent) {}
+                               int readerFontId, int marginLeft, int marginTop)
+       : Activity("DictionaryWordSelect", renderer, mappedInput),
+         page(std::move(page)),
+         readerFontId(readerFontId),
+         marginLeft(marginLeft),
+         marginTop(marginTop) {}
 
   void onEnter() override;
   void onExit() override;
@@ -48,7 +47,6 @@ class DictionaryWordSelectActivity final : public Activity {
   int readerFontId = 0;
   int marginLeft = 0;
   int marginTop = 0;
-  int progressPercent = -1;
   std::vector<WordInfo> words;
   std::vector<Row> rows;
   int currentRow = 0;

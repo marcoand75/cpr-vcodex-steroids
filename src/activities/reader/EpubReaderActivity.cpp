@@ -1977,10 +1977,9 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         break;
       }
       READING_STATS.noteActivity();
-      const uint8_t bookProgress = READING_STATS.getBookProgressForHome(stableBookId, epub->getPath());
       startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(
                                  renderer, mappedInput, page, SETTINGS.getReaderFontId(), overlayMarginLeft,
-                                 overlayMarginTop, static_cast<int>(bookProgress)),
+                                 overlayMarginTop),
                              [this](const ActivityResult&) {
                                READING_STATS.resumeSession();
                                ReaderUtils::requestReaderUiTransitionRefresh(renderer);

@@ -425,34 +425,6 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_LOOKUP_EMPTY_PAGE));
   }
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int sideBackgroundWidth = metrics.sideButtonHintsWidth + 8;
-  const int sideBackgroundHeight = 168;
-  int sideY;
-  if (gpio.deviceIsX3()) {
-    constexpr int sideYX3 = 151;
-    sideY = sideYX3;
-    renderer.fillRect(0, sideY, sideBackgroundWidth, sideBackgroundHeight / 2, false);
-    renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth,
-                      sideBackgroundHeight / 2, false);
-  } else {
-    sideY = std::min(341, std::max(0, renderer.getScreenHeight() - sideBackgroundHeight - 4));
-    renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth,
-                      sideBackgroundHeight, false);
-  }
-
-  if (progressPercent >= 0 && progressPercent <= 100) {
-    const int barX = renderer.getScreenWidth() - sideBackgroundWidth + 4;
-    const int barY = sideY + 4;
-    const int barWidth = sideBackgroundWidth - 8;
-    const int barHeight = 3;
-    renderer.drawRect(barX, barY, barWidth, barHeight, 1, true);
-    const int fillWidth = std::max(0, (barWidth - 2) * progressPercent / 100);
-    if (fillWidth > 0) {
-      renderer.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, true);
-    }
-  }
-
   ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
