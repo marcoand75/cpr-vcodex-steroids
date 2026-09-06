@@ -1098,7 +1098,7 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
   const int fontId = SETTINGS.getReaderFontId();
   const int ascender = renderer.getFontAscenderSize(fontId);
   const int lineHeight = ascender + 2;
-  const int descenderPad = 6; // copre discendenti (g q y p j)
+  const int descenderPad = 6;  // copre discendenti (g q y p j)
   const int padX = 1;
   const int padY = 1;
 
@@ -1114,7 +1114,7 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
   }
 
   if (!clippingStartMarkSet) {
-    // Solo cursore: evidenzia la parola corrente come fa il dizionario
+    // Solo cursore: usa la resa originale, senza dither.
     if (cursorGlobalIndex >= 0 && cursorGlobalIndex < static_cast<int>(clippingWords.size())) {
       const auto& w = clippingWords[cursorGlobalIndex];
       renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
@@ -1132,12 +1132,15 @@ void EpubReaderActivity::renderClippingSelectionOverlay() {
     if (w.globalIndex < startWord || w.globalIndex > endWord) continue;
 
     const bool isCursor = w.globalIndex == cursorGlobalIndex;
+    const int highlightX = w.screenX - padX - 1;
+    const int highlightY = w.screenY - padY - 1;
+    const int highlightW = w.width + padX * 2 + 2;
+    const int highlightH = lineHeight + descenderPad + 2;
+
+    renderer.fillRect(highlightX, highlightY, highlightW, highlightH, true);
+    renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
     if (isCursor) {
-      renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
-    } else {
-      renderer.fillRect(w.screenX - padX - 1, w.screenY - padY - 1, w.width + padX * 2 + 2, lineHeight + descenderPad + 2, true);
-      renderer.drawText(fontId, w.screenX, w.screenY, w.text.c_str(), false, EpdFontFamily::REGULAR);
+      renderer.drawRect(highlightX, highlightY, highlightW, highlightH, false);
     }
   }
 }
@@ -1260,10 +1263,10 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
 
   const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
 
-  // Cheap pre-check: only do the expensive word-array build (and its heap
-  // allocation) when there is at least one clipping for the current spine.
-  // Without this, the allocation runs on every grayscale pass of every page and
-  // an uncaught std::bad_alloc aborts the device under memory pressure.
+  // Cheap pre-check: only build the word array and do the search when there
+  // is at least one clipping for the current spine. This avoids 5 redundant
+  // builds per frame (BW + image AA + tiled + LSB + MSB) on pages with no
+  // clippings. Also frees the 2KB cache when leaving a spine with clippings.
   bool hasClipForSpine = false;
   for (const auto& clipping : clippingStore.getAll()) {
     if (clipping.spineIndex == currentSpine) {
@@ -1271,91 +1274,186 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
       break;
     }
   }
-  if (!hasClipForSpine) return;
+  if (!hasClipForSpine) {
+    // Free the persistent cache when it's no longer needed. This releases
+    // ~2KB of heap that would otherwise be permanently allocated on a
+    // 320KB-RAM device, reducing fragmentation in the tiled grayscale path.
+    if (!clippingWordCache_.words.empty()) {
+      LOG_DBG("CLP", "renderClippingHighlights: clearing cache (no clips for spine %u)", currentSpine);
+      clippingWordCache_.words.clear();
+      clippingWordCache_.xs.clear();
+      clippingWordCache_.ys.clear();
+      clippingWordCache_.words.shrink_to_fit();
+      clippingWordCache_.xs.shrink_to_fit();
+      clippingWordCache_.ys.shrink_to_fit();
+    }
+    return;
+  }
 
   const int fontId = SETTINGS.getReaderFontId();
 
-  // Build a flat word array (same pattern as renderBookmarkHighlight v3).
-  struct PW { const char* t; int16_t x; int16_t y; int16_t w; };
+  // Use member-variable cache to avoid 5 alloc/free cycles per frame.
+  // The cache persists across the 5 render passes (BW, image AA, tiled,
+  // LSB, MSB) within a single frame, and is rebuilt only when the page,
+  // margins, or spine changes. This is critical on the 320KB-RAM ESP32-C3
+  // where repeated alloc/free of the word array fragments the heap and
+  // causes OOM in the 8KB grayscale scratch path.
+  const bool cacheValid = !clippingWordCache_.page.expired() &&
+                          clippingWordCache_.page.lock() == page &&
+                          clippingWordCache_.marginLeft == marginLeft &&
+                          clippingWordCache_.marginTop == marginTop &&
+                          clippingWordCache_.spineIndex == currentSpine &&
+                          !clippingWordCache_.words.empty();
 
-  // Count words first so the array can be allocated in a single nothrow shot
-  // instead of growing a std::vector (whose reallocation throws std::bad_alloc
-  // when the heap is fragmented).
-  size_t totalWords = 0;
-  for (const auto& element : page->elements) {
-    if (!element || element->getTag() != TAG_PageLine) continue;
-    const auto& line = static_cast<const PageLine&>(*element);
-    const auto& block = line.getBlock();
-    if (!block) continue;
-    totalWords += block->wordCount();
-  }
-  if (totalWords == 0) return;
-
-  std::unique_ptr<PW[]> pw(new (std::nothrow) PW[totalWords]);
-  if (!pw) return;  // Graceful degradation: skip highlights this frame on OOM.
-
-  size_t pwCount = 0;
-  for (const auto& element : page->elements) {
-    if (!element || element->getTag() != TAG_PageLine) continue;
-    const auto& line = static_cast<const PageLine&>(*element);
-    const auto& block = line.getBlock();
-    if (!block) continue;
-    const uint16_t wc = block->wordCount();
-    for (uint16_t wi = 0; wi < wc && pwCount < totalWords; ++wi) {
-      const char* wordText = block->wordText(wi);
-      const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
-      const int16_t sy = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t sw = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
-      pw[pwCount++] = {wordText, sx, sy, sw};
+  if (!cacheValid) {
+    // Guard: skip cache build if free heap is critically low. The tiled
+    // grayscale path needs ~8KB contiguous; if we can't guarantee enough
+    // room for the cache + the upcoming scratch, skip highlights this frame
+    // rather than risk pushing maxAlloc below the scratch threshold.
+    // Use ESP.getFreeHeap()/getMaxAllocHeap() directly — they are inline and
+    // do NOT allocate heap. Also avoid LOG_DBG here when heap is already
+    // tight, because snprintf in the log macro can itself trigger an OOM
+    // assert when maxAlloc is near zero (observed crash: abort inside the
+    // LOG_DBG snprintf at strip[101] with maxAlloc=32).
+    constexpr uint32_t MIN_FREE_FOR_CACHE = 16384;  // 16KB headroom
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+    if (freeHeap < MIN_FREE_FOR_CACHE || maxAllocHeap < MIN_FREE_FOR_CACHE) {
+      // Silent skip when heap is very low to avoid snprintf allocation.
+      // Only log if we have enough headroom for the log itself.
+      if (maxAllocHeap > 1024) {
+        LOG_DBG("CLP", "renderClippingHighlights: SKIP cache build (low heap: free=%u maxAlloc=%u)",
+                freeHeap, maxAllocHeap);
+      }
+      return;
     }
+
+    LOG_DBG("CLP", "renderClippingHighlights: building cache (free=%u maxAlloc=%u)", freeHeap, maxAllocHeap);
+
+    clippingWordCache_.page = page;
+    clippingWordCache_.marginLeft = marginLeft;
+    clippingWordCache_.marginTop = marginTop;
+    clippingWordCache_.spineIndex = currentSpine;
+
+    size_t totalWords = 0;
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+      totalWords += block->wordCount();
+    }
+
+    clippingWordCache_.words.clear();
+    clippingWordCache_.xs.clear();
+    clippingWordCache_.ys.clear();
+    if (totalWords == 0) return;
+
+    clippingWordCache_.words.reserve(totalWords);
+    clippingWordCache_.xs.reserve(totalWords);
+    clippingWordCache_.ys.reserve(totalWords);
+
+    for (const auto& element : page->elements) {
+      if (!element || element->getTag() != TAG_PageLine) continue;
+      const auto& line = static_cast<const PageLine&>(*element);
+      const auto& block = line.getBlock();
+      if (!block) continue;
+      const uint16_t wc = block->wordCount();
+      const int16_t baseY = static_cast<int16_t>(line.yPos + marginTop);
+      for (uint16_t wi = 0; wi < wc; ++wi) {
+        const char* wordText = block->wordText(wi);
+        if (!wordText) continue;
+        const int16_t sx = static_cast<int16_t>(line.xPos + block->wordXpos(wi) + marginLeft);
+        // getTextAdvanceX uses the font's built-in advance table (no glyph
+        // load, no SD access) since the font was already loaded by the
+        // preceding page->render() call in the same frame.
+        const uint32_t sw = static_cast<uint32_t>(std::max(1, renderer.getTextAdvanceX(fontId, wordText, EpdFontFamily::REGULAR)));
+        clippingWordCache_.words.push_back({wordText, sw});
+        clippingWordCache_.xs.push_back(sx);
+        clippingWordCache_.ys.push_back(baseY);
+      }
+    }
+    LOG_DBG("CLP", "renderClippingHighlights: cache built with %zu words", clippingWordCache_.words.size());
   }
 
-  // Text-search only: consecutive word match (same proven algorithm as bookmarks).
-  // Numeric offsets are unreliable after layout changes.
+  const auto& words = clippingWordCache_.words;
+  const auto& xs = clippingWordCache_.xs;
+  const auto& ys = clippingWordCache_.ys;
+  const size_t pwCount = words.size();
+  if (pwCount == 0) return;
+
+  // Text-search: consecutive word match (same proven algorithm as bookmarks).
   for (const auto& clipping : clippingStore.getAll()) {
     if (clipping.spineIndex != currentSpine) continue;
     const auto& text = clipping.selectedText;
     if (text.empty()) continue;
 
-    std::vector<std::string> tokens;
+    // Fixed-stack tokenization: avoids std::vector<std::string> heap
+    // allocations that fragment the heap on this constrained device.
+    constexpr size_t MAX_TOKENS = 32;
+    constexpr size_t MAX_TOKEN_LEN = 32;
+    const char* tokens[MAX_TOKENS];
+    char tokenBuf[MAX_TOKENS][MAX_TOKEN_LEN];
+    size_t tokenCount = 0;
+
     {
-      std::string token;
+      size_t tokenLen = 0;
       for (char c : text) {
         if (c == ' ' || c == '\n' || c == '\r') {
-          if (!token.empty()) { tokens.push_back(token); token.clear(); }
-        } else { token += c; }
+          if (tokenLen > 0 && tokenCount < MAX_TOKENS) {
+            tokenBuf[tokenCount][tokenLen] = '\0';
+            tokens[tokenCount] = tokenBuf[tokenCount];
+            ++tokenCount;
+            tokenLen = 0;
+          }
+        } else if (tokenLen < MAX_TOKEN_LEN - 1) {
+          tokenBuf[tokenCount][tokenLen++] = c;
+        }
       }
-      if (!token.empty()) tokens.push_back(token);
+      if (tokenLen > 0 && tokenCount < MAX_TOKENS) {
+        tokenBuf[tokenCount][tokenLen] = '\0';
+        tokens[tokenCount] = tokenBuf[tokenCount];
+        ++tokenCount;
+      }
     }
-    if (tokens.size() < 3) continue;
-    const size_t minMatch = std::max(tokens.size() / 2, size_t{3});
+
+    if (tokenCount < 2) continue;
+    // 2-word clippings: require full match (minMatch=2).
+    // 3+ word clippings: require at least max(tokens/2, 3) consecutive words.
+    const size_t minMatch = (tokenCount <= 2) ? tokenCount : std::max(tokenCount / 2, size_t{3});
 
     for (size_t startIdx = 0; startIdx + minMatch <= pwCount; ++startIdx) {
-      if (strcmp(pw[startIdx].t, tokens[0].c_str()) != 0) continue;
+      if (!words[startIdx].first) continue;
+      if (strcmp(words[startIdx].first, tokens[0]) != 0) continue;
       size_t m = 1;
-      for (size_t k = 1; k < tokens.size() && startIdx + k < pwCount; ++k) {
-        if (strcmp(pw[startIdx + k].t, tokens[k].c_str()) == 0) ++m; else break;
+      for (size_t k = 1; k < tokenCount && startIdx + k < pwCount; ++k) {
+        if (!words[startIdx + k].first) break;
+        if (strcmp(words[startIdx + k].first, tokens[k]) == 0) ++m; else break;
       }
       if (m < minMatch) continue;
 
       // Group consecutive matched words on the same line into single rects.
       int16_t asc = static_cast<int16_t>(renderer.getFontAscenderSize(fontId));
       for (size_t k = 0; k < m; ) {
-        int16_t lineY = pw[startIdx + k].y;
-        int16_t runX = pw[startIdx + k].x;
-        int16_t runEnd = runX + pw[startIdx + k].w;
+        if (startIdx + k >= pwCount) break;
+        int16_t lineY = ys[startIdx + k];
+        int16_t runX = xs[startIdx + k];
+        int16_t runEnd = static_cast<int16_t>(runX + static_cast<int16_t>(words[startIdx + k].second));
         size_t kEnd = k + 1;
-        while (kEnd < m && pw[startIdx + kEnd].y == lineY) {
-          runEnd = pw[startIdx + kEnd].x + pw[startIdx + kEnd].w;
+        while (kEnd < m && startIdx + kEnd < pwCount && ys[startIdx + kEnd] == lineY) {
+          runEnd = static_cast<int16_t>(xs[startIdx + kEnd] + static_cast<int16_t>(words[startIdx + kEnd].second));
           ++kEnd;
         }
-        renderer.fillRectDither(runX - 1, lineY - 1, runEnd - runX + 2, asc + 6, Color::LightGray);
+        int16_t width = static_cast<int16_t>(runEnd - runX + 2);
+        if (width < 1) width = 1;
+        renderer.fillRectDither(runX - 1, lineY - 1, width, asc + 6, Color::LightGray);
         for (size_t j = k; j < kEnd; ++j) {
-          renderer.drawText(fontId, pw[startIdx + j].x, pw[startIdx + j].y, pw[startIdx + j].t, true, EpdFontFamily::BOLD);
+          if (startIdx + j >= pwCount) break;
+          renderer.drawText(fontId, xs[startIdx + j], ys[startIdx + j], words[startIdx + j].first, true, EpdFontFamily::REGULAR);
         }
         k = kEnd;
       }
-      return;
+      return;  // Only highlight the first match per clipping
     }
   }
 }
@@ -1374,10 +1472,14 @@ void EpubReaderActivity::createClippingFromSelection() {
     return;
   }
 
+  const unsigned long t0 = millis();
   const int startRow = std::min(clippingStartRow, clippingEndRow);
   const int endRow = std::max(clippingStartRow, clippingEndRow);
   const int startWord = std::min(clippingStartWordIndex, clippingEndWordIndex);
   const int endWord = std::max(clippingStartWordIndex, clippingEndWordIndex);
+  LOG_DBG("CLP", "createClippingFromSelection: start=%d end=%d row=%d..%d words=%d..%d",
+          startWord, endWord, startRow, endRow,
+          std::max(0, endWord - startWord) + 1, static_cast<int>(millis() - t0));
 
   ClippingStore::Clipping clipping;
   clipping.spineIndex = static_cast<uint16_t>(currentSpineIndex);
@@ -1419,11 +1521,6 @@ void EpubReaderActivity::createClippingFromSelection() {
       }
       if (lineHasSelectedWord) {
         if (!firstLine) {
-          // Continua il testo selezionato: tra due righe adiacenti inserisci un
-          // SINGOLO spazio (la spaziatura corretta tra l'ultima parola della
-          // riga precedente e la prima della successiva). Usa un capoverso
-          // (`\n`) solo per un vero blocco di paragrafo (gap verticale ben
-          // superiore a un'interlinea), non per il semplice andare a capo.
           const int gap = std::abs(line.yPos - prevLineY);
           const int lineHeight = renderer.getLineHeight(SETTINGS.getReaderFontId());
           const bool paragraphBreak = gap > static_cast<int>(lineHeight * 1.5f);
@@ -1442,20 +1539,29 @@ void EpubReaderActivity::createClippingFromSelection() {
   clipping.selectedText = selectedText;
 
   if (clipping.selectedText.empty()) {
+    LOG_DBG("CLP", "createClippingFromSelection: empty selectedText");
     PopupUtils::showErrorToast(renderer, tr(STR_ERROR_GENERAL_FAILURE));
     exitClippingMode();
     requestUpdate();
     return;
   }
 
+  const unsigned long tAdd = millis();
   clippingStore.add(clipping);
-  clippingStore.save();
-
-  exportClippingToTextFile(clipping);
+  LOG_DBG("CLP", "createClippingFromSelection: add took %ums", static_cast<int>(millis() - tAdd));
 
   GUI.drawPopup(renderer, tr(STR_CLIPPING_ADDED));
   renderer.displayBuffer();
-  delay(500);
+
+  const unsigned long tSave = millis();
+  clippingStore.save();
+  LOG_DBG("CLP", "createClippingFromSelection: save took %ums", static_cast<int>(millis() - tSave));
+
+  const unsigned long tExport = millis();
+  exportClippingToTextFile(clipping);
+  LOG_DBG("CLP", "createClippingFromSelection: export took %ums total=%ums",
+          static_cast<int>(millis() - tExport), static_cast<int>(millis() - t0));
+
   exitClippingMode();
   requestUpdate();
 }
@@ -2956,11 +3062,19 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
   const auto tDisplay = millis();
 
   const bool needsGrayscale = enableTextAA || enableImageGrayscaleOnly;
+  {
+    const auto mem = MemoryBudget::snapshot();
+    LOG_DBG("ERS", "pre-tiled-grayscale: free=%u maxAlloc=%u needsGrayscale=%d",
+            mem.freeHeap, mem.maxAllocHeap, needsGrayscale ? 1 : 0);
+  }
   ReaderUtils::TiledGrayscaleTimings tiledTimings;
   const bool tiledGrayscale =
       needsGrayscale && ReaderUtils::renderTiledGrayscale(
                            renderer, "ERS",
                             [&]() {
+                              static int stripIdx = 0;
+                              const auto memBefore = MemoryBudget::snapshot();
+                              LOG_DBG("ERS", "tiled-strip[%d] start: free=%u maxAlloc=%u", stripIdx, memBefore.freeHeap, memBefore.maxAllocHeap);
                               if (enableImageGrayscaleOnly) {
                                 page->renderImages(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
                               } else {
@@ -2969,10 +3083,17 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
                                 renderClippingHighlights(page, orientedMarginLeft, orientedMarginTop);
                               }
                               renderStatusBar();
+                              const auto memAfter = MemoryBudget::snapshot();
+                              LOG_DBG("ERS", "tiled-strip[%d] end: free=%u maxAlloc=%u", stripIdx, memAfter.freeHeap, memAfter.maxAllocHeap);
+                              ++stripIdx;
                             },
                            &tiledTimings);
 
   if (tiledGrayscale) {
+    {
+      const auto mem = MemoryBudget::snapshot();
+      LOG_DBG("ERS", "post-tiled-grayscale: free=%u maxAlloc=%u", mem.freeHeap, mem.maxAllocHeap);
+    }
     const auto tEnd = millis();
     fcm->logStats("gray");
     LOG_DBG("ERS",

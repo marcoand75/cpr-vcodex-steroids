@@ -90,6 +90,20 @@ class EpubReaderActivity final : public Activity {
   void renderClippingSelectionOverlay();
   void renderBookmarkHighlight(std::shared_ptr<Page> page, int marginLeft, int marginTop);
   void renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop);
+  // Cached page word positions for clipping highlight search. Reused across
+  // the 5 render passes (BW + image AA + tiled + LSB + MSB) within a single
+  // frame to avoid repeated alloc/free of the word array, which fragments
+  // the 320KB heap on ESP32-C3 and triggers OOM in the grayscale path.
+  struct ClippingWordCache {
+    std::weak_ptr<Page> page;
+    int marginLeft = 0;
+    int marginTop = 0;
+    int spineIndex = -1;
+    std::vector<std::pair<const char*, uint32_t>> words;  // text ptr + width
+    std::vector<int16_t> xs;
+    std::vector<int16_t> ys;
+  };
+  ClippingWordCache clippingWordCache_;
   void createClippingFromSelection();
   void exportClippingToTextFile(const ClippingStore::Clipping& clipping);
   int sessionStartSpineIndex = 0;
