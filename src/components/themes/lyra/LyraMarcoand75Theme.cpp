@@ -299,10 +299,10 @@ void drawDataPanel(const GfxRenderer& r, const RecentBook& book, bool inCar, int
   }
 
   {
-    // BOOK STATS column is 48px narrower and GLOBAL STATS 48px wider so the
+    // BOOK STATS column is 16px narrower and GLOBAL STATS 16px wider so the
     // right column's longer rows (today + daily average + trend icon, goal +
     // checkmark) stay readable. Combined width still fills the panel exactly.
-    constexpr int statsWidthShift = 48;
+    constexpr int statsWidthShift = 16;
     const int halfW = (pw - gap) / 2;
     const int bookColW = std::max(1, halfW - statsWidthShift);
     const int globalColW = halfW + statsWidthShift;
