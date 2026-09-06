@@ -3,6 +3,7 @@
 #include <Bitmap.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <Logging.h>
 
 #include <algorithm>
 #include <string>
@@ -13,6 +14,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/PanelDrawHelper.h"
+#include "util/CoverRawCache.h"
 #include "components/icons/apps_hub.h"
 #include "components/icons/book.h"
 #include "components/icons/bookmark.h"
@@ -485,30 +487,71 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
         if (Storage.openFileForRead("HOME", thumbPath, file)) {
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpRatio  = static_cast<float>(bitmap.getWidth())
-                                    / static_cast<float>(bitmap.getHeight());
-            const float tileRatio = static_cast<float>(sw) / static_cast<float>(sh);
+            bool drawn = false;
+            const std::string rawPath =
+                CoverRawCache::getRawPath(thumbPath, bitmap.getWidth(), bitmap.getHeight());
+            RawCoverHeader rawHeader;
+            size_t rawSize = 0;
+            uint8_t* rawData = CoverRawCache::load(rawPath, &rawHeader, &rawSize);
+            if (rawData) {
+              const float bmpRatio  = static_cast<float>(rawHeader.width)
+                                      / static_cast<float>(rawHeader.height);
+              const float tileRatio = static_cast<float>(sw) / static_cast<float>(sh);
 
-            // Allineamento reale a libri sovrapposti per tutte le cover laterali.
-            if (bmpRatio > tileRatio) {
-              int drawH = sh;
-              int drawW = static_cast<int>(drawH * bmpRatio);
-              int drawX = isLeft ? sx : (sx + sw - drawW);
-              int drawY = sy;
-              // Disegna l'immagine scalata in altezza
-              renderer.drawBitmap(bitmap, drawX, drawY, drawW, drawH, 0.0f, 0.0f);
-              
-              // Copre la parte in eccesso con il bianco per simulare il taglio netto
-              if (isLeft) {
-                renderer.fillRect(sx + sw, sy, drawW - sw + 2, sh, false);
+              if (bmpRatio > tileRatio) {
+                int drawH = sh;
+                int drawW = static_cast<int>(drawH * bmpRatio);
+                int drawX = isLeft ? sx : (sx + sw - drawW);
+                int drawY = sy;
+                LOG_DBG("HCR-RAW", "side cover RAW bmp=%dx%d tile=%dx%d draw=%dx%d@%d,%d rawPath=%s",
+                        rawHeader.width, rawHeader.height, sw, sh, drawW, drawH, drawX, drawY,
+                        rawPath.c_str());
+                renderer.drawBitmapFromRaw(rawHeader.width, rawHeader.height, rawHeader.topDown,
+                                           rawHeader.rowBytes, rawData, drawX, drawY, drawW, drawH, 0.0f, 0.0f);
+
+                if (isLeft) {
+                  renderer.fillRect(sx + sw, sy, drawW - sw + 2, sh, false);
+                } else {
+                  renderer.fillRect(drawX - 2, sy, sx - drawX + 2, sh, false);
+                }
               } else {
-                renderer.fillRect(drawX - 2, sy, sx - drawX + 2, sh, false);
+                const float cropX = 0.0f;
+                const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+                LOG_DBG("HCR-RAW", "side cover RAW crop bmp=%dx%d tile=%dx%d cropX=%f cropY=%f rawPath=%s",
+                        rawHeader.width, rawHeader.height, sw, sh, cropX, cropY, rawPath.c_str());
+                renderer.drawBitmapFromRaw(rawHeader.width, rawHeader.height, rawHeader.topDown,
+                                           rawHeader.rowBytes, rawData, sx, sy, sw, sh, cropX, cropY);
               }
-            } else {
-              // Cover verticali: taglio centrato classico
-              const float cropX = 0.0f;
-              const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
-              renderer.drawBitmap(bitmap, sx, sy, sw, sh, cropX, cropY);
+              drawn = true;
+              free(rawData);
+            }
+            if (!drawn) {
+              const float bmpRatio  = static_cast<float>(bitmap.getWidth())
+                                      / static_cast<float>(bitmap.getHeight());
+              const float tileRatio = static_cast<float>(sw) / static_cast<float>(sh);
+
+              // Allineamento reale a libri sovrapposti per tutte le cover laterali.
+              if (bmpRatio > tileRatio) {
+                int drawH = sh;
+                int drawW = static_cast<int>(drawH * bmpRatio);
+                int drawX = isLeft ? sx : (sx + sw - drawW);
+                int drawY = sy;
+                // Disegna l'immagine scalata in altezza
+                renderer.drawBitmap(bitmap, drawX, drawY, drawW, drawH, 0.0f, 0.0f);
+                
+                // Copre la parte in eccesso con il bianco per simulare il taglio netto
+                if (isLeft) {
+                  renderer.fillRect(sx + sw, sy, drawW - sw + 2, sh, false);
+                } else {
+                  renderer.fillRect(drawX - 2, sy, sx - drawX + 2, sh, false);
+                }
+              } else {
+                // Cover verticali: taglio centrato classico
+                const float cropX = 0.0f;
+                const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+                renderer.drawBitmap(bitmap, sx, sy, sw, sh, cropX, cropY);
+              }
+              CoverRawCache::generate(thumbPath, rawPath);
             }
             hasCover = true;
           }
@@ -613,21 +656,51 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
         if (Storage.openFileForRead("HOME", thumbPath, file)) {
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-            const float bmpRatio  = static_cast<float>(bitmap.getWidth())
-                                    / static_cast<float>(bitmap.getHeight());
-            const float tileRatio = static_cast<float>(kFiveCoverCenterW)
-                                    / static_cast<float>(kFiveCoverCenterH);
-            const float cropX = (bmpRatio > tileRatio)
-                                    ? (1.0f - tileRatio / bmpRatio)
-                                    : 0.0f;
-            const float cropY = (bmpRatio < tileRatio)
-                                    ? (1.0f - bmpRatio / tileRatio)
-                                    : 0.0f;
-            renderer.drawBitmap(bitmap, centerX, centerCoverTop,
-                                kFiveCoverCenterW, kFiveCoverCenterH, cropX, cropY);
-            renderer.maskRoundedRectOutsideCorners(centerX, centerCoverTop,
-                                                    kFiveCoverCenterW, kFiveCoverCenterH,
-                                                    kCornerRadius, Color::White);
+            bool drawn = false;
+            const std::string rawPath =
+                CoverRawCache::getRawPath(thumbPath, bitmap.getWidth(), bitmap.getHeight());
+            RawCoverHeader rawHeader;
+            size_t rawSize = 0;
+            uint8_t* rawData = CoverRawCache::load(rawPath, &rawHeader, &rawSize);
+            if (rawData) {
+              const float bmpRatio  = static_cast<float>(rawHeader.width)
+                                      / static_cast<float>(rawHeader.height);
+              const float tileRatio = static_cast<float>(kFiveCoverCenterW)
+                                      / static_cast<float>(kFiveCoverCenterH);
+              const float cropX = (bmpRatio > tileRatio)
+                                      ? (1.0f - tileRatio / bmpRatio)
+                                      : 0.0f;
+              const float cropY = (bmpRatio < tileRatio)
+                                      ? (1.0f - bmpRatio / tileRatio)
+                                      : 0.0f;
+              renderer.drawBitmapFromRaw(rawHeader.width, rawHeader.height, rawHeader.topDown,
+                                         rawHeader.rowBytes, rawData,
+                                         centerX, centerCoverTop,
+                                         kFiveCoverCenterW, kFiveCoverCenterH, cropX, cropY);
+              renderer.maskRoundedRectOutsideCorners(centerX, centerCoverTop,
+                                                      kFiveCoverCenterW, kFiveCoverCenterH,
+                                                      kCornerRadius, Color::White);
+              drawn = true;
+              free(rawData);
+            }
+            if (!drawn) {
+              const float bmpRatio  = static_cast<float>(bitmap.getWidth())
+                                      / static_cast<float>(bitmap.getHeight());
+              const float tileRatio = static_cast<float>(kFiveCoverCenterW)
+                                      / static_cast<float>(kFiveCoverCenterH);
+              const float cropX = (bmpRatio > tileRatio)
+                                      ? (1.0f - tileRatio / bmpRatio)
+                                      : 0.0f;
+              const float cropY = (bmpRatio < tileRatio)
+                                      ? (1.0f - bmpRatio / tileRatio)
+                                      : 0.0f;
+              renderer.drawBitmap(bitmap, centerX, centerCoverTop,
+                                  kFiveCoverCenterW, kFiveCoverCenterH, cropX, cropY);
+              renderer.maskRoundedRectOutsideCorners(centerX, centerCoverTop,
+                                                      kFiveCoverCenterW, kFiveCoverCenterH,
+                                                      kCornerRadius, Color::White);
+              CoverRawCache::generate(thumbPath, rawPath);
+            }
             hasCover = true;
           }
           file.close();

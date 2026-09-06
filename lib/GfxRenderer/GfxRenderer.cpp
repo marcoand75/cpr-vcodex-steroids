@@ -1382,6 +1382,132 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
   }
 }
 
+void GfxRenderer::drawBitmapFromRaw(int width, int height, bool topDown, int rowBytes, const uint8_t* pixelData,
+                                    const int x, const int y, const int maxWidth, const int maxHeight,
+                                    const float cropX, const float cropY) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+  if (width <= 0 || height <= 0 || !pixelData) return;
+
+  float scale = 1.0f;
+  bool isScaled = false;
+  int cropPixX = std::floor(width * cropX / 2.0f);
+  int cropPixY = std::floor(height * cropY / 2.0f);
+
+  const float croppedWidth = (1.0f - cropX) * static_cast<float>(width);
+  const float croppedHeight = (1.0f - cropY) * static_cast<float>(height);
+  bool hasTargetBounds = false;
+  float fitScale = 1.0f;
+
+  if (maxWidth > 0 && croppedWidth > 0.0f) {
+    fitScale = static_cast<float>(maxWidth) / croppedWidth;
+    hasTargetBounds = true;
+  }
+
+  if (maxHeight > 0 && croppedHeight > 0.0f) {
+    const float heightScale = static_cast<float>(maxHeight) / croppedHeight;
+    fitScale = hasTargetBounds ? std::min(fitScale, heightScale) : heightScale;
+    hasTargetBounds = true;
+  }
+
+  if (hasTargetBounds && fitScale < 1.0f) {
+    scale = fitScale;
+    isScaled = true;
+  }
+
+  const int outputRowSize = (width + 3) / 4;
+  for (int bmpY = 0; bmpY < (height - cropPixY); bmpY++) {
+    int screenY = -cropPixY + (topDown ? bmpY : height - 1 - bmpY);
+    if (isScaled) {
+      screenY = std::floor(screenY * scale);
+    }
+    screenY += y;
+    if (screenY >= getScreenHeight()) {
+      break;
+    }
+    if (screenY < 0) {
+      continue;
+    }
+    if (bmpY < cropPixY) {
+      continue;
+    }
+
+    const uint8_t* rowPtr = pixelData + static_cast<size_t>(bmpY) * static_cast<size_t>(rowBytes);
+    for (int bmpX = cropPixX; bmpX < width - cropPixX; bmpX++) {
+      int screenX = bmpX - cropPixX;
+      if (isScaled) {
+        screenX = std::floor(screenX * scale);
+      }
+      screenX += x;
+      if (screenX >= getScreenWidth()) {
+        break;
+      }
+      if (screenX < 0) {
+        continue;
+      }
+
+      const uint8_t val = rowPtr[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+
+      if (renderMode == BW) {
+        if (darkMode) {
+          drawPixelRaw(screenX, screenY, val < 3);
+        } else if (val < 3) {
+          drawPixelRaw(screenX, screenY, true);
+        }
+      } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+        drawPixel(screenX, screenY, false);
+      } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+        drawPixel(screenX, screenY, false);
+      }
+    }
+  }
+}
+
+void GfxRenderer::drawBitmap1BitFromRaw(int width, int height, bool topDown, int rowBytes, const uint8_t* pixelData,
+                                        const int x, const int y, const int maxWidth, const int maxHeight) const {
+  if (width <= 0 || height <= 0 || !pixelData) return;
+
+  float scale = 1.0f;
+  bool isScaled = false;
+  if (maxWidth > 0 && width > maxWidth) {
+    scale = static_cast<float>(maxWidth) / static_cast<float>(width);
+    isScaled = true;
+  }
+  if (maxHeight > 0 && height > maxHeight) {
+    scale = std::min(scale, static_cast<float>(maxHeight) / static_cast<float>(height));
+    isScaled = true;
+  }
+
+  for (int bmpY = 0; bmpY < height; bmpY++) {
+    const int bmpYOffset = topDown ? bmpY : height - 1 - bmpY;
+    int screenY = y + (isScaled ? static_cast<int>(std::floor(bmpYOffset * scale)) : bmpYOffset);
+    if (screenY >= getScreenHeight()) {
+      continue;
+    }
+    if (screenY < 0) {
+      continue;
+    }
+
+    const uint8_t* rowPtr = pixelData + static_cast<size_t>(bmpY) * static_cast<size_t>(rowBytes);
+    for (int bmpX = 0; bmpX < width; bmpX++) {
+      int screenX = x + (isScaled ? static_cast<int>(std::floor(bmpX * scale)) : bmpX);
+      if (screenX >= getScreenWidth()) {
+        break;
+      }
+      if (screenX < 0) {
+        continue;
+      }
+
+      const uint8_t val = rowPtr[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+
+      if (darkMode) {
+        drawPixelRaw(screenX, screenY, val < 3);
+      } else if (val < 3) {
+        drawPixelRaw(screenX, screenY, true);
+      }
+    }
+  }
+}
+
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {
   if (numPoints < 3) return;
 

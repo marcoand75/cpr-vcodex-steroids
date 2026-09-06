@@ -208,9 +208,13 @@ class GfxRenderer {
   void drawIconInverted(const uint8_t bitmap[], int x, int y, int width, int height) const;
   void drawScaledIcon(const uint8_t bitmap[], int x, int y, int srcW, int srcH, int dstW, int dstH) const;
   void drawScaledIconInverted(const uint8_t bitmap[], int x, int y, int srcW, int srcH, int dstW, int dstH) const;
-  void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
-                  float cropY = 0) const;
+  void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0.0f,
+                  float cropY = 0.0f) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+  void drawBitmapFromRaw(int width, int height, bool topDown, int rowBytes, const uint8_t* pixelData, int x, int y,
+                         int maxWidth, int maxHeight, float cropX = 0.0f, float cropY = 0.0f) const;
+  void drawBitmap1BitFromRaw(int width, int height, bool topDown, int rowBytes, const uint8_t* pixelData, int x, int y,
+                             int maxWidth, int maxHeight) const;
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
   // Text
