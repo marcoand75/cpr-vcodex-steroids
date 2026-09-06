@@ -92,10 +92,16 @@ class EpubReaderActivity final : public Activity {
   void renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop);
   // Cached page word positions for clipping highlight search. Reused across
   // the 5 render passes (BW + image AA + tiled + LSB + MSB) within a single
-  // frame to avoid repeated alloc/free of the word array, which fragments
-  // the 320KB heap on ESP32-C3 and triggers OOM in the grayscale path.
+  // frame AND across frames: the cache is keyed by (section, pageNumber,
+  // margins) so it stays valid when the Page object is recreated every render.
+  // Holding a shared_ptr keeps the page alive so the const char* word pointers
+  // in `words` stay valid. This makes a freshly added clipping appear on the
+  // current page immediately: the text search runs without needing to rebuild
+  // the cache (which could be skipped under low heap).
   struct ClippingWordCache {
-    std::weak_ptr<Page> page;
+    std::shared_ptr<Page> page;
+    const void* sectionId = nullptr;
+    int pageNumber = -1;
     int marginLeft = 0;
     int marginTop = 0;
     int spineIndex = -1;

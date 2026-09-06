@@ -1259,14 +1259,14 @@ void EpubReaderActivity::renderBookmarkHighlight(std::shared_ptr<Page> page, int
 
 void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, int marginLeft, int marginTop) {
   if (clippingStore.isEmpty()) return;
-  if (!page) return;
+  if (!page || !section) return;
 
   const uint16_t currentSpine = static_cast<uint16_t>(currentSpineIndex);
 
   // Cheap pre-check: only build the word array and do the search when there
   // is at least one clipping for the current spine. This avoids 5 redundant
   // builds per frame (BW + image AA + tiled + LSB + MSB) on pages with no
-  // clippings. Also frees the 2KB cache when leaving a spine with clippings.
+  // clippings. Also frees the cache when leaving a spine with clippings.
   bool hasClipForSpine = false;
   for (const auto& clipping : clippingStore.getAll()) {
     if (clipping.spineIndex == currentSpine) {
@@ -1276,46 +1276,55 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
   }
   if (!hasClipForSpine) {
     // Free the persistent cache when it's no longer needed. This releases
-    // ~2KB of heap that would otherwise be permanently allocated on a
-    // 320KB-RAM device, reducing fragmentation in the tiled grayscale path.
-    if (!clippingWordCache_.words.empty()) {
+    // the held page and the word arrays on a 320KB-RAM device, reducing
+    // fragmentation in the tiled grayscale path. Avoid shrink_to_fit(): on
+    // the ESP32-C3 heap it can fragment memory more than it helps.
+    if (!clippingWordCache_.words.empty() || clippingWordCache_.page) {
       LOG_DBG("CLP", "renderClippingHighlights: clearing cache (no clips for spine %u)", currentSpine);
       clippingWordCache_.words.clear();
       clippingWordCache_.xs.clear();
       clippingWordCache_.ys.clear();
-      clippingWordCache_.words.shrink_to_fit();
-      clippingWordCache_.xs.shrink_to_fit();
-      clippingWordCache_.ys.shrink_to_fit();
+      clippingWordCache_.page.reset();
+      clippingWordCache_.sectionId = nullptr;
+      clippingWordCache_.pageNumber = -1;
+      clippingWordCache_.marginLeft = 0;
+      clippingWordCache_.marginTop = 0;
+      clippingWordCache_.spineIndex = -1;
     }
     return;
   }
 
   const int fontId = SETTINGS.getReaderFontId();
 
-  // Use member-variable cache to avoid 5 alloc/free cycles per frame.
-  // The cache persists across the 5 render passes (BW, image AA, tiled,
-  // LSB, MSB) within a single frame, and is rebuilt only when the page,
-  // margins, or spine changes. This is critical on the 320KB-RAM ESP32-C3
-  // where repeated alloc/free of the word array fragments the heap and
-  // causes OOM in the 8KB grayscale scratch path.
-  const bool cacheValid = !clippingWordCache_.page.expired() &&
-                          clippingWordCache_.page.lock() == page &&
+  // Use member-variable cache to avoid repeated alloc/free of the word array,
+  // which fragments the heap on the ESP32-C3 and triggers OOM in the 8KB
+  // grayscale scratch path. The cache persists across the 5 render passes of
+  // a single frame AND across frames: the Page object is recreated each render,
+  // so it is keyed by (section pointer, page number, margins) instead of page
+  // pointer identity. Holding the page with shared_ptr keeps the word-text
+  // pointers valid. This is what lets a newly added clipping appear on the
+  // current page immediately — the text search below runs against a valid
+  // cache instead of being skipped under low heap.
+  const bool cacheValid = clippingWordCache_.page &&
+                          clippingWordCache_.sectionId == section.get() &&
+                          clippingWordCache_.pageNumber == section->currentPage &&
                           clippingWordCache_.marginLeft == marginLeft &&
                           clippingWordCache_.marginTop == marginTop &&
                           clippingWordCache_.spineIndex == currentSpine &&
                           !clippingWordCache_.words.empty();
 
   if (!cacheValid) {
-    // Guard: skip cache build if free heap is critically low. The tiled
-    // grayscale path needs ~8KB contiguous; if we can't guarantee enough
-    // room for the cache + the upcoming scratch, skip highlights this frame
-    // rather than risk pushing maxAlloc below the scratch threshold.
-    // Use ESP.getFreeHeap()/getMaxAllocHeap() directly — they are inline and
-    // do NOT allocate heap. Also avoid LOG_DBG here when heap is already
-    // tight, because snprintf in the log macro can itself trigger an OOM
-    // assert when maxAlloc is near zero (observed crash: abort inside the
-    // LOG_DBG snprintf at strip[101] with maxAlloc=32).
-    constexpr uint32_t MIN_FREE_FOR_CACHE = 16384;  // 16KB headroom
+    // Guard: skip cache build only if heap is genuinely too low to build it.
+    // The cache itself is small (~2KB for a full page: words/xs/ys vectors).
+    // The old 16KB threshold was sized for the *grayscale* 8KB scratch, but the
+    // grayscale path has its own guard and degrades gracefully (it is already
+    // skipped whenever maxAlloc < 16KB). Requiring 16KB here meant the cache
+    // was never rebuilt after the first page, so clippings added or already
+    // present on a page were never highlighted. 3KB covers the cache + the
+    // LOG_DBG snprintf with margin, while still avoiding the OOM crash seen
+    // when snprintf runs at maxAlloc=32. (Observed maxAlloc after prewarm in
+    // the field is 4-14KB; the lowest recorded was 4084, just above 3KB.)
+    constexpr uint32_t MIN_FREE_FOR_CACHE = 3072;
     const uint32_t freeHeap = ESP.getFreeHeap();
     const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
     if (freeHeap < MIN_FREE_FOR_CACHE || maxAllocHeap < MIN_FREE_FOR_CACHE) {
@@ -1331,6 +1340,8 @@ void EpubReaderActivity::renderClippingHighlights(std::shared_ptr<Page> page, in
     LOG_DBG("CLP", "renderClippingHighlights: building cache (free=%u maxAlloc=%u)", freeHeap, maxAllocHeap);
 
     clippingWordCache_.page = page;
+    clippingWordCache_.sectionId = section.get();
+    clippingWordCache_.pageNumber = section->currentPage;
     clippingWordCache_.marginLeft = marginLeft;
     clippingWordCache_.marginTop = marginTop;
     clippingWordCache_.spineIndex = currentSpine;
@@ -1573,6 +1584,11 @@ void EpubReaderActivity::exitClippingMode() {
   clippingStartRow = -1;
   clippingEndRow = -1;
   clippingStartMarkSet = false;
+  // The selection word list is only needed while selecting: releasing its
+  // capacity (~4KB on a full page) frees heap right before the page re-render
+  // that must show the newly added highlight. It is rebuilt on next enter.
+  std::vector<ClippingWordInfo>().swap(clippingWords);
+  clippingRowWordCounts.clear();
 }
 
 void EpubReaderActivity::exportClippingToTextFile(const ClippingStore::Clipping& clipping) {
