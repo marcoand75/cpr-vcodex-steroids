@@ -3109,6 +3109,12 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
             tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tiledTimings.grayLsb - tDisplay,
             tiledTimings.grayMsb - tiledTimings.grayLsb, tiledTimings.grayDisplay - tiledTimings.grayMsb,
             tiledTimings.cleanup - tiledTimings.grayDisplay, tEnd - t0);
+    // Clear the font cache now that all render passes are done. The next
+    // page's PrewarmScope constructor will rebuild it. Clearing here
+    // (instead of in the PrewarmScope destructor) avoids the
+    // fragmentation caused by clearing then immediately re-allocating
+    // for the next page's prewarm on the same render cycle.
+    fcm->clearCache();
     return;
   }
 
@@ -3173,6 +3179,13 @@ void EpubReaderActivity::renderContents(std::shared_ptr<Page> page, const int or
             tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay,
             needsGrayscale ? "skipped" : "off", tEnd - t0);
   }
+
+  // Clear the font cache now that all render passes are done. The next
+  // page's PrewarmScope constructor will rebuild it. Clearing here
+  // (instead of in the PrewarmScope destructor) avoids the
+  // fragmentation caused by clearing then immediately re-allocating
+  // for the next page's prewarm on the same render cycle.
+  fcm->clearCache();
 }
 
 void EpubReaderActivity::renderStatusBar() const {
