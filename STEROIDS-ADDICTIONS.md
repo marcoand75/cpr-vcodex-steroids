@@ -1522,6 +1522,14 @@ explicitly tracks whether a scan font ID was set during `recordText()`/`recordSt
   `needsReload()` and `loadFamily()` stay in sync, avoiding false reloads when
   settings map to the same point size.
 
+### 23.9 Wikipedia cache listing fix
+`SDCardManager::listFiles()` in `freeink-sdk` skips directories, so
+`WikipediaActivity::loadCachedPages()` stopped seeing `wiki_<hash>` cache
+folders after a submodule update. Added `HalStorage::listFilesWithDirectories()`
+as a local wrapper that includes directories in the listing, keeping the fix
+isolated from upstream changes. `WikipediaActivity` now uses the new wrapper
+to enumerate cached articles correctly.
+
 Effect: reduced heap churn on Home→Reader transitions, fewer alloc/free cycles,
 and more stable `MaxAlloc` during rendering because glyph caches are preserved
 across prewarm.

@@ -45,6 +45,30 @@ std::vector<String> HalStorage::listFiles(const char* path, int maxFiles) {
   HAL_STORAGE_WRAPPED_CALL(listFiles, path, maxFiles);
 }
 
+std::vector<String> HalStorage::listFilesWithDirectories(const char* path, int maxFiles) {
+  std::vector<String> ret;
+  if (!ready()) {
+    LOG_ERR("HAL", "listFilesWithDirectories: SD not initialized");
+    return ret;
+  }
+
+  HalFile dir = open(path, O_RDONLY);
+  if (!dir || !dir.isDirectory()) {
+    return ret;
+  }
+
+  int count = 0;
+  char name[128];
+  for (HalFile f = dir.openNextFile(); f && count < maxFiles; f = dir.openNextFile()) {
+    f.getName(name, sizeof(name));
+    ret.emplace_back(name);
+    f.close();
+    count++;
+  }
+  dir.close();
+  return ret;
+}
+
 String HalStorage::readFile(const char* path) { HAL_STORAGE_WRAPPED_CALL(readFile, path); }
 
 bool HalStorage::readFileToStream(const char* path, Print& out, size_t chunkSize) {

@@ -526,7 +526,7 @@ implementation Steroids no longer ships.
 | `lib/MiniBidi/*` | Bidi engine pulled in by CrossInk; not in upstream master. |
 | `lib/miniz/` + `third_party/miniz.c` | New inflater used by CrossInk. |
 | `lib/Memory/Arena.h` / `ArenaVector.h` | Arena allocator used **inside** the CrossInk engine, **not** on the epub render hot path. |
-| `src/activities/apps/WikipediaActivity.cpp/h` | Per-article folder cache (`wiki_<hash>`), crash fixes, i18n delete key, `listFiles(includeDirectories)`. |
+| `src/activities/apps/WikipediaActivity.cpp/h` | Per-article folder cache (`wiki_<hash>`), crash fixes, i18n delete key, `HalStorage::listFilesWithDirectories()` wrapper because upstream `SDCardManager::listFiles()` skips directories. |
 | `src/activities/reader/WikiTxtReaderActivity.cpp/h` | Dedicated wiki reader (progress.bin, screenshot info, frame reserve). |
 | `src/util/ScreenshotInfo.h` | New reader-metadata hook (used by wiki reader). |
 | `src/ReadingStats/` | **Intentionally empty** — CrossInk binary stats removed; vCodex JSON is the only store. |
@@ -1320,8 +1320,8 @@ deltas to watch in the next upstream pull. Details by feature in
   `std::hash`; a hash mismatch is what used to make cover thumbs and book-cache
   deletion miss.
 - **Wikipedia** is a full Steroids app (`WikipediaActivity`/`WikiTxtReaderActivity`)
-  plus cache plumbing (`HalStorage::listFiles(includeDirectories=false)`),
-  `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
+  plus cache plumbing (`HalStorage::listFilesWithDirectories()` wrapper around
+  `SDCardManager::listFiles()`), `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
   Steroids string keys (keep local; see I18N workflow).
 - **Settings JSON split** (2026-08-04): `JsonSettingsIO.cpp` is byte-identical to
   upstream; all 43 Steroids-only fields live in `JsonSettingsIOSteroids.cpp`.
