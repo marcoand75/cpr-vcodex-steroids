@@ -1190,25 +1190,99 @@ int collectionBookCount(int collectionIdx) {
 
 // ---- Mixed view query ----
 
-int queryMixed(BookRef* out, int page, int pageSize) {
+// Forward declaration for filter matching used by queryMixed/totalMixedMatching.
+static bool matchesFilter(const Record& rec, FilterMode m);
+
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode) {
   HalFile mf = Storage.open(kIdxMixed);
   if (!mf) return 0;
 
   const int total = static_cast<int>(mf.size() / kIndexRecSize);
-  const int start = page * pageSize;
-  if (start >= total) { mf.close(); return 0; }
-
   HalFile cf = Storage.open(kIdxCollections);
   const bool hasCollIndex = !!cf;
 
   int count = 0;
-  for (int i = start; i < total && count < pageSize; ++i) {
+  int skipped = 0;
+  const int wantSkip = page * pageSize;
+
+  for (int i = 0; i < total && count < pageSize; ++i) {
     mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
     IndexRec ir;
     if (!readIndexRec(mf, ir)) break;
 
+    bool matches = true;
     if (ir.bookId & 0x80000000u) {
-      // Series tile: read collection info from idx_collections.bin
+      // Series tile: match if any book in the series passes filter + search
+      const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
+      if (hasCollIndex) {
+        cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+        CollectionIndexRec ci;
+        if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+          // Check collection name for search
+          if (searchFilter && searchFilter[0] != '\0') {
+            char key[20]; makeTitleSortKey(ci.collectionName, key);
+            matches = substringMatch(key, searchFilter);
+          }
+
+          // Check if any book in the series matches the filter
+          if (matches && filterMode != FilterMode::ALL) {
+            HalFile sf = Storage.open(kSeriesDat);
+            HalFile df = Storage.open(kDatFile);
+            if (sf && df) {
+              sf.seek(ci.firstSeriesOffset);
+              SeriesRec sr;
+              bool anyMatch = false;
+              for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                if (sr.bookId == 0) continue;
+                df.seek(0);
+                Record rec;
+                uint32_t rp = 0;
+                while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                  if (rec.id == sr.bookId && !rec.tombstone()) {
+                    if (matchesFilter(rec, filterMode)) {
+                      anyMatch = true;
+                      break;
+                    }
+                  }
+                  ++rp;
+                }
+                if (anyMatch) break;
+              }
+              matches = anyMatch;
+            }
+            if (sf) sf.close();
+            if (df) df.close();
+          }
+        }
+      }
+    } else {
+      // Standalone book: match against filter + search
+      Record rec;
+      if (readRecord(ir.recordOffset / kRecordSize, rec)) {
+        matches = matchesFilter(rec, filterMode);
+        if (matches && searchFilter && searchFilter[0] != '\0') {
+          char titleKey[20]; makeTitleSortKey(rec.title, titleKey);
+          char authorKey[20]; makeSortKey(rec.author, authorKey);
+          matches = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
+        }
+      } else {
+        matches = false;
+      }
+    }
+
+    if (!matches) {
+      ++skipped;
+      continue;
+    }
+
+    if (skipped < wantSkip) {
+      ++skipped;
+      continue;
+    }
+
+    // This item is on the requested page
+    if (ir.bookId & 0x80000000u) {
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
@@ -1224,8 +1298,6 @@ int queryMixed(BookRef* out, int page, int pageSize) {
           ref.isCompleted = false;
           ref.isHidden = false;
 
-          // First-book path was precomputed during buildMixedIndex() and
-          // stored in recordOffset as a library.dat byte offset.
           if (ir.recordOffset != 0xFFFFFFFFu) {
             Record firstRec;
             if (readRecord(ir.recordOffset / kRecordSize, firstRec)) {
@@ -1238,7 +1310,6 @@ int queryMixed(BookRef* out, int page, int pageSize) {
         }
       }
     } else {
-      // Standalone book
       Record rec;
       if (readRecord(ir.recordOffset / kRecordSize, rec)) {
         BookRef& ref = out[count];
@@ -1266,6 +1337,91 @@ int totalMixed() {
   const int total = static_cast<int>(f.size() / kIndexRecSize);
   f.close();
   return total;
+}
+
+int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
+  HalFile mf = Storage.open(kIdxMixed);
+  if (!mf) return 0;
+
+  const bool hasSearch = (searchFilter && searchFilter[0] != '\0');
+  if (!hasSearch && filterMode == FilterMode::ALL) {
+    mf.close();
+    return totalMixed();
+  }
+
+  HalFile cf = Storage.open(kIdxCollections);
+  const bool hasCollIndex = !!cf;
+
+  int count = 0;
+  const int total = static_cast<int>(mf.size() / kIndexRecSize);
+  for (int i = 0; i < total; ++i) {
+    mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+    IndexRec ir;
+    if (!readIndexRec(mf, ir)) break;
+
+    bool matches = false;
+    if (ir.bookId & 0x80000000u) {
+      const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
+      if (hasCollIndex) {
+        cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+        CollectionIndexRec ci;
+        if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+          if (hasSearch) {
+            char key[20]; makeTitleSortKey(ci.collectionName, key);
+            matches = substringMatch(key, searchFilter);
+          } else {
+            matches = true;
+          }
+
+          if (matches && filterMode != FilterMode::ALL) {
+            HalFile sf = Storage.open(kSeriesDat);
+            HalFile df = Storage.open(kDatFile);
+            if (sf && df) {
+              sf.seek(ci.firstSeriesOffset);
+              SeriesRec sr;
+              bool anyMatch = false;
+              for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                if (sr.bookId == 0) continue;
+                df.seek(0);
+                Record rec;
+                uint32_t rp = 0;
+                while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                  if (rec.id == sr.bookId && !rec.tombstone()) {
+                    if (matchesFilter(rec, filterMode)) {
+                      anyMatch = true;
+                      break;
+                    }
+                  }
+                  ++rp;
+                }
+                if (anyMatch) break;
+              }
+              matches = anyMatch;
+            }
+            if (sf) sf.close();
+            if (df) df.close();
+          }
+        }
+      }
+    } else {
+      Record rec;
+      if (readRecord(ir.recordOffset / kRecordSize, rec)) {
+        matches = matchesFilter(rec, filterMode);
+        if (matches && hasSearch) {
+          char titleKey[20]; makeTitleSortKey(rec.title, titleKey);
+          char authorKey[20]; makeSortKey(rec.author, authorKey);
+          matches = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
+        }
+      }
+    }
+
+    if (matches) ++count;
+  }
+
+  if (hasCollIndex) cf.close();
+  mf.close();
+  return count;
 }
 
 // =========================================================================

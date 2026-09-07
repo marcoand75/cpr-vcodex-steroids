@@ -300,7 +300,8 @@ void LibraryActivity::scanSd() {
     totalBooks_ = collectionsMode_
         ? LibraryIndex::totalCollections()
         : (mixedMode_
-           ? LibraryIndex::totalMixed()
+           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
            : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                           static_cast<LibraryIndex::FilterMode>(currentFilter_)));
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
@@ -331,7 +332,8 @@ void LibraryActivity::scanSd() {
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
       : (mixedMode_
-         ? LibraryIndex::totalMixed()
+         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                             static_cast<LibraryIndex::FilterMode>(currentFilter_))
          : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                         static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
@@ -352,9 +354,11 @@ void LibraryActivity::refreshPageCache() {
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
   const bool hasSearch = !currentSearchText_.empty();
-  if (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch) {
+  if (mixedMode_ && currentCollectionIdx_ < 0) {
     // Mixed view: root shows series + standalone; inside a series shows books
-    slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_);
+    slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
+                                         currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                         static_cast<LibraryIndex::FilterMode>(currentFilter_));
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
     slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_);
@@ -380,14 +384,17 @@ void LibraryActivity::refreshPageCache() {
   if (slotCount == 0 && curPage > 0) {
     totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
         ? LibraryIndex::totalCollections()
-        : (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch
-           ? LibraryIndex::totalMixed()
+        : (mixedMode_ && currentCollectionIdx_ < 0
+           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
            : LibraryIndex::totalBooks());
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch)
-      slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_);
+    if (mixedMode_ && currentCollectionIdx_ < 0)
+      slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
+                                           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                           static_cast<LibraryIndex::FilterMode>(currentFilter_));
     else if (collectionsMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_);
     else if (mixedMode_ && currentCollectionIdx_ >= 0)
@@ -426,7 +433,8 @@ void LibraryActivity::applyFilterAndSort() {
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
       : (mixedMode_
-         ? LibraryIndex::totalMixed()
+         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                            static_cast<LibraryIndex::FilterMode>(currentFilter_))
          : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                         static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
@@ -1007,7 +1015,8 @@ void LibraryActivity::loop() {
       prevSelectorBeforeCollection_ = -1;
       totalBooks_ = collectionsMode_
           ? LibraryIndex::totalCollections()
-          : LibraryIndex::totalMixed();
+          : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                              static_cast<LibraryIndex::FilterMode>(currentFilter_));
       totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
       selectorIndex_ = (prevSelector >= 0 && prevSelector < totalBooks_) ? prevSelector : 0;
       refreshPageCache();

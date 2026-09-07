@@ -122,8 +122,9 @@ int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
               const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL);
 
 // Mixed view: standalone books + series tiles together
-int queryMixed(BookRef* out, int page, int pageSize);
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL);
 int totalMixed();
+int totalMixedMatching(const char* searchFilter, FilterMode filterMode = FilterMode::ALL);
 
 // Collections: list unique collections
 int queryCollections(BookRef* out, int page, int pageSize);
