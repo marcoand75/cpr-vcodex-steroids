@@ -297,7 +297,6 @@ void LibraryActivity::scanSd() {
     LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
     LibraryIndex::buildIndices();
     LibraryIndex::buildCollectionsIndex();
-    LibraryIndex::buildMixedIndex();
     totalBooks_ = collectionsMode_
         ? LibraryIndex::totalCollections()
         : (mixedMode_
@@ -326,7 +325,6 @@ void LibraryActivity::scanSd() {
       renderer.displayBuffer();
       LibraryIndex::buildIndices();
       LibraryIndex::buildCollectionsIndex();
-      LibraryIndex::buildMixedIndex();
     }
   }
 
