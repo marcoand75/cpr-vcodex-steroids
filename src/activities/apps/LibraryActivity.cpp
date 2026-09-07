@@ -351,7 +351,8 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
 void LibraryActivity::refreshPageCache() {
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
-  if (mixedMode_) {
+  const bool hasSearch = !currentSearchText_.empty();
+  if (mixedMode_ && !hasSearch) {
     // Mixed view: root shows series + standalone; inside a series shows books
     slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_);
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
@@ -363,7 +364,7 @@ void LibraryActivity::refreshPageCache() {
     totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
   } else {
-    // Normal book browsing
+    // Normal book browsing, or mixed mode with active search
     slotCount = LibraryIndex::queryPage(
         pageCache_, curPage, gridsPerPage_,
         static_cast<LibraryIndex::SortMode>(currentSort_),
@@ -374,13 +375,13 @@ void LibraryActivity::refreshPageCache() {
   if (slotCount == 0 && curPage > 0) {
     totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
         ? LibraryIndex::totalCollections()
-        : (mixedMode_
+        : (mixedMode_ && !hasSearch
            ? LibraryIndex::totalMixed()
            : LibraryIndex::totalBooks());
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_)
+    if (mixedMode_ && !hasSearch)
       slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_);
     else if (collectionsMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_);
