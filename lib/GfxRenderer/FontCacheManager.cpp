@@ -19,6 +19,18 @@ void FontCacheManager::clearCache() {
   }
 }
 
+void FontCacheManager::clearCache(int fontId) {
+  auto it = sdCardFonts_.find(fontId);
+  if (it != sdCardFonts_.end()) {
+    it->second->clearCache();
+    return;
+  }
+
+  // Built-in fonts are not in sdCardFonts_; fall back to the global
+  // decompressor cache when we can't target a single font.
+  if (fontDecompressor_) fontDecompressor_->clearCache();
+}
+
 void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask) {
   // SD card font prewarm path: prewarm all requested styles in one call
   auto it = sdCardFonts_.find(fontId);
@@ -121,7 +133,13 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (!active_) return;
   endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
-  if (clearOnDestroy_) manager_->clearCache();
+  if (clearOnDestroy_) {
+    if (manager_->scanFontIdSet_) {
+      manager_->clearCache(manager_->scanFontId_);
+    } else {
+      manager_->clearCache();
+    }
+  }
 }
 
 FontCacheManager::PrewarmScope::PrewarmScope(PrewarmScope&& other) noexcept

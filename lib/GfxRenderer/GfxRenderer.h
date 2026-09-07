@@ -58,6 +58,9 @@ class GfxRenderer {
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
+  // Global font store shared by all activities. Do not clear or unload during
+  // active rendering; use releaseSdCardFontForLowMemory() / clearSdCardFonts()
+  // only at well-defined activity boundaries.
   mutable std::map<int, SdCardFont*> sdCardFonts_;
   std::map<int, int> fallbackFontMap_;
   mutable bool nextRefreshOverridePending = false;

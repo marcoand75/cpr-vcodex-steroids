@@ -36,25 +36,32 @@ bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRender
     unloadAll(renderer);
   }
 
-  // Prefer the standard reader sizes when the family also ships smaller UI
-  // fallback files; otherwise retain ordinal selection for custom packs.
-  auto sizes = family.availableSizes();
-  if (sizes.empty()) {
-    LOG_ERR("SDMGR", "Family %s has no files to load", family.name.c_str());
+  const SdCardFontFileInfo* selected = family.findFile(getTargetSizeForEnum(family, fontSizeEnum));
+  if (!selected) {
+    LOG_ERR("SDMGR", "Family %s has no matching size for enum %u", family.name.c_str(), fontSizeEnum);
     return false;
   }
-
-  const bool standardSizes = family.hasSize(12) && family.hasSize(14) && family.hasSize(16) && family.hasSize(18);
-  const uint8_t readerTargets[] = {12, 14, 16, 18};
-  const uint8_t idx = std::min<uint8_t>(fontSizeEnum, 3);
-  const SdCardFontFileInfo* selected = standardSizes ? family.findFile(readerTargets[idx])
-                                                     : family.findFile(sizes[std::min<size_t>(idx, sizes.size() - 1)]);
 
   if (loadFile(*selected, family.name.c_str(), renderer) == 0) return false;
 
   loadedFamilyName_ = family.name;
   loadedPointSize_ = selected->pointSize;
   return true;
+}
+
+uint8_t SdCardFontManager::getTargetSizeForEnum(const SdCardFontFamilyInfo& family, uint8_t fontSizeEnum) const {
+  auto sizes = family.availableSizes();
+  if (sizes.empty()) return 0;
+
+  const bool standardSizes = family.hasSize(12) && family.hasSize(14) && family.hasSize(16) && family.hasSize(18);
+  const uint8_t readerTargets[] = {12, 14, 16, 18};
+  const uint8_t idx = std::min<uint8_t>(fontSizeEnum, 3);
+
+  if (standardSizes) {
+    return readerTargets[idx];
+  }
+
+  return sizes[std::min<size_t>(idx, sizes.size() - 1)];
 }
 
 int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer) {

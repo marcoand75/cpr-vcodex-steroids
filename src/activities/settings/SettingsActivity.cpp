@@ -766,7 +766,7 @@ void SettingsActivity::toggleCurrentSetting() {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {
       startActivityForResult(std::make_unique<FontSelectionActivity>(renderer, mappedInput, &sdFontSystem.registry()),
                              [this](const ActivityResult&) {
-                               ensureSdFontLoaded();
+                               onReaderResume();
                                SETTINGS.saveToFile();
                                requestUpdate(true);
                              });
@@ -854,7 +854,7 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::DownloadFonts:
         startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) {
-                                 ensureSdFontLoaded();
+                                 onReaderResume();
                                  SETTINGS.saveToFile();
                                  requestUpdate(true);
                                });
@@ -1088,7 +1088,7 @@ case SettingAction::ReaderMenuVisibility:
     ACHIEVEMENTS.syncWithPreviousStats();
   }
   if (setting.valuePtr == &CrossPointSettings::fontSize) {
-    ensureSdFontLoaded();
+    onReaderResume();
   }
   if (setting.valuePtr == &CrossPointSettings::darkMode) {
     renderer.setDarkMode(SETTINGS.darkMode);

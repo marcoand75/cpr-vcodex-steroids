@@ -1237,6 +1237,35 @@ been ported (`d3e21a61`):
 
 **Build:** SUCCESS — RAM 16.0% (52292/327680), Flash 98.5% (6455663/6553600), 0 warnings.
 
+### 23.14 Shared SD font cache + selective prewarm
+
+- **`src/SdCardFontSystem.h/cpp`** — added `generation_` counter + `needsReload()`
+  so the reader can skip redundant `ensureLoaded()` calls when the currently
+  loaded family/size already matches settings.
+- **`src/main.cpp`, `src/SdCardFontGlobals.h`** — new `onReaderResume()` helper
+  that replaces scattered `ensureSdFontLoaded()` calls in reader paths with a
+  single check against `sdFontSystem.needsReload()`.
+- **`src/activities/reader/EpubReaderActivity.cpp`** — `onEnter()`, font-size
+  change, and `applyReaderSettingsChanges()` now call `onReaderResume()`.
+- **`src/activities/reader/TxtReaderActivity.cpp`** — same.
+- **`src/activities/reader/WikiTxtReaderActivity.cpp`** — same.
+- **`src/activities/reader/ReaderQuickSettingsActivity.cpp`** — same for font
+  family and font-size changes.
+- **`src/activities/settings/SettingsActivity.cpp`** — same for font family,
+  download-fonts, and font-size exits.
+- **`lib/EpdFont/SdCardFontManager.h/cpp`** — extracted `getTargetSizeForEnum()`
+  so `needsReload()` and `loadFamily()` use the exact same standard-size
+  selection logic.
+- **`lib/GfxRenderer/FontCacheManager.h/cpp`** — added `clearCache(int fontId)`
+  and made `PrewarmScope` use it when `scanFontIdSet_` is true, so prewarming
+  one font no longer invalidates the entire glyph cache.
+- **`lib/GfxRenderer/GfxRenderer.h`** — documented that `sdCardFonts_` is a
+  global shared store and must not be cleared during active rendering.
+
+Effect: SD fonts stay loaded across activity transitions; reader entry no longer
+pays an unnecessary unload/load penalty when family/size are unchanged. Prewarm
+is now targeted, reducing heap churn and fragmentation.
+
 ### Remaining deferred: SdCardFontRegistry case-insensitive dirs
 Not needed — Steroids uses a different font directory management approach.
 

@@ -313,7 +313,7 @@ void EpubReaderActivity::onEnter() {
   // EPUB images (still inside the archive) can be pulled out on first render.
   ImageBlock::setExtractor(this, &EpubReaderActivity::extractInlineImage);
 
-  ensureSdFontLoaded();
+  onReaderResume();
 
   epub->setupCacheDir();
 
@@ -872,7 +872,7 @@ bool EpubReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION ac
       } else if (SETTINGS.fontSize > CrossPointSettings::X_SMALL && !increase) {
         SETTINGS.fontSize--;
       }
-      ensureSdFontLoaded();
+      onReaderResume();
       SETTINGS.saveToFile();
       section.reset();
       requestUpdate();
@@ -1760,7 +1760,7 @@ void EpubReaderActivity::applyReaderSettingsChanges(const ReaderSettingsSnapshot
   invalidateCurrentOverlayPageCache();
 
   if (fontChanged) {
-    ensureSdFontLoaded();
+    onReaderResume();
   }
 
   renderer.setFadingFix(SETTINGS.fadingFix);

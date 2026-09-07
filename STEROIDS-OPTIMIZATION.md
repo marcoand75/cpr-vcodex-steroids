@@ -428,7 +428,22 @@ if (text_overlay::shouldDraw(myText)) {
 }
 ```
 
-### 7.2 Clamp instead of std::min/std::max
+### 7.2 Shared SD font cache + selective prewarm
+- `sdCardFonts_` in `GfxRenderer` is a global shared store. Once an SD font
+  family is loaded, all activities reuse it; do not clear/unload it during
+  active rendering.
+- Call `onReaderResume()` instead of `ensureSdFontLoaded()` at reader entry
+  and after settings changes. It checks `SdCardFontSystem::needsReload()` and
+  only reloads when family/size actually changed, avoiding unnecessary
+  unload/load cycles and heap churn.
+- `FontCacheManager::clearCache(int fontId)` lets `PrewarmScope` invalidate
+  only the prewarmed font's cache when `scanFontIdSet_` is true. This avoids
+  rebuilding every font's glyph cache on every prewarm.
+- `SdCardFontManager::getTargetSizeForEnum()` shares the standard-size logic
+  with `needsReload()` so the reader does not reload the same font just
+  because the enum-to-point-size mapping changed internally.
+
+### 7.3 Clamp instead of std::min/std::max
 Use `ButtonNavigator::clampIndex(current, total)`:
 - Replaces `std::clamp(selectedIndex, 0, total - 1)`.
 - Replaces `std::max(0, static_cast<int>(entries.size()) - 1)`.
@@ -438,12 +453,12 @@ Use `ButtonNavigator::clampIndex(current, total)`:
 
 This is now the standard clamp for every list-screen state.
 
-### 7.3 `mappedInput.mapLabels + GUI.drawButtonHints` → `ListRenderHelper::drawHints` / `drawStandardHints`
+### 7.4 `mappedInput.mapLabels + GUI.drawButtonHints` → `ListRenderHelper::drawHints` / `drawStandardHints`
 This 2-line ritual appeared in ~80 activities before the refactor. It
 is now banned. The single-call replacement handles the `const` qualifier
 correctly (drawHints accepts `const MappedInputManager&`).
 
-### 7.4 `OrderListActivity` over hand-rolled order screens
+### 7.5 `OrderListActivity` over hand-rolled order screens
 Any "user can reorder entries" activity must derive from
 `OrderListActivity<Derived, Entry>`. The base provides all of the
 back/confirm/nav state machine plus the empty-state + standard hints

@@ -11,6 +11,22 @@ static uint8_t fontSizeEnumFromSettings() {
   return e;
 }
 
+bool SdCardFontSystem::needsReload() const {
+  const char* wantedFamily = SETTINGS.sdFontFamilyName;
+  const std::string& currentFamily = manager_.currentFamilyName();
+  const uint8_t sizeEnum = fontSizeEnumFromSettings();
+
+  if (wantedFamily[0] == '\0') return !currentFamily.empty();
+
+  const auto* family = registry_.findFamily(wantedFamily);
+  if (!family) return !currentFamily.empty();
+
+  if (currentFamily != wantedFamily) return true;
+
+  const uint8_t wantedPt = manager_.getTargetSizeForEnum(*family, sizeEnum);
+  return wantedPt != manager_.currentPointSize();
+}
+
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
   registry_.discover();
   registryReleasedForNetwork_.store(false, std::memory_order_release);
@@ -60,6 +76,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   if (wantedFamily[0] == '\0') {
     if (!currentFamily.empty()) {
       manager_.unloadAll(renderer);
+      bumpGeneration();
     }
     return;
   }
@@ -73,6 +90,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     if (!family) {
       LOG_DBG("SDFS", "SD font family disappeared: %s (clearing)", wantedFamily);
       manager_.unloadAll(renderer);
+      bumpGeneration();
       SETTINGS.sdFontFamilyName[0] = '\0';
       return;
     }
@@ -94,13 +112,16 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   if (family) {
     if (manager_.loadFamily(*family, renderer, sizeEnum)) {
       LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
+      bumpGeneration();
     } else {
       LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
       SETTINGS.sdFontFamilyName[0] = '\0';
+      bumpGeneration();
     }
   } else {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
     SETTINGS.sdFontFamilyName[0] = '\0';
+    bumpGeneration();
   }
 }
 
@@ -109,6 +130,7 @@ bool SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
   if (hadLoadedFont) {
     LOG_DBG("SDFS", "Unloading SD font family before network: %s", manager_.currentFamilyName().c_str());
     manager_.unloadAll(renderer);
+    bumpGeneration();
   }
 
   registry_.releaseMemory();

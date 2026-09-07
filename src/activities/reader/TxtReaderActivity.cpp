@@ -300,7 +300,7 @@ void TxtReaderActivity::onEnter() {
     return;
   }
 
-  ensureSdFontLoaded();
+  onReaderResume();
 
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 

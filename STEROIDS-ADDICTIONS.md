@@ -1506,6 +1506,26 @@ SD card font IDs can legitimately be negative (they're assigned by SdCardFontMan
 at runtime), so the `< 0` sentinel was unreliable. The `scanFontIdSet_` flag
 explicitly tracks whether a scan font ID was set during `recordText()`/`recordStyle()`.
 
+### 23.8 Shared SD font cache + selective prewarm
+
+- Added `SdCardFontSystem::needsReload()` + `generation_` counter so reader
+  entry can skip redundant `ensureLoaded()` work when the loaded family/size
+  already matches settings.
+- New `onReaderResume()` helper centralizes font load checks for reader and
+  settings paths, replacing scattered `ensureSdFontLoaded()` calls.
+- `FontCacheManager::clearCache(int fontId)` lets `PrewarmScope` invalidate only
+  the prewarmed font's cache instead of the entire glyph cache.
+- `GfxRenderer::sdCardFonts_` is documented as a global shared store: fonts stay
+  resident across activity transitions and are only unloaded at well-defined
+  boundaries such as network release or explicit family/size changes.
+- `SdCardFontManager::getTargetSizeForEnum()` exposes the standard-size logic so
+  `needsReload()` and `loadFamily()` stay in sync, avoiding false reloads when
+  settings map to the same point size.
+
+Effect: reduced heap churn on Home→Reader transitions, fewer alloc/free cycles,
+and more stable `MaxAlloc` during rendering because glyph caches are preserved
+across prewarm.
+
 ### 23.8 Build safety
 - Build: SUCCESS — RAM 16.0% (52276/327680), Flash 98.5%, 0 warnings
 - `Utf8::utf8IsCjkCodepoint()` added for CJK range detection (also from 1.5.0.20)

@@ -567,6 +567,16 @@ void ensureSdFontLoaded() {
   }
 }
 
+// Reader-facing helper: ensure SD fonts are loaded only when the loaded
+// family/size differs from current settings. Uses the font system generation
+// counter to skip redundant work and reduce heap churn.
+void onReaderResume() {
+  if (!Storage.ready()) return;
+  if (sdFontSystem.needsReload()) {
+    sdFontSystem.ensureLoaded(renderer);
+  }
+}
+
 // Free font heap memory for use by other subsystems (e.g. screensaver PNG decoder).
 // Font caches and decompressor are rebuilt on next font access.
 void freeFontMemory() {

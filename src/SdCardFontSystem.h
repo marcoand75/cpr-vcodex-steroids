@@ -40,6 +40,13 @@ class SdCardFontSystem {
   /// Thread-safe: can be called from the web server task.
   void markRegistryDirty() { registryDirty_.store(true, std::memory_order_release); }
 
+  /// Generation counter incremented on every load/unload cycle.
+  /// Used to skip redundant ensureLoaded() calls when nothing changed.
+  uint32_t generation() const { return generation_; }
+
+  /// Non-mutating check: would ensureLoaded() actually reload?
+  bool needsReload() const;
+
   /// If the registry is dirty, re-scan the SD card now and clear the flag.
   /// Used by the web UI so uploaded/deleted fonts appear in the list
   /// without waiting for the reader activity to run ensureLoaded().
@@ -56,4 +63,6 @@ class SdCardFontSystem {
   SdCardFontManager manager_;
   std::atomic<bool> registryDirty_{false};
   std::atomic<bool> registryReleasedForNetwork_{false};
+  uint32_t generation_ = 0;
+  void bumpGeneration() { ++generation_; }
 };

@@ -270,7 +270,7 @@ bool WikiTxtReaderActivity::readContent(uint8_t* buffer, size_t offset, size_t l
 
 void WikiTxtReaderActivity::onEnter() {
   Activity::onEnter();
-  ensureSdFontLoaded();
+  onReaderResume();
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
   const std::string articlePath = wikiDir + "/article.md";

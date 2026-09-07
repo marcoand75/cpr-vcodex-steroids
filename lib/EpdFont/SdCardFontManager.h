@@ -38,6 +38,10 @@ class SdCardFontManager {
   // 0 if nothing loaded.
   uint8_t currentPointSize() const { return loadedPointSize_; };
 
+  // Compute the point size this manager would select for the given family
+  // and font-size enum, using the same standard-size detection as loadFamily().
+  uint8_t getTargetSizeForEnum(const SdCardFontFamilyInfo& family, uint8_t fontSizeEnum) const;
+
  private:
   struct LoadedFont {
     SdCardFont* font;  // heap-allocated, owned

@@ -160,7 +160,7 @@ void ReaderQuickSettingsActivity::toggleSelectedSetting() {
   if (setting.type == QuickSettingType::FontFamily) {
     startActivityForResult(std::make_unique<FontSelectionActivity>(renderer, mappedInput, &sdFontSystem.registry()),
                            [this](const ActivityResult&) {
-                             ensureSdFontLoaded();
+                             onReaderResume();
                              SETTINGS.saveToFile();
                              requestUpdate(true);
                            });
@@ -186,7 +186,7 @@ void ReaderQuickSettingsActivity::toggleSelectedSetting() {
   }
 
   if (setting.valuePtr == &CrossPointSettings::fontSize) {
-    ensureSdFontLoaded();
+    onReaderResume();
   }
 
   applyImmediateRendererSetting(setting);
