@@ -1538,14 +1538,10 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
 
   if (!drawn) {
     if (isCollectionTile) {
-      // Collection placeholder: deeper stack + collection icon + title text
+      // Collection placeholder: deeper stack + centered title, no icon.
       const int stackOffset = 6;
       renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
       renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
-      const int iconSize = std::min(28, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
-      const int iconX = x + (coverWidth_ - iconSize) / 2;
-      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
-      renderer.drawIcon(::LibraryNewIcon, iconX, iconY, iconSize, iconSize);
 
       const int textAreaH = 2 * coverHeight_ / 3 - 8;
       if (i < static_cast<int>(pageTitleCache_.size())) {
@@ -1622,14 +1618,14 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     }
   }
 
-  // Collection title ribbon: overlay on top of cover or placeholder
+  // Collection title ribbon: bottom-half overlay on cover or placeholder
   if (isCollectionTile) {
     constexpr int ribbonH = 18;
-    const int ribbonY = y + 2;
-    renderer.fillRect(x + 2, ribbonY, coverWidth_ - 4, ribbonH, Color::Black);
+    const int ribbonY = y + coverHeight_ / 2 + 2;
+    renderer.fillRect(x + 4, ribbonY, coverWidth_ - 8, ribbonH, Color::Black);
     const char* title = pageCache_[i].title;
     const int titleFont = SMALL_FONT_ID;
-    const int maxTitleW = coverWidth_ - 8;
+    const int maxTitleW = coverWidth_ - 12;
     std::string displayTitle = title;
     if (renderer.getTextWidth(titleFont, displayTitle.c_str(), EpdFontFamily::BOLD) > maxTitleW) {
       displayTitle = renderer.truncatedText(titleFont, displayTitle.c_str(), maxTitleW, EpdFontFamily::BOLD);
