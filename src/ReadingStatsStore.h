@@ -141,6 +141,7 @@ class ReadingStatsStore {
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
   mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
   bool _readingPaused = false;
 
   // Cached copy of summary.json contents (for the "not fully loaded" fast path).
@@ -200,6 +201,10 @@ class ReadingStatsStore {
     static ReadingStatsStore instance;
     return instance;
   }
+
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   void beginSession(const std::string& path, const std::string& title, const std::string& author,
                     const std::string& coverBmpPath, uint8_t progressPercent = 0, const std::string& chapterTitle = "",

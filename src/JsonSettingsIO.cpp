@@ -23,6 +23,7 @@
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "StoreManager.h"
 #include "SettingsList.h"
 #include "WifiCredentialStore.h"
 #include "util/BookIdentity.h"

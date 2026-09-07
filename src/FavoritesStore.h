@@ -26,6 +26,7 @@ class FavoritesStore {
 
   std::vector<FavoriteBook> favoriteBooks;
   mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
 
   friend bool JsonSettingsIO::saveFavorites(const FavoritesStore&, const char*);
   friend bool JsonSettingsIO::loadFavorites(FavoritesStore&, const char*);
@@ -34,6 +35,10 @@ class FavoritesStore {
   ~FavoritesStore() = default;
 
   static FavoritesStore& getInstance() { return instance; }
+
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   bool addBook(const std::string& path, const std::string& title = "", const std::string& author = "",
                const std::string& coverBmpPath = "", const std::string& bookId = "");
@@ -54,6 +59,7 @@ class FavoritesStore {
   bool loadFromFile();
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
   FavoriteBook getDataFromBook(std::string path) const;
 
  private:

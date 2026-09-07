@@ -566,6 +566,7 @@ bool FlashcardsStore::loadFromFile() {
   }
 
   loaded_ = true;
+  bumpGeneration();
   return true;
 }
 

@@ -26,6 +26,7 @@ class RecentBooksStore {
 
   std::vector<RecentBook> recentBooks;
   mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
 
   friend bool JsonSettingsIO::saveRecentBooks(const RecentBooksStore&, const char*);
   friend bool JsonSettingsIO::loadRecentBooks(RecentBooksStore&, const char*);
@@ -35,6 +36,10 @@ class RecentBooksStore {
 
   // Get singleton instance
   static RecentBooksStore& getInstance() { return instance; }
+
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   // Add a book to the recent list (moves to front if already exists)
   void addBook(const std::string& path, const std::string& title, const std::string& author,
@@ -66,6 +71,7 @@ class RecentBooksStore {
   bool loadFromFile();
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
   RecentBook getDataFromBook(std::string path) const;
   const RecentBook* findBook(const std::string& path) const;
 
@@ -76,5 +82,4 @@ class RecentBooksStore {
   bool loadFromBinaryFile();
 };
 
-// Helper macro to access recent books store
 #define RECENT_BOOKS RecentBooksStore::getInstance()

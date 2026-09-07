@@ -34,6 +34,7 @@
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "StoreManager.h"
 #include "version.h"
 #include "SdCardFontGlobals.h"
 #include "util/StringUtils.h"

@@ -1,4 +1,5 @@
 #include "FavoritesStore.h"
+#include "StoreManager.h"
 
 #include <HalStorage.h>
 #include <JsonSettingsIO.h>
@@ -190,6 +191,7 @@ bool FavoritesStore::loadFromFile() {
   const bool loaded = JsonSettingsIO::loadFavorites(*this, json.c_str());
   if (loaded) {
     loaded_ = true;
+    bumpGeneration();
   }
   return loaded;
 }

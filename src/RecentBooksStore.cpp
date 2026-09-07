@@ -1,4 +1,5 @@
 #include "RecentBooksStore.h"
+#include "StoreManager.h"
 
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -194,6 +195,7 @@ bool RecentBooksStore::loadFromFile() {
               static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()), ok ? 1 : 0);
       if (ok) {
         loaded_ = true;
+        bumpGeneration();
       }
       return ok;
     }
@@ -206,6 +208,7 @@ bool RecentBooksStore::loadFromFile() {
       Storage.rename(RECENT_BOOKS_FILE_BIN, RECENT_BOOKS_FILE_BAK);
       LOG_DBG("RBS", "Migrated recent.bin to recent.json");
       loaded_ = true;
+      bumpGeneration();
       return true;
     }
   }

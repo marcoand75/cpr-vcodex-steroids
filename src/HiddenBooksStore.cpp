@@ -1,4 +1,5 @@
 #include "HiddenBooksStore.h"
+#include "StoreManager.h"
 
 #include <ArduinoJson.h>
 #include <HalStorage.h>
@@ -84,6 +85,7 @@ bool HiddenBooksStore::loadFromFile() {
         LOG_DBG("HBN", "  hidden: bookId=%s path=%s", e.bookId.c_str(), e.path.c_str());
     }
     loaded_ = true;
+    bumpGeneration();
     return true;
 }
 

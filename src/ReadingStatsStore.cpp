@@ -1635,6 +1635,7 @@ void ReadingStatsStore::reset() {
   activeSession = {};
   lastSessionSnapshot = {};
   loaded_ = false;
+  bumpGeneration();
   markDirty();
   saveToFile();
 }
@@ -1865,6 +1866,7 @@ bool ReadingStatsStore::loadFromFile() {
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats persistence suspended after load failure");
   } else {
     loaded_ = true;
+    bumpGeneration();
   }
   return loaded;
 }
@@ -2041,6 +2043,7 @@ bool ReadingStatsStore::releaseMemoryForNetwork() {
   dirty = false;
   lastSaveMs = millis();
   loaded_ = false;
+  bumpGeneration();
 
   LOG_DBG("RST", "After network release: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));

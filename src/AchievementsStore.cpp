@@ -1,4 +1,5 @@
 #include "AchievementsStore.h"
+#include "StoreManager.h"
 
 #include <HalStorage.h>
 #include <I18n.h>
@@ -576,6 +577,7 @@ bool AchievementsStore::loadFromFile() {
     saveToFile();
   }
   loaded_ = true;
+  bumpGeneration();
   return true;
 }
 
@@ -610,6 +612,7 @@ void AchievementsStore::reset() {
   }
 
   loaded_ = false;
+  bumpGeneration();
   markDirty();
   saveToFile();
 }

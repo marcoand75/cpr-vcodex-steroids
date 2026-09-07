@@ -77,56 +77,63 @@ struct FlashcardSessionSummaryData {
 class FlashcardsStore {
   static FlashcardsStore instance;
 
-  std::vector<FlashcardDeckRecord> knownDecks;
-  std::vector<std::string> recentDeckIds;
+   std::vector<FlashcardDeckRecord> knownDecks;
+   std::vector<std::string> recentDeckIds;
 
-  FlashcardDeckRecord* findDeckRecordInternal(const std::string& deckId);
-  const FlashcardDeckRecord* findDeckRecordInternal(const std::string& deckId) const;
-  std::string getIndexPath() const;
-  std::string getStatePath(const std::string& deckId) const;
-  uint32_t getReferenceDayOrdinal() const;
-  uint32_t getReferenceTimestamp() const;
-  static std::string getTitleFromPath(const std::string& path);
+   FlashcardDeckRecord* findDeckRecordInternal(const std::string& deckId);
+   const FlashcardDeckRecord* findDeckRecordInternal(const std::string& deckId) const;
+   std::string getIndexPath() const;
+   std::string getStatePath(const std::string& deckId) const;
+   uint32_t getReferenceDayOrdinal() const;
+   uint32_t getReferenceTimestamp() const;
+   static std::string getTitleFromPath(const std::string& path);
 
  public:
-  static constexpr int MAX_RECENT_DECKS = 10;
+   static constexpr int MAX_RECENT_DECKS = 10;
 
-  ~FlashcardsStore() = default;
+   ~FlashcardsStore() = default;
 
-  static FlashcardsStore& getInstance() { return instance; }
+   static FlashcardsStore& getInstance() { return instance; }
 
-  const std::vector<FlashcardDeckRecord>& getKnownDecks() const { return knownDecks; }
-  int getKnownDeckCount() const { return static_cast<int>(knownDecks.size()); }
+   uint32_t generation() const { return generation_; }
+   bool needsReload() const { return !loaded_; }
+   void bumpGeneration() { ++generation_; }
 
-  std::vector<FlashcardDeckRecord> getRecentDecks() const;
-  bool removeRecentDeck(const std::string& deckIdOrPath);
-  bool resetDeckStats(const std::string& deckIdOrPath);
+   const std::vector<FlashcardDeckRecord>& getKnownDecks() const { return knownDecks; }
+   int getKnownDeckCount() const { return static_cast<int>(knownDecks.size()); }
 
-  bool saveToFile() const;
-  bool loadFromFile();
+   std::vector<FlashcardDeckRecord> getRecentDecks() const;
+   bool removeRecentDeck(const std::string& deckIdOrPath);
+   bool resetDeckStats(const std::string& deckIdOrPath);
+
+   bool saveToFile() const;
+   bool loadFromFile();
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
 
   bool loadDeck(const std::string& path, FlashcardDeck& deck, std::string* error = nullptr) const;
-  bool loadDeckCard(const FlashcardDeck& deck, int cardIndex, FlashcardCard& card,
-                    std::string* error = nullptr) const;
-  bool loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress,
-                        std::string* error = nullptr) const;
-  bool saveDeckProgress(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress);
+   bool loadDeckCard(const FlashcardDeck& deck, int cardIndex, FlashcardCard& card,
+                     std::string* error = nullptr) const;
+   bool loadDeckProgress(const FlashcardDeck& deck, std::vector<FlashcardCardProgress>& progress,
+                         std::string* error = nullptr) const;
+   bool saveDeckProgress(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress);
 
-  FlashcardDeckMetrics buildMetrics(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress) const;
-  std::vector<int> buildSessionQueue(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress) const;
+   FlashcardDeckMetrics buildMetrics(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress) const;
+   std::vector<int> buildSessionQueue(const FlashcardDeck& deck, const std::vector<FlashcardCardProgress>& progress) const;
 
-  void registerDeckOpened(const FlashcardDeck& deck, const FlashcardDeckMetrics& metrics);
-  void registerSession(const FlashcardDeck& deck, const FlashcardDeckMetrics& metrics);
+   void registerDeckOpened(const FlashcardDeck& deck, const FlashcardDeckMetrics& metrics);
+   void registerSession(const FlashcardDeck& deck, const FlashcardDeckMetrics& metrics);
 
-  const FlashcardDeckRecord* findDeckRecord(const std::string& deckIdOrPath) const;
+   const FlashcardDeckRecord* findDeckRecord(const std::string& deckIdOrPath) const;
 
-   void markCardSuccess(FlashcardCardProgress& progress) const;
-   void markCardFailure(FlashcardCardProgress& progress) const;
-   void markCardSkipped(FlashcardCardProgress& progress) const;
+    void markCardSuccess(FlashcardCardProgress& progress) const;
+    void markCardFailure(FlashcardCardProgress& progress) const;
+    void markCardSkipped(FlashcardCardProgress& progress) const;
 
-   mutable bool loaded_ = false;
+    mutable bool loaded_ = false;
+    uint32_t generation_ = 0;
 };
 
 #define FLASHCARDS FlashcardsStore::getInstance()
+

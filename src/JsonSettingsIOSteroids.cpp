@@ -1,4 +1,5 @@
 #include "JsonSettingsIOSteroids.h"
+#include "StoreManager.h"
 
 #include <ArduinoJson.h>
 #include <HalStorage.h>

@@ -13,6 +13,10 @@ class HiddenBooksStore {
  public:
   static HiddenBooksStore& getInstance();
 
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
+
   bool loadFromFile();
   bool saveToFile() const;
   bool isHidden(const std::string& bookIdOrPath) const;
@@ -23,6 +27,7 @@ class HiddenBooksStore {
   const std::vector<HiddenBookEntry>& getBooks() const { return hiddenBooks; }
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
 
  private:
   HiddenBooksStore() = default;
@@ -34,6 +39,7 @@ class HiddenBooksStore {
 
   std::vector<HiddenBookEntry> hiddenBooks;
   mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
 };
 
 #define HIDDEN_BOOKS HiddenBooksStore::getInstance()
