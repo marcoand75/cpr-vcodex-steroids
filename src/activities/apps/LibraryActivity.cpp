@@ -352,12 +352,17 @@ void LibraryActivity::refreshPageCache() {
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
   const bool hasSearch = !currentSearchText_.empty();
-  if (mixedMode_ && !hasSearch) {
+  if (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch) {
     // Mixed view: root shows series + standalone; inside a series shows books
     slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_);
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
     slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_);
+  } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
+    // Inside a series in mixed view
+    slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
+    totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
+    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
   } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
     // Browsing books within a collection
     slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
@@ -375,16 +380,18 @@ void LibraryActivity::refreshPageCache() {
   if (slotCount == 0 && curPage > 0) {
     totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
         ? LibraryIndex::totalCollections()
-        : (mixedMode_ && !hasSearch
+        : (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch
            ? LibraryIndex::totalMixed()
            : LibraryIndex::totalBooks());
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_ && !hasSearch)
+    if (mixedMode_ && currentCollectionIdx_ < 0 && !hasSearch)
       slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_);
     else if (collectionsMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_);
+    else if (mixedMode_ && currentCollectionIdx_ >= 0)
+      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
     else if (collectionsMode_ && currentCollectionIdx_ >= 0)
       slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
     else
@@ -404,20 +411,16 @@ void LibraryActivity::refreshPageCache() {
   cachedTotalBooks_ = totalBooks_;
   forceRender_ = true;
   // Start cover generation for missing covers on the new page.
-  // Works in normal mode AND inside a collection (where books have covers).
-  // Skipped only when viewing the collections list.
-  if (!collectionsMode_ || currentCollectionIdx_ >= 0) {
-    coverGen_.active = true;
-    coverGen_.slot = 0;
-    coverGen_.done = 0;
-    coverGen_.total = 0;
-  }
+  coverGen_.active = true;
+  coverGen_.slot = 0;
+  coverGen_.done = 0;
+  coverGen_.total = 0;
 }
 
 void LibraryActivity::applyFilterAndSort() {
   collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
   mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
-  if (collectionsMode_) {
+  if (collectionsMode_ || mixedMode_) {
     currentCollectionIdx_ = -1;
   }
   totalBooks_ = collectionsMode_
@@ -571,8 +574,9 @@ void LibraryActivity::selectPopupItem() {
       CrossPointSettings::LIBRARY_SORT_TITLE_ASC, CrossPointSettings::LIBRARY_SORT_TITLE_DESC,
       CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC,
       CrossPointSettings::LIBRARY_SORT_COLLECTIONS,
+      CrossPointSettings::LIBRARY_SORT_MIXED,
     };
-    if (idx < 5) {
+    if (idx < 6) {
       currentSort_ = sorts[idx];
       SETTINGS.librarySort = currentSort_;
       SETTINGS.saveToFile();
@@ -978,7 +982,7 @@ void LibraryActivity::loop() {
       if (collectionsMode_ && currentCollectionIdx_ < 0) {
         // Enter the selected collection
         int slot = selectorIndex_ % gridsPerPage_;
-        currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id);
+        currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFF);
         currentCollectionName_ = pageCache_[slot].title;
         selectorIndex_ = 0;
         refreshPageCache();
@@ -1494,6 +1498,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   bool drawn = false;
   const std::string path(pageCache_[i].path);
   const bool isSeriesTile = (pageCache_[i].id & 0x80000000u) != 0;
+  const bool isCollectionTile = isSeriesTile && collectionsMode_ && !path.empty();
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
@@ -1515,7 +1520,16 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   }
 
   if (!drawn) {
-    if (isSeriesTile) {
+    if (isCollectionTile) {
+      // Collection placeholder: deeper stack + collection icon
+      const int stackOffset = 6;
+      renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
+      renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
+      const int iconSize = std::min(28, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
+      const int iconX = x + (coverWidth_ - iconSize) / 2;
+      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
+      renderer.drawIcon(::LibraryNewIcon, iconX, iconY, iconSize, iconSize);
+    } else if (isSeriesTile) {
       // Series placeholder: stacked outlines + centered icon + count badge
       const int stackOffset = 4;
       renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
@@ -1579,8 +1593,20 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     }
   }
 
+  // Collection indicator: bottom bar on both cover and placeholder
+  if (isCollectionTile) {
+    constexpr int barH = 16;
+    const int barY = y + coverHeight_ - barH;
+    renderer.fillRect(x, barY, coverWidth_, barH, Color::Black);
+    const char* label = tr(STR_SORT_COLLECTIONS);
+    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::REGULAR);
+    const int textX = x + (coverWidth_ - labelW) / 2;
+    const int textY = barY + (barH - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
+    renderer.drawText(SMALL_FONT_ID, textX, textY, label, true, EpdFontFamily::REGULAR);
+  }
+
   // Series badge — shows on both covers AND placeholders
-  if (isSeriesTile) {
+  if (isSeriesTile && !isCollectionTile) {
     const char* author = pageCache_[i].author;
     int count = 0;
     if (author && author[0]) {

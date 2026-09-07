@@ -1064,21 +1064,51 @@ int queryCollections(BookRef* out, int page, int pageSize) {
   const int start = page * pageSize;
   if (start >= total) { f.close(); return 0; }
   f.seek(static_cast<uint32_t>(start) * sizeof(CollectionIndexRec));
+
+  HalFile sf = Storage.open(kSeriesDat);
+  HalFile df = Storage.open(kDatFile);
+
   CollectionIndexRec ci;
   int count = 0;
   for (int i = start; i < total && count < pageSize; ++i) {
     if (f.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != static_cast<int>(sizeof(CollectionIndexRec))) break;
     BookRef& ref = out[count];
-    ref.id = static_cast<uint32_t>(i);  // use index as id for collection picking
+    ref.id = 0x80000000u | static_cast<uint32_t>(i);
     std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
-    // Show bookCount in author field as "N books"
     snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
-    std::strncpy(ref.path, kSeriesDat, 128); ref.path[128] = '\0';
+    ref.path[0] = '\0';
     ref.isFavorite = false;
     ref.isOpened = false;
     ref.isCompleted = false;
+    ref.isHidden = false;
+
+    // Resolve first book path so the UI can show a meaningful cover.
+    if (sf && df) {
+      sf.seek(ci.firstSeriesOffset);
+      SeriesRec sr;
+      for (uint32_t b = 0; b < ci.bookCount; ++b) {
+        if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+        if (sr.bookId == 0) continue;
+        df.seek(0);
+        Record rec;
+        uint32_t rp = 0;
+        while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+          if (rec.id == sr.bookId && !rec.tombstone()) {
+            std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+            ref.path[sizeof(ref.path) - 1] = '\0';
+            break;
+          }
+          ++rp;
+        }
+        if (ref.path[0] != '\0') break;
+      }
+    }
+
     ++count;
   }
+
+  if (df) df.close();
+  if (sf) sf.close();
   f.close();
   return count;
 }
