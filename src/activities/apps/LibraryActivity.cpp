@@ -970,6 +970,7 @@ void LibraryActivity::loop() {
         // In mixed root view: check if selected item is a series tile
         int slot = selectorIndex_ % gridsPerPage_;
         if (pageCache_[slot].id & 0x80000000u) {
+          prevSelectorBeforeCollection_ = selectorIndex_;
           currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFFu);
           currentCollectionName_ = pageCache_[slot].title;
           selectorIndex_ = 0;
@@ -982,6 +983,7 @@ void LibraryActivity::loop() {
       if (collectionsMode_ && currentCollectionIdx_ < 0) {
         // Enter the selected collection
         int slot = selectorIndex_ % gridsPerPage_;
+        prevSelectorBeforeCollection_ = selectorIndex_;
         currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFF);
         currentCollectionName_ = pageCache_[slot].title;
         selectorIndex_ = 0;
@@ -999,13 +1001,15 @@ void LibraryActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     // In mixed/collections mode: go back to root from a specific collection/series
     if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0) {
+      const int prevSelector = prevSelectorBeforeCollection_;
       currentCollectionIdx_ = -1;
       currentCollectionName_.clear();
+      prevSelectorBeforeCollection_ = -1;
       totalBooks_ = collectionsMode_
           ? LibraryIndex::totalCollections()
           : LibraryIndex::totalMixed();
       totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-      selectorIndex_ = 0;
+      selectorIndex_ = (prevSelector >= 0 && prevSelector < totalBooks_) ? prevSelector : 0;
       refreshPageCache();
       forceRender_ = true;
       requestUpdate();
@@ -1521,7 +1525,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
 
   if (!drawn) {
     if (isCollectionTile) {
-      // Collection placeholder: deeper stack + collection icon
+      // Collection placeholder: deeper stack + collection icon + title text
       const int stackOffset = 6;
       renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
       renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
@@ -1529,6 +1533,18 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
       const int iconX = x + (coverWidth_ - iconSize) / 2;
       const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
       renderer.drawIcon(::LibraryNewIcon, iconX, iconY, iconSize, iconSize);
+
+      const int textAreaH = 2 * coverHeight_ / 3 - 8;
+      if (i < static_cast<int>(pageTitleCache_.size())) {
+        const auto& lines = pageTitleCache_[i];
+        int lh = renderer.getLineHeight(SMALL_FONT_ID);
+        int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+        for (auto& ln : lines) {
+          int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+          renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+          ty += lh;
+        }
+      }
     } else if (isSeriesTile) {
       // Series placeholder: stacked outlines + centered icon + count badge
       const int stackOffset = 4;
@@ -1593,16 +1609,22 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     }
   }
 
-  // Collection indicator: bottom bar on both cover and placeholder
+  // Collection title ribbon: overlay on top of cover or placeholder
   if (isCollectionTile) {
-    constexpr int barH = 16;
-    const int barY = y + coverHeight_ - barH;
-    renderer.fillRect(x, barY, coverWidth_, barH, Color::Black);
-    const char* label = tr(STR_SORT_COLLECTIONS);
-    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::REGULAR);
-    const int textX = x + (coverWidth_ - labelW) / 2;
-    const int textY = barY + (barH - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
-    renderer.drawText(SMALL_FONT_ID, textX, textY, label, true, EpdFontFamily::REGULAR);
+    constexpr int ribbonH = 18;
+    const int ribbonY = y + 2;
+    renderer.fillRect(x + 2, ribbonY, coverWidth_ - 4, ribbonH, Color::Black);
+    const char* title = pageCache_[i].title;
+    const int titleFont = SMALL_FONT_ID;
+    const int maxTitleW = coverWidth_ - 8;
+    std::string displayTitle = title;
+    if (renderer.getTextWidth(titleFont, displayTitle.c_str(), EpdFontFamily::BOLD) > maxTitleW) {
+      displayTitle = renderer.truncatedText(titleFont, displayTitle.c_str(), maxTitleW, EpdFontFamily::BOLD);
+    }
+    const int titleW = renderer.getTextWidth(titleFont, displayTitle.c_str(), EpdFontFamily::BOLD);
+    const int titleX = x + (coverWidth_ - titleW) / 2;
+    const int titleY = ribbonY + (ribbonH - renderer.getLineHeight(titleFont)) / 2;
+    renderer.drawText(titleFont, titleX, titleY, displayTitle.c_str(), true, EpdFontFamily::BOLD);
   }
 
   // Series badge — shows on both covers AND placeholders

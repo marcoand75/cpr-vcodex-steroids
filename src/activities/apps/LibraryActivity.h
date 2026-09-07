@@ -57,6 +57,7 @@ class LibraryActivity final : public Activity {
   bool collectionsMode_ = false;         // true when browsing collections
   int  currentCollectionIdx_ = -1;       // selected collection index (-1 = list of collections)
   std::string currentCollectionName_;    // name of currently opened collection
+  int  prevSelectorBeforeCollection_ = -1; // selector index before entering a collection
 
   // Mixed mode (series + standalone books together)
   bool mixedMode_ = false;               // true when browsing mixed view
