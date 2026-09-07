@@ -39,9 +39,11 @@ familiar with the table below before opening a PR.
 | 8 | `book_filter::` | `src/util/BookFilter.h` | Book-title normalization and safe fallback filename extraction. Use instead of inline `substr` / manual lowercase copies when building sort keys or display titles. |
 | 9 | `long_press::Button` | `src/util/LongPress.h` | Per-button long-press state machine. Replaces the old `held` + `longTriggered` boolean pairs and hard-coded `getHeldTime() >= N` checks. |
 | 10 | `BookStoreUtils::` | `src/util/BookStoreUtils.h` | Template helpers for book-store deduplication, path/bookId normalization, `findBookIndex`, and `fallbackTitleFromPath`. |
-| 11 | `CoverGenerator::` | `src/util/CoverGenerator.{h,cpp}` | EPUB/XTC/TXT cover thumbnail generation with heap guards, adaptive contain sizing, and per-format cache paths. |
+ | 11 | `CoverGenerator::` | `src/util/CoverGenerator.{h,cpp}` | EPUB/XTC/TXT cover thumbnail generation with heap guards, adaptive contain sizing, and per-format cache paths. |
+ | 12 | `StoreManager` | `src/StoreManager.h` | Central access point for all app stores with `ensure*Loaded()`, `invalidate*()`, and `*Generation()` helpers. All stores expose `needsReload()` / `bumpGeneration()` so activity code can skip redundant loads. |
 
-All 9 rendering/input and store utilities are **tested, building, and used in
+
+All 10 rendering/input and store utilities are **tested, building, and used in
 production**. They are the canonically correct way to write Steroids UI
 and book-store code. `ListLayout` is the foundation; `ListRenderHelper` and
 `OrderListActivity` both depend on it.
@@ -973,3 +975,7 @@ The canonical pattern is:
 
 This pattern keeps navigation, popups, and input responsive during
 cover generation.
+
+---
+
+*Last updated: 2026-09-07 — added StoreManager to shared utilities table (§1) and documented centralized store access pattern.*

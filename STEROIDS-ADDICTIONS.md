@@ -1696,6 +1696,59 @@ summary-aware getters), `src/activities/boot_sleep/BootActivity.cpp`,
 `src/components/themes/lyra/LyraTheme.cpp`, `LyraCarouselTheme.cpp`,
 `LyraCustomTheme.cpp`, `LyraMarcoand75Theme.cpp`.
 
+## 23. StoreManager Centralized Store Access
+
+All persistent app stores now expose a common generation/needsReload contract
+and are accessed through `StoreManager` instead of scattered singleton macros.
+
+### 23.1 What changed
+
+- `StoreManager` (`src/StoreManager.h`) is the single entry point for:
+  - `readingStats()`, `recentBooks()`, `favorites()`, `hiddenBooks()`,
+    `flashcards()`, `achievements()`
+  - `ensure*Loaded()` guarded by `needsReload()`
+  - `invalidate*()` to force a reload
+  - `*Generation()` for debug/logging
+- Store headers still define `READING_STATS`, `RECENT_BOOKS`, `FAVORITES`,
+  `HIDDEN_BOOKS`, `FLASHCARDS`, `ACHIEVEMENTS`, but they now route through
+  `StoreManager`.
+- Every store gained:
+  - `uint32_t generation_ = 0;`
+  - `uint32_t generation() const;`
+  - `bool needsReload() const { return !loaded_; }`
+  - `void bumpGeneration() { ++generation_; }`
+  - `void resetLoaded() { loaded_ = false; bumpGeneration(); }`
+- `loadFromFile()`, `reset()`, and `releaseMemoryForNetwork()` call
+  `bumpGeneration()` after updating `loaded_`.
+
+### 23.2 Why
+
+- Reduces duplicate `ensureLoaded()` work across activities.
+- Gives one place to change loading strategy without touching every caller.
+- Makes store reloads observable in logs via generation counters.
+- Keeps existing activity code working through the compatibility macros.
+
+### 23.3 Build/verification
+
+- Build: SUCCESS — RAM 16.3% (53404/327680), Flash 81.4%, no StoreManager-related
+  warnings beyond expected macro redefinition notices during translation unit
+  assembly.
+- Verified on device via boot log: deferred loads for reading stats, favorites,
+  hidden books, flashcards, achievements, and single-load recent books.
+
+### 23.4 Files
+
+| Path | Role |
+|------|------|
+| `src/StoreManager.h` | Central accessor + ensure/invalidate/generation helpers |
+| `src/ReadingStatsStore.{h,cpp}` | generation/needsReload/bumpGeneration |
+| `src/RecentBooksStore.{h,cpp}` | same |
+| `src/FavoritesStore.{h,cpp}` | same |
+| `src/HiddenBooksStore.{h,cpp}` | same |
+| `src/FlashcardsStore.{h,cpp}` | same |
+| `src/AchievementsStore.{h,cpp}` | same |
+| `src/JsonSettingsIO.cpp`, `JsonSettingsIOSteroids.cpp`, `main.cpp` | include `StoreManager.h` so macro/routed access compiles everywhere |
+
 ---
 
 ## 25. Dictionary Activity (Detail)
@@ -1768,4 +1821,4 @@ every dictionary entry.
 
 ---
 
-*Last updated: 2026-08-29 — added daily average to Home summary.json + trend indicator in LyraMarcoand75 global stats panel (§8, §22), issue #56.*
+*Last updated: 2026-09-07 — added StoreManager centralized store access with generation/needsReload across ReadingStats/Recents/Favorites/Hidden/Flashcards/Achievements (§23), issue #store-manager.*

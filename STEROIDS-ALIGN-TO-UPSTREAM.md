@@ -1340,6 +1340,12 @@ deltas to watch in the next upstream pull. Details by feature in
   own `silentRestartToHome()` for Home returns (heap defragmentation); the upstream
   change is noted but Steroids overrides the restart call. The
   `fromReaderExit=true` flag for `ReadingStatsDetailActivity` is Steroids-specific.
+- **StoreManager** (`src/StoreManager.h`): all lazy stores are accessed through a
+  central manager with `ensure*Loaded()`, `invalidate*()`, and `*Generation()`.
+  Upstream still uses direct singleton macros per store. Keep `StoreManager` and
+  the `generation_`/`needsReload()` additions in `ReadingStatsStore`,
+  `RecentBooksStore`, `FavoritesStore`, `HiddenBooksStore`, `FlashcardsStore`,
+  and `AchievementsStore`; do not replace them with upstream eager-load patterns.
 
 ### Protected-file additions since `07126f2b`
 See the "New Additions (2026-08-09 → 2026-08-18)" table above. In particular the
@@ -1384,4 +1390,4 @@ python -X utf8 -m platformio run -e default -j 16
 
 ---
 
-*Last updated: 2026-08-23 — updated upstream sync status (1.5.0.20 fully ported incl. HAL crash detection), added completed alignment phases summary, SdCardFont port details, HAL crash detection port details, carousel recents panel fix (a605404d), WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, and new HAL/FontManager protected files.*
+*Last updated: 2026-09-07 — updated upstream sync status (1.5.0.20 fully ported incl. HAL crash detection), added completed alignment phases summary, SdCardFont port details, HAL crash detection port details, carousel recents panel fix (a605404d), WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, new HAL/FontManager protected files, and StoreManager centralized store access divergence.*
