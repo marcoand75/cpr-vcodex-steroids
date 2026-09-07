@@ -223,6 +223,25 @@ bool readRecord(uint32_t pos, Record& rec) {
   return ok;
 }
 
+// Find a Record by its bookId in library.dat.
+// Linear scan; acceptable because it is used only for the first book of a
+// series while building mixed query results.
+// Returns true on success.  RAM: 256 bytes stack.
+bool readRecordByBookId(uint32_t bookId, Record& rec) {
+  HalFile f = Storage.open(kDatFile);
+  if (!f) return false;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (rec.id == bookId && !rec.tombstone()) {
+      f.close();
+      return true;
+    }
+  }
+  f.close();
+  return false;
+}
+
 // Append one Record to library.dat.  Returns the new record position (index).
 // Returns UINT32_MAX on error.
 uint32_t appendRecord(const Record& rec) {
@@ -1155,6 +1174,26 @@ int queryMixed(BookRef* out, int page, int pageSize) {
           ref.isOpened = false;
           ref.isCompleted = false;
           ref.isHidden = false;
+
+          // Try to fill path with the first book in the series so the UI
+          // can reuse the normal cover pipeline for the series tile.
+          HalFile sf = Storage.open(kSeriesDat);
+          if (sf) {
+            sf.seek(ci.firstSeriesOffset);
+            SeriesRec sr;
+            for (uint32_t i = 0; i < ci.bookCount; ++i) {
+              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+              if (sr.bookId == 0) continue;
+              Record rec;
+              if (readRecordByBookId(sr.bookId, rec)) {
+                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                ref.path[sizeof(ref.path) - 1] = '\0';
+                break;
+              }
+            }
+            sf.close();
+          }
+
           ++count;
         }
       }
