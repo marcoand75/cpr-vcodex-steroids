@@ -122,6 +122,53 @@ void makeSortKey(const char* src, char* dst) {
   while (w < 20) dst[w++] = '\0';
 }
 
+// Normalise string for title sort key with natural/alphanumeric ordering:
+// lowercase, strip accents/diacritics, zero-pad digit runs to 4 digits so
+// "Lightlark 2" sorts before "Lightlark 10".  Truncates to 20 bytes.
+// Used only for the title index; author index keeps the plain makeSortKey().
+void makeTitleSortKey(const char* src, char* dst) {
+  size_t w = 0;
+  for (size_t i = 0; src[i] && w < 20; ++i) {
+    unsigned char c = static_cast<unsigned char>(src[i]);
+    if (c >= '0' && c <= '9') {
+      size_t numStart = i;
+      while (src[i] >= '0' && src[i] <= '9') ++i;
+      const size_t numLen = i - numStart;
+      // Zero-pad short numbers to 4 digits.
+      if (numLen < 4) {
+        const size_t pad = static_cast<size_t>(4 - numLen);
+        const size_t space = (w + pad > 20) ? (20 - w) : pad;
+        for (size_t p = 0; p < space && w < 20; ++p) dst[w++] = '0';
+      }
+      // Copy original digits.
+      for (size_t d = 0; d < numLen && w < 20; ++d) {
+        dst[w++] = src[numStart + d];
+      }
+      // Compensate for the outer for-loop increment: we already consumed
+      // the digit run, so back off by one position.
+      if (src[i]) --i;
+    } else {
+      // Accent folding (ISO-8859-1 Latin-1 supplementary)
+      switch (c) {
+        case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5: dst[w++] = 'a'; break;
+        case 0xC8: case 0xC9: case 0xCA: case 0xCB: dst[w++] = 'e'; break;
+        case 0xCC: case 0xCD: case 0xCE: case 0xCF: dst[w++] = 'i'; break;
+        case 0xD2: case 0xD3: case 0xD4: case 0xD5: case 0xD6: dst[w++] = 'o'; break;
+        case 0xD9: case 0xDA: case 0xDB: case 0xDC: dst[w++] = 'u'; break;
+        case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: dst[w++] = 'a'; break;
+        case 0xE8: case 0xE9: case 0xEA: case 0xEB: dst[w++] = 'e'; break;
+        case 0xEC: case 0xED: case 0xEE: case 0xEF: dst[w++] = 'i'; break;
+        case 0xF2: case 0xF3: case 0xF4: case 0xF5: case 0xF6: dst[w++] = 'o'; break;
+        case 0xF9: case 0xFA: case 0xFB: case 0xFC: dst[w++] = 'u'; break;
+        case 0xD1: case 0xF1: dst[w++] = 'n'; break;
+        case 0xC7: case 0xE7: dst[w++] = 'c'; break;
+        default: dst[w++] = static_cast<char>(std::tolower(c)); break;
+      }
+    }
+  }
+  while (w < 20) dst[w++] = '\0';
+}
+
 // Compare two sort keys (memcmp-like)
 int cmpSortKey(const char* a, const char* b) {
   return std::strncmp(a, b, 20);
@@ -659,7 +706,7 @@ static bool buildIndexFile(const char* outPath, int (*cmp)(const void*, const vo
         if (key[0] == '\0') { key[0] = 'z'; key[1] = 'z'; key[2] = 'z'; key[3] = '\0'; }
         makeSortKey(key, ir.sortKey);
       } else {
-        makeSortKey(rec.title, ir.sortKey);
+        makeTitleSortKey(rec.title, ir.sortKey);
       }
       ir.bookId = rec.id;
       ir.recordOffset = static_cast<uint32_t>(rp * kRecordSize);
