@@ -117,17 +117,19 @@ bool sync(const char* rootDir = "/");
 // searchFilter: if non-null and non-empty, apply full-text substring
 //   filter on title AND author (case-insensitive, accent-normalised).
 // filterMode: additional static filter (favourites / recent / unread).
+// coverWidth/coverHeight: used only for collection/mixed view cover lookup.
 // RAM: ~(pageSize * sizeof(BookRef)) + 1 KB I/O buffer.
 int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
-              const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL);
+              const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL,
+              int coverWidth = 0, int coverHeight = 0);
 
 // Mixed view: standalone books + series tiles together
-int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL);
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL, int coverWidth = 0, int coverHeight = 0);
 int totalMixed();
 int totalMixedMatching(const char* searchFilter, FilterMode filterMode = FilterMode::ALL);
 
 // Collections: list unique collections
-int queryCollections(BookRef* out, int page, int pageSize);
+int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight);
 
 // Books within a specific collection (by index in idx_collections.bin)
 int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx);

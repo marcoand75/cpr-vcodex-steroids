@@ -1057,7 +1057,7 @@ bool buildMixedIndex() {
 
 // ---- Collections query ----
 
-int queryCollections(BookRef* out, int page, int pageSize) {
+int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight) {
   HalFile f = Storage.open(kIdxCollections);
   if (!f) return 0;
   const int total = static_cast<int>(f.size() / sizeof(CollectionIndexRec));
@@ -1082,8 +1082,10 @@ int queryCollections(BookRef* out, int page, int pageSize) {
     ref.isCompleted = false;
     ref.isHidden = false;
 
-    // Resolve first book path so the UI can show a meaningful cover.
-    if (sf && df) {
+    // Resolve first book path that has an existing cover so the UI
+    // can show a meaningful cover. If no book has a cover yet, path
+    // stays empty and the UI will render the collection placeholder.
+    if (sf && df && coverWidth > 0 && coverHeight > 0) {
       sf.seek(ci.firstSeriesOffset);
       SeriesRec sr;
       for (uint32_t b = 0; b < ci.bookCount; ++b) {
@@ -1094,9 +1096,13 @@ int queryCollections(BookRef* out, int page, int pageSize) {
         uint32_t rp = 0;
         while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
           if (rec.id == sr.bookId && !rec.tombstone()) {
-            std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-            ref.path[sizeof(ref.path) - 1] = '\0';
-            break;
+            const std::string bookPath(rec.path);
+            const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+            if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+              std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+              ref.path[sizeof(ref.path) - 1] = '\0';
+              break;
+            }
           }
           ++rp;
         }
@@ -1201,13 +1207,16 @@ int collectionBookCount(int collectionIdx) {
 // Forward declaration for filter matching used by queryMixed/totalMixedMatching.
 static bool matchesFilter(const Record& rec, FilterMode m);
 
-int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode) {
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight) {
   HalFile mf = Storage.open(kIdxMixed);
   if (!mf) return 0;
 
   const int total = static_cast<int>(mf.size() / kIndexRecSize);
   HalFile cf = Storage.open(kIdxCollections);
   const bool hasCollIndex = !!cf;
+
+  HalFile sf = Storage.open(kSeriesDat);
+  HalFile df = Storage.open(kDatFile);
 
   int count = 0;
   int skipped = 0;
@@ -1234,8 +1243,6 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
 
           // Check if any book in the series matches the filter
           if (matches && filterMode != FilterMode::ALL) {
-            HalFile sf = Storage.open(kSeriesDat);
-            HalFile df = Storage.open(kDatFile);
             if (sf && df) {
               sf.seek(ci.firstSeriesOffset);
               SeriesRec sr;
@@ -1259,8 +1266,6 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
               }
               matches = anyMatch;
             }
-            if (sf) sf.close();
-            if (df) df.close();
           }
         }
       }
@@ -1306,11 +1311,29 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
           ref.isCompleted = false;
           ref.isHidden = false;
 
-          if (ir.recordOffset != 0xFFFFFFFFu) {
-            Record firstRec;
-            if (readRecord(ir.recordOffset / kRecordSize, firstRec)) {
-              std::strncpy(ref.path, firstRec.path, sizeof(ref.path) - 1);
-              ref.path[sizeof(ref.path) - 1] = '\0';
+          // Resolve first book with an existing cover, if available.
+          if (sf && df && coverWidth > 0 && coverHeight > 0) {
+            sf.seek(ci.firstSeriesOffset);
+            SeriesRec sr;
+            for (uint32_t b = 0; b < ci.bookCount; ++b) {
+              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+              if (sr.bookId == 0) continue;
+              df.seek(0);
+              Record rec;
+              uint32_t rp = 0;
+              while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                if (rec.id == sr.bookId && !rec.tombstone()) {
+                  const std::string bookPath(rec.path);
+                  const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                  if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                    std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                    ref.path[sizeof(ref.path) - 1] = '\0';
+                    break;
+                  }
+                }
+                ++rp;
+              }
+              if (ref.path[0] != '\0') break;
             }
           }
 
@@ -1335,6 +1358,8 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   }
 
   if (hasCollIndex) cf.close();
+  if (df) df.close();
+  if (sf) sf.close();
   mf.close();
   return count;
 }
@@ -1619,16 +1644,16 @@ static int scanFullText(BookRef* out, int page, int pageSize, SortMode sortMode,
 }
 
 int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
-              const char* searchFilter, FilterMode filterMode) {
+              const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight) {
   if (!out || pageSize <= 0) return 0;
   if (!exists()) return 0;
 
   if (sortMode == SortMode::COLLECTIONS) {
-    return queryCollections(out, page, pageSize);
+    return queryCollections(out, page, pageSize, coverWidth, coverHeight);
   }
 
   if (sortMode == SortMode::MIXED) {
-    return queryMixed(out, page, pageSize);
+    return queryMixed(out, page, pageSize, searchFilter, filterMode, coverWidth, coverHeight);
   }
 
   const bool hasSearch = (searchFilter && searchFilter[0] != '\0');

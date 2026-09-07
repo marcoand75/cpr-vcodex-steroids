@@ -358,10 +358,11 @@ void LibraryActivity::refreshPageCache() {
     // Mixed view: root shows series + standalone; inside a series shows books
     slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
                                          currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                         static_cast<LibraryIndex::FilterMode>(currentFilter_));
+                                         static_cast<LibraryIndex::FilterMode>(currentFilter_),
+                                         coverWidth_, coverHeight_);
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
-    slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_);
+    slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
   } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
     // Inside a series in mixed view
     slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
@@ -378,7 +379,8 @@ void LibraryActivity::refreshPageCache() {
         pageCache_, curPage, gridsPerPage_,
         static_cast<LibraryIndex::SortMode>(currentSort_),
         currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-        static_cast<LibraryIndex::FilterMode>(currentFilter_));
+        static_cast<LibraryIndex::FilterMode>(currentFilter_),
+        coverWidth_, coverHeight_);
   }
   // If the page had fewer items than requested, update totalBooks_
   if (slotCount == 0 && curPage > 0) {
@@ -394,9 +396,10 @@ void LibraryActivity::refreshPageCache() {
     if (mixedMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
                                            currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_));
+                                           static_cast<LibraryIndex::FilterMode>(currentFilter_),
+                                           coverWidth_, coverHeight_);
     else if (collectionsMode_ && currentCollectionIdx_ < 0)
-      slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_);
+      slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_, coverWidth_, coverHeight_);
     else if (mixedMode_ && currentCollectionIdx_ >= 0)
       slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
     else if (collectionsMode_ && currentCollectionIdx_ >= 0)
@@ -406,7 +409,8 @@ void LibraryActivity::refreshPageCache() {
           pageCache_, lastPage, gridsPerPage_,
           static_cast<LibraryIndex::SortMode>(currentSort_),
           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-          static_cast<LibraryIndex::FilterMode>(currentFilter_));
+          static_cast<LibraryIndex::FilterMode>(currentFilter_),
+          coverWidth_, coverHeight_);
   }
   // Zero out remaining slots
   for (int i = slotCount; i < gridsPerPage_; ++i) {
@@ -1511,7 +1515,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   bool drawn = false;
   const std::string path(pageCache_[i].path);
   const bool isSeriesTile = (pageCache_[i].id & 0x80000000u) != 0;
-  const bool isCollectionTile = isSeriesTile && collectionsMode_ && !path.empty();
+  const bool isCollectionTile = isSeriesTile && collectionsMode_;
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
