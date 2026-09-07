@@ -1515,7 +1515,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   bool drawn = false;
   const std::string path(pageCache_[i].path);
   const bool isSeriesTile = (pageCache_[i].id & 0x80000000u) != 0;
-  const bool isCollectionTile = isSeriesTile && collectionsMode_;
+  const bool isCollectionTile = isSeriesTile && (collectionsMode_ || (mixedMode_ && currentCollectionIdx_ < 0));
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
@@ -1618,10 +1618,10 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     }
   }
 
-  // Collection title ribbon: bottom-half overlay on cover or placeholder
+  // Collection title ribbon: bottom overlay on cover or placeholder
   if (isCollectionTile) {
-    constexpr int ribbonH = 18;
-    const int ribbonY = y + coverHeight_ / 2 + 2;
+    constexpr int ribbonH = 36;
+    const int ribbonY = y + coverHeight_ - ribbonH;
     renderer.fillRect(x + 4, ribbonY, coverWidth_ - 8, ribbonH, Color::Black);
     const char* title = pageCache_[i].title;
     const int titleFont = SMALL_FONT_ID;
