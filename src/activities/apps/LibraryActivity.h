@@ -34,6 +34,7 @@ class LibraryActivity final : public Activity {
   CrossPointSettings::LIBRARY_SORT cachedInfoSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
   std::string cachedInfoSearch_;
   mutable bool cachedCollectionsMode_ = false;
+  mutable bool cachedMixedMode_ = false;
   mutable int  cachedCollectionIdx_ = -2;
   mutable std::string cachedCollectionName_;
   std::vector<std::vector<std::string>> pageTitleCache_;
@@ -56,6 +57,9 @@ class LibraryActivity final : public Activity {
   bool collectionsMode_ = false;         // true when browsing collections
   int  currentCollectionIdx_ = -1;       // selected collection index (-1 = list of collections)
   std::string currentCollectionName_;    // name of currently opened collection
+
+  // Mixed mode (series + standalone books together)
+  bool mixedMode_ = false;               // true when browsing mixed view
 
   // Cover generation state (one slot per frame, like HomeActivity carousel)
   struct CoverGenState {

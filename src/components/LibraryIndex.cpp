@@ -33,6 +33,7 @@ constexpr const char* kScanFile = "/.crosspoint/LIBRARY/scan_state.dat";
 constexpr const char* kIdxTitle  = "/.crosspoint/LIBRARY/idx_title.bin";
 constexpr const char* kIdxAuthor = "/.crosspoint/LIBRARY/idx_author.bin";
 constexpr const char* kIdxCollections = "/.crosspoint/LIBRARY/idx_collections.bin";
+constexpr const char* kIdxMixed = "/.crosspoint/LIBRARY/idx_mixed.bin";
 constexpr const char* kSeriesDat = "/.crosspoint/LIBRARY/series.dat";
 constexpr const char* kTmpDir   = "/.crosspoint/LIBRARY/tmp";
 
@@ -778,6 +779,10 @@ bool buildIndices() {
     LOG_ERR("LIB", "BuildIndices: author index failed");
     return false;
   }
+  if (!buildMixedIndex()) {
+    LOG_ERR("LIB", "BuildIndices: mixed index failed");
+    return false;
+  }
 
   LOG_DBG("LIB", "BuildIndices: done in %lu ms", millis() - t0);
   return true;
@@ -872,6 +877,143 @@ bool buildCollectionsIndex() {
   outF.close();
 
   LOG_DBG("LIB", "BuildCollIdx: %d collections from %d series entries", collections.size(), totalSeries);
+  return true;
+}
+
+// =========================================================================
+// Mixed index builder (series tiles + standalone books together)
+// =========================================================================
+
+bool buildMixedIndex() {
+  LOG_DBG("LIB", "BuildMixedIdx: start");
+  const unsigned long t0 = millis();
+
+  // Phase 0: read series.dat and build a sorted set of book IDs that belong
+  // to a series/collection.  Used to skip them when emitting standalone entries.
+  std::vector<uint32_t> seriesBookIds;
+  {
+    HalFile sf = Storage.open(kSeriesDat);
+    if (sf) {
+      const size_t totalSeries = sf.size() / sizeof(SeriesRec);
+      seriesBookIds.reserve(totalSeries);
+      SeriesRec sr;
+      for (size_t i = 0; i < totalSeries; ++i) {
+        if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == sizeof(SeriesRec)) {
+          if (sr.bookId > 0) seriesBookIds.push_back(sr.bookId);
+        }
+      }
+      sf.close();
+      std::sort(seriesBookIds.begin(), seriesBookIds.end());
+    }
+  }
+
+  int chunkCount = 0;
+  {
+    // Phase 1a: standalone books from library.dat
+    HalFile dat = Storage.open(kDatFile);
+    if (!dat) return false;
+    const int totalRecs = static_cast<int>(dat.size() / kRecordSize);
+    if (totalRecs == 0) { dat.close(); return false; }
+
+    std::vector<IndexRec> chunk; chunk.reserve(kChunkRecs);
+    Record rec;
+    for (int rp = 0; rp < totalRecs; ++rp) {
+      if (!readRecord(static_cast<uint32_t>(rp), rec)) continue;
+      if (rec.tombstone()) continue;
+      if (std::binary_search(seriesBookIds.begin(), seriesBookIds.end(), rec.id)) continue;
+
+      IndexRec ir;
+      makeTitleSortKey(rec.title, ir.sortKey);
+      ir.bookId = rec.id;
+      ir.recordOffset = static_cast<uint32_t>(rp * kRecordSize);
+      chunk.push_back(ir);
+
+      if (static_cast<int>(chunk.size()) >= kChunkRecs || rp == totalRecs - 1) {
+        std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+        char tmpPath[96];
+        std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, chunkCount++);
+        HalFile tf = Storage.open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC);
+        if (tf) {
+          tf.write(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size() * kIndexRecSize);
+          tf.close();
+        }
+        chunk.clear();
+      }
+    }
+    dat.close();
+  }
+
+  {
+    // Phase 1b: series tiles from idx_collections.bin
+    HalFile cf = Storage.open(kIdxCollections);
+    if (cf) {
+      const int totalColls = static_cast<int>(cf.size() / sizeof(CollectionIndexRec));
+      if (totalColls > 0) {
+        std::vector<IndexRec> chunk; chunk.reserve(kChunkRecs);
+        CollectionIndexRec ci;
+        for (int i = 0; i < totalColls; ++i) {
+          if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != static_cast<int>(sizeof(CollectionIndexRec))) break;
+          IndexRec ir;
+          makeTitleSortKey(ci.collectionName, ir.sortKey);
+          ir.bookId = 0x80000000u | static_cast<uint32_t>(i);
+          ir.recordOffset = static_cast<uint32_t>(i);  // collection index for lookup
+          chunk.push_back(ir);
+
+          if (static_cast<int>(chunk.size()) >= kChunkRecs || i == totalColls - 1) {
+            std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+            char tmpPath[96];
+            std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, chunkCount++);
+            HalFile tf = Storage.open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC);
+            if (tf) {
+              tf.write(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size() * kIndexRecSize);
+              tf.close();
+            }
+            chunk.clear();
+          }
+        }
+      }
+      cf.close();
+    }
+  }
+
+  if (chunkCount == 0) {
+    LOG_DBG("LIB", "BuildMixedIdx: no entries");
+    return false;
+  }
+
+  // Phase 2: k-way merge into idx_mixed.bin
+  HalFile outF = Storage.open(kIdxMixed, O_CREAT | O_WRONLY | O_TRUNC);
+  if (!outF) return false;
+
+  std::vector<ChunkReader> readers(chunkCount);
+  for (int i = 0; i < chunkCount; ++i) {
+    char tmpPath[96];
+    std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, i);
+    readers[i].open(tmpPath);
+  }
+
+  while (true) {
+    int best = -1;
+    for (int i = 0; i < chunkCount; ++i) {
+      if (readers[i].eof) continue;
+      if (best < 0 || cmpByTitle(&readers[i].cur, &readers[best].cur) < 0) best = i;
+    }
+    if (best < 0) break;
+    writeIndexRec(outF, readers[best].cur);
+    readers[best].advance();
+  }
+
+  outF.close();
+  for (int i = 0; i < chunkCount; ++i) readers[i].close();
+
+  // Phase 3: delete temp chunks
+  for (int i = 0; i < chunkCount; ++i) {
+    char tmpPath[96];
+    std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, i);
+    Storage.remove(tmpPath);
+  }
+
+  LOG_DBG("LIB", "BuildMixedIdx: done in %lu ms, %d chunks", millis() - t0, chunkCount);
   return true;
 }
 
@@ -976,6 +1118,75 @@ int collectionBookCount(int collectionIdx) {
   }
   cf.close();
   return static_cast<int>(ci.bookCount);
+}
+
+// ---- Mixed view query ----
+
+int queryMixed(BookRef* out, int page, int pageSize) {
+  HalFile mf = Storage.open(kIdxMixed);
+  if (!mf) return 0;
+
+  const int total = static_cast<int>(mf.size() / kIndexRecSize);
+  const int start = page * pageSize;
+  if (start >= total) { mf.close(); return 0; }
+
+  HalFile cf = Storage.open(kIdxCollections);
+  const bool hasCollIndex = !!cf;
+
+  int count = 0;
+  for (int i = start; i < total && count < pageSize; ++i) {
+    mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+    IndexRec ir;
+    if (!readIndexRec(mf, ir)) break;
+
+    if (ir.bookId & 0x80000000u) {
+      // Series tile: read collection info from idx_collections.bin
+      const int collIdx = static_cast<int>(ir.recordOffset);
+      if (hasCollIndex) {
+        cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+        CollectionIndexRec ci;
+        if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+          BookRef& ref = out[count];
+          ref.id = ir.bookId;
+          std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
+          snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
+          ref.path[0] = '\0';
+          ref.isFavorite = false;
+          ref.isOpened = false;
+          ref.isCompleted = false;
+          ref.isHidden = false;
+          ++count;
+        }
+      }
+    } else {
+      // Standalone book
+      Record rec;
+      if (readRecord(ir.recordOffset / kRecordSize, rec)) {
+        BookRef& ref = out[count];
+        ref.id = ir.bookId;
+        std::strncpy(ref.title, rec.title, 64); ref.title[64] = '\0';
+        std::strncpy(ref.author, rec.author, 48); ref.author[48] = '\0';
+        std::strncpy(ref.path, rec.path, 128); ref.path[128] = '\0';
+        ref.isFavorite = rec.favorite();
+        ref.isOpened = rec.opened();
+        ref.isCompleted = rec.completed();
+        ref.isHidden = HIDDEN_BOOKS.isHidden(rec.path);
+        ++count;
+      }
+    }
+  }
+
+  if (hasCollIndex) cf.close();
+  mf.close();
+  return count;
+}
+
+int totalMixed() {
+  HalFile f = Storage.open(kIdxMixed);
+  if (!f) return 0;
+  const int total = static_cast<int>(f.size() / kIndexRecSize);
+  f.close();
+  return total;
 }
 
 // =========================================================================
@@ -1173,6 +1384,10 @@ int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
     return queryCollections(out, page, pageSize);
   }
 
+  if (sortMode == SortMode::MIXED) {
+    return queryMixed(out, page, pageSize);
+  }
+
   const bool hasSearch = (searchFilter && searchFilter[0] != '\0');
   const bool needsFullScan = hasSearch || sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS;
   const bool reverse = (sortMode == SortMode::TITLE_DESC || sortMode == SortMode::AUTHOR_DESC ||
@@ -1239,6 +1454,7 @@ void invalidate() {
   Storage.remove(kIdxTitle);
   Storage.remove(kIdxAuthor);
   Storage.remove(kIdxCollections);
+  Storage.remove(kIdxMixed);
   Storage.remove(kSeriesDat);
   // Clean temp merge-sort chunks
   for (int i = 0; i < 9999; ++i) {

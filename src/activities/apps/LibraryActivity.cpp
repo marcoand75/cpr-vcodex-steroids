@@ -281,6 +281,7 @@ void LibraryActivity::scanSd() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
   collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
+  mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
   if (collectionsMode_) currentCollectionIdx_ = -1;
 
   // Init LibraryIndex if needed
@@ -296,10 +297,13 @@ void LibraryActivity::scanSd() {
     LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
     LibraryIndex::buildIndices();
     LibraryIndex::buildCollectionsIndex();
+    LibraryIndex::buildMixedIndex();
     totalBooks_ = collectionsMode_
         ? LibraryIndex::totalCollections()
-        : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                       static_cast<LibraryIndex::FilterMode>(currentFilter_));
+        : (mixedMode_
+           ? LibraryIndex::totalMixed()
+           : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                          static_cast<LibraryIndex::FilterMode>(currentFilter_)));
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     refreshPageCache();
     return;
@@ -322,16 +326,19 @@ void LibraryActivity::scanSd() {
       renderer.displayBuffer();
       LibraryIndex::buildIndices();
       LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildMixedIndex();
     }
   }
 
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
-      : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                     static_cast<LibraryIndex::FilterMode>(currentFilter_));
+      : (mixedMode_
+         ? LibraryIndex::totalMixed()
+         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  LOG_DBG("LIB", "scanSd: existing index, doScan=%d total=%d collMode=%d",
-          static_cast<int>(doScan), totalBooks_, collectionsMode_);
+  LOG_DBG("LIB", "scanSd: existing index, doScan=%d total=%d collMode=%d mixMode=%d",
+          static_cast<int>(doScan), totalBooks_, collectionsMode_, mixedMode_);
   refreshPageCache();
 }
 
@@ -346,7 +353,10 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
 void LibraryActivity::refreshPageCache() {
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
-  if (collectionsMode_ && currentCollectionIdx_ < 0) {
+  if (mixedMode_) {
+    // Mixed view: root shows series + standalone; inside a series shows books
+    slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_);
+  } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
     slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_);
   } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
@@ -366,11 +376,15 @@ void LibraryActivity::refreshPageCache() {
   if (slotCount == 0 && curPage > 0) {
     totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
         ? LibraryIndex::totalCollections()
-        : LibraryIndex::totalBooks();
+        : (mixedMode_
+           ? LibraryIndex::totalMixed()
+           : LibraryIndex::totalBooks());
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (collectionsMode_ && currentCollectionIdx_ < 0)
+    if (mixedMode_)
+      slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_);
+    else if (collectionsMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_);
     else if (collectionsMode_ && currentCollectionIdx_ >= 0)
       slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
@@ -403,13 +417,16 @@ void LibraryActivity::refreshPageCache() {
 
 void LibraryActivity::applyFilterAndSort() {
   collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
+  mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
   if (collectionsMode_) {
     currentCollectionIdx_ = -1;
   }
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
-      : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                     static_cast<LibraryIndex::FilterMode>(currentFilter_));
+      : (mixedMode_
+         ? LibraryIndex::totalMixed()
+         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
   selectorIndex_ = 0;
   pageTitleCacheKey_ = -1;
@@ -468,8 +485,9 @@ void LibraryActivity::openSortPopup() {
     {StrId::STR_SORT_AUTHOR_ASC, SortAscIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
     {StrId::STR_SORT_AUTHOR_DESC, SortDescIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
     {StrId::STR_SORT_COLLECTIONS, LibraryNewIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_COLLECTIONS},
+    {StrId::STR_SORT_MIXED, LibraryNewIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_MIXED},
   };
-  for (int i = 0; i < 5; ++i) {
+  for (size_t i = 0; i < sizeof(sorts) / sizeof(sorts[0]); ++i) {
     PopupItem item;
     item.label = I18N.get(sorts[i].id);
     item.icon = sorts[i].icon;
@@ -479,7 +497,7 @@ void LibraryActivity::openSortPopup() {
     popupOverlay_.items.push_back(item);
     if (item.selected) {
       popupOverlay_.selectedIndex = i;
-      popupOverlay_.startIndex = std::max(0, i - PanelDrawHelper::kMaxVisibleRows / 2);
+      popupOverlay_.startIndex = std::max(0, static_cast<int>(i) - PanelDrawHelper::kMaxVisibleRows / 2);
     }
   }
   requestUpdate();
@@ -944,7 +962,20 @@ void LibraryActivity::loop() {
             });
         return;
       }
-      // Short press: open book or enter collection
+      // Short press: open book or enter collection/series
+      if (mixedMode_ && currentCollectionIdx_ < 0) {
+        // In mixed root view: check if selected item is a series tile
+        int slot = selectorIndex_ % gridsPerPage_;
+        if (pageCache_[slot].id & 0x80000000u) {
+          currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFFu);
+          currentCollectionName_ = pageCache_[slot].title;
+          selectorIndex_ = 0;
+          refreshPageCache();
+          forceRender_ = true;
+          requestUpdate();
+          return;
+        }
+      }
       if (collectionsMode_ && currentCollectionIdx_ < 0) {
         // Enter the selected collection
         int slot = selectorIndex_ % gridsPerPage_;
@@ -963,11 +994,13 @@ void LibraryActivity::loop() {
 
   // ---- Back button --------------------------------------------------------
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    // In collections mode: go back to collections list from a specific collection
-    if (collectionsMode_ && currentCollectionIdx_ >= 0) {
+    // In mixed/collections mode: go back to root from a specific collection/series
+    if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0) {
       currentCollectionIdx_ = -1;
       currentCollectionName_.clear();
-      totalBooks_ = LibraryIndex::totalCollections();
+      totalBooks_ = collectionsMode_
+          ? LibraryIndex::totalCollections()
+          : LibraryIndex::totalMixed();
       totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
       selectorIndex_ = 0;
       refreshPageCache();
@@ -1151,9 +1184,15 @@ bool LibraryActivity::rebuildInfoCacheIfChanged(int curPageRaw, int total) {
       cachedRenderSelector_ != selectorIndex_ || cachedRenderPage_ != curPageRaw ||
       cachedInfoFilter_ != currentFilter_ || cachedInfoSort_ != currentSort_ ||
       cachedInfoSearch_ != currentSearchText_ || cachedTotalBooks_ != totalBooks_ ||
-      cachedCollectionsMode_ != collectionsMode_ || cachedCollectionIdx_ != currentCollectionIdx_ ||
+      cachedCollectionsMode_ != collectionsMode_ || cachedMixedMode_ != mixedMode_ ||
+      cachedCollectionIdx_ != currentCollectionIdx_ ||
       cachedCollectionName_ != currentCollectionName_;
   if (!infoKeyChanged) return false;
+
+  cachedCollectionsMode_ = collectionsMode_;
+  cachedMixedMode_ = mixedMode_;
+  cachedCollectionIdx_ = currentCollectionIdx_;
+  cachedCollectionName_ = currentCollectionName_;
 
   cachedInfo_.clear();
   switch (currentFilter_) {
@@ -1162,15 +1201,17 @@ bool LibraryActivity::rebuildInfoCacheIfChanged(int curPageRaw, int total) {
     case CrossPointSettings::LIBRARY_FILTER_UNREAD:     cachedInfo_ = tr(STR_UNREAD); break;
     case CrossPointSettings::LIBRARY_FILTER_COMPLETED:  cachedInfo_ = tr(STR_COMPLETED); break;
     case CrossPointSettings::LIBRARY_FILTER_HIDDEN:     cachedInfo_ = tr(STR_HIDDEN_FILTER); break;
-    default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS) : tr(STR_ALL_BOOKS); break;
+    default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS)
+                      : mixedMode_      ? tr(STR_SORT_MIXED)
+                      : tr(STR_ALL_BOOKS); break;
   }
-  if (collectionsMode_ && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
+  if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
     cachedInfo_ = currentCollectionName_;
   }
   const char* sortLabel = nullptr;
-  // Don't show sort label when in collections mode — the info line
-  // already says "Collections" or "Collections / Name".
-  if (!collectionsMode_) {
+  // Don't show sort label when in collections/mixed mode — the info line
+  // already says "Collections", "Series + Books", or "Name".
+  if (!collectionsMode_ && !mixedMode_) {
     switch (currentSort_) {
       case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
       case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;

@@ -63,6 +63,7 @@ enum class SortMode {
   RECENT = 4,
   PROGRESS = 5,
   COLLECTIONS = 6,
+  MIXED = 7,
 };
 
 // ---- Filter mode ----
@@ -100,6 +101,10 @@ bool buildIndices();
 // Build collections index from series.dat (must be called after scan)
 bool buildCollectionsIndex();
 
+// Build mixed index from library.dat + series.dat + collections index.
+// One entry per standalone book + one entry per collection/series tile.
+bool buildMixedIndex();
+
 // Incremental sync: runs scan() only if library.dat is stale or missing.
 // Falls back to a fast path when nothing changed.
 // RAM: same as scan() + buildIndices().
@@ -115,6 +120,10 @@ bool sync(const char* rootDir = "/");
 // RAM: ~(pageSize * sizeof(BookRef)) + 1 KB I/O buffer.
 int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
               const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL);
+
+// Mixed view: standalone books + series tiles together
+int queryMixed(BookRef* out, int page, int pageSize);
+int totalMixed();
 
 // Collections: list unique collections
 int queryCollections(BookRef* out, int page, int pageSize);
