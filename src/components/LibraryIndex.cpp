@@ -1130,37 +1130,45 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   if (!sf) return 0;
   sf.seek(ci.firstSeriesOffset);
 
-  std::vector<uint32_t> bookIds;
+  struct BookSlot {
+    uint32_t bookId;
+    uint32_t seriesIndex;
+    uint32_t recordOffset;
+  };
+  std::vector<BookSlot> slots;
   SeriesRec sr;
   for (uint32_t i = 0; i < ci.bookCount; ++i) {
     if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != static_cast<int>(sizeof(SeriesRec))) break;
+    if (sr.bookId == 0) continue;
     // Find Record by bookId in library.dat
-    if (sr.bookId > 0) {
-      // Scan library.dat for this bookId (linear, but collections are small)
-      HalFile df = Storage.open(kDatFile);
-      if (df) {
-        Record rec;
-        uint32_t rp = 0;
-        while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-          if (rec.id == sr.bookId && !rec.tombstone()) {
-            bookIds.push_back(rp);
-            break;
-          }
-          ++rp;
+    HalFile df = Storage.open(kDatFile);
+    if (df) {
+      Record rec;
+      uint32_t rp = 0;
+      while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+        if (rec.id == sr.bookId && !rec.tombstone()) {
+          slots.push_back({sr.bookId, static_cast<uint32_t>(sr.seriesIndex), rp * kRecordSize});
+          break;
         }
-        df.close();
+        ++rp;
       }
+      df.close();
     }
   }
   sf.close();
 
+  // Sort by seriesIndex numerically
+  std::sort(slots.begin(), slots.end(), [](const BookSlot& a, const BookSlot& b) {
+    return a.seriesIndex < b.seriesIndex;
+  });
+
   // Paginate
   const int start = page * pageSize;
-  const int end = std::min(start + pageSize, static_cast<int>(bookIds.size()));
+  const int end = std::min(start + pageSize, static_cast<int>(slots.size()));
   int count = 0;
   for (int i = start; i < end; ++i) {
     Record rec;
-    if (!readRecord(bookIds[i], rec)) continue;
+    if (!readRecord(slots[i].recordOffset / kRecordSize, rec)) continue;
     recordToBookRef(rec, out[count++]);
   }
   return count;
