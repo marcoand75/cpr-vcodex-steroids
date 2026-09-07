@@ -975,7 +975,26 @@ bool buildMixedIndex() {
           IndexRec ir;
           makeTitleSortKey(ci.collectionName, ir.sortKey);
           ir.bookId = 0x80000000u | static_cast<uint32_t>(i);
-          ir.recordOffset = static_cast<uint32_t>(i);  // collection index for lookup
+
+          // Resolve first book path now so queryMixed() does not need to
+          // scan series.dat + library.dat at runtime.
+          Record firstRec;
+          bool foundFirst = false;
+          HalFile sf = Storage.open(kSeriesDat);
+          if (sf) {
+            sf.seek(ci.firstSeriesOffset);
+            SeriesRec sr;
+            for (uint32_t b = 0; b < ci.bookCount; ++b) {
+              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+              if (sr.bookId == 0) continue;
+              if (readRecordByBookId(sr.bookId, firstRec)) {
+                foundFirst = true;
+                break;
+              }
+            }
+            sf.close();
+          }
+          ir.recordOffset = foundFirst ? static_cast<uint32_t>((firstRec.id > 0 ? (firstRec.id - 1) : 0) * kRecordSize) : 0xFFFFFFFFu;
           chunk.push_back(ir);
 
           if (static_cast<int>(chunk.size()) >= kChunkRecs || i == totalColls - 1) {
@@ -1160,7 +1179,7 @@ int queryMixed(BookRef* out, int page, int pageSize) {
 
     if (ir.bookId & 0x80000000u) {
       // Series tile: read collection info from idx_collections.bin
-      const int collIdx = static_cast<int>(ir.recordOffset);
+      const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
         CollectionIndexRec ci;
@@ -1175,23 +1194,14 @@ int queryMixed(BookRef* out, int page, int pageSize) {
           ref.isCompleted = false;
           ref.isHidden = false;
 
-          // Try to fill path with the first book in the series so the UI
-          // can reuse the normal cover pipeline for the series tile.
-          HalFile sf = Storage.open(kSeriesDat);
-          if (sf) {
-            sf.seek(ci.firstSeriesOffset);
-            SeriesRec sr;
-            for (uint32_t i = 0; i < ci.bookCount; ++i) {
-              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-              if (sr.bookId == 0) continue;
-              Record rec;
-              if (readRecordByBookId(sr.bookId, rec)) {
-                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                ref.path[sizeof(ref.path) - 1] = '\0';
-                break;
-              }
+          // First-book path was precomputed during buildMixedIndex() and
+          // stored in recordOffset as a library.dat byte offset.
+          if (ir.recordOffset != 0xFFFFFFFFu) {
+            Record firstRec;
+            if (readRecord(ir.recordOffset / kRecordSize, firstRec)) {
+              std::strncpy(ref.path, firstRec.path, sizeof(ref.path) - 1);
+              ref.path[sizeof(ref.path) - 1] = '\0';
             }
-            sf.close();
           }
 
           ++count;
