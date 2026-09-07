@@ -1492,6 +1492,7 @@ void LibraryActivity::reloadPageCovers() {
 void LibraryActivity::drawTileContent(int i, int x, int y) const {
   bool drawn = false;
   const std::string path(pageCache_[i].path);
+  const bool isSeriesTile = (pageCache_[i].id & 0x80000000u) != 0;
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
@@ -1513,45 +1514,92 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   }
 
   if (!drawn) {
-    renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
-    renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1,
-                             COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
-    const int iconSize = std::min(32, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
-    const int iconX = x + (coverWidth_ - iconSize) / 2;
-    const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
-    renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
+    if (isSeriesTile) {
+      // Series placeholder: stacked outlines + centered icon + count badge
+      const int stackOffset = 4;
+      renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
+      renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
+      const int iconSize = std::min(28, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
+      const int iconX = x + (coverWidth_ - iconSize) / 2;
+      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
+      renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
 
-    const int textAreaH = 2 * coverHeight_ / 3 - 8;
-    if (i < static_cast<int>(pageTitleCache_.size())) {
-      const auto& lines = pageTitleCache_[i];
-      int lh = renderer.getLineHeight(SMALL_FONT_ID);
-      int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
-      for (auto& ln : lines) {
-        int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
-        renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-        ty += lh;
+      const int textAreaH = 2 * coverHeight_ / 3 - 8;
+      if (i < static_cast<int>(pageTitleCache_.size())) {
+        const auto& lines = pageTitleCache_[i];
+        int lh = renderer.getLineHeight(SMALL_FONT_ID);
+        int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+        for (auto& ln : lines) {
+          int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+          renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+          ty += lh;
+        }
       }
-    }
+    } else {
+      renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
+      renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1,
+                               COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
+      const int iconSize = std::min(32, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
+      const int iconX = x + (coverWidth_ - iconSize) / 2;
+      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
+      renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
 
-    // Progress bar for cover generation: drawn in WHITE on the black placeholder.
-    // The bar is only visible when coverGen_.active is true and this tile
-    // corresponds to a slot that is being or has been processed.
-    if (coverGen_.active || coverGen_.pending) {
-      const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-      const int slot = (pageStart + i) - pageStart;  // local slot index
-      if (slot >= 0 && slot < gridsPerPage_ && slot <= coverGen_.slot && coverGen_.total > 0) {
-        constexpr int kBarH = 8;
-        const int barY = y + coverHeight_ - kBarH - 4;
-        const int maxBarW = coverWidth_ - 6;
-        // White outline
-        renderer.drawRect(x + 3, barY, maxBarW, kBarH, false);
-        // White fill: proportional to done / total
-        const int barW = (coverGen_.done * maxBarW) / coverGen_.total;
-        if (barW > 0) {
-          renderer.fillRect(x + 3, barY, barW, kBarH, false);
+      const int textAreaH = 2 * coverHeight_ / 3 - 8;
+      if (i < static_cast<int>(pageTitleCache_.size())) {
+        const auto& lines = pageTitleCache_[i];
+        int lh = renderer.getLineHeight(SMALL_FONT_ID);
+        int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+        for (auto& ln : lines) {
+          int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+          renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+          ty += lh;
+        }
+      }
+
+      // Progress bar for cover generation: drawn in WHITE on the black placeholder.
+      // The bar is only visible when coverGen_.active is true and this tile
+      // corresponds to a slot that is being or has been processed.
+      if (coverGen_.active || coverGen_.pending) {
+        const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+        const int slot = (pageStart + i) - pageStart;  // local slot index
+        if (slot >= 0 && slot < gridsPerPage_ && slot <= coverGen_.slot && coverGen_.total > 0) {
+          constexpr int kBarH = 8;
+          const int barY = y + coverHeight_ - kBarH - 4;
+          const int maxBarW = coverWidth_ - 6;
+          // White outline
+          renderer.drawRect(x + 3, barY, maxBarW, kBarH, false);
+          // White fill: proportional to done / total
+          const int barW = (coverGen_.done * maxBarW) / coverGen_.total;
+          if (barW > 0) {
+            renderer.fillRect(x + 3, barY, barW, kBarH, false);
+          }
         }
       }
     }
+  }
+
+  // Series badge — shows on both covers AND placeholders
+  if (isSeriesTile) {
+    const char* author = pageCache_[i].author;
+    int count = 0;
+    if (author && author[0]) {
+      sscanf(author, "%d books", &count);
+    }
+    if (count <= 0) count = 1;
+    constexpr int badgePad = 4;
+    const int badgeMaxW = coverWidth_ - 2 * badgePad;
+    char badgeBuf[16];
+    snprintf(badgeBuf, sizeof(badgeBuf), "%d", count);
+    const int badgeFont = SMALL_FONT_ID;
+    const int badgeW = renderer.getTextWidth(badgeFont, badgeBuf, EpdFontFamily::BOLD) + badgePad * 2;
+    const int badgeH = std::max(14, renderer.getLineHeight(badgeFont) + 4);
+    const int bx = x + coverWidth_ - badgeW - badgePad;
+    const int by = y + badgePad;
+    renderer.fillRoundedRect(bx, by, badgeW, badgeH, 4, Color::Black);
+    renderer.drawRoundedRect(bx, by, badgeW, badgeH, 1, 4, true);
+    const int textX = bx + (badgeW - renderer.getTextWidth(badgeFont, badgeBuf, EpdFontFamily::BOLD)) / 2;
+    const int textY = by + (badgeH - renderer.getLineHeight(badgeFont)) / 2;
+    renderer.drawText(badgeFont, textX, textY, badgeBuf, true, EpdFontFamily::BOLD);
   }
 
   // Ribbon badge — shows on both covers AND placeholders
@@ -1559,7 +1607,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     const bool isFav = pageCache_[i].isFavorite;
     const bool isComplete = pageCache_[i].isCompleted;
     const bool isOpened = pageCache_[i].isOpened && !isComplete;
-    if (isComplete || isFav || isOpened)
+    if (!isSeriesTile && (isComplete || isFav || isOpened))
       drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
   }
 }
