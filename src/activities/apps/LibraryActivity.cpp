@@ -27,6 +27,7 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
+#include "SdCardFontGlobals.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
 #include <Epub.h>
@@ -2043,7 +2044,27 @@ bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
     constexpr int kMaxLines = 4;
     std::string t = title;
     const int maxLineW = w - 2 * kPad;
-    const int titleFont = SMALL_FONT_ID;
+
+    // Pick a font that can render the title. Titles with non-Latin (CJK)
+    // codepoints use the user-configured SD font when it is a CJK family and
+    // can be loaded; the built-in SMALL_FONT lacks CJK glyphs.
+    int titleFont = SMALL_FONT_ID;
+    bool hasNonLatin = false;
+    for (unsigned char ch : title) {
+      if (ch >= 0x80) { hasNonLatin = true; break; }
+    }
+    if (hasNonLatin && SETTINGS.sdFontFamilyName[0] != '\0') {
+      std::string fam(SETTINGS.sdFontFamilyName);
+      for (auto& ch : fam) {
+        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+      }
+      if (fam.find("cjk") != std::string::npos || fam.find("swei") != std::string::npos) {
+        sdFontSystem.ensureLoaded(renderer);
+        const int sdId = sdFontSystem.resolveFontId(SETTINGS.sdFontFamilyName, SETTINGS.fontSize);
+        if (sdId > 0 && renderer.isSdCardFont(sdId)) titleFont = sdId;
+      }
+    }
+
     const int lh = renderer.getLineHeight(titleFont);
     const auto lines = renderer.wrappedText(titleFont, t.c_str(), maxLineW, kMaxLines, EpdFontFamily::BOLD);
     const int blockH = static_cast<int>(lines.size()) * lh;
@@ -2125,6 +2146,7 @@ bool LibraryActivity::generatePageCover(const std::string& path) {
     const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
     snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
   } else if (!FsHelpers::hasTxtExtension(path) && !FsHelpers::hasMarkdownExtension(path)) {
+    LOG_DBG("LIB", "CovGen: unsupported extension, cover skipped: %s", path.c_str());
     return false;  // unsupported format
   }
   if (cacheDir[0] && !Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
