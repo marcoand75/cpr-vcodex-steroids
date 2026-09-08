@@ -1515,7 +1515,9 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   bool drawn = false;
   const std::string path(pageCache_[i].path);
   const bool isSeriesTile = (pageCache_[i].id & 0x80000000u) != 0;
-  const bool isCollectionTile = isSeriesTile && (collectionsMode_ || (mixedMode_ && currentCollectionIdx_ < 0));
+  // A tile represents a collection/series when we are at a root listing
+  // (collections mode or the Series+Books root), never inside a collection.
+  const bool isCollectionTile = isSeriesTile && currentCollectionIdx_ < 0;
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
@@ -1633,7 +1635,8 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     const int titleW = renderer.getTextWidth(titleFont, displayTitle.c_str(), EpdFontFamily::BOLD);
     const int titleX = x + (coverWidth_ - titleW) / 2;
     const int titleY = ribbonY + (ribbonH - renderer.getLineHeight(titleFont)) / 2;
-    renderer.drawText(titleFont, titleX, titleY, displayTitle.c_str(), true, EpdFontFamily::BOLD);
+    // black=false -> white text on the black ribbon.
+    renderer.drawText(titleFont, titleX, titleY, displayTitle.c_str(), false, EpdFontFamily::BOLD);
   }
 
   // Series badge — shows on both covers AND placeholders
