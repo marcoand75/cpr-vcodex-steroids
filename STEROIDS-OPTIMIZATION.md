@@ -976,6 +976,38 @@ The canonical pattern is:
 This pattern keeps navigation, popups, and input responsive during
 cover generation.
 
+## 14. Library Management V3 — Query & RAM Notes
+
+The library grid is now **V3** (`feature/mixed-library-series-view`): it keeps the
+V2 fixed-RAM page-cache model and adds a mixed Series + Books view, natural title
+sort, and collection-tile covers. These are the RAM/query constraints that the
+implementation must respect (see `STEROIDS-ADDICTIONS.md` §6.6 for the feature
+description).
+
+- **Page cache unchanged**: 16 `BookRef` ≈ ~4 KB in RAM; `queryMixed()` and
+  `queryPage()` both fill that fixed cache per page — never the full dataset.
+- **`idx_mixed.bin` is on-disk only**: one 28 B `IndexRec` per standalone book +
+  per series tile. It is rebuilt by `buildIndices()` (via `buildMixedIndex()`), so
+  `LibraryActivity` must **not** call `buildMixedIndex()` again after
+  `buildCollectionsIndex()` — that doubled build time on SD (measured ~4.5 s × 2 on
+  293 books).
+- **Natural sort costs nothing at runtime**: correctness lives in
+  `makeTitleSortKey()` (digit zero-padding in `idx_title.bin`); `cmpSortKey()` stays
+  a plain `strncmp`, no extra comparator state, no RAM.
+- **Series-tile cover resolution is the only per-render scan**: `queryCollections()`/
+  `queryMixed()` walk the collection’s books (by `seriesIndex`) until the first
+  *existing* cover BMP (`Storage.exists(thumb)`), and leave `path` empty otherwise.
+  It is bounded by the collection book count and runs only for the tile slots on the
+  requested page; the collection grid itself never triggers cover generation.
+- **In-view search/filter reuses the existing filters**: `queryMixed()` calls
+  `matchesFilter()` per standalone book and, for a series tile, tests whether at
+  least one book in the series passes the filter. Series membership check is a
+  short `series.dat`+`library.dat` seek over that collection only.
+- **Cover-size plumbing**: `queryCollections()`/`queryMixed()`/`queryPage()` take
+  `coverWidth`/`coverHeight` only to compute `thumbPathFor()` existence checks;
+  pass real grid sizes from `LibraryActivity`, and `0,0` from index-only callers to
+  skip the scan entirely.
+
 ---
 
-*Last updated: 2026-09-07 — added StoreManager to shared utilities table (§1) and documented centralized store access pattern.*
+*Last updated: 2026-09-08 — added §14 Library Management V3 query & RAM notes (fixed page cache, on-disk mixed index, zero-cost natural sort, bounded series-cover scan, no double `buildMixedIndex`).*

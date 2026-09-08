@@ -422,7 +422,8 @@ so the cache can enumerate `wiki_*` folders; existing callers unchanged.
 
 ## 6. Library Module (Detail)
 
-The complete library subsystem (rewritten from scratch July 2026): on-device book
+The complete library subsystem (rewritten from scratch July 2026 as **Library V2**,
+upgraded to **Library V3** in September 2026): on-device book
 collection, grid browsing with sort/filter/search, cover generation, and
 collections/series navigation.
 
@@ -434,9 +435,15 @@ collections/series navigation.
 ├── idx_title.bin      (28 B/record, sorted by title)
 ├── idx_author.bin     (28 B/record, sorted by author)
 ├── idx_collections.bin (88 B/record, unique collections)
+├── idx_mixed.bin      (28 B/record, V3: series tiles + standalone books)
 ├── series.dat         (88 B/record, per-book series metadata)
 └── tmp/chunk_*.tmp    (temporary merge-sort chunks, deleted after build)
 ```
+
+`idx_mixed.bin` is written by `buildMixedIndex()` and consumed by
+`queryMixed()`/`totalMixedMatching()`. It holds one `IndexRec` per **standalone
+book** and one per **series/collection tile** (tile `bookId` uses the high bit:
+`0x80000000u | collectionIndex`).
 
 ### 6.2 Key principle: NO full dataset in RAM
 None of these files is ever loaded entirely into memory. The library operates with a
@@ -451,8 +458,16 @@ Scales to 10,000+ books with flat RAM.
   the same file backwards.
 - **Collections index** (`buildCollectionsIndex()`) — sorts `series.dat` by collection +
   series index, builds `idx_collections.bin` compact directory.
+- **Mixed index** (`buildMixedIndex()`, V3) — merges `library.dat` +
+  `idx_collections.bin` into `idx_mixed.bin`; one tile per collection/series plus
+  one entry per standalone book, both sorted with the natural title key.
 - **Page query** (`queryPage()`) — indexed O(log N) walk, or O(N) full-text search for
   RECENT/PROGRESS/filters.
+- **Natural title key** (`makeTitleSortKey()`, V3) — zero-pads digit runs to 4
+  digits when building `idx_title.bin`, so `Lightlark 2` sorts before
+  `Lightlark 10`. The author index keeps the plain `makeSortKey()`.
+- **Series ordering** (`queryCollectionBooks()`, V3) — books inside a collection are
+  returned sorted by numeric `seriesIndex` (previously scan order).
 
 ### 6.4 UI
 - Grid layouts 2×2, 3×3, 4×4 (default), controlled by `SETTINGS.libraryLayout`.
@@ -460,6 +475,15 @@ Scales to 10,000+ books with flat RAM.
   sub-second on e-ink.
 - Cover generation on-demand per page; every success triggers a render (progressive).
 - Collections browse (series) from Calibre / EPUB3 metadata.
+- **Series + Books** (`LIBRARY_SORT_MIXED = 7`, V3) — mixed root grid with series/
+  collection tiles and standalone books interleaved; tapping a series tile enters it,
+  Back returns to the same page with the same tile still selected.
+- **Collection tile covers** (V3) — a collection uses the cover of the first book
+  (by seriesIndex) that already has a cover BMP; otherwise it renders the collection
+  placeholder. Covers and placeholders carry a bottom black ribbon (doubled height)
+  with the collection title in white; no icons.
+- Search and filters (V3) run **inside** the mixed view (`queryMixed()`) instead of
+  falling back to the flat book query.
 - Persistent filter/sort: `libraryFilter`, `librarySort`, `librarySearchText`, root dir.
 - Settings → Rebuild Library calls `LibraryIndex::invalidate()` (deletes all library files).
 
@@ -474,6 +498,65 @@ Scales to 10,000+ books with flat RAM.
 **Files:** `src/components/LibraryIndex.{cpp,h}`, `src/components/LibraryCache.{cpp,h}`,
 `src/components/EpubParser.{cpp,h}`, `src/activities/apps/LibraryActivity.{cpp,h}`,
 `src/CrossPointSettings.h`.
+
+### 6.6 Library Management V3 — what changed since V2
+
+**Versioning.** Library V2 shipped the streaming scan/index/cover pipeline
+(July 2026). Library V3 (branch `feature/mixed-library-series-view`, September
+2026) keeps that pipeline intact — same `scan()` incremental refresh, same
+external merge-sort, same on-demand cover generation — and layers a richer
+grid model on top.
+
+**New capabilities**
+
+| Area | V2 | V3 |
+|---|---|---|
+| Title sort | ASCII truncation → `1, 10, 2` | Natural/alphanumeric → `1, 2, 10` |
+| Root grid | flat books OR Collections list | flat books, Collections list, **Series + Books** |
+| Series tiles in grid | placeholder tile | cover of first existing cover book + white-title black ribbon (doubled height) or placeholder |
+| Search | flat-book full-text only | full-text inside `Series + Books` too |
+| Filters | flat books only | applied directly in `queryMixed()` (series shown if ≥1 book matches) |
+| Books inside a series | scan order | sorted by numeric `seriesIndex` |
+| Back from a series | resets to top | returns to same page with same tile selected |
+
+**Series + Books (mixed) view mechanics**
+- New setting `LIBRARY_SORT_MIXED = 7` (`CrossPointSettings::LIBRARY_SORT`), label
+  `STR_SORT_MIXED` (EN “Series + Books”, IT “Serie + Libri”), exposed in the
+  library sort popup and in `SettingsList.cpp` `librarySort` enum (now includes
+  `COLLECTIONS` and `MIXED`).
+- `LibraryIndex::SortMode::MIXED` maps onto `queryMixed()`; the query walks
+  `idx_mixed.bin`, applies `searchFilter` and `filterMode` in place, resolves the
+  series cover path, and paginates — no fallback to `queryPage()`.
+- Series/collection tiles are recognized by `BookRef.id & 0x80000000u`; inside a
+  collection the books are ordinary `BookRef`s (no high bit).
+- `totalMixedMatching()` (V3) counts matching mixed entries so page totals and the
+  header remain correct with search/filter active.
+
+**Collection tile cover resolution (V3)**
+- `queryCollections()` / `queryMixed()` receive `coverWidth`/`coverHeight` and scan
+  the collection’s books (by `seriesIndex` order) for the **first one whose cover
+  BMP already exists**; that path becomes the tile `path`. If none exists the path
+  stays empty → placeholder.
+- The library grid itself never generates covers for collection tiles — cover
+  generation still happens for the books when the user opens the collection.
+
+**Rendering rules (`drawTileContent`)**
+- Collection tiles with a cover: cover BMP + bottom black ribbon 36 px high
+  (full tile width, inset) with the collection title in **white**
+  (`drawText(..., black=false)`).
+- Collection tiles without a cover: deeper-stack black placeholder with the same
+  white title treatment. No icons on collection tiles.
+- These rules apply at the Collections root and at the Series + Books root
+  (`isCollectionTile = isSeriesTile && currentCollectionIdx_ < 0`).
+
+**Files touched (V3)**
+| Path | Change |
+|---|---|
+| `src/components/LibraryIndex.{h,cpp}` | `SortMode::MIXED`, `buildMixedIndex()`, `queryMixed()`, `totalMixedMatching()`, `makeTitleSortKey()`, cover-aware `queryCollections()`/`queryMixed()`, seriesIndex ordering in `queryCollectionBooks()`, cover-size parameters on `queryPage()` |
+| `src/activities/apps/LibraryActivity.{h,cpp}` | `mixedMode_`, mixed navigation (enter/back with `prevSelectorBeforeCollection_`), collection-tile cover/ribbon rendering, mixed-mode info line |
+| `src/CrossPointSettings.h` | `LIBRARY_SORT_MIXED = 7` |
+| `src/SettingsList.cpp` | `librarySort` enum gains `STR_SORT_COLLECTIONS` + `STR_SORT_MIXED` |
+| `lib/I18n/translations/english.yaml` / `italian.yaml` | `STR_SORT_MIXED` |
 
 ---
 
@@ -1821,4 +1904,4 @@ every dictionary entry.
 
 ---
 
-*Last updated: 2026-09-07 — added StoreManager centralized store access with generation/needsReload across ReadingStats/Recents/Favorites/Hidden/Flashcards/Achievements (§23), issue #store-manager.*
+*Last updated: 2026-09-08 — added Library Management V3 (§6.6, branch `feature/mixed-library-series-view`): Series + Books mixed view (`LIBRARY_SORT_MIXED`), `idx_mixed.bin` + `queryMixed()`/`totalMixedMatching()`, natural/alphanumeric title sort (`makeTitleSortKey()`), collection-tile cover lookup + white-title black ribbon, in-view search/filters for mixed root, seriesIndex ordering inside collections, back-restores-selection navigation.*

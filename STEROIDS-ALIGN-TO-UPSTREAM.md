@@ -18,7 +18,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | `src/activities/reader/ClippingsActivity.cpp/h` | In-reader clipping UI |
 | `src/activities/apps/ClippingsAppActivity.cpp/h` | Clippings browser app |
 | `src/activities/apps/BookmarksAppActivity.cpp/h` | Bookmarks browser app |
-| `src/activities/apps/LibraryActivity.cpp/h` | Full e-book library browser |
+| `src/activities/apps/LibraryActivity.cpp/h` | Full e-book library browser (Steroids **Library V3**: mixed Series+Books view, collection-tile covers + white-title ribbon, natural title sort, back-restores-selection) |
 | `src/activities/apps/ScreenSaverActivity.cpp/h` | Screensaver app |
 | `src/activities/apps/ScreenSaverDirActivity.cpp/h` | Screensaver directory selector |
 | `src/activities/apps/ScreenSaverPreviewActivity.cpp/h` | Screensaver preview |
@@ -63,7 +63,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary) + dailyAverageMs for Home trend indicator** |
 | **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot) + daily average computation from all stored reading days except today** |
 | **`src/ReadingStatsActivity.cpp/h`** | **selectedBookPath constructor param (pre-select book in stats)** |
-| **`src/components/LibraryIndex.cpp`** | **Incremental scan vector pre-allocation, null-terminated ZIP reads** |
+| **`src/components/LibraryIndex.cpp`** | **Library V3 index engine: incremental scan vector pre-allocation, null-terminated ZIP reads, `SortMode::MIXED` + `idx_mixed.bin` (`buildMixedIndex()`/`queryMixed()`/`totalMixedMatching()`), natural title sort (`makeTitleSortKey()`), cover-aware collection queries, `queryCollectionBooks()` seriesIndex ordering** |
 | **`src/activities/settings/StatusBarSettingsActivity.cpp`** | **Clock position, clock format, sync clock now in status bar menu** |
 | **`src/util/TimeUtils.cpp`** | **applySystemClockFromRtc: no clockHasBeenSynced guard, DS3231 time used immediately** |
 | **`src/network/OtaUpdater.h`** | **Added ABORTED error code + cancelFlag parameter to installUpdate** |
@@ -1319,6 +1319,15 @@ deltas to watch in the next upstream pull. Details by feature in
 - **Library cover cache** uses FNV-1a 64 (aligned with `Epub`) instead of upstream
   `std::hash`; a hash mismatch is what used to make cover thumbs and book-cache
   deletion miss.
+- **LibraryIndex is now V3** (2026-09, branch `feature/mixed-library-series-view`):
+  upstream `LibraryIndex.*` must never be taken wholesale. Steroids adds
+  `SortMode::MIXED`/`LIBRARY_SORT_MIXED`, the on-disk `idx_mixed.bin`
+  (`buildMixedIndex()`), `queryMixed()`/`totalMixedMatching()` with search+filter
+  applied in place, natural title keys (`makeTitleSortKey()` — digit zero-padding in
+  `idx_title.bin`), cover-size-aware `queryCollections()`/`queryMixed()`
+  (new `coverWidth/coverHeight` params on `queryPage()`), and `queryCollectionBooks()`
+  sorted by numeric `seriesIndex`. Re-apply any upstream library change manually on
+  top of these. The storage layout gained `idx_mixed.bin`; `invalidate()` removes it.
 - **Wikipedia** is a full Steroids app (`WikipediaActivity`/`WikiTxtReaderActivity`)
   plus cache plumbing (`HalStorage::listFilesWithDirectories()` wrapper around
   `SDCardManager::listFiles()`), `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
@@ -1390,4 +1399,4 @@ python -X utf8 -m platformio run -e default -j 16
 
 ---
 
-*Last updated: 2026-09-07 — updated upstream sync status (1.5.0.20 fully ported incl. HAL crash detection), added completed alignment phases summary, SdCardFont port details, HAL crash detection port details, carousel recents panel fix (a605404d), WifiCredentialStore security notes, settings JSON split reference, EPUB/MarkdownStore divergence, new HAL/FontManager protected files, and StoreManager centralized store access divergence.*
+*Last updated: 2026-09-08 — documented Library Management V3 (`feature/mixed-library-series-view`): LibraryActivity/LibraryIndex protected-file rows updated, LibraryIndex V3 divergence note added (mixed index, natural sort, cover-aware queries), upstream merge must not overwrite `idx_mixed.bin` handling.*
