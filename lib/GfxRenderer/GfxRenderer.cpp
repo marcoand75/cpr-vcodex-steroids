@@ -157,18 +157,36 @@ void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
 
 int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const EpdFontFamily::Style style) const {
   if (!text || !*text) return fontId;
-  const auto fallbackId = fallbackFontMap_.find(fontId);
-  if (fallbackId == fallbackFontMap_.end()) return fontId;
   const auto primary = fontMap.find(fontId);
-  const auto fallback = fontMap.find(fallbackId->second);
-  if (primary == fontMap.end() || fallback == fontMap.end()) return fontId;
+  if (primary == fontMap.end()) return fontId;
 
-  const char* cursor = text;
-  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor))) {
-    if (utf8IsCjkCodepoint(cp) && !primary->second.hasCodepoint(cp, style) &&
-        fallback->second.hasCodepoint(cp, style)) {
-      return fallbackId->second;
+  // 1) Explicit per-primary override (setFallbackFont), if any.
+  const auto explicitFallback = fallbackFontMap_.find(fontId);
+  if (explicitFallback != fallbackFontMap_.end()) {
+    const auto fallback = fontMap.find(explicitFallback->second);
+    if (fallback != fontMap.end()) {
+      const char* cursor = text;
+      while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor))) {
+        if (utf8IsCjkCodepoint(cp) && !primary->second.hasCodepoint(cp, style) &&
+            fallback->second.hasCodepoint(cp, style)) {
+          return explicitFallback->second;
+        }
+      }
     }
+  }
+
+  // 2) Generic global fallback: any loaded SD-card font that actually contains
+  // the missing CJK codepoint. This lets a loaded CJK family (e.g. SweiSpring
+  // CJK) back the Latin-only UI fonts without per-screen wiring.
+  const char* cursor2 = text;
+  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor2))) {
+    if (!utf8IsCjkCodepoint(cp) || primary->second.hasCodepoint(cp, style)) continue;
+    for (const auto& entry : fontMap) {
+      if (entry.first == fontId) continue;
+      if (sdCardFonts_.count(entry.first) == 0) continue;  // only loaded SD fonts
+      if (entry.second.hasCodepoint(cp, style)) return entry.first;
+    }
+    break;  // once a CJK codepoint is missing with no candidate, stop scanning
   }
   return fontId;
 }
