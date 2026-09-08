@@ -100,24 +100,12 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
 
   // Use FreeInk's canonical two-pass X3/X4 fingerprint. Inconclusive results
   // remain uncached so a transient I2C failure gets another chance next boot.
-  uint8_t score1 = 0;
-  uint8_t score2 = 0;
-  const freeink::XteinkVerdict verdict = freeink::detectXteinkVerdict(&score1, &score2);
-  LOG_INF("HW", "Xteink probe scores: pass1=%u pass2=%u verdict=%u", score1, score2, static_cast<unsigned>(verdict));
-
-  if (verdict == freeink::XteinkVerdict::X3Confirmed) {
+  const bool isX3 = freeink::detectXteinkIsX3();
+  if (isX3) {
     writeNvsDeviceValue(NVS_KEY_DEV_CACHED, NvsDeviceValue::X3);
     return HalGPIO::DeviceType::X3;
   }
 
-  if (verdict == freeink::XteinkVerdict::X4Confirmed) {
-    // Cache only the positive X3 fingerprint. X4 is inferred from absence of
-    // X3-only peripherals, which is safe for this boot but not durable proof:
-    // a transient I2C failure on an X3 must get another chance next boot.
-    return HalGPIO::DeviceType::X4;
-  }
-
-  // Conservative fallback for first boot with inconclusive probes.
   return HalGPIO::DeviceType::X4;
 }
 
@@ -126,14 +114,6 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
 void HalGPIO::begin() {
   _deviceType = detectDeviceTypeWithFingerprint();
   BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
-
-  // Controller probing must happen before SPI owns the EPD pins. FreeInk first
-  // checks the factory calibration value and then uses a two-pass bus probe.
-  // Preserve the UC8279 X3 sibling profile selected by that probe.
-  freeink::applyXteinkDisplayController();
-  if (deviceIsX3() && BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) {
-    BoardConfig::selectDevice(BoardConfig::Board::XteinkX3Uc8279);
-  }
 
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 
