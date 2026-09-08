@@ -2060,6 +2060,34 @@ bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
     if (hasNonLatin) {
       const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer);
       if (cjkId > 0) titleFont = cjkId;
+      // Only rasterize when the chosen font really covers every non-Latin
+      // codepoint; a partial/Traditional-only CJK family would otherwise render
+      // U+FFFD boxes (black card). Fall back to the placeholder when missing.
+      const auto& fontMap = renderer.getFontMap();
+      auto it = fontMap.find(titleFont);
+      if (it == fontMap.end()) {
+        LOG_DBG("LIB", "CovGen: text cover skipped - font %d not found for %s", titleFont, path.c_str());
+        return false;
+      }
+      const uint8_t* p = reinterpret_cast<const uint8_t*>(title.c_str());
+      bool missing = false;
+      while (*p && !missing) {
+        uint32_t cp = 0;
+        if (*p < 0x80) { cp = *p++; }
+        else if ((*p & 0xE0) == 0xC0) { cp = (*p++ & 0x1F) << 6; cp |= (*p++ & 0x3F); }
+        else if ((*p & 0xF0) == 0xE0) { cp = (*p++ & 0x0F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
+        else if ((*p & 0xF8) == 0xF0) { cp = (*p++ & 0x07) << 18; cp |= (*p++ & 0x3F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
+        else { ++p; continue; }
+        if (cp >= 0x80 &&
+            !it->second.hasCodepoint(cp, EpdFontFamily::BOLD) &&
+            !it->second.hasCodepoint(cp, EpdFontFamily::REGULAR)) {
+          missing = true;
+        }
+      }
+      if (missing) {
+        LOG_DBG("LIB", "CovGen: text cover skipped - font id %d lacks glyphs for %s", titleFont, path.c_str());
+        return false;
+      }
     }
 
     const int lh = renderer.getLineHeight(titleFont);
