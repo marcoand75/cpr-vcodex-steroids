@@ -222,6 +222,9 @@ void LibraryActivity::onEnter() {
   // matchesFilter). The full store is materialized only when a progress/recency
   // sort or a context-menu action (mark read/unread, view stats) needs it.
 
+  // Drop any page frames cached by a previous session (index/state may differ).
+  clearPageFrameCache();
+
   applyLayoutFromSettings();
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;
@@ -300,6 +303,8 @@ void LibraryActivity::scanSd() {
     LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
     LibraryIndex::buildIndices();
     LibraryIndex::buildCollectionsIndex();
+    clearPageFrameCache();  // library contents changed -> all frames stale
+    bumpLibEpoch();
     totalBooks_ = collectionsMode_
         ? LibraryIndex::totalCollections()
         : (mixedMode_
@@ -329,6 +334,8 @@ void LibraryActivity::scanSd() {
       renderer.displayBuffer();
       LibraryIndex::buildIndices();
       LibraryIndex::buildCollectionsIndex();
+      clearPageFrameCache();  // library contents changed -> all frames stale
+      bumpLibEpoch();
     }
   }
 
@@ -911,7 +918,7 @@ void LibraryActivity::loop() {
                                          [this](const ActivityResult&) { forceRender_ = true; requestUpdate(); });
                   return;
                 case BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES:
-                  FAVORITES.toggleBook(path); forceRender_ = true; requestUpdate(); return;
+                  FAVORITES.toggleBook(path); bumpLibEpoch(); forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::MARK_READ_UNREAD: {
                   const auto* s = READING_STATS.getHomeBookStatsForRender("", path);
                   const bool wasCompleted = s && s->completed;
@@ -920,10 +927,12 @@ void LibraryActivity::loop() {
                                               LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_),
                                             wasCompleted ? 0 : 100);
                   READING_STATS.endSession();
+                  bumpLibEpoch();
                   forceRender_ = true; requestUpdate(); return;
                 }
                 case BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB:
                   deleteLibraryCovers(path);
+                  bumpLibEpoch();
                   refreshPageCache();
                   forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::DELETE_PAGE_COVER_THUMBS:
@@ -934,6 +943,7 @@ void LibraryActivity::loop() {
                         if (!r.isCancelled) {
                           deletePageCovers();
                         }
+                        bumpLibEpoch();
                         refreshPageCache();
                         // Defer generation by one frame so the grid is drawn
                         // before the generation loop blocks the renderer.
@@ -954,6 +964,7 @@ void LibraryActivity::loop() {
                         if (!r.isCancelled) {
                           deleteAllLibraryCovers();
                         }
+                        bumpLibEpoch();
                         refreshPageCache();
                         coverGen_.active = false;
                         coverGen_.pending = true;
@@ -974,6 +985,7 @@ void LibraryActivity::loop() {
                       static_cast<LibraryIndex::FilterMode>(currentFilter_));
                   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
                   if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
+                  bumpLibEpoch();
                   refreshPageCache();
                   forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::DELETE_BOOK_FILE: {
@@ -1042,6 +1054,7 @@ void LibraryActivity::loop() {
     // In mixed/collections mode: go back to root from a specific collection/series
     if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0) {
       const int prevSelector = prevSelectorBeforeCollection_;
+      bumpLibEpoch();  // covers may have been generated inside -> root tiles changed
       currentCollectionIdx_ = -1;
       currentCollectionName_.clear();
       prevSelectorBeforeCollection_ = -1;
@@ -1302,6 +1315,226 @@ void LibraryActivity::refreshSelectedTitleAuthor(int selectorIndex, int total, i
   }
 }
 
+// ============================================================================
+// Page-frame cache — full 1-bit framebuffer per rendered page.
+// Returning to a page that is already fully rendered (all covers present) loads
+// the saved frame instead of re-decoding every cover BMP from SD.
+// ============================================================================
+namespace {
+constexpr const char* kLibFrameDir = "/.crosspoint/libframes";
+constexpr uint32_t kFrameMagic = 0x4C46524Du;  // "LFRM"
+
+uint32_t fnv1aByte(uint32_t h, uint8_t v) {
+  h ^= v;
+  h *= 16777619u;
+  return h;
+}
+}  // namespace
+
+uint32_t LibraryActivity::frameSignature() const {
+  uint32_t h = 2166136261u;
+  h = fnv1aByte(h, static_cast<uint8_t>(currentSort_));
+  h = fnv1aByte(h, static_cast<uint8_t>(currentFilter_));
+  h = fnv1aByte(h, collectionsMode_ ? 1u : 0u);
+  h = fnv1aByte(h, mixedMode_ ? 1u : 0u);
+  const int collByte = (currentCollectionIdx_ < 0 || currentCollectionIdx_ > 255) ? 255
+                                                                                  : currentCollectionIdx_;
+  h = fnv1aByte(h, static_cast<uint8_t>(collByte));
+  for (char c : currentSearchText_) h = fnv1aByte(h, static_cast<uint8_t>(c));
+  h = fnv1aByte(h, static_cast<uint8_t>(gridColumns_));
+  h = fnv1aByte(h, static_cast<uint8_t>(gridsPerPage_));
+  h = fnv1aByte(h, static_cast<uint8_t>(coverWidth_ & 0xFF));
+  h = fnv1aByte(h, static_cast<uint8_t>(coverHeight_ & 0xFF));
+  h = fnv1aByte(h, static_cast<uint8_t>(libEpoch_ & 0xFF));
+  h = fnv1aByte(h, static_cast<uint8_t>((libEpoch_ >> 8) & 0xFF));
+  h = fnv1aByte(h, static_cast<uint8_t>((libEpoch_ >> 16) & 0xFF));
+  return h;
+}
+
+bool LibraryActivity::pageCoversComplete(int pageStart, int pageCount) const {
+  for (int i = 0; i < pageCount; ++i) {
+    const LibraryIndex::BookRef& r = pageCache_[i];
+    if (r.id == 0) continue;              // empty slot
+    if (r.path[0] == '\0') continue;      // collection tile without cover -> placeholder
+    const std::string tp = LibraryIndex::thumbPathFor(std::string(r.path), coverWidth_, coverHeight_);
+    if (tp.empty()) continue;
+    if (!Storage.exists(tp.c_str())) return false;
+    if (!isBookCoverReady(std::string(r.path))) return false;
+  }
+  (void)pageStart;
+  return true;
+}
+
+std::string LibraryActivity::pageFrameCachePath(int pageStart, uint32_t sig) const {
+  char buf[96];
+  snprintf(buf, sizeof(buf), "%s/fr_%08x_%06d.bin", kLibFrameDir, sig, pageStart);
+  return std::string(buf);
+}
+
+void LibraryActivity::clearPageFrameCache() {
+  auto d = Storage.open(kLibFrameDir);
+  if (!d || !d.isDirectory()) return;
+  d.rewindDirectory();
+  char nb[96];
+  for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+    if (f.isDirectory()) { f.close(); continue; }
+    if (f.getName(nb, sizeof(nb))) {
+      char full[128];
+      snprintf(full, sizeof(full), "%s/%s", kLibFrameDir, nb);
+      f.close();
+      Storage.remove(full);
+    } else {
+      f.close();
+    }
+  }
+  d.close();
+}
+
+void LibraryActivity::savePageFrame(int pageStart, int pageCount, int savedSelector) {
+  if (popupMode_ != PopupMode::None) return;
+  if (coverGen_.active || coverGen_.pending) return;
+  if (pageCount <= 0) return;
+  if (!pageCoversComplete(pageStart, pageCount)) return;
+
+  uint8_t* fb = renderer.getFrameBuffer();
+  const size_t bufSize = renderer.getBufferSize();
+  if (!fb || bufSize == 0) return;
+
+  const uint32_t sig = frameSignature();
+  const std::string path = pageFrameCachePath(pageStart, sig);
+  Storage.mkdir(kLibFrameDir);
+
+  FsFile file;
+  if (!Storage.openFileForWrite("LIB", path, file)) return;
+  const uint32_t hdr[3] = {kFrameMagic, static_cast<uint32_t>(pageStart),
+                           static_cast<uint32_t>(savedSelector)};
+  file.write(reinterpret_cast<const uint8_t*>(hdr), sizeof(hdr));
+  const size_t written = file.write(fb, bufSize);
+  file.close();
+  if (written != bufSize) {
+    Storage.remove(path.c_str());
+    return;
+  }
+  LOG_DBG("LIB", "FrameSave: page=%d sig=%08x selector=%d %zu B", pageStart, sig, savedSelector, bufSize);
+}
+
+bool LibraryActivity::tryLoadPageFrame(int pageStart, int pageCount) {
+  if (popupMode_ != PopupMode::None) return false;
+  if (coverGen_.active || coverGen_.pending) return false;
+  if (pageCount <= 0) return false;
+  if (!pageCoversComplete(pageStart, pageCount)) return false;
+
+  const uint32_t sig = frameSignature();
+  const std::string path = pageFrameCachePath(pageStart, sig);
+  FsFile file;
+  if (!Storage.openFileForRead("LIB", path, file)) return false;
+
+  const size_t bufSize = renderer.getBufferSize();
+  if (bufSize == 0) { file.close(); return false; }
+  if (file.size() != static_cast<int>(sizeof(uint32_t) * 3 + bufSize)) {
+    file.close();
+    Storage.remove(path.c_str());
+    return false;
+  }
+
+  uint32_t hdr[3] = {0, 0, 0};
+  if (file.read(reinterpret_cast<uint8_t*>(hdr), sizeof(hdr)) != static_cast<int>(sizeof(hdr))) {
+    file.close();
+    Storage.remove(path.c_str());
+    return false;
+  }
+  if (hdr[0] != kFrameMagic || static_cast<int>(hdr[1]) != pageStart) {
+    file.close();
+    Storage.remove(path.c_str());
+    return false;
+  }
+
+  uint8_t* fb = renderer.getFrameBuffer();
+  if (!fb) { file.close(); return false; }
+  const size_t got = file.read(fb, bufSize);
+  file.close();
+  if (got != bufSize) {
+    Storage.remove(path.c_str());
+    return false;
+  }
+
+  // --- Overlay the dynamic parts over the restored static frame ---
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int total = totalBooks_;
+  const int totalPages = total > 0 ? (total + gridsPerPage_ - 1) / gridsPerPage_ : 0;
+  const int curPage = pageStart / gridsPerPage_ + 1;
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int lh = renderer.getLineHeight(UI_10_FONT_ID);
+  const int headerY = metrics.topPadding + 8;
+  const int selTitleY = headerY + lh + 2;
+  const int rowH = coverHeight_ + rowPad_;
+
+  // Erase the top band (old header/info/title) - grid below stays intact.
+  renderer.fillRect(0, 0, pageWidth, contentTop, true);
+
+  // Header bar + page number
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, nullptr, nullptr);
+  if (total > 0) {
+    char hdrBuf[32] = {};
+    snprintf(hdrBuf, sizeof(hdrBuf), "%d/%d (%d)", curPage, totalPages, total);
+    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, metrics.topPadding + 6, hdrBuf, true,
+                      EpdFontFamily::REGULAR);
+  }
+
+  // Info line + selected title/author
+  const int curPageRaw = pageStart / gridsPerPage_;
+  rebuildInfoCacheIfChanged(curPageRaw, total);
+  cachedInfo_ = renderer.truncatedText(UI_10_FONT_ID, cachedInfo_.c_str(), pageWidth - 16, EpdFontFamily::REGULAR);
+  const int lblW = renderer.getTextWidth(UI_10_FONT_ID, cachedInfo_.c_str(), EpdFontFamily::REGULAR);
+  renderer.drawText(UI_10_FONT_ID, (pageWidth - lblW) / 2, headerY, cachedInfo_.c_str(), true, EpdFontFamily::REGULAR);
+  if (selectorIndex_ < total && !cachedSelTitle_.empty()) {
+    const int selTitleW = renderer.getTextWidth(UI_10_FONT_ID, cachedSelTitle_.c_str(), EpdFontFamily::BOLD);
+    const int selTitleX = std::max(8, (pageWidth - selTitleW) / 2);
+    renderer.drawText(UI_10_FONT_ID, selTitleX, selTitleY, cachedSelTitle_.c_str(), true, EpdFontFamily::BOLD);
+    if (!cachedSelAuthor_.empty()) {
+      std::string author = renderer.truncatedText(UI_10_FONT_ID, cachedSelAuthor_.c_str(), pageWidth - 16, EpdFontFamily::REGULAR);
+      const int authorY = selTitleY + lh + 1;
+      const int authorW = renderer.getTextWidth(UI_10_FONT_ID, author.c_str(), EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, std::max(8, (pageWidth - authorW) / 2), authorY, author.c_str(), true, EpdFontFamily::REGULAR);
+    }
+  }
+
+  // Selection border: erase the saved tile's border, draw the current one.
+  auto tileXY = [&](int idx, int* outX, int* outY) {
+    const int ts = (idx / gridsPerPage_) * gridsPerPage_;
+    const int ti = idx - ts;
+    const int gridW = gridColumns_ * coverWidth_ + (gridColumns_ - 1) * gap_;
+    const int x0 = (pageWidth - gridW) / 2;
+    *outX = x0 + (ti % gridColumns_) * (coverWidth_ + gap_);
+    *outY = contentTop + (ti / gridColumns_) * rowH;
+  };
+  const int savedSelector = static_cast<int>(hdr[2]);
+  if (savedSelector >= 0 && savedSelector < total && savedSelector != selectorIndex_) {
+    int ex = 0, ey = 0;
+    tileXY(savedSelector, &ex, &ey);
+    drawCyberpunkSelectionBorder(renderer, ex, ey, coverWidth_, coverHeight_, false);
+  }
+  int nx = 0, ny = 0;
+  tileXY(selectorIndex_, &nx, &ny);
+  drawCyberpunkSelectionBorder(renderer, nx, ny, coverWidth_, coverHeight_, true);
+
+  // Button hints (frame already contains them; redraw for correctness)
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_SELECT), tr(STR_LIBRARY_DIR_LEFT_PAGE),
+                              tr(STR_LIBRARY_DIR_RIGHT_PAGE));
+  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP_SORT), tr(STR_DIR_DOWN_FILTER));
+
+  lastRenderedSelectorIndex_ = selectorIndex_;
+  lastRenderedPage_ = curPageRaw;
+  prevBorderIdx_ = selectorIndex_;
+  lastFrameHitPage_ = pageStart;
+
+  renderer.displayBuffer();
+  LOG_DBG("LIB", "FrameHit: page=%d sig=%08x", pageStart, sig);
+  return true;
+}
+
 void LibraryActivity::render(RenderLock&&) {
   esp_task_wdt_reset();
   const int total = totalBooks_;
@@ -1380,8 +1613,19 @@ void LibraryActivity::render(RenderLock&&) {
   }
 
   // ---- FULL RENDER --------------------------------------------------------
-  const bool forcedRender = forceRender_;
   forceRender_ = false;
+
+  // Frame-cache fast path: if this page was already fully rendered (all covers
+  // present) and nothing grid-affecting changed, restore its frame instead of
+  // re-decoding every cover BMP.
+  if (total > 0) {
+    const int pageStartForLoad = curPageRaw * gridsPerPage_;
+    const int pageCountForLoad = std::min(gridsPerPage_, total - pageStartForLoad);
+    if (tryLoadPageFrame(pageStartForLoad, pageCountForLoad)) {
+      return;
+    }
+  }
+  lastFrameHitPage_ = -1;
 
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
@@ -1521,6 +1765,14 @@ void LibraryActivity::render(RenderLock&&) {
   }
 
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
+
+  // Cache the finished page frame (only when covers are complete) so returning
+  // to this page can skip the per-cover BMP decode.
+  if (total > 0 && popupMode_ == PopupMode::None) {
+    const int pgStart = curPageRaw * gridsPerPage_;
+    const int pgCount = std::min(gridsPerPage_, total - pgStart);
+    savePageFrame(pgStart, pgCount, selectorIndex_);
+  }
 
   lastRenderedSelectorIndex_ = selectorIndex_;
   lastRenderedPage_ = curPageRaw;

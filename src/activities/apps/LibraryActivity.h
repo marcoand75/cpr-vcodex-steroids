@@ -40,6 +40,12 @@ class LibraryActivity final : public Activity {
   std::vector<std::vector<std::string>> pageTitleCache_;
   int pageTitleCacheKey_ = -1;
 
+  // Page-frame disk cache (full 1-bit framebuffer per rendered page). Speeds
+  // up returning to an already-rendered page: reloads the raw frame (~48000 B)
+  // instead of re-decoding every cover BMP from SD.
+  uint32_t libEpoch_ = 0;                 // bumped when grid-affecting state changes
+  int lastFrameHitPage_ = -1;             // last page served from the frame cache
+
   int prevBorderIdx_ = -1;
 
   int coverWidth_ = 100;
@@ -105,6 +111,17 @@ class LibraryActivity final : public Activity {
   void selectPopupItem();
   void beginTextSearch();
 
+  // Page-frame cache helpers.
+  uint32_t frameSignature() const;
+  bool pageCoversComplete(int pageStart, int pageCount) const;
+  std::string pageFrameCachePath(int pageStart, uint32_t sig) const;
+  void clearPageFrameCache();
+  void bumpLibEpoch() { ++libEpoch_; }
+  // Tries to restore a cached frame for the current page. On success draws the
+  // dynamic overlay (selection border, header/info/title) and returns true.
+  bool tryLoadPageFrame(int pageStart, int pageCount);
+  void savePageFrame(int pageStart, int pageCount, int savedSelector);
+
   // Rebuild cachedInfo_ when the input key (selector, page, filter, sort,
   // search, collection) changes. Returns true if the cache was rebuilt.
   // Used by both the partial and full render paths so the visible info
@@ -128,5 +145,6 @@ class LibraryActivity final : public Activity {
   void onExit() override;
   void freeBackgroundMemory() override;
   void render(RenderLock&&) override;
+  bool preventAutoSleep() override { return coverGen_.active || coverGen_.pending; }
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
 };
