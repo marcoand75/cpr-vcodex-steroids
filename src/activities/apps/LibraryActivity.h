@@ -67,6 +67,9 @@ class LibraryActivity final : public Activity {
 
   // Mixed mode (series + standalone books together)
   bool mixedMode_ = false;               // true when browsing mixed view
+  // Last non-series shelf ordering, restored when a book filter is chosen from
+  // the exclusive filter popup (which can switch away from Serie/Serie+Libri).
+  CrossPointSettings::LIBRARY_SORT lastFlatSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
 
   // Cover generation state (one slot per frame, like HomeActivity carousel)
   struct CoverGenState {

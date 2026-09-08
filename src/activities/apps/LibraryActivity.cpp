@@ -446,6 +446,7 @@ void LibraryActivity::refreshPageCache() {
 void LibraryActivity::applyFilterAndSort() {
   collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
   mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
+  if (!collectionsMode_ && !mixedMode_) lastFlatSort_ = currentSort_;  // remember flat ordering
   if (collectionsMode_ || mixedMode_) {
     currentCollectionIdx_ = -1;
   }
@@ -551,38 +552,42 @@ void LibraryActivity::openFilterPopup() {
   upPress_.reset();
   downPress_.reset();
 
+  // The whole menu is one-of-many: book filters apply to the flat shelf only;
+  // Serie and Serie+Libri are exclusive shelf modes (ring is never duplicated).
+  const bool flatMode = (currentSort_ != CrossPointSettings::LIBRARY_SORT_COLLECTIONS &&
+                         currentSort_ != CrossPointSettings::LIBRARY_SORT_MIXED);
+
   PopupItem allItem; allItem.label = I18N.get(StrId::STR_ALL_BOOKS);
   allItem.icon = LibraryNewIcon; allItem.iconW = 32; allItem.iconH = 32;
-  allItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_ALL);
+  allItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_ALL);
   popupOverlay_.items.push_back(allItem);
 
   PopupItem favItem; favItem.label = I18N.get(StrId::STR_FAVOURITES);
   favItem.icon = Heart24Icon; favItem.iconW = 24; favItem.iconH = 24;
-  favItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_FAVOURITES);
+  favItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_FAVOURITES);
   popupOverlay_.items.push_back(favItem);
 
   PopupItem recentItem; recentItem.label = I18N.get(StrId::STR_LATEST_READ);
   recentItem.icon = RecentBooksIcon32; recentItem.iconW = 32; recentItem.iconH = 32;
-  recentItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_LATEST_READ);
+  recentItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_LATEST_READ);
   popupOverlay_.items.push_back(recentItem);
 
   PopupItem unreadItem; unreadItem.label = I18N.get(StrId::STR_UNREAD);
   unreadItem.icon = Text24Icon; unreadItem.iconW = 24; unreadItem.iconH = 24;
-  unreadItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_UNREAD);
+  unreadItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_UNREAD);
   popupOverlay_.items.push_back(unreadItem);
 
   PopupItem completedItem; completedItem.label = I18N.get(StrId::STR_COMPLETED);
   completedItem.icon = CleanMonitorIcon32; completedItem.iconW = 32; completedItem.iconH = 32;
-  completedItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_COMPLETED);
+  completedItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_COMPLETED);
   popupOverlay_.items.push_back(completedItem);
 
   PopupItem hiddenItem; hiddenItem.label = I18N.get(StrId::STR_HIDDEN_FILTER);
   hiddenItem.icon = LibraryIcon; hiddenItem.iconW = 32; hiddenItem.iconH = 32;
-  hiddenItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_HIDDEN);
+  hiddenItem.selected = (flatMode && currentFilter_ == CrossPointSettings::LIBRARY_FILTER_HIDDEN);
   popupOverlay_.items.push_back(hiddenItem);
 
-  // View modes live in the filter popup (they are not filters, but this is
-  // where the user picks how the shelf is grouped).
+  // View modes: exclusive shelf grouping (labelled "Serie" / "Serie + Libri").
   PopupItem collItem; collItem.label = I18N.get(StrId::STR_SORT_COLLECTIONS);
   collItem.icon = LibraryNewIcon; collItem.iconW = 32; collItem.iconH = 32;
   collItem.selected = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
@@ -632,51 +637,38 @@ void LibraryActivity::selectPopupItem() {
       applyFilterAndSort();
     }
   } else if (popupMode_ == PopupMode::Filter) {
-    // Popup order: 0=All, 1=Favourites, 2=Latest, 3=Unread, 4=Completed,
-    //              5=Hidden, 6=Collections (view), 7=Series+Books (view)
+    // Popup order (one-of-many): 0=All, 1=Favourites, 2=Latest, 3=Unread,
+    // 4=Completed, 5=Hidden, 6=Serie (grouped shelf), 7=Serie + Libri (mixed).
     if (idx == 6) {
       currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
       SETTINGS.librarySort = currentSort_;
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
+      SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx == 7) {
       currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
       SETTINGS.librarySort = currentSort_;
-      SETTINGS.saveToFile();
-      applyFilterAndSort();
-    } else if (idx == 5) {
-      // Hidden
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_HIDDEN;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 4) {
-      // Completed
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_COMPLETED;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 3) {
-      // Unread
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_UNREAD;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 2) {
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_LATEST_READ;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 1) {
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_FAVOURITES;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 0) {
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
+      applyFilterAndSort();
+    } else if (idx >= 0 && idx <= 5) {
+      // A book filter always targets the flat shelf: leave Serie modes and
+      // restore the remembered flat ordering.
+      if (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS ||
+          currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED) {
+        currentSort_ = lastFlatSort_;
+        SETTINGS.librarySort = currentSort_;
+      }
+      static const CrossPointSettings::LIBRARY_FILTER kFilters[6] = {
+          CrossPointSettings::LIBRARY_FILTER_ALL, CrossPointSettings::LIBRARY_FILTER_FAVOURITES,
+          CrossPointSettings::LIBRARY_FILTER_LATEST_READ, CrossPointSettings::LIBRARY_FILTER_UNREAD,
+          CrossPointSettings::LIBRARY_FILTER_COMPLETED, CrossPointSettings::LIBRARY_FILTER_HIDDEN};
+      currentFilter_ = kFilters[idx];
+      SETTINGS.libraryFilter = currentFilter_;
+      SETTINGS.saveToFile();
+      applyFilterAndSort();
     }
   }
   closePopup();
