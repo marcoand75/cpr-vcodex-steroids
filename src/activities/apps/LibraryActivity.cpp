@@ -1429,6 +1429,7 @@ bool LibraryActivity::tryLoadPageFrame(int pageStart, int pageCount) {
 
   const uint32_t sig = frameSignature();
   const std::string path = pageFrameCachePath(pageStart, sig);
+  if (!Storage.exists(path.c_str())) return false;
   FsFile file;
   if (!Storage.openFileForRead("LIB", path, file)) return false;
 
@@ -1474,8 +1475,9 @@ bool LibraryActivity::tryLoadPageFrame(int pageStart, int pageCount) {
   const int selTitleY = headerY + lh + 2;
   const int rowH = coverHeight_ + rowPad_;
 
-  // Erase the top band (old header/info/title) - grid below stays intact.
-  renderer.fillRect(0, 0, pageWidth, contentTop, true);
+  // Erase the top band (old header/info/title) in WHITE - grid below stays
+  // intact. (state=false = white pixels on the e-ink buffer)
+  renderer.fillRect(0, 0, pageWidth, contentTop, false);
 
   // Header bar + page number
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, nullptr, nullptr);
