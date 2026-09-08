@@ -217,7 +217,10 @@ void LibraryActivity::onEnter() {
 
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
-  READING_STATS.ensureLoaded();
+  // READING_STATS is intentionally NOT loaded here: the grid reads badges
+  // through the lightweight summary.json path (see LibraryIndex::recordToBookRef /
+  // matchesFilter). The full store is materialized only when a progress/recency
+  // sort or a context-menu action (mark read/unread, view stats) needs it.
 
   applyLayoutFromSettings();
   selectorIndex_ = 0;
@@ -866,7 +869,8 @@ void LibraryActivity::loop() {
         const std::string title = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(path);
         const bool isEpub = FsHelpers::hasEpubExtension(std::string_view{path.c_str()});
         const bool isFav = FAVORITES.isFavorite(path);
-        const auto* stats = READING_STATS.findBook(path);
+        // Lightweight summary path — does not force the full store into RAM.
+        const auto* stats = READING_STATS.getHomeBookStatsForRender("", path);
         const bool isCompleted = stats && stats->completed;
         const bool isHidden = HIDDEN_BOOKS.isHidden(path);
 
@@ -885,7 +889,7 @@ void LibraryActivity::loop() {
                 case BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES:
                   FAVORITES.toggleBook(path); forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::MARK_READ_UNREAD: {
-                  const auto* s = READING_STATS.findBook(path);
+                  const auto* s = READING_STATS.getHomeBookStatsForRender("", path);
                   const bool wasCompleted = s && s->completed;
                   READING_STATS.beginSession(path, title,
                                               pageCache_[slot].title[0] ? pageCache_[slot].title : "",

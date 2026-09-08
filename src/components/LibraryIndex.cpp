@@ -1343,15 +1343,10 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
     } else {
       Record rec;
       if (readRecord(ir.recordOffset / kRecordSize, rec)) {
-        BookRef& ref = out[count];
-        ref.id = ir.bookId;
-        std::strncpy(ref.title, rec.title, 64); ref.title[64] = '\0';
-        std::strncpy(ref.author, rec.author, 48); ref.author[48] = '\0';
-        std::strncpy(ref.path, rec.path, 128); ref.path[128] = '\0';
-        ref.isFavorite = rec.favorite();
-        ref.isOpened = rec.opened();
-        ref.isCompleted = rec.completed();
-        ref.isHidden = HIDDEN_BOOKS.isHidden(rec.path);
+        // Full flag population (favorite/opened/completed/hidden) via the
+        // same code path as the other queries — the Record flag bits are
+        // never written by scan, so reading them here would always be false.
+        recordToBookRef(rec, out[count]);
         ++count;
       }
     }
@@ -1481,16 +1476,18 @@ bool sync(const char* rootDir) {
 // =========================================================================
 
 // Populate a BookRef from a Record.
+// Reading status comes from the lightweight summary path (getHomeBookStatsForRender),
+// which never forces a full store load; the store is only materialized when a
+// progress/recency sort or a context-menu action actually needs it.
 static void recordToBookRef(const Record& rec, BookRef& ref) {
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
-  READING_STATS.ensureLoaded();
   ref.id = rec.id;
   std::strncpy(ref.title, rec.title, 64); ref.title[64] = '\0';
   std::strncpy(ref.author, rec.author, 48); ref.author[48] = '\0';
   std::strncpy(ref.path, rec.path, 128); ref.path[128] = '\0';
   ref.isFavorite  = FAVORITES.isFavorite(rec.path);
-  const auto* s = READING_STATS.findBook(rec.path);
+  const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
   ref.isOpened    = s && s->totalReadingMs > 0;
   ref.isCompleted = s && s->completed;
   ref.isHidden    = HIDDEN_BOOKS.isHidden(rec.path);
@@ -1498,10 +1495,11 @@ static void recordToBookRef(const Record& rec, BookRef& ref) {
 
 // Check if a Record matches the active filter (favourites/recent/etc.)
 // Hidden books are always excluded except when explicitly showing hidden only.
+// Reading-state filters (UNREAD/COMPLETED) go through the lightweight summary
+// path; they never force a full store load.
 static bool matchesFilter(const Record& rec, FilterMode m) {
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
-  READING_STATS.ensureLoaded();
   // Hidden books are excluded from all standard views.
   if (m != FilterMode::HIDDEN && HIDDEN_BOOKS.isHidden(rec.path)) {
     LOG_DBG("LIBIDX", "matchesFilter: hidden book excluded: %s", rec.path);
@@ -1518,11 +1516,11 @@ static bool matchesFilter(const Record& rec, FilterMode m) {
       return false;
     }
     case FilterMode::UNREAD: {
-      const auto* s = READING_STATS.findBook(rec.path);
+      const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
       return !s || s->totalReadingMs == 0;
     }
     case FilterMode::COMPLETED: {
-      const auto* s = READING_STATS.findBook(rec.path);
+      const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
       return s && s->completed;
     }
     case FilterMode::HIDDEN: return HIDDEN_BOOKS.isHidden(rec.path);
@@ -1577,6 +1575,12 @@ static int scanFullText(BookRef* out, int page, int pageSize, SortMode sortMode,
                         const char* search, FilterMode filter) {
   // O(n) scan of library.dat — used for full-text search AND for
   // RECENT/PROGRESS sorts which can't use alphabetical indices.
+  // These sorts compare lastReadAt / progress, which only the full store
+  // carries (summary.json has no lastReadAt), so materialize it just here.
+  if (sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS) {
+    READING_STATS.ensureLoaded();
+  }
+
   HalFile f = Storage.open(kDatFile);
   if (!f) return 0;
 
