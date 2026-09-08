@@ -2003,26 +2003,131 @@ void LibraryActivity::deleteAllLibraryCovers() {
   }
 }
 
+// Persistent text title-card cover (1-bit BMP) used when a book has no
+// extractable cover image (EPUB without a cover, TXT/Markdown). The title is
+// rasterized into an isolated strip scratch (never touches the screen) with the
+// normal UI fonts, then saved as a 1-bit top-down BMP whose bit layout matches
+// the JPG/PNG thumbnail pipeline (bit 0 = black, bit 1 = white, MSB-first).
+bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
+  if (path.empty() || coverWidth_ <= 0 || coverHeight_ <= 0) return false;
+  if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) {
+    LOG_DBG("LIB", "CovGen: text cover SKIP low heap free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return false;
+  }
+
+  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
+  if (thumbPath.empty()) return false;
+  const size_t slash = thumbPath.find_last_of('/');
+  if (slash != std::string::npos && !Storage.exists(thumbPath.substr(0, slash).c_str())) {
+    Storage.mkdir(thumbPath.substr(0, slash).c_str());
+  }
+  // Keep a stable title for the fallback across grid sizes: derive from the
+  // file name (same source the placeholders use when a cover is missing).
+  std::string title = book_filter::filenameWithoutExtension(path);
+
+  const int w = coverWidth_;
+  const int h = coverHeight_;
+  const int rowBytesFb = renderer.getDisplayWidthBytes();  // full panel row bytes
+  const size_t scratchBytes = static_cast<size_t>(rowBytesFb) * static_cast<size_t>(h);
+  std::vector<uint8_t> scratch(scratchBytes);
+  if (scratch.size() < scratchBytes) return false;
+
+  {
+    GfxStripTargetScope stripScope(renderer, scratch.data(), 0, h);
+    // Dark "card" background (cleared bit = black), thin white frame.
+    renderer.fillRect(0, 0, w, h, true);
+    renderer.drawRect(1, 1, w - 2, h - 2, false);
+
+    // Centered wrapped title in white (state=false = white).
+    constexpr int kPad = 6;
+    constexpr int kMaxLines = 4;
+    std::string t = title;
+    const int maxLineW = w - 2 * kPad;
+    const int titleFont = SMALL_FONT_ID;
+    const int lh = renderer.getLineHeight(titleFont);
+    const auto lines = renderer.wrappedText(titleFont, t.c_str(), maxLineW, kMaxLines, EpdFontFamily::BOLD);
+    const int blockH = static_cast<int>(lines.size()) * lh;
+    int ty = (h - blockH) / 2;
+    if (ty < 4) ty = 4;
+    for (const auto& ln : lines) {
+      const int tw = renderer.getTextWidth(titleFont, ln.c_str(), EpdFontFamily::BOLD);
+      renderer.drawText(titleFont, (w - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+      ty += lh;
+    }
+  }  // strip scope ends -> renderer target restored to the screen buffer
+
+  // Encode 1-bit BMP: row bytes = ceil(w/8), padded to a 4-byte boundary.
+  const int bmpRow = (w + 7) / 8;
+  const int padRow = (bmpRow + 3) & ~3;
+  const int imageSize = padRow * h;
+  const uint32_t fileSize = 62u + static_cast<uint32_t>(imageSize);
+
+  FsFile out;
+  if (!Storage.openFileForWrite("LIB", thumbPath, out)) return false;
+
+  auto write32 = [&out](uint32_t v) {
+    out.write(static_cast<uint8_t>(v & 0xFF));
+    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
+    out.write(static_cast<uint8_t>((v >> 16) & 0xFF));
+    out.write(static_cast<uint8_t>((v >> 24) & 0xFF));
+  };
+  auto write16 = [&out](uint16_t v) {
+    out.write(static_cast<uint8_t>(v & 0xFF));
+    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
+  };
+
+  out.write('B'); out.write('M');
+  write32(fileSize);
+  write32(0);
+  write32(62);
+  write32(40);
+  write32(static_cast<uint32_t>(w));
+  write32(static_cast<uint32_t>(0xFFFFFFFFu - h + 1));  // negative height = top-down
+  write16(1);
+  write16(1);
+  write32(0);
+  write32(static_cast<uint32_t>(imageSize));
+  write32(2835);
+  write32(2835);
+  write32(2);
+  write32(2);
+  const uint8_t palette[8] = {0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00};
+  for (uint8_t p : palette) out.write(p);
+
+  std::vector<uint8_t> rowBuf(padRow, 0);
+  for (int y = 0; y < h; ++y) {
+    const uint8_t* src = scratch.data() + static_cast<size_t>(y) * rowBytesFb;
+    std::fill(rowBuf.begin(), rowBuf.end(), 0);
+    std::memcpy(rowBuf.data(), src, bmpRow);
+    out.write(rowBuf.data(), padRow);
+  }
+  out.close();
+
+  if (!Storage.exists(thumbPath.c_str()) || !isBookCoverReady(path)) {
+    Storage.remove(thumbPath.c_str());
+    return false;
+  }
+  LOG_DBG("LIB", "CovGen: text cover OK %s (%dx%d)", path.c_str(), w, h);
+  return true;
+}
+
 bool LibraryActivity::generatePageCover(const std::string& path) {
-  // Generates a cover thumbnail using the full Epub/Xtc parser (like HomeActivity).
-  // Returns true if a valid BMP was created at the expected thumb path.
-  if (path.empty()) return false;
 
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   if (thumbPath.empty()) return false;
 
   // Ensure the cache directory exists (hash must match the Epub/Xtc cache path)
-  char cacheDir[64];
+  char cacheDir[64] = {};
   if (FsHelpers::hasEpubExtension(path)) {
     const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
     snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
   } else if (FsHelpers::hasXtcExtension(path)) {
     const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
     snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
-  } else {
-    return false;  // TXT/MD not supported for cover generation
+  } else if (!FsHelpers::hasTxtExtension(path) && !FsHelpers::hasMarkdownExtension(path)) {
+    return false;  // unsupported format
   }
-  if (!Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
+  if (cacheDir[0] && !Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
 
   if (FsHelpers::hasEpubExtension(path)) {
     if (ESP.getMaxAllocHeap() < 32 * 1024) {
@@ -2042,9 +2147,15 @@ bool LibraryActivity::generatePageCover(const std::string& path) {
     // the runtime drawBitmap() never needs to crop a "fill" (oversized) image,
     // which produced out-of-range pixels on non-3:5 cover ratios.
     const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
-    LOG_DBG("LIB", "CovGen: EPUB thumb gen=%d path=%s heap=%u maxA=%u",
-            ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return ok;
+    if (ok) {
+      LOG_DBG("LIB", "CovGen: EPUB thumb gen=1 path=%s heap=%u maxA=%u",
+              path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      return true;
+    }
+    // EPUB without an embedded cover image: render a persistent text title card.
+    LOG_DBG("LIB", "CovGen: EPUB no cover -> text fallback path=%s heap=%u maxA=%u",
+            path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return writeTextFallbackCover(path);
   }
 
   if (FsHelpers::hasXtcExtension(path)) {
@@ -2055,6 +2166,14 @@ bool LibraryActivity::generatePageCover(const std::string& path) {
     LOG_DBG("LIB", "CovGen: XTC thumb gen=%d path=%s heap=%u maxA=%u",
             ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     return ok;
+  }
+
+  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    // TXT/Markdown have no embedded cover; render a persistent text title card.
+    if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
+    const bool fb = writeTextFallbackCover(path);
+    LOG_DBG("LIB", "CovGen: TXT text cover gen=%d path=%s", fb ? 1 : 0, path.c_str());
+    return fb;
   }
 
   return false;

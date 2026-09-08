@@ -103,6 +103,9 @@ class LibraryActivity final : public Activity {
   void deleteAllLibraryCovers();
   void reloadPageCovers();
   bool generatePageCover(const std::string& path);
+  // Persistent text title-card cover (1-bit BMP) for books that have no
+  // extractable cover image (EPUB without a cover, TXT/Markdown).
+  bool writeTextFallbackCover(const std::string& path);
   void rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter);
 
   void openSortPopup();
