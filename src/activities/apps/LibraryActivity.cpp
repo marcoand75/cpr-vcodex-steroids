@@ -223,6 +223,10 @@ void LibraryActivity::onEnter() {
   // matchesFilter). The full store is materialized only when a progress/recency
   // sort or a context-menu action (mark read/unread, view stats) needs it.
 
+  // Preload the best installed SD CJK family so non-Latin titles render with
+  // glyphs everywhere in the grid/header (no-op when no CJK font is installed).
+  sdFontSystem.ensureCjkFontLoaded(renderer);
+
   // Drop any page frames cached by a previous session (index/state may differ).
   clearPageFrameCache();
 
@@ -2046,23 +2050,16 @@ bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
     const int maxLineW = w - 2 * kPad;
 
     // Pick a font that can render the title. Titles with non-Latin (CJK)
-    // codepoints use the user-configured SD font when it is a CJK family and
-    // can be loaded; the built-in SMALL_FONT lacks CJK glyphs.
+    // codepoints load the best installed SD CJK family on demand; the built-in
+    // SMALL_FONT lacks CJK glyphs.
     int titleFont = SMALL_FONT_ID;
     bool hasNonLatin = false;
     for (unsigned char ch : title) {
       if (ch >= 0x80) { hasNonLatin = true; break; }
     }
-    if (hasNonLatin && SETTINGS.sdFontFamilyName[0] != '\0') {
-      std::string fam(SETTINGS.sdFontFamilyName);
-      for (auto& ch : fam) {
-        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
-      }
-      if (fam.find("cjk") != std::string::npos || fam.find("swei") != std::string::npos) {
-        sdFontSystem.ensureLoaded(renderer);
-        const int sdId = sdFontSystem.resolveFontId(SETTINGS.sdFontFamilyName, SETTINGS.fontSize);
-        if (sdId > 0 && renderer.isSdCardFont(sdId)) titleFont = sdId;
-      }
+    if (hasNonLatin) {
+      const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer);
+      if (cjkId > 0) titleFont = cjkId;
     }
 
     const int lh = renderer.getLineHeight(titleFont);

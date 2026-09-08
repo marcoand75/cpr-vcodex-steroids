@@ -4,14 +4,17 @@
 #include <SdCardFontRegistry.h>
 
 #include <atomic>
+#include <string>
 
 class GfxRenderer;
+class SdCardFont;
 
 /// Facade that owns the SD card font registry, manager, and resolver logic.
 /// Hides implementation details behind a single begin() + ensureLoaded() API.
 class SdCardFontSystem {
  public:
   SdCardFontSystem() = default;
+  ~SdCardFontSystem();
   SdCardFontSystem(const SdCardFontSystem&) = delete;
   SdCardFontSystem& operator=(const SdCardFontSystem&) = delete;
   /// Discover SD card fonts and load user's saved selection. Call once during setup.
@@ -29,6 +32,12 @@ class SdCardFontSystem {
   /// Resolve an SD card font ID from family name + fontSize enum.
   /// Returns 0 if not found. Used by CrossPointSettings::getReaderFontId().
   int resolveFontId(const char* familyName, uint8_t fontSizeEnum) const;
+
+  /// Best-effort load of an SD CJK family (e.g. SweiSpringCJKtc) so that
+  /// Latin-only UI fonts can fall back to it for non-Latin text anywhere in
+  /// the firmware. Returns the font ID, or 0 when no CJK family is installed.
+  /// Kept alongside the user's configured reader family.
+  int ensureCjkFontLoaded(GfxRenderer& renderer);
 
   /// Access the registry (e.g. for settings UI to enumerate available fonts).
   const SdCardFontRegistry& registry() const { return registry_; }
@@ -65,4 +74,15 @@ class SdCardFontSystem {
   std::atomic<bool> registryReleasedForNetwork_{false};
   uint32_t generation_ = 0;
   void bumpGeneration() { ++generation_; }
+
+  // Optional extra CJK fallback font kept alongside the configured reader family.
+  SdCardFont* cjkFont_ = nullptr;
+  int cjkFontId_ = 0;
+  std::string cjkFamilyName_;
+  uint8_t cjkPointSize_ = 0;
+
+  // Re-register the already-loaded extra CJK font into the renderer after a
+  // manager unload/reload cycle cleared the renderer's SD font table.
+  void reRegisterCjkExtra(GfxRenderer& renderer);
+  void dropCjkExtra(GfxRenderer& renderer);
 };

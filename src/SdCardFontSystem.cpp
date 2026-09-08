@@ -1,7 +1,11 @@
 #include "SdCardFontSystem.h"
 
+#include <EpdFontFamily.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <SdCardFont.h>
+
+#include <cctype>
 
 #include "CrossPointSettings.h"
 
@@ -9,6 +13,101 @@ static uint8_t fontSizeEnumFromSettings() {
   uint8_t e = SETTINGS.fontSize;
   if (e >= CrossPointSettings::FONT_SIZE_COUNT) e = 1;  // default to MEDIUM
   return e;
+}
+
+static bool familyLooksCjk(const std::string& name) {
+  std::string lower = name;
+  for (auto& c : lower) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return lower.find("cjk") != std::string::npos || lower.find("swei") != std::string::npos ||
+         lower.find("chinese") != std::string::npos;
+}
+
+SdCardFontSystem::~SdCardFontSystem() {
+  delete cjkFont_;
+  cjkFont_ = nullptr;
+}
+
+void SdCardFontSystem::dropCjkExtra(GfxRenderer& renderer) {
+  if (cjkFontId_ != 0) {
+    renderer.removeFont(cjkFontId_);
+  }
+  delete cjkFont_;
+  cjkFont_ = nullptr;
+  cjkFontId_ = 0;
+  cjkFamilyName_.clear();
+  cjkPointSize_ = 0;
+}
+
+void SdCardFontSystem::reRegisterCjkExtra(GfxRenderer& renderer) {
+  if (!cjkFont_ || cjkFontId_ == 0) return;
+  if (renderer.isSdCardFont(cjkFontId_)) return;
+  // The manager unload cycle cleared the renderer's SD font table; re-register
+  // the still-valid extra CJK font object (no disk reload needed).
+  renderer.registerSdCardFont(cjkFontId_, cjkFont_);
+  EpdFontFamily fontFamily(cjkFont_->getEpdFont(0), cjkFont_->getEpdFont(1), cjkFont_->getEpdFont(2),
+                           cjkFont_->getEpdFont(3));
+  renderer.insertFont(cjkFontId_, fontFamily);
+}
+
+int SdCardFontSystem::ensureCjkFontLoaded(GfxRenderer& renderer) {
+  // Already loaded and still registered in the renderer.
+  if (cjkFont_ && cjkFontId_ != 0 && renderer.isSdCardFont(cjkFontId_)) return cjkFontId_;
+
+  if (registry_.getFamilyCount() == 0) registry_.discover();
+
+  const SdCardFontFamilyInfo* family = nullptr;
+  for (const auto& f : registry_.getFamilies()) {
+    if (familyLooksCjk(f.name)) {
+      family = &f;
+      break;
+    }
+  }
+  if (!family) {
+    LOG_DBG("SDFS", "ensureCjkFontLoaded: no CJK SD family installed");
+    return 0;
+  }
+
+  const auto sizes = family->availableSizes();
+  if (sizes.empty()) return 0;
+  // Smallest installed size keeps the fallback footprint low.
+  const uint8_t pt = sizes.front();
+  const auto* file = family->findFile(pt);
+  if (!file) return 0;
+
+  // Family/size changed since last load? Drop the old object.
+  if (cjkFont_ && (cjkFamilyName_ != family->name || cjkPointSize_ != pt)) {
+    dropCjkExtra(renderer);
+  }
+
+  if (!cjkFont_) {
+    auto* font = new (std::nothrow) SdCardFont();
+    if (!font) return 0;
+    if (!font->load(file->path.c_str())) {
+      LOG_ERR("SDFS", "ensureCjkFontLoaded: failed to load %s", file->path.c_str());
+      delete font;
+      return 0;
+    }
+    cjkFont_ = font;
+    cjkFamilyName_ = family->name;
+    cjkPointSize_ = pt;
+
+    // Deterministic font id (same scheme as SdCardFontManager).
+    uint32_t hash = font->contentHash();
+    static constexpr uint32_t FNV_PRIME = 16777619u;
+    for (char ch : family->name) {
+      hash ^= static_cast<uint8_t>(ch);
+      hash *= FNV_PRIME;
+    }
+    hash ^= pt;
+    hash *= FNV_PRIME;
+    cjkFontId_ = (static_cast<int>(hash) != 0) ? static_cast<int>(hash) : 1;
+  }
+
+  reRegisterCjkExtra(renderer);
+  LOG_DBG("SDFS", "CJK fallback font ready: %s size=%u id=%d", family->name.c_str(), pt, cjkFontId_);
+  return cjkFontId_;
 }
 
 bool SdCardFontSystem::needsReload() const {
@@ -78,6 +177,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
       manager_.unloadAll(renderer);
       bumpGeneration();
     }
+    reRegisterCjkExtra(renderer);
     return;
   }
 
@@ -92,6 +192,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
       manager_.unloadAll(renderer);
       bumpGeneration();
       SETTINGS.sdFontFamilyName[0] = '\0';
+      reRegisterCjkExtra(renderer);
       return;
     }
     auto sizes = family->availableSizes();
@@ -123,6 +224,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     SETTINGS.sdFontFamilyName[0] = '\0';
     bumpGeneration();
   }
+
+  reRegisterCjkExtra(renderer);
 }
 
 bool SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
@@ -132,6 +235,8 @@ bool SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
     manager_.unloadAll(renderer);
     bumpGeneration();
   }
+  // The extra CJK fallback also drops its registered/loaded state to free RAM.
+  dropCjkExtra(renderer);
 
   registry_.releaseMemory();
   registryReleasedForNetwork_.store(true, std::memory_order_release);
