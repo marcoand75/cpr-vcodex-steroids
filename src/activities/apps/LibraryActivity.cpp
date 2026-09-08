@@ -1420,8 +1420,11 @@ void LibraryActivity::savePageFrame(int pageStart, int pageCount, int savedSelec
 
 bool LibraryActivity::tryLoadPageFrame(int pageStart, int pageCount) {
   if (popupMode_ != PopupMode::None) return false;
-  if (coverGen_.active || coverGen_.pending) return false;
   if (pageCount <= 0) return false;
+  // Safe to serve a cached frame whenever this page's covers are already all
+  // present. coverGen_ may still be flagged active right after a page flip
+  // (refreshPageCache enables it), but with a complete page it will find zero
+  // missing covers, so loading the frame is correct.
   if (!pageCoversComplete(pageStart, pageCount)) return false;
 
   const uint32_t sig = frameSignature();
