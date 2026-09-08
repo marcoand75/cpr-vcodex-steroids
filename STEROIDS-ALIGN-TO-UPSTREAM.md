@@ -1328,6 +1328,10 @@ deltas to watch in the next upstream pull. Details by feature in
   (new `coverWidth/coverHeight` params on `queryPage()`), and `queryCollectionBooks()`
   sorted by numeric `seriesIndex`. Re-apply any upstream library change manually on
   top of these. The storage layout gained `idx_mixed.bin`; `invalidate()` removes it.
+  LibraryActivity also caches full rendered page frames under `/.crosspoint/libframes`
+  (do not overwrite with upstream). `GfxRenderer::resolveTextFontId()` adds a generic
+  CJK fallback across loaded SD fonts and `SdCardFontSystem` gains
+  `ensureCjkFontLoaded()` — upstream versions of those files must be re-ported manually.
 - **Wikipedia** is a full Steroids app (`WikipediaActivity`/`WikiTxtReaderActivity`)
   plus cache plumbing (`HalStorage::listFilesWithDirectories()` wrapper around
   `SDCardManager::listFiles()`), `title.txt`, per-article `wiki_<hash>` folders. English/Italian yaml carry the
@@ -1399,4 +1403,4 @@ python -X utf8 -m platformio run -e default -j 16
 
 ---
 
-*Last updated: 2026-09-08 — documented Library Management V3 (`feature/mixed-library-series-view`): LibraryActivity/LibraryIndex protected-file rows updated, LibraryIndex V3 divergence note added (mixed index, natural sort, cover-aware queries), upstream merge must not overwrite `idx_mixed.bin` handling.*
+*Last updated: 2026-09-08 — merged `feature/mixed-library-series-view` into master: LibraryActivity/LibraryIndex protected-file rows updated, LibraryIndex V3 divergence note added (mixed index, natural sort, cover-aware queries), LibraryActivity page-frame cache, GfxRenderer CJK fallback and SdCardFontSystem `ensureCjkFontLoaded()` marked as Steroids-only — upstream merge must not overwrite `idx_mixed.bin` handling, `/.crosspoint/libframes`, or the font fallback APIs.*

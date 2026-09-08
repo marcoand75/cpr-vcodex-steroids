@@ -553,10 +553,41 @@ grid model on top.
 | Path | Change |
 |---|---|
 | `src/components/LibraryIndex.{h,cpp}` | `SortMode::MIXED`, `buildMixedIndex()`, `queryMixed()`, `totalMixedMatching()`, `makeTitleSortKey()`, cover-aware `queryCollections()`/`queryMixed()`, seriesIndex ordering in `queryCollectionBooks()`, cover-size parameters on `queryPage()` |
-| `src/activities/apps/LibraryActivity.{h,cpp}` | `mixedMode_`, mixed navigation (enter/back with `prevSelectorBeforeCollection_`), collection-tile cover/ribbon rendering, mixed-mode info line |
+| `src/activities/apps/LibraryActivity.{h,cpp}` | `mixedMode_`, mixed navigation (enter/back with `prevSelectorBeforeCollection_`), collection-tile cover/ribbon rendering, mixed-mode info line, **page-frame cache**, `preventAutoSleep()` during cover gen, exclusive Filtra popup (radio), `lastFlatSort_`, lazy reading stats |
 | `src/CrossPointSettings.h` | `LIBRARY_SORT_MIXED = 7` |
 | `src/SettingsList.cpp` | `librarySort` enum gains `STR_SORT_COLLECTIONS` + `STR_SORT_MIXED` |
-| `lib/I18n/translations/english.yaml` / `italian.yaml` | `STR_SORT_MIXED` |
+| `lib/I18n/translations/english.yaml` / `italian.yaml` | `STR_SORT_MIXED`; `STR_SORT_COLLECTIONS` renamed EN “Series” / IT “Serie” |
+| `src/SdCardFontSystem.{h,cpp}` | `ensureCjkFontLoaded()` on-demand CJK family loader with sample glyph coverage |
+| `lib/GfxRenderer/GfxRenderer.cpp` | generic CJK fallback in `resolveTextFontId()` across loaded SD fonts |
+
+### 6.7 V3 hardening on the same branch (2026-09)
+
+- **Page-frame cache** (`/.crosspoint/libframes`): after a page is fully rendered
+  (all covers present) its raw 1-bit framebuffer (~48 KB) is saved; returning to the
+  page restores it and redraws only header/info/title/border/hints instead of
+  re-decoding every cover BMP (log `FrameHit`). Signature-keyed
+  (sort/filter/search/mode/collection/layout + epoch) and invalidated on scans and
+  grid-affecting actions.
+- **CPU pacing**: Library keeps the ESP32 at full clock during cover generation
+  (`preventAutoSleep()` override) so generator bursts are not throttled.
+- **Lazy reading stats**: Library no longer materializes the full reading-stats store
+  on entry; `recordToBookRef()`/`matchesFilter()` read badges through the lightweight
+  `summary.json` path (`getHomeBookStatsForRender`), and the full store loads only for
+  RECENT/PROGRESS sorts or mark read/unread actions. Heap stays ~137 KB free with
+  `maxA = 114676` during Library browsing.
+- **Text title-card covers**: EPUBs without an embedded cover and TXT/Markdown files
+  get a generated 1-bit title card (title rasterized in an isolated strip scratch)
+  when the resolved font covers every codepoint — never a broken black BMP.
+- **CJK support**: `SdCardFontSystem::ensureCjkFontLoaded()` finds the best installed
+  SD CJK family for a UTF-8 sample (full coverage preferred, best partial otherwise)
+  and registers it alongside the reader family; `GfxRenderer::resolveTextFontId()`
+  falls back to any loaded SD font that contains a missing CJK glyph. Simplified
+  titles render once a SC-capable family is installed (the on-device
+  `SweiSpringCJKtc` is Traditional-only).
+- **Exclusive Filtra popup**: the filter menu is one-of-many. Book filters apply to
+  the flat shelf and, when chosen from a Serie/Serie+Libri view, return to the
+  remembered flat ordering (`lastFlatSort_`); Serie and Serie + Libri reset the book
+  filter to All. Exactly one selection ring is shown.
 
 ---
 
@@ -1904,4 +1935,4 @@ every dictionary entry.
 
 ---
 
-*Last updated: 2026-09-08 — added Library Management V3 (§6.6, branch `feature/mixed-library-series-view`): Series + Books mixed view (`LIBRARY_SORT_MIXED`), `idx_mixed.bin` + `queryMixed()`/`totalMixedMatching()`, natural/alphanumeric title sort (`makeTitleSortKey()`), collection-tile cover lookup + white-title black ribbon, in-view search/filters for mixed root, seriesIndex ordering inside collections, back-restores-selection navigation.*
+*Last updated: 2026-09-08 — merged `feature/mixed-library-series-view` into master (Library Management V3, §6.6–6.7): Series + Books mixed view (`LIBRARY_SORT_MIXED`), `idx_mixed.bin` + `queryMixed()`/`totalMixedMatching()`, natural/alphanumeric title sort (`makeTitleSortKey()`), collection-tile cover lookup + white-title black ribbon, in-view search/filters for mixed root, seriesIndex ordering inside collections, back-restores-selection navigation, page-frame cache, lazy reading stats, text title-card covers, on-demand CJK family loader, and the exclusive one-of-many Filtra popup.*

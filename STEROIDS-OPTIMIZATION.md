@@ -1007,7 +1007,18 @@ description).
   `coverWidth`/`coverHeight` only to compute `thumbPathFor()` existence checks;
   pass real grid sizes from `LibraryActivity`, and `0,0` from index-only callers to
   skip the scan entirely.
+- **Reading stats stay lazy**: the full store (~53 KB for 36 books, formerly
+  loaded at every Library entry and fragmenting `maxA` 114676 → ~32 KB) is no
+  longer forced; grid badges/filters use the `summary.json` fast path. Only
+  RECENT/PROGRESS sorts and mark-read/unread actions materialize the store.
+- **Page-frame cache**: a fully rendered page (all covers present) is saved as a
+  raw 48 KB framebuffer under `/.crosspoint/libframes`; revisits reload it and
+  re-draw only the overlay, skipping the per-cover BMP decode (~2-4 s → ~0.1 s).
+  Frames are signature-keyed and invalidated on scans and grid-affecting actions.
+- **CJK/cover generation guard**: text title-card covers verify per-codepoint glyph
+  coverage first so a partial font never writes a black BMP; the CJK SD family is
+  chosen by coverage of the sample and registered once for the whole UI.
 
 ---
 
-*Last updated: 2026-09-08 — added §14 Library Management V3 query & RAM notes (fixed page cache, on-disk mixed index, zero-cost natural sort, bounded series-cover scan, no double `buildMixedIndex`).*
+*Last updated: 2026-09-08 — merged Library V3 branch into master; §14 now also covers lazy reading stats, the Library page-frame cache, and the CJK glyph-coverage guard.*
