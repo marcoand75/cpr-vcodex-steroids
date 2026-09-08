@@ -51,62 +51,133 @@ void SdCardFontSystem::reRegisterCjkExtra(GfxRenderer& renderer) {
   renderer.insertFont(cjkFontId_, fontFamily);
 }
 
-int SdCardFontSystem::ensureCjkFontLoaded(GfxRenderer& renderer) {
-  // Already loaded and still registered in the renderer.
-  if (cjkFont_ && cjkFontId_ != 0 && renderer.isSdCardFont(cjkFontId_)) return cjkFontId_;
+static uint32_t countCjkCoverage(SdCardFont& font, const char* utf8Sample, int* totalNonLatin) {
+  EpdFontFamily family(font.getEpdFont(0), font.getEpdFont(1), font.getEpdFont(2), font.getEpdFont(3));
+  int covered = 0;
+  int nonLatin = 0;
+  const uint8_t* p = reinterpret_cast<const uint8_t*>(utf8Sample ? utf8Sample : "");
+  while (*p) {
+    uint32_t cp = 0;
+    if (*p < 0x80) { cp = *p++; }
+    else if ((*p & 0xE0) == 0xC0) { cp = (*p++ & 0x1F) << 6; cp |= (*p++ & 0x3F); }
+    else if ((*p & 0xF0) == 0xE0) { cp = (*p++ & 0x0F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
+    else if ((*p & 0xF8) == 0xF0) { cp = (*p++ & 0x07) << 18; cp |= (*p++ & 0x3F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
+    else { ++p; continue; }
+    if (cp < 0x80) continue;
+    ++nonLatin;
+    if (family.hasCodepoint(cp, EpdFontFamily::BOLD) || family.hasCodepoint(cp, EpdFontFamily::REGULAR)) {
+      ++covered;
+    }
+  }
+  if (totalNonLatin) *totalNonLatin = nonLatin;
+  return covered;
+}
+
+int SdCardFontSystem::ensureCjkFontLoaded(GfxRenderer& renderer, const char* utf8Sample) {
+  const bool wantFullSample = (utf8Sample && *utf8Sample);
+
+  // Fast path: the already loaded extra still covers the whole request.
+  if (cjkFont_ && cjkFontId_ != 0 && renderer.isSdCardFont(cjkFontId_)) {
+    if (!wantFullSample) return cjkFontId_;
+    int total = 0;
+    const int covered = static_cast<int>(countCjkCoverage(*cjkFont_, utf8Sample, &total));
+    if (total > 0 && covered >= total) return cjkFontId_;
+    // Partial coverage: fall through so a better family can be selected.
+  }
 
   if (registry_.getFamilyCount() == 0) registry_.discover();
 
-  const SdCardFontFamilyInfo* family = nullptr;
+  // Gather candidate CJK families (sorted as discovered).
+  std::vector<const SdCardFontFamilyInfo*> candidates;
   for (const auto& f : registry_.getFamilies()) {
-    if (familyLooksCjk(f.name)) {
-      family = &f;
-      break;
-    }
+    if (familyLooksCjk(f.name)) candidates.push_back(&f);
   }
-  if (!family) {
+  if (candidates.empty()) {
     LOG_DBG("SDFS", "ensureCjkFontLoaded: no CJK SD family installed");
     return 0;
   }
 
-  const auto sizes = family->availableSizes();
-  if (sizes.empty()) return 0;
-  // Smallest installed size keeps the fallback footprint low.
-  const uint8_t pt = sizes.front();
-  const auto* file = family->findFile(pt);
-  if (!file) return 0;
-
-  // Family/size changed since last load? Drop the old object.
-  if (cjkFont_ && (cjkFamilyName_ != family->name || cjkPointSize_ != pt)) {
-    dropCjkExtra(renderer);
+  // If no sample was given, keep the previously loaded candidate if it exists
+  // and is still usable, else load the first candidate.
+  if (!wantFullSample && cjkFont_ && cjkFontId_ != 0 && !renderer.isSdCardFont(cjkFontId_)) {
+    reRegisterCjkExtra(renderer);
+    return cjkFontId_;
   }
 
-  if (!cjkFont_) {
-    auto* font = new (std::nothrow) SdCardFont();
-    if (!font) return 0;
-    if (!font->load(file->path.c_str())) {
-      LOG_ERR("SDFS", "ensureCjkFontLoaded: failed to load %s", file->path.c_str());
-      delete font;
-      return 0;
-    }
-    cjkFont_ = font;
-    cjkFamilyName_ = family->name;
-    cjkPointSize_ = pt;
+  // Choose the candidate with the best coverage of the sample (falling back to
+  // the first candidate when no sample / no coverage data).
+  int bestCover = -1;
+  const SdCardFontFamilyInfo* chosen = nullptr;
+  SdCardFont* chosenFont = nullptr;
+  uint32_t chosenContentHash = 0;
+  for (const auto* fam : candidates) {
+    const auto sizes = fam->availableSizes();
+    if (sizes.empty()) continue;
+    const uint8_t pt = sizes.front();
+    const auto* file = fam->findFile(pt);
+    if (!file) continue;
 
-    // Deterministic font id (same scheme as SdCardFontManager).
-    uint32_t hash = font->contentHash();
+    auto* font = new (std::nothrow) SdCardFont();
+    if (!font) continue;
+    if (!font->load(file->path.c_str())) {
+      delete font;
+      continue;
+    }
+
+    int coverage = 0;
+    if (wantFullSample) {
+      int total = 0;
+      coverage = static_cast<int>(countCjkCoverage(*font, utf8Sample, &total));
+      if (coverage < total) {
+        // Partial family: only useful when better than what we already have.
+        if (coverage <= bestCover) {
+          delete font;
+          continue;
+        }
+      }
+    } else {
+      coverage = 0;  // no sample: first candidate wins
+    }
+
+    if (coverage > bestCover || (!wantFullSample && bestCover < 0)) {
+      delete chosenFont;  // previous best
+      chosenFont = font;
+      chosen = fam;
+      chosenContentHash = font->contentHash();
+      bestCover = coverage;
+      if (!wantFullSample || (wantFullSample && coverage >= 0)) {
+        // When no sample requested we are done after the first candidate.
+        if (!wantFullSample) break;
+      }
+    } else {
+      delete font;
+    }
+  }
+
+  if (!chosenFont || !chosen) {
+    LOG_DBG("SDFS", "ensureCjkFontLoaded: no loadable CJK family");
+    return 0;
+  }
+
+  // Swap the newly chosen family into the registered extra slot.
+  dropCjkExtra(renderer);
+  cjkFont_ = chosenFont;
+  cjkFamilyName_ = chosen->name;
+  cjkPointSize_ = chosen->availableSizes().empty() ? 0 : chosen->availableSizes().front();
+  {
+    uint32_t hash = chosenContentHash;
     static constexpr uint32_t FNV_PRIME = 16777619u;
-    for (char ch : family->name) {
+    for (char ch : chosen->name) {
       hash ^= static_cast<uint8_t>(ch);
       hash *= FNV_PRIME;
     }
-    hash ^= pt;
+    hash ^= cjkPointSize_;
     hash *= FNV_PRIME;
     cjkFontId_ = (static_cast<int>(hash) != 0) ? static_cast<int>(hash) : 1;
   }
-
   reRegisterCjkExtra(renderer);
-  LOG_DBG("SDFS", "CJK fallback font ready: %s size=%u id=%d", family->name.c_str(), pt, cjkFontId_);
+  LOG_DBG("SDFS", "CJK fallback font ready: %s size=%u id=%d covered=%d",
+          chosen->name.c_str(), cjkPointSize_, cjkFontId_, bestCover);
   return cjkFontId_;
 }
 

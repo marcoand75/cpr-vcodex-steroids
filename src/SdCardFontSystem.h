@@ -37,7 +37,9 @@ class SdCardFontSystem {
   /// Latin-only UI fonts can fall back to it for non-Latin text anywhere in
   /// the firmware. Returns the font ID, or 0 when no CJK family is installed.
   /// Kept alongside the user's configured reader family.
-  int ensureCjkFontLoaded(GfxRenderer& renderer);
+  /// When utf8Sample is provided the candidate with the best glyph coverage of
+  /// that text is chosen (falls back across every installed CJK family).
+  int ensureCjkFontLoaded(GfxRenderer& renderer, const char* utf8Sample = nullptr);
 
   /// Access the registry (e.g. for settings UI to enumerate available fonts).
   const SdCardFontRegistry& registry() const { return registry_; }

@@ -2058,7 +2058,7 @@ bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
       if (ch >= 0x80) { hasNonLatin = true; break; }
     }
     if (hasNonLatin) {
-      const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer);
+      const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer, title.c_str());
       if (cjkId > 0) titleFont = cjkId;
       // Only rasterize when the chosen font really covers every non-Latin
       // codepoint; a partial/Traditional-only CJK family would otherwise render
