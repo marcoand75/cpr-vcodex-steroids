@@ -501,8 +501,6 @@ void LibraryActivity::openSortPopup() {
     {StrId::STR_SORT_TITLE_DESC, SortDescIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_TITLE_DESC},
     {StrId::STR_SORT_AUTHOR_ASC, SortAscIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC},
     {StrId::STR_SORT_AUTHOR_DESC, SortDescIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC},
-    {StrId::STR_SORT_COLLECTIONS, LibraryNewIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_COLLECTIONS},
-    {StrId::STR_SORT_MIXED, LibraryNewIcon, 32, 32, CrossPointSettings::LIBRARY_SORT_MIXED},
   };
   for (size_t i = 0; i < sizeof(sorts) / sizeof(sorts[0]); ++i) {
     PopupItem item;
@@ -517,6 +515,18 @@ void LibraryActivity::openSortPopup() {
       popupOverlay_.startIndex = std::max(0, static_cast<int>(i) - PanelDrawHelper::kMaxVisibleRows / 2);
     }
   }
+
+  // Search tools live in the sort popup.
+  PopupItem searchItem; searchItem.label = I18N.get(StrId::STR_SEARCH_LIBRARY);
+  searchItem.icon = SearchPlusIcon; searchItem.iconW = 32; searchItem.iconH = 32;
+  searchItem.selected = false;
+  popupOverlay_.items.push_back(searchItem);
+
+  PopupItem clearItem; clearItem.label = I18N.get(StrId::STR_SEARCH_CLEAR);
+  clearItem.icon = SearchMinusIcon; clearItem.iconW = 32; clearItem.iconH = 32;
+  clearItem.selected = false;
+  popupOverlay_.items.push_back(clearItem);
+
   requestUpdate();
 }
 
@@ -559,15 +569,17 @@ void LibraryActivity::openFilterPopup() {
   hiddenItem.selected = (currentFilter_ == CrossPointSettings::LIBRARY_FILTER_HIDDEN);
   popupOverlay_.items.push_back(hiddenItem);
 
-  PopupItem searchItem; searchItem.label = I18N.get(StrId::STR_SEARCH_LIBRARY);
-  searchItem.icon = SearchPlusIcon; searchItem.iconW = 32; searchItem.iconH = 32;
-  searchItem.selected = false;
-  popupOverlay_.items.push_back(searchItem);
+  // View modes live in the filter popup (they are not filters, but this is
+  // where the user picks how the shelf is grouped).
+  PopupItem collItem; collItem.label = I18N.get(StrId::STR_SORT_COLLECTIONS);
+  collItem.icon = LibraryNewIcon; collItem.iconW = 32; collItem.iconH = 32;
+  collItem.selected = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
+  popupOverlay_.items.push_back(collItem);
 
-  PopupItem clearItem; clearItem.label = I18N.get(StrId::STR_SEARCH_CLEAR);
-  clearItem.icon = SearchMinusIcon; clearItem.iconW = 32; clearItem.iconH = 32;
-  clearItem.selected = false;
-  popupOverlay_.items.push_back(clearItem);
+  PopupItem mixedItem; mixedItem.label = I18N.get(StrId::STR_SORT_MIXED);
+  mixedItem.icon = LibraryNewIcon; mixedItem.iconW = 32; mixedItem.iconH = 32;
+  mixedItem.selected = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
+  popupOverlay_.items.push_back(mixedItem);
 
   requestUpdate();
 }
@@ -585,38 +597,44 @@ void LibraryActivity::selectPopupItem() {
   if (idx < 0 || idx >= static_cast<int>(popupOverlay_.items.size())) return;
 
   if (popupMode_ == PopupMode::Sort) {
-    CrossPointSettings::LIBRARY_SORT sorts[] = {
-      CrossPointSettings::LIBRARY_SORT_TITLE_ASC, CrossPointSettings::LIBRARY_SORT_TITLE_DESC,
-      CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC,
-      CrossPointSettings::LIBRARY_SORT_COLLECTIONS,
-      CrossPointSettings::LIBRARY_SORT_MIXED,
-    };
-    if (idx < 6) {
+    // Popup order: 0=TitleAZ, 1=TitleZA, 2=AuthorAZ, 3=AuthorZA,
+    //              4=Search, 5=Clear search
+    if (idx == 4) {
+      closePopup();
+      beginTextSearch();
+      return;
+    }
+    if (idx == 5) {
+      currentSearchText_.clear();
+      SETTINGS.librarySearchText[0] = '\0';
+      SETTINGS.saveToFile();
+      applyFilterAndSort();
+    } else if (idx >= 0 && idx < 4) {
+      CrossPointSettings::LIBRARY_SORT sorts[] = {
+        CrossPointSettings::LIBRARY_SORT_TITLE_ASC, CrossPointSettings::LIBRARY_SORT_TITLE_DESC,
+        CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC,
+      };
       currentSort_ = sorts[idx];
       SETTINGS.librarySort = currentSort_;
       SETTINGS.saveToFile();
       applyFilterAndSort();
     }
   } else if (popupMode_ == PopupMode::Filter) {
-    // Popup order: 0=All, 1=Favourites, 2=Latest, 3=Unread, 4=Completed, 5=Search, 6=Clear
-    if (idx == 0) {
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
-      SETTINGS.libraryFilter = currentFilter_;
+    // Popup order: 0=All, 1=Favourites, 2=Latest, 3=Unread, 4=Completed,
+    //              5=Hidden, 6=Collections (view), 7=Series+Books (view)
+    if (idx == 6) {
+      currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
+      SETTINGS.librarySort = currentSort_;
       SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 1) {
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_FAVOURITES;
-      SETTINGS.libraryFilter = currentFilter_;
+      applyFilterAndSort();
+    } else if (idx == 7) {
+      currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
+      SETTINGS.librarySort = currentSort_;
       SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 2) {
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_LATEST_READ;
-      SETTINGS.libraryFilter = currentFilter_;
-      SETTINGS.saveToFile();
-      rebuildForFilter(currentFilter_);
-    } else if (idx == 3) {
-      // Unread
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_UNREAD;
+      applyFilterAndSort();
+    } else if (idx == 5) {
+      // Hidden
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_HIDDEN;
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       rebuildForFilter(currentFilter_);
@@ -626,21 +644,27 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       rebuildForFilter(currentFilter_);
-    } else if (idx == 5) {
-      // Hidden
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_HIDDEN;
+    } else if (idx == 3) {
+      // Unread
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_UNREAD;
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       rebuildForFilter(currentFilter_);
-    } else if (idx == 6) {
-      closePopup();
-      beginTextSearch();
-      return;
-    } else if (idx == 7) {
-      currentSearchText_.clear();
-      SETTINGS.librarySearchText[0] = '\0';
+    } else if (idx == 2) {
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_LATEST_READ;
+      SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
-      applyFilterAndSort();
+      rebuildForFilter(currentFilter_);
+    } else if (idx == 1) {
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_FAVOURITES;
+      SETTINGS.libraryFilter = currentFilter_;
+      SETTINGS.saveToFile();
+      rebuildForFilter(currentFilter_);
+    } else if (idx == 0) {
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
+      SETTINGS.libraryFilter = currentFilter_;
+      SETTINGS.saveToFile();
+      rebuildForFilter(currentFilter_);
     }
   }
   closePopup();
