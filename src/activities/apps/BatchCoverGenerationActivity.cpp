@@ -6,6 +6,7 @@
 
 #include "../ActivityManager.h"
 #include "HalStorage.h"
+#include "HalPowerManager.h"
 #include "CrossPointSettings.h"
 #include "Logging.h"
 #include "components/LibraryIndex.h"
@@ -77,6 +78,20 @@ void BatchCoverGenerationActivity::scanMissingCovers() {
   scanning_ = true;
 }
 
+void BatchCoverGenerationActivity::lockPowerSaving() {
+  if (!powerLocked_) {
+    powerManager.setPowerSaving(false);
+    powerLocked_ = true;
+  }
+}
+
+void BatchCoverGenerationActivity::unlockPowerSaving() {
+  if (powerLocked_) {
+    powerManager.setPowerSaving(true);
+    powerLocked_ = false;
+  }
+}
+
 bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path) {
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   if (thumbPath.empty()) return false;
@@ -124,11 +139,13 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
 
 void BatchCoverGenerationActivity::onEnter() {
   Activity::onEnter();
+  lockPowerSaving();
   scanMissingCovers();
   requestUpdate();
 }
 
 void BatchCoverGenerationActivity::onExit() {
+  unlockPowerSaving();
   running_ = false;
   finished_ = false;
   scanning_ = false;

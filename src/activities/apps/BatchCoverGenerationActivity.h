@@ -37,6 +37,11 @@ class BatchCoverGenerationActivity final : public Activity {
   int scanNextPage_ = 0;
   int scanScannedCount_ = 0;
 
+  // Power management during long-running generation
+  bool powerLocked_ = false;
+  void lockPowerSaving();
+  void unlockPowerSaving();
+
  public:
   explicit BatchCoverGenerationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("BatchCoverGeneration", renderer, mappedInput) {}
