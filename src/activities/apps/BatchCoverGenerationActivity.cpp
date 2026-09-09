@@ -27,6 +27,7 @@ void BatchCoverGenerationActivity::scanMissingCovers() {
   currentIndex_ = 0;
   running_ = false;
   finished_ = false;
+  scanning_ = false;
 
   // Use the current library layout to determine cover size.
   const uint8_t layout = SETTINGS.libraryLayout;
@@ -44,27 +45,12 @@ void BatchCoverGenerationActivity::scanMissingCovers() {
   const int total = LibraryIndex::totalBooks();
   if (total <= 0) {
     LOG_INF(TAG, "No books in library");
+    finished_ = true;
     return;
   }
 
-  constexpr int kPageSize = 16;
-  LibraryIndex::BookRef page[kPageSize];
-
-  for (int pageStart = 0; pageStart < total; pageStart += kPageSize) {
-    const int count = LibraryIndex::queryPage(page, pageStart / kPageSize, kPageSize,
-                                               LibraryIndex::SortMode::TITLE_ASC);
-    for (int i = 0; i < count; ++i) {
-      if (page[i].path[0] == '\0') continue;
-      const std::string thumbPath = LibraryIndex::thumbPathFor(std::string(page[i].path), coverWidth_, coverHeight_);
-      if (thumbPath.empty()) continue;
-      if (Storage.exists(thumbPath.c_str())) continue;
-
-      missingBooks_.push_back({page[i].path, page[i].title});
-    }
-  }
-
-  totalCount_ = static_cast<int>(missingBooks_.size());
-  LOG_INF(TAG, "Found %d missing covers out of %d books", totalCount_, total);
+  totalCount_ = total;
+  scanning_ = true;
 }
 
 bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path) {
@@ -115,21 +101,62 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
 void BatchCoverGenerationActivity::onEnter() {
   Activity::onEnter();
   scanMissingCovers();
-  if (totalCount_ > 0) {
-    running_ = true;
-  } else {
-    finished_ = true;
-  }
   requestUpdate();
 }
 
 void BatchCoverGenerationActivity::onExit() {
   running_ = false;
   finished_ = false;
+  scanning_ = false;
+  scanNextPage_ = 0;
+  scanScannedCount_ = 0;
   Activity::onExit();
 }
 
 void BatchCoverGenerationActivity::loop() {
+  if (scanning_) {
+    constexpr int kBatchSize = 8;
+    const int total = totalCount_ > 0 ? totalCount_ : LibraryIndex::totalBooks();
+    if (total <= 0) {
+      scanning_ = false;
+      finished_ = true;
+      requestUpdate();
+      return;
+    }
+
+    constexpr int kPageSize = 16;
+    LibraryIndex::BookRef page[kPageSize];
+    const int pagesToScan = (kBatchSize + kPageSize - 1) / kPageSize;
+
+    for (int p = 0; p < pagesToScan && scanNextPage_ * kPageSize < total; ++p, ++scanNextPage_) {
+      const int count = LibraryIndex::queryPage(page, scanNextPage_, kPageSize,
+                                                 LibraryIndex::SortMode::TITLE_ASC);
+      for (int i = 0; i < count; ++i) {
+        if (page[i].path[0] == '\0') continue;
+        const std::string thumbPath = LibraryIndex::thumbPathFor(std::string(page[i].path), coverWidth_, coverHeight_);
+        if (thumbPath.empty()) continue;
+        if (Storage.exists(thumbPath.c_str())) continue;
+
+        missingBooks_.push_back({page[i].path, page[i].title});
+      }
+      scanScannedCount_ += count;
+    }
+
+    if (scanScannedCount_ >= total || scanNextPage_ * kPageSize >= total) {
+      scanning_ = false;
+      totalCount_ = static_cast<int>(missingBooks_.size());
+      if (totalCount_ > 0) {
+        running_ = true;
+      } else {
+        finished_ = true;
+      }
+      LOG_INF(TAG, "Scan complete: %d missing covers out of %d books", totalCount_, total);
+    }
+
+    requestUpdate();
+    return;
+  }
+
   if (!running_) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
         mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
@@ -140,6 +167,7 @@ void BatchCoverGenerationActivity::loop() {
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     running_ = false;
+    finished_ = true;
     requestUpdate();
     return;
   }
@@ -170,7 +198,9 @@ void BatchCoverGenerationActivity::render(RenderLock&&) {
   renderer.drawCenteredText(UI_12_FONT_ID, metrics.topPadding + 20,
                             tr(STR_BATCH_GENERATE_COVERS), true, EpdFontFamily::BOLD);
 
-  if (finished_) {
+  if (scanning_) {
+    renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, "Scanning library...", true);
+  } else if (finished_) {
     char msg[64];
     snprintf(msg, sizeof(msg), tr(STR_BATCH_GENERATE_COVERS_DONE), doneCount_, totalCount_);
     renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, msg, true);
@@ -184,8 +214,6 @@ void BatchCoverGenerationActivity::render(RenderLock&&) {
       const std::string truncated = renderer.truncatedText(UI_10_FONT_ID, title.c_str(), pw - 40);
       renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 80, truncated.c_str(), true);
     }
-  } else if (totalCount_ == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, "No missing covers", true);
   } else {
     renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, "Press Back to cancel", true);
   }

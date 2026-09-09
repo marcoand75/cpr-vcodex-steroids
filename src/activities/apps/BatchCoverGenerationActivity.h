@@ -25,12 +25,17 @@ class BatchCoverGenerationActivity final : public Activity {
   int currentIndex_ = 0;
   bool running_ = false;
   bool finished_ = false;
+  bool scanning_ = false;
 
   int coverWidth_ = 100;
   int coverHeight_ = 150;
 
   void scanMissingCovers();
   bool generateCoverForBook(const std::string& path);
+
+  // Incremental scan state
+  int scanNextPage_ = 0;
+  int scanScannedCount_ = 0;
 
  public:
   explicit BatchCoverGenerationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
