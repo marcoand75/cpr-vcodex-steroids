@@ -41,9 +41,9 @@ enum class SettingAction {
    ShortcutVisibility,
    OrderHomeShortcuts,
    OrderAppsShortcuts,
-ReaderMenuVisibility,
-    ReaderMenuOrder,
-    Bookmarks,
+   ReaderMenuVisibility,
+   ReaderMenuOrder,
+   Bookmarks,
    Favorites,
    Flashcards,
    ScreenClean,
@@ -55,6 +55,7 @@ ReaderMenuVisibility,
    ClearCorruptCovers,
    UpdateLibrary,
    ScreenSaverReaderDir,
+   BatchGenerateCovers,
 };
 
 struct SettingInfo {

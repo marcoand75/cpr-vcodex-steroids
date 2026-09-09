@@ -1074,6 +1074,16 @@ case SettingAction::ReaderMenuVisibility:
               requestUpdate(true);
             });
         break;
+      case SettingAction::BatchGenerateCovers:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_BATCH_GENERATE_COVERS), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                activityManager.goToBatchCoverGeneration();
+              }
+              requestUpdate(true);
+            });
+        break;
       case SettingAction::None:
         break;
     }

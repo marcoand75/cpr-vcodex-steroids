@@ -19,6 +19,7 @@
 #include "apps/LibraryActivity.h"
 #include "apps/LuaPluginActivity.h"
 #include "apps/PluginBrowserActivity.h"
+#include "apps/BatchCoverGenerationActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/KOReaderSyncActivity.h"
 #include "reader/ReaderActivity.h"
@@ -258,6 +259,10 @@ void ActivityManager::goToPluginInProcess(const char* pluginName, bool returnToP
 
 void ActivityManager::goToPluginBrowser() {
   replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToBatchCoverGeneration() {
+  replaceActivity(std::make_unique<BatchCoverGenerationActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToFileBrowser(std::string path) {

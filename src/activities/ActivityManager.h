@@ -100,6 +100,7 @@ class ActivityManager {
    void goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);
    void goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser);
    void goToPluginBrowser();
+   void goToBatchCoverGeneration();
 
   // This will move current activity to stack instead of deleting it
   void pushActivity(std::unique_ptr<Activity>&& activity);
