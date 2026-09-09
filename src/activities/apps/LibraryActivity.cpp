@@ -9,6 +9,8 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#include "StoreManager.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -218,6 +220,9 @@ void LibraryActivity::onEnter() {
 
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
+  USER_COLLECTIONS.ensureLoaded();
+  lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
+  pendingCollectionsRebuild_ = false;
   // READING_STATS is intentionally NOT loaded here: the grid reads badges
   // through the lightweight summary.json path (see LibraryIndex::recordToBookRef /
   // matchesFilter). The full store is materialized only when a progress/recency
@@ -696,6 +701,19 @@ void LibraryActivity::beginTextSearch() {
 // ============================================================================
 
 void LibraryActivity::loop() {
+  // ---- User collections rebuild (debounced) ----
+  if (pendingCollectionsRebuild_) {
+    USER_COLLECTIONS.ensureLoaded();
+    if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildMixedIndex();
+      lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
+      clearPageFrameCache();
+      bumpLibEpoch();
+    }
+    pendingCollectionsRebuild_ = false;
+  }
+
   // ---- Cover generation: one slot per frame, after grid is rendered -------
   if (coverGen_.pending) {
     coverGen_.pending = false;

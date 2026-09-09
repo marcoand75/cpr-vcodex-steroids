@@ -6,6 +6,7 @@
 #include "HiddenBooksStore.h"
 #include "FlashcardsStore.h"
 #include "AchievementsStore.h"
+#include "UserCollectionsStore.h"
 
 class StoreManager {
  public:
@@ -15,6 +16,7 @@ class StoreManager {
   static HiddenBooksStore& hiddenBooks() { return HiddenBooksStore::getInstance(); }
   static FlashcardsStore& flashcards() { return FlashcardsStore::getInstance(); }
   static AchievementsStore& achievements() { return AchievementsStore::getInstance(); }
+  static UserCollectionsStore& userCollections() { return UserCollectionsStore::getInstance(); }
 
   static void ensureReadingStatsLoaded() {
     if (readingStats().needsReload()) readingStats().ensureLoaded();
@@ -34,6 +36,9 @@ class StoreManager {
   static void ensureAchievementsLoaded() {
     if (achievements().needsReload()) achievements().ensureLoaded();
   }
+  static void ensureUserCollectionsLoaded() {
+    if (userCollections().needsReload()) userCollections().ensureLoaded();
+  }
 
   static void invalidateReadingStats() { readingStats().resetLoaded(); }
   static void invalidateRecentBooks() { recentBooks().resetLoaded(); }
@@ -41,6 +46,7 @@ class StoreManager {
   static void invalidateHiddenBooks() { hiddenBooks().resetLoaded(); }
   static void invalidateFlashcards() { flashcards().resetLoaded(); }
   static void invalidateAchievements() { achievements().resetLoaded(); }
+  static void invalidateUserCollections() { userCollections().resetLoaded(); }
 
   static uint32_t readingStatsGeneration() { return readingStats().generation(); }
   static uint32_t recentBooksGeneration() { return recentBooks().generation(); }
@@ -48,6 +54,7 @@ class StoreManager {
   static uint32_t hiddenBooksGeneration() { return hiddenBooks().generation(); }
   static uint32_t flashcardsGeneration() { return flashcards().generation(); }
   static uint32_t achievementsGeneration() { return achievements().generation(); }
+  static uint32_t userCollectionsGeneration() { return userCollections().generation(); }
 };
 
 #define READING_STATS StoreManager::readingStats()
@@ -56,3 +63,4 @@ class StoreManager {
 #define HIDDEN_BOOKS StoreManager::hiddenBooks()
 #define FLASHCARDS StoreManager::flashcards()
 #define ACHIEVEMENTS StoreManager::achievements()
+#define USER_COLLECTIONS StoreManager::userCollections()

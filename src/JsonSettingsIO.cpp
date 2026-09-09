@@ -19,6 +19,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FavoritesStore.h"
+#include "UserCollectionsStore.h"
 #include "KOReaderCredentialStore.h"
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
@@ -1018,6 +1019,66 @@ bool JsonSettingsIO::loadFavorites(FavoritesStore& store, const char* json) {
 
   store.normalizeBooks();
   LOG_DBG("FAV", "Favorites loaded from file (%d entries)", store.getCount());
+  return true;
+}
+
+// ---- UserCollectionsStore ----
+
+bool JsonSettingsIO::saveUserCollections(const UserCollectionsStore& store, const char* path) {
+  JsonDocument doc;
+  doc["version"] = 1;
+  JsonArray collArr = doc["collections"].to<JsonArray>();
+  for (const auto& c : store.collections()) {
+    JsonObject obj = collArr.add<JsonObject>();
+    obj["id"] = c.id;
+    obj["name"] = c.name;
+    obj["createdAt"] = static_cast<uint32_t>(c.createdAt);
+  }
+  JsonArray memArr = doc["members"].to<JsonArray>();
+  for (const auto& m : store.allMembers()) {
+    JsonObject obj = memArr.add<JsonObject>();
+    obj["collectionId"] = m.collectionId;
+    obj["bookId"] = m.bookId;
+    obj["position"] = m.position;
+  }
+
+  return saveJsonDocumentToFile("UCS", path, doc);
+}
+
+bool JsonSettingsIO::loadUserCollections(UserCollectionsStore& store, const char* json) {
+  JsonDocument doc;
+  auto error = deserializeJson(doc, json);
+  if (error) {
+    LOG_ERR("UCS", "JSON parse error: %s", error.c_str());
+    return false;
+  }
+
+  store.collections_.clear();
+  store.members_.clear();
+
+  JsonArray collArr = doc["collections"].as<JsonArray>();
+  for (JsonObject obj : collArr) {
+    UserCollection c;
+    c.id = obj["id"] | std::string("");
+    c.name = obj["name"] | std::string("");
+    c.createdAt = obj["createdAt"] | 0u;
+    if (!c.id.empty() && !c.name.empty()) {
+      store.collections_.push_back(c);
+    }
+  }
+
+  JsonArray memArr = doc["members"].as<JsonArray>();
+  for (JsonObject obj : memArr) {
+    CollectionMember m;
+    m.collectionId = obj["collectionId"] | std::string("");
+    m.bookId = obj["bookId"] | 0u;
+    m.position = obj["position"] | 0.0f;
+    if (!m.collectionId.empty() && m.bookId != 0) {
+      store.members_.push_back(m);
+    }
+  }
+
+  LOG_DBG("UCS", "Loaded %d collections, %d members", static_cast<int>(store.collections_.size()), static_cast<int>(store.members_.size()));
   return true;
 }
 

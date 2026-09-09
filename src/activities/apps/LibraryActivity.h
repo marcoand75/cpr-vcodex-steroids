@@ -65,6 +65,10 @@ class LibraryActivity final : public Activity {
   std::string currentCollectionName_;    // name of currently opened collection
   int  prevSelectorBeforeCollection_ = -1; // selector index before entering a collection
 
+  // User collections rebuild tracking (Steroids extension)
+  uint32_t lastUserCollectionsGeneration_ = 0;
+  bool pendingCollectionsRebuild_ = false;
+
   // Mixed mode (series + standalone books together)
   bool mixedMode_ = false;               // true when browsing mixed view
   // Last non-series shelf ordering, restored when a book filter is chosen from

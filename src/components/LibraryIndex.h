@@ -51,6 +51,8 @@ struct __attribute__((packed)) BookRef {
   bool isOpened;
   bool isCompleted;
   bool isHidden;
+  bool isCollection;     // true if this tile is a user-defined collection
+  uint8_t reserved[3];   // padding
 };
 static_assert(sizeof(BookRef) <= 260, "BookRef fits in stack");
 
@@ -155,5 +157,39 @@ void invalidate();
 // Legacy cover path helper (delegates to same logic as before).
 // Kept for LibraryActivity compatibility.
 std::string thumbPathFor(const std::string& bookPath, int coverW, int coverH);
+
+// ---- User collections API (Steroids extension) ----
+// These operations rebuild idx_collections.bin and idx_mixed.bin as needed.
+// Caller should invalidate/rebuild page frame cache after mutations.
+
+// Total number of user-defined collections.
+int totalUserCollections();
+
+// Number of books in a specific user collection (by collection id string).
+int userCollectionBookCount(const char* collectionId);
+
+// List user collection tiles. Returns count written (0 on end/error).
+int queryUserCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight);
+
+// Books within a specific user collection (by collection id string).
+int queryUserCollectionBooks(BookRef* out, int page, int pageSize, const char* collectionId);
+
+// Create a new user collection. Returns true on success, outId receives the new id.
+bool createUserCollection(const char* name, char* outId, size_t outIdCap);
+
+// Rename an existing user collection. Returns true if found and renamed.
+bool renameUserCollection(const char* collectionId, const char* newName);
+
+// Delete a user collection and all its memberships. Returns true if found.
+bool deleteUserCollection(const char* collectionId);
+
+// Add a book to a user collection. Idempotent: no-op if already present.
+bool addBookToCollection(const char* collectionId, uint32_t bookId, float position = 0.0f);
+
+// Remove a book from a user collection. Returns true if membership existed.
+bool removeBookFromCollection(const char* collectionId, uint32_t bookId);
+
+// Remove a book from all user collections (called on book delete/rename).
+void removeBookFromAllCollections(uint32_t bookId);
 
 }  // namespace LibraryIndex

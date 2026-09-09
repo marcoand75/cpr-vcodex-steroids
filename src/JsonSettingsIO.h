@@ -9,6 +9,7 @@ class KOReaderCredentialStore;
 struct KOReaderProfile;
 class RecentBooksStore;
 class FavoritesStore;
+class UserCollectionsStore;
 class ReadingStatsStore;
 class AchievementsStore;
 class OpdsServerStore;
@@ -42,6 +43,10 @@ bool loadRecentBooks(RecentBooksStore& store, const char* json);
 // FavoritesStore
 bool saveFavorites(const FavoritesStore& store, const char* path);
 bool loadFavorites(FavoritesStore& store, const char* json);
+
+// UserCollectionsStore
+bool saveUserCollections(const UserCollectionsStore& store, const char* path);
+bool loadUserCollections(UserCollectionsStore& store, const char* json);
 
 // ReadingStatsStore
 bool saveReadingStats(const ReadingStatsStore& store, const char* path);

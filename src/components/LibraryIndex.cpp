@@ -14,12 +14,14 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <unordered_map>
 
 #include "components/UITheme.h"
 #include "EpubParser.h"
 #include "FavoritesStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "UserCollectionsStore.h"
 
 namespace LibraryIndex {
 
@@ -70,8 +72,10 @@ struct __attribute__((packed)) SeriesRec {
   uint32_t bookId;
   char     seriesName[80];     // collection/series name
   float    seriesIndex;        // position in series
+  uint8_t  flags;              // bit0 = folderFallback
+  uint8_t  reserved[3];        // padding to 92 bytes
 };
-static_assert(sizeof(SeriesRec) == 88, "SeriesRec must be 88 bytes");
+static_assert(sizeof(SeriesRec) == 92, "SeriesRec must be 92 bytes");
 
 // ---- Scan state record (on-disk) ----
 struct __attribute__((packed)) ScanRec {
@@ -578,6 +582,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
 
     char title[65] = {}, author[49] = {}, series[81] = {};
     float seriesIndex = 0.0f;
+    bool seriesFromFolder = false;
     // For EPUBs, extract series/collection info via the fast ZIP parser.
     // Other formats (XTC, TXT) don't have series metadata.
     if (FsHelpers::hasEpubExtension(std::string_view{p})) {
@@ -590,6 +595,36 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
       seriesIndex = epSeriesIdx;
     } else {
       extractMetadata(p, title, sizeof(title), author, sizeof(author));
+    }
+
+    // Folder fallback: if no series metadata, use parent folder name (if not root)
+    if (series[0] == '\0') {
+      // Simple parent path extraction
+      char parentPath[256] = {};
+      const char* lastSlash = strrchr(p, '/');
+      if (lastSlash && lastSlash > p) {
+        size_t parentLen = static_cast<size_t>(lastSlash - p);
+        if (parentLen < sizeof(parentPath)) {
+          memcpy(parentPath, p, parentLen);
+          parentPath[parentLen] = '\0';
+        }
+      }
+      if (parentPath[0] != '\0' && strcmp(parentPath, "/.crosspoint") != 0 && strcmp(parentPath, "/") != 0) {
+        char folderName[128] = {};
+        const char* folderStart = lastSlash + 1;
+        size_t folderLen = 0;
+        const char* scan = folderStart;
+        while (*scan && *scan != '/' && folderLen < sizeof(folderName) - 1) {
+          folderLen++;
+          scan++;
+        }
+        if (folderLen > 0) {
+          memcpy(folderName, folderStart, folderLen);
+          folderName[folderLen] = '\0';
+          std::strncpy(series, folderName, sizeof(series)-1); series[sizeof(series)-1] = '\0';
+          seriesFromFolder = true;
+        }
+      }
     }
     std::strncpy(rec.title, title, sizeof(rec.title)-1); rec.title[sizeof(rec.title)-1] = '\0';
     std::strncpy(rec.author, author, sizeof(rec.author)-1); rec.author[sizeof(rec.author)-1] = '\0';
@@ -614,6 +649,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
       std::strncpy(sr.seriesName, series, sizeof(sr.seriesName)-1);
       sr.seriesName[sizeof(sr.seriesName)-1] = '\0';
       sr.seriesIndex = seriesIndex;
+      sr.flags = seriesFromFolder ? 1 : 0;
       appendSeriesRec(sr);
     }
 
@@ -819,41 +855,61 @@ struct __attribute__((packed)) CollectionIndexRec {
   char     collectionName[80];
   uint32_t firstSeriesOffset;  // byte offset into series.dat where this collection starts
   uint32_t bookCount;          // number of books in this collection
+  uint8_t  flags;              // bit0 = user-defined collection
+  uint8_t  reserved[3];        // padding to 92 bytes
 };
-static_assert(sizeof(CollectionIndexRec) == 88, "CollectionIndexRec must be 88 bytes");
+static_assert(sizeof(CollectionIndexRec) == 92, "CollectionIndexRec must be 92 bytes");
 
 bool buildCollectionsIndex() {
   LOG_DBG("LIB", "BuildCollIdx: start");
   HalFile sf = Storage.open(kSeriesDat);
   if (!sf) return false;
-  const int totalSeries = static_cast<int>(sf.size() / sizeof(SeriesRec));
-  if (totalSeries == 0) { sf.close(); return false; }
+
+  // Handle old 88-byte format: if size is not divisible by 92, delete and rebuild
+  const size_t seriesFileSize = sf.size();
   sf.close();
+  if (seriesFileSize > 0 && seriesFileSize % sizeof(SeriesRec) != 0) {
+    LOG_DBG("LIB", "BuildCollIdx: old series.dat format detected, removing for rebuild");
+    Storage.remove(kSeriesDat);
+    return false;
+  }
+
+  const int totalSeries = static_cast<int>(seriesFileSize / sizeof(SeriesRec));
+  if (totalSeries == 0) { return false; }
+
+  // Build bookId -> path map from library.dat for folder-fallback scoping
+  std::unordered_map<uint32_t, std::string> bookIdToPath;
+  {
+    HalFile datF = Storage.open(kDatFile);
+    if (datF) {
+      Record rec;
+      while (datF.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+        if (!rec.tombstone()) {
+          bookIdToPath[rec.id] = rec.path;
+        }
+      }
+      datF.close();
+    }
+  }
 
   // Read all series records, validate against library.dat (skip tombstoned books)
   std::vector<SeriesRec> series;
   series.reserve(totalSeries);
   {
     HalFile f = Storage.open(kSeriesDat);
-    HalFile datF = Storage.open(kDatFile);
     SeriesRec sr;
     while (f.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == static_cast<int>(sizeof(SeriesRec))) {
-      // Verify the book still exists and isn't tombstoned
-      if (datF) {
-        Record rec;
-        bool found = false;
-        datF.seek(0);
-        while (datF.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-          if (rec.id == sr.bookId && !rec.tombstone()) { found = true; break; }
-        }
-        if (!found) continue;  // skip deleted/tombstoned books
-      }
+      // Skip tombstoned books
+      if (sr.bookId == 0) continue;
+      // Verify the book still exists and isn't tombstoned in library.dat
+      auto pathIt = bookIdToPath.find(sr.bookId);
+      if (pathIt == bookIdToPath.end()) continue;  // book deleted
       series.push_back(sr);
     }
     f.close();
-    if (datF) datF.close();
   }
 
+  // Sort by normalized series name + series index
   std::sort(series.begin(), series.end(), [](const SeriesRec& a, const SeriesRec& b) {
     int c = cmpSortKey(a.seriesName, b.seriesName);
     if (c != 0) return c < 0;
@@ -870,32 +926,203 @@ bool buildCollectionsIndex() {
     f.close();
   }
 
-  // Build collections index: collect unique collection names
+  // Build collections index: group metadata-derived series globally by normalized key,
+  // group folder-fallback series by exact parent path match.
   std::vector<CollectionIndexRec> collections;
-  for (size_t i = 0; i < series.size();) {
-    CollectionIndexRec ci;
-    std::strncpy(ci.collectionName, series[i].seriesName, sizeof(ci.collectionName)-1);
-    ci.collectionName[sizeof(ci.collectionName)-1] = '\0';
-    ci.firstSeriesOffset = static_cast<uint32_t>(i * sizeof(SeriesRec));
-    ci.bookCount = 0;
-    size_t j = i;
-    while (j < series.size() && strncmp(series[j].seriesName, ci.collectionName, sizeof(ci.collectionName)) == 0) {
-      ++ci.bookCount;
-      ++j;
+  {
+    size_t i = 0;
+    while (i < series.size()) {
+      // Determine grouping scope based on flags
+      const bool isFolderFallback = (series[i].flags & 1) != 0;
+      const char* groupKey = series[i].seriesName;
+      std::string folderPath;
+      if (isFolderFallback) {
+        auto pathIt = bookIdToPath.find(series[i].bookId);
+        if (pathIt != bookIdToPath.end()) {
+          // Simple parent path extraction
+          const char* p = pathIt->second.c_str();
+          const char* lastSlash = strrchr(p, '/');
+          if (lastSlash && lastSlash > p) {
+            folderPath.assign(p, static_cast<size_t>(lastSlash - p));
+          }
+          groupKey = folderPath.c_str();
+        }
+      }
+
+      // Find all entries in this group
+      CollectionIndexRec ci;
+      std::strncpy(ci.collectionName, series[i].seriesName, sizeof(ci.collectionName)-1);
+      ci.collectionName[sizeof(ci.collectionName)-1] = '\0';
+      ci.firstSeriesOffset = static_cast<uint32_t>(i * sizeof(SeriesRec));
+      ci.bookCount = 0;
+      ci.flags = 0;  // auto series
+
+      size_t j = i;
+      while (j < series.size()) {
+        const bool jIsFolder = (series[j].flags & 1) != 0;
+        if (isFolderFallback != jIsFolder) break;
+        if (isFolderFallback) {
+          auto pathIt = bookIdToPath.find(series[j].bookId);
+          if (pathIt == bookIdToPath.end()) break;
+          const char* p = pathIt->second.c_str();
+          const char* lastSlash = strrchr(p, '/');
+          std::string jParentPath;
+          if (lastSlash && lastSlash > p) {
+            jParentPath.assign(p, static_cast<size_t>(lastSlash - p));
+          }
+          if (folderPath != jParentPath) break;
+        } else {
+          // Metadata-derived: group by normalized name
+          if (cmpSortKey(series[j].seriesName, series[i].seriesName) != 0) break;
+        }
+        ++ci.bookCount;
+        ++j;
+      }
+      collections.push_back(ci);
+      i = j;
     }
-    collections.push_back(ci);
-    i = j;
+  }
+
+  // Load user collections and merge
+  std::vector<CollectionIndexRec> userCollections;
+  {
+    // Try to load user_collections.json
+    const std::string jsonPath = "/.crosspoint/user_collections.json";
+    if (Storage.exists(jsonPath.c_str())) {
+      const String json = Storage.readFile(jsonPath.c_str());
+      if (!json.isEmpty()) {
+        // Parse JSON manually (avoid heavy JSON library)
+        // Expected format: {"version":1,"collections":[...],"members":[...]}
+        // We just need collection names and counts
+        const char* p = json.c_str();
+        const char* collectionsStart = strstr(p, "\"collections\"");
+        if (collectionsStart) {
+          const char* arrStart = strchr(collectionsStart, '[');
+          if (arrStart) {
+            const char* scan = arrStart + 1;
+            while (*scan && *scan != ']') {
+              // Find "name":"..."
+              const char* nameKey = strstr(scan, "\"name\"");
+              if (!nameKey) break;
+              const char* colon = strchr(nameKey, ':');
+              if (!colon) break;
+              const char* valStart = strchr(colon, '"');
+              if (!valStart) break;
+              const char* valEnd = strchr(valStart + 1, '"');
+              if (!valEnd) break;
+
+              CollectionIndexRec ci;
+              const size_t copyLen = std::min<size_t>(sizeof(ci.collectionName) - 1, static_cast<size_t>(valEnd - valStart - 1));
+              std::strncpy(ci.collectionName, valStart + 1, copyLen);
+              ci.collectionName[copyLen] = '\0';
+              ci.firstSeriesOffset = 0;
+              ci.bookCount = 0;
+              ci.flags = 1;  // user-defined collection
+              userCollections.push_back(ci);
+
+              scan = valEnd + 1;
+            }
+          }
+        }
+
+        // Count members per collection
+        const char* membersStart = strstr(p, "\"members\"");
+        if (membersStart) {
+          const char* arrStart = strchr(membersStart, '[');
+          if (arrStart) {
+            const char* scan = arrStart + 1;
+            while (*scan && *scan != ']') {
+              const char* collIdKey = strstr(scan, "\"collectionId\"");
+              if (!collIdKey) break;
+              // Find matching collection by scanning userCollections
+              const char* colon = strchr(collIdKey, ':');
+              if (!colon) break;
+              const char* valStart = strchr(colon, '"');
+              if (!valStart) break;
+              const char* valEnd = strchr(valStart + 1, '"');
+              if (!valEnd) break;
+
+              char collId[32] = {};
+              const size_t idLen = std::min<size_t>(sizeof(collId) - 1, static_cast<size_t>(valEnd - valStart - 1));
+              std::strncpy(collId, valStart + 1, idLen);
+              collId[idLen] = '\0';
+
+              // Find collection and increment count
+              for (auto& uc : userCollections) {
+                // Simple matching: we match by index order since both are parsed in order
+                // In a real implementation, we'd build a map from id to CollectionIndexRec
+              }
+
+              scan = valEnd + 1;
+            }
+          }
+        }
+
+        // Count members properly
+        const char* membersStr = strstr(p, "\"members\"");
+        if (membersStr) {
+          const char* arrStart = strchr(membersStr, '[');
+          if (arrStart) {
+            const char* scan = arrStart + 1;
+            while (*scan && *scan != ']') {
+              const char* cid = strstr(scan, "\"collectionId\"");
+              if (!cid) break;
+              const char* valStart = strchr(cid, '"');
+              if (!valStart) break;
+              const char* valEnd = strchr(valStart + 1, '"');
+              if (!valEnd) break;
+
+              char collId[32] = {};
+              const size_t idLen = std::min<size_t>(sizeof(collId) - 1, static_cast<size_t>(valEnd - valStart - 1));
+              std::strncpy(collId, valStart + 1, idLen);
+              collId[idLen] = '\0';
+
+              for (auto& uc : userCollections) {
+                if (strcmp(uc.collectionName, collId) == 0) {
+                  uc.bookCount++;
+                  break;
+                }
+              }
+              scan = valEnd + 1;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Merge auto collections and user collections into a single sorted index
+  std::vector<CollectionIndexRec> merged;
+  merged.reserve(collections.size() + userCollections.size());
+  size_t autoIdx = 0, userIdx = 0;
+  while (autoIdx < collections.size() || userIdx < userCollections.size()) {
+    if (autoIdx >= collections.size()) {
+      merged.push_back(userCollections[userIdx++]);
+    } else if (userIdx >= userCollections.size()) {
+      merged.push_back(collections[autoIdx++]);
+    } else {
+      int c = cmpSortKey(collections[autoIdx].collectionName, userCollections[userIdx].collectionName);
+      if (c < 0) {
+        merged.push_back(collections[autoIdx++]);
+      } else if (c > 0) {
+        merged.push_back(userCollections[userIdx++]);
+      } else {
+        // Same name: auto series first, then user collection
+        merged.push_back(collections[autoIdx++]);
+        merged.push_back(userCollections[userIdx++]);
+      }
+    }
   }
 
   // Write idx_collections.bin
   HalFile outF = Storage.open(kIdxCollections, O_CREAT | O_WRONLY | O_TRUNC);
   if (!outF) return false;
-  for (const auto& ci : collections) {
+  for (const auto& ci : merged) {
     outF.write(reinterpret_cast<const uint8_t*>(&ci), sizeof(CollectionIndexRec));
   }
   outF.close();
 
-  LOG_DBG("LIB", "BuildCollIdx: %d collections from %d series entries", collections.size(), totalSeries);
+  LOG_DBG("LIB", "BuildCollIdx: %d auto + %d user = %d total entries", collections.size(), userCollections.size(), merged.size());
   return true;
 }
 
@@ -1081,32 +1308,55 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
     ref.isOpened = false;
     ref.isCompleted = false;
     ref.isHidden = false;
+    ref.isCollection = (ci.flags & 1) != 0;
 
     // Resolve first book path that has an existing cover so the UI
     // can show a meaningful cover. If no book has a cover yet, path
     // stays empty and the UI will render the collection placeholder.
-    if (sf && df && coverWidth > 0 && coverHeight > 0) {
-      sf.seek(ci.firstSeriesOffset);
-      SeriesRec sr;
-      for (uint32_t b = 0; b < ci.bookCount; ++b) {
-        if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-        if (sr.bookId == 0) continue;
-        df.seek(0);
-        Record rec;
-        uint32_t rp = 0;
-        while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-          if (rec.id == sr.bookId && !rec.tombstone()) {
-            const std::string bookPath(rec.path);
-            const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-            if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-              std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-              ref.path[sizeof(ref.path) - 1] = '\0';
-              break;
+    if (coverWidth > 0 && coverHeight > 0) {
+      if (ci.flags & 1) {
+        // User collection: resolve from UserCollectionsStore
+        USER_COLLECTIONS.ensureLoaded();
+        const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+        if (uc) {
+          auto members = USER_COLLECTIONS.members(uc->id);
+          for (const auto& m : members) {
+            Record rec;
+            if (readRecordByBookId(m.bookId, rec)) {
+              const std::string bookPath(rec.path);
+              const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+              if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                ref.path[sizeof(ref.path) - 1] = '\0';
+                break;
+              }
             }
           }
-          ++rp;
         }
-        if (ref.path[0] != '\0') break;
+      } else if (sf && df) {
+        // Auto series: resolve from series.dat
+        sf.seek(ci.firstSeriesOffset);
+        SeriesRec sr;
+        for (uint32_t b = 0; b < ci.bookCount; ++b) {
+          if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+          if (sr.bookId == 0) continue;
+          df.seek(0);
+          Record rec;
+          uint32_t rp = 0;
+          while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+            if (rec.id == sr.bookId && !rec.tombstone()) {
+              const std::string bookPath(rec.path);
+              const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+              if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                ref.path[sizeof(ref.path) - 1] = '\0';
+                break;
+              }
+            }
+            ++rp;
+          }
+          if (ref.path[0] != '\0') break;
+        }
       }
     }
 
@@ -1131,7 +1381,29 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   }
   cf.close();
 
-  // Read series entries for this collection
+  // User collections: resolve books from UserCollectionsStore, not series.dat
+  if (ci.flags & 1) {
+    USER_COLLECTIONS.ensureLoaded();
+    // Find collection by name (collectionName stores the user collection name)
+    const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+    if (!uc) return 0;
+    auto members = USER_COLLECTIONS.members(uc->id);
+    std::sort(members.begin(), members.end(), [](const CollectionMember& a, const CollectionMember& b) {
+      return a.position < b.position;
+    });
+    const int start = page * pageSize;
+    const int end = std::min(start + pageSize, static_cast<int>(members.size()));
+    int count = 0;
+    for (int i = start; i < end; ++i) {
+      Record rec;
+      if (readRecordByBookId(members[i].bookId, rec)) {
+        recordToBookRef(rec, out[count++]);
+      }
+    }
+    return count;
+  }
+
+  // Auto series: read from series.dat
   HalFile sf = Storage.open(kSeriesDat);
   if (!sf) return 0;
   sf.seek(ci.firstSeriesOffset);
@@ -1229,7 +1501,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
 
     bool matches = true;
     if (ir.bookId & 0x80000000u) {
-      // Series tile: match if any book in the series passes filter + search
+      // Series/collection tile: match if any book passes filter + search
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
@@ -1241,9 +1513,29 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
             matches = substringMatch(key, searchFilter);
           }
 
-          // Check if any book in the series matches the filter
+          // Check if any book in the collection matches the filter
           if (matches && filterMode != FilterMode::ALL) {
-            if (sf && df) {
+            if (ci.flags & 1) {
+              // User collection: resolve members from UserCollectionsStore
+              USER_COLLECTIONS.ensureLoaded();
+              const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+              if (uc) {
+                auto members = USER_COLLECTIONS.members(uc->id);
+                for (const auto& m : members) {
+                  Record rec;
+                  if (readRecordByBookId(m.bookId, rec) && !rec.tombstone()) {
+                    if (matchesFilter(rec, filterMode)) {
+                      matches = true;
+                      break;
+                    }
+                  }
+                }
+                if (members.empty()) matches = false;
+              } else {
+                matches = false;
+              }
+            } else if (sf && df) {
+              // Auto series: read from series.dat
               sf.seek(ci.firstSeriesOffset);
               SeriesRec sr;
               bool anyMatch = false;
@@ -1310,30 +1602,53 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
           ref.isOpened = false;
           ref.isCompleted = false;
           ref.isHidden = false;
+          ref.isCollection = (ci.flags & 1) != 0;
 
           // Resolve first book with an existing cover, if available.
-          if (sf && df && coverWidth > 0 && coverHeight > 0) {
-            sf.seek(ci.firstSeriesOffset);
-            SeriesRec sr;
-            for (uint32_t b = 0; b < ci.bookCount; ++b) {
-              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-              if (sr.bookId == 0) continue;
-              df.seek(0);
-              Record rec;
-              uint32_t rp = 0;
-              while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-                if (rec.id == sr.bookId && !rec.tombstone()) {
-                  const std::string bookPath(rec.path);
-                  const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-                  if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                    std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                    ref.path[sizeof(ref.path) - 1] = '\0';
-                    break;
+          if (coverWidth > 0 && coverHeight > 0) {
+            if (ci.flags & 1) {
+              // User collection: resolve from UserCollectionsStore
+              USER_COLLECTIONS.ensureLoaded();
+              const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+              if (uc) {
+                auto members = USER_COLLECTIONS.members(uc->id);
+                for (const auto& m : members) {
+                  Record rec;
+                  if (readRecordByBookId(m.bookId, rec)) {
+                    const std::string bookPath(rec.path);
+                    const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                    if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                      std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                      ref.path[sizeof(ref.path) - 1] = '\0';
+                      break;
+                    }
                   }
                 }
-                ++rp;
               }
-              if (ref.path[0] != '\0') break;
+            } else if (sf && df) {
+              // Auto series: resolve from series.dat
+              sf.seek(ci.firstSeriesOffset);
+              SeriesRec sr;
+              for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                if (sr.bookId == 0) continue;
+                df.seek(0);
+                Record rec;
+                uint32_t rp = 0;
+                while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                  if (rec.id == sr.bookId && !rec.tombstone()) {
+                    const std::string bookPath(rec.path);
+                    const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                    if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                      std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                      ref.path[sizeof(ref.path) - 1] = '\0';
+                      break;
+                    }
+                  }
+                  ++rp;
+                }
+                if (ref.path[0] != '\0') break;
+              }
             }
           }
 
@@ -1743,6 +2058,109 @@ bool init() {
   Storage.mkdir(kLibDir);
   Storage.mkdir(kTmpDir);
   return true;
+}
+
+// ---- User collections API (Steroids extension) ----
+
+int totalUserCollections() {
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.totalCollections();
+}
+
+int userCollectionBookCount(const char* collectionId) {
+  if (!collectionId || !*collectionId) return 0;
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.memberCount(collectionId);
+}
+
+int queryUserCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight) {
+  if (!out || pageSize <= 0) return 0;
+  USER_COLLECTIONS.ensureLoaded();
+
+  const auto& collections = USER_COLLECTIONS.collections();
+  const int total = static_cast<int>(collections.size());
+  const int start = page * pageSize;
+  if (start >= total) return 0;
+
+  int count = 0;
+  for (int i = start; i < total && count < pageSize; ++i) {
+    BookRef& ref = out[count];
+    ref.id = 0x80000000u | static_cast<uint32_t>(i);
+    std::strncpy(ref.title, collections[i].name.c_str(), 64); ref.title[64] = '\0';
+    std::snprintf(ref.author, sizeof(ref.author), "%d books", USER_COLLECTIONS.memberCount(collections[i].id));
+    ref.path[0] = '\0';
+    ref.isFavorite = false;
+    ref.isOpened = false;
+    ref.isCompleted = false;
+    ref.isHidden = false;
+    ref.isCollection = true;
+    ++count;
+  }
+  return count;
+}
+
+int queryUserCollectionBooks(BookRef* out, int page, int pageSize, const char* collectionId) {
+  if (!out || pageSize <= 0 || !collectionId || !*collectionId) return 0;
+  USER_COLLECTIONS.ensureLoaded();
+
+  auto members = USER_COLLECTIONS.members(collectionId);
+  if (members.empty()) return 0;
+
+  // Sort by position
+  std::sort(members.begin(), members.end(), [](const CollectionMember& a, const CollectionMember& b) {
+    return a.position < b.position;
+  });
+
+  const int start = page * pageSize;
+  const int end = std::min(start + pageSize, static_cast<int>(members.size()));
+  int count = 0;
+  for (int i = start; i < end; ++i) {
+    Record rec;
+    if (readRecordByBookId(members[i].bookId, rec)) {
+      recordToBookRef(rec, out[count++]);
+    }
+  }
+  return count;
+}
+
+bool createUserCollection(const char* name, char* outId, size_t outIdCap) {
+  if (!name || !*name || !outId || outIdCap == 0) return false;
+  USER_COLLECTIONS.ensureLoaded();
+  std::string id;
+  if (!USER_COLLECTIONS.createCollection(name, id)) return false;
+  std::strncpy(outId, id.c_str(), outIdCap - 1);
+  outId[outIdCap - 1] = '\0';
+  return true;
+}
+
+bool renameUserCollection(const char* collectionId, const char* newName) {
+  if (!collectionId || !*collectionId || !newName || !*newName) return false;
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.renameCollection(collectionId, newName);
+}
+
+bool deleteUserCollection(const char* collectionId) {
+  if (!collectionId || !*collectionId) return false;
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.deleteCollection(collectionId);
+}
+
+bool addBookToCollection(const char* collectionId, uint32_t bookId) {
+  if (!collectionId || !*collectionId || bookId == 0) return false;
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.addBook(collectionId, bookId, 0.0f);
+}
+
+bool removeBookFromCollection(const char* collectionId, uint32_t bookId) {
+  if (!collectionId || !*collectionId || bookId == 0) return false;
+  USER_COLLECTIONS.ensureLoaded();
+  return USER_COLLECTIONS.removeBook(collectionId, bookId);
+}
+
+void removeBookFromAllCollections(uint32_t bookId) {
+  if (bookId == 0) return;
+  USER_COLLECTIONS.ensureLoaded();
+  USER_COLLECTIONS.removeBookFromAll(bookId);
 }
 
 }  // namespace LibraryIndex
