@@ -144,7 +144,6 @@ void BatchCoverGenerationActivity::loop() {
       return;
     }
 
-    constexpr int kBatchSize = 8;
     const int total = totalCount_ > 0 ? totalCount_ : LibraryIndex::totalBooks();
     if (total <= 0) {
       scanning_ = false;
@@ -155,9 +154,9 @@ void BatchCoverGenerationActivity::loop() {
 
     constexpr int kPageSize = 16;
     LibraryIndex::BookRef page[kPageSize];
-    const int pagesToScan = (kBatchSize + kPageSize - 1) / kPageSize;
+    constexpr int kPagesPerLoop = 8;
 
-    for (int p = 0; p < pagesToScan && scanNextPage_ * kPageSize < total; ++p, ++scanNextPage_) {
+    for (int p = 0; p < kPagesPerLoop && scanNextPage_ * kPageSize < total; ++p, ++scanNextPage_) {
       const int count = LibraryIndex::queryPage(page, scanNextPage_, kPageSize,
                                                  LibraryIndex::SortMode::TITLE_ASC);
       for (int i = 0; i < count; ++i) {
