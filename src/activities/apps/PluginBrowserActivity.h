@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../Activity.h"
+#include "activities/util/ConfirmationActivity.h"
 
 /**
  * PluginBrowserActivity
@@ -27,6 +28,18 @@ class PluginBrowserActivity final : public Activity {
 
   void scanPlugins();
   void parsePluginHeaders(PluginEntry& entry);
+  bool togglePluginReboot(PluginEntry& plugin);
+  bool deletePlugin(const PluginEntry& plugin);
+
+  // Long-press / context menu state
+  bool showingMenu_ = false;
+  int menuIndex_ = 0;
+  static constexpr unsigned long kPluginLongPressMs = 800;
+
+  // Long-press tracking for Confirm
+  bool confirmHeld_ = false;
+  bool longPressFired_ = false;
+  unsigned long confirmPressStartMs_ = 0;
 
  public:
   explicit PluginBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

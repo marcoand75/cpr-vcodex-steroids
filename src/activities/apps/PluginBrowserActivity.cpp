@@ -142,6 +142,85 @@ void PluginBrowserActivity::parsePluginHeaders(PluginEntry& entry) {
   }
 }
 
+bool PluginBrowserActivity::togglePluginReboot(PluginEntry& plugin) {
+  const std::string newValue = plugin.fastReboot ? "no" : "yes";
+  const std::string marker = "-- RESTART:";
+  const std::string replacement = marker + " " + newValue;
+
+  HalFile file = Storage.open(plugin.path.c_str(), O_RDWR);
+  if (!file) {
+    LOG_ERR(TAG, "Failed to open plugin for reboot toggle: %s", plugin.path.c_str());
+    return false;
+  }
+
+  const size_t fileSize = file.fileSize();
+  if (fileSize == 0) {
+    file.close();
+    return false;
+  }
+
+  std::vector<char> buffer(fileSize + 1);
+  const size_t bytesRead = file.read(reinterpret_cast<uint8_t*>(buffer.data()), fileSize);
+  file.close();
+  if (bytesRead != fileSize) {
+    LOG_ERR(TAG, "Short read while toggling reboot for %s", plugin.path.c_str());
+    return false;
+  }
+  buffer[fileSize] = '\0';
+
+  const char* start = strstr(buffer.data(), marker.c_str());
+  if (!start) {
+    // No RESTART header yet: append after the last leading comment block.
+    const char* insert = buffer.data();
+    const char* scan = buffer.data();
+    while (*scan) {
+      if (scan[0] == '\n' || scan[0] == '\r') {
+        const char* next = scan + 1;
+        if (*next == '-' && *(next + 1) == '-') {
+          insert = next;
+        }
+        break;
+      }
+      ++scan;
+    }
+    std::string updated(buffer.data(), insert - buffer.data());
+    updated += "-- RESTART: " + newValue + "\n";
+    updated += insert;
+    file = Storage.open(plugin.path.c_str(), O_WRONLY | O_TRUNC);
+    if (!file) return false;
+    const bool ok = file.write(reinterpret_cast<const uint8_t*>(updated.c_str()), updated.size()) == updated.size();
+    file.close();
+    if (ok) plugin.fastReboot = !plugin.fastReboot;
+    return ok;
+  }
+
+  const char* lineEnd = start;
+  while (*lineEnd && *lineEnd != '\n' && *lineEnd != '\r') ++lineEnd;
+
+  std::string updated(buffer.data(), start - buffer.data());
+  updated += replacement;
+  updated += lineEnd;
+
+  file = Storage.open(plugin.path.c_str(), O_WRONLY | O_TRUNC);
+  if (!file) {
+    LOG_ERR(TAG, "Failed to reopen plugin for reboot toggle: %s", plugin.path.c_str());
+    return false;
+  }
+  const bool ok = file.write(reinterpret_cast<const uint8_t*>(updated.c_str()), updated.size()) == updated.size();
+  file.close();
+  if (ok) plugin.fastReboot = !plugin.fastReboot;
+  return ok;
+}
+
+bool PluginBrowserActivity::deletePlugin(const PluginEntry& plugin) {
+  if (Storage.remove(plugin.path.c_str())) {
+    LOG_INF(TAG, "Deleted plugin: %s", plugin.path.c_str());
+    return true;
+  }
+  LOG_ERR(TAG, "Failed to delete plugin: %s", plugin.path.c_str());
+  return false;
+}
+
 void PluginBrowserActivity::onEnter() {
   Activity::onEnter();
   scanPlugins();
@@ -161,30 +240,98 @@ void PluginBrowserActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    onGoHome();
+  if (showingMenu_) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      showingMenu_ = false;
+      requestUpdate();
+      return;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
+      if (menuIndex_ > 0) menuIndex_--;
+      requestUpdate();
+      return;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+      if (menuIndex_ < 1) menuIndex_++;
+      requestUpdate();
+      return;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      if (menuIndex_ == 0) {
+        PluginEntry& plugin = pluginList_[selectedIndex_];
+        if (togglePluginReboot(plugin)) {
+          LOG_INF(TAG, "Plugin reboot toggled: %s -> %s", plugin.name.c_str(),
+                  plugin.fastReboot ? "RST" : "LIVE");
+        }
+      } else if (menuIndex_ == 1) {
+        const PluginEntry& plugin = pluginList_[selectedIndex_];
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                   tr(STR_PLUGIN_OPTION_DELETE), plugin.name),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled && selectedIndex_ < (int)pluginList_.size()) {
+                const PluginEntry& target = pluginList_[selectedIndex_];
+                if (deletePlugin(target)) {
+                  scanPlugins();
+                  if (selectedIndex_ >= (int)pluginList_.size()) {
+                    selectedIndex_ = std::max(0, (int)pluginList_.size() - 1);
+                  }
+                }
+              }
+              requestUpdate();
+            });
+      }
+      showingMenu_ = false;
+      requestUpdate();
+      return;
+    }
+
+    delay(10);
     return;
   }
 
+  // Track Confirm press for long-press detection.
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    // Launch the selected plugin
-    if (selectedIndex_ < (int)pluginList_.size()) {
-       const PluginEntry& plugin = pluginList_[selectedIndex_];
-       const std::string& pluginName = plugin.filename;
-       const bool fromApps = false;  // launched from PluginBrowser (not Apps hub)
-       const bool returnToPluginBrowser = true;  // return to PluginBrowser after plugin exits
+    confirmHeld_ = true;
+    longPressFired_ = false;
+    confirmPressStartMs_ = millis();
+  }
 
-       if (plugin.fastReboot) {
-         // Default: silent (fast) reboot into the plugin, then back.
-         LOG_INF(TAG, "Launching plugin with fast reboot: %s", pluginName.c_str());
-         silentRestartToPlugin(pluginName.c_str(), fromApps, returnToPluginBrowser);
-       } else {
-         // "-- RESTART: no" → run in-process without rebooting. The browser is
-         // kept on the activity stack, so exiting the plugin returns here.
-         LOG_INF(TAG, "Launching plugin in-process (no reboot): %s", pluginName.c_str());
-         activityManager.goToPluginInProcess(pluginName.c_str(), returnToPluginBrowser);
-       }
+  if (confirmHeld_ && !longPressFired_ && millis() - confirmPressStartMs_ >= kPluginLongPressMs) {
+    longPressFired_ = true;
+    showingMenu_ = true;
+    menuIndex_ = 0;
+    requestUpdate();
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (confirmHeld_ && !longPressFired_) {
+      // Short press: launch the selected plugin
+      if (selectedIndex_ < (int)pluginList_.size()) {
+         const PluginEntry& plugin = pluginList_[selectedIndex_];
+         const std::string& pluginName = plugin.filename;
+         const bool fromApps = false;
+         const bool returnToPluginBrowser = true;
+
+         if (plugin.fastReboot) {
+           LOG_INF(TAG, "Launching plugin with fast reboot: %s", pluginName.c_str());
+           silentRestartToPlugin(pluginName.c_str(), fromApps, returnToPluginBrowser);
+         } else {
+           LOG_INF(TAG, "Launching plugin in-process (no reboot): %s", pluginName.c_str());
+           activityManager.goToPluginInProcess(pluginName.c_str(), returnToPluginBrowser);
+         }
+      }
     }
+    confirmHeld_ = false;
+    longPressFired_ = false;
+    confirmPressStartMs_ = 0;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    onGoHome();
     return;
   }
 
@@ -290,16 +437,20 @@ void PluginBrowserActivity::render(RenderLock&&) {
       const std::string nameText = renderer.truncatedText(UI_12_FONT_ID, plugin.name.c_str(), nameTW);
       renderer.drawText(UI_12_FONT_ID, textX, py + padTop, nameText.c_str(), tb, EpdFontFamily::BOLD);
 
-      // Reboot indicator (top-right of the panel): a filled "RST" badge for
-      // plugins that launch with a silent reboot, plain "LIVE" for in-process.
+      // Reboot indicator badge: shared sizing/centering for both states.
       constexpr int badgeW = 30;
-      const int badgeX = px + usablePanelW - 10 - badgeW;
+      constexpr int badgeRightMargin = 22;  // was 10; move left by at least 12 px
+      const int badgeX = px + usablePanelW - badgeRightMargin - badgeW;
+      const int badgeH = std::max(14, lh10 + 4);
+      const int badgeY = py + padTop - 1;
+      const int textY = badgeY + (badgeH - lh10) / 2;
+
       if (plugin.fastReboot) {
-        renderer.fillRect(badgeX, py + padTop - 1, badgeW, 14, sel ? 0 : 1);
-        renderer.drawText(UI_10_FONT_ID, badgeX + 2, py + padTop, "RST", sel ? true : false,
+        renderer.fillRect(badgeX, badgeY, badgeW, badgeH, sel ? 0 : 1);
+        renderer.drawText(UI_10_FONT_ID, badgeX + 2, textY, "RST", sel ? true : false,
                           EpdFontFamily::BOLD);
       } else {
-        renderer.drawText(UI_10_FONT_ID, badgeX + 2, py + padTop, "LIVE", tb, EpdFontFamily::BOLD);
+        renderer.drawText(UI_10_FONT_ID, badgeX + 2, textY, "LIVE", tb, EpdFontFamily::BOLD);
       }
 
       // Description — the wrapped lines drawn inside this panel's own height
@@ -308,6 +459,39 @@ void PluginBrowserActivity::render(RenderLock&&) {
         renderer.drawText(UI_10_FONT_ID, textX, descY, line.c_str(), tb);
         descY += lh10;
       }
+    }
+
+    if (showingMenu_) {
+      constexpr int menuItemCount = 2;
+      const int menuW = 240;
+      const int menuRowH = lh12 + 10;
+      const int menuH = menuItemCount * menuRowH + 24;
+      const int menuX = (pw - menuW) / 2;
+      const int menuY = (ph - menuH) / 2;
+
+      renderer.fillRect(menuX, menuY, menuW, menuH, 0);
+      PanelDrawHelper::drawCyberpunkPanel(renderer, menuX, menuY, menuW, menuH, true);
+
+      const char* items[menuItemCount];
+      if (pluginList_[selectedIndex_].fastReboot) {
+        items[0] = tr(STR_PLUGIN_OPTION_TOGGLE_REBOOT);
+      } else {
+        items[0] = tr(STR_PLUGIN_OPTION_TOGGLE_REBOOT);
+      }
+      items[1] = tr(STR_PLUGIN_OPTION_DELETE);
+
+      for (int i = 0; i < menuItemCount; ++i) {
+        const int rowY = menuY + 12 + i * menuRowH;
+        const bool selected = (i == menuIndex_);
+        if (selected) {
+          renderer.fillRect(menuX + 4, rowY, menuW - 8, menuRowH, true);
+        }
+        const int textY = rowY + (menuRowH - lh12) / 2;
+        renderer.drawText(UI_12_FONT_ID, menuX + 12, textY, items[i], !selected,
+                          selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+      }
+
+      ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_CANCEL), tr(STR_CONFIRM), "", "");
     }
   }
 
