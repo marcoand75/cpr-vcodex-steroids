@@ -17,8 +17,32 @@
 #include "fontIds.h"
 #include "I18n.h"
 #include "../util/ListRenderHelper.h"
+#include "GfxRenderer.h"
 
 static const char* TAG = "BATCH_COV";
+
+static bool isCoverReady(const std::string& path, int coverW, int coverH) {
+  const std::string tp = LibraryCache::thumbPathFor(path, coverW, coverH);
+  if (tp.empty() || !Storage.exists(tp.c_str())) return false;
+  FsFile file;
+  if (!Storage.openFileForRead("LIB", tp, file)) {
+    Storage.remove(tp.c_str());
+    return false;
+  }
+  if (file.size() == 0) {
+    file.close();
+    Storage.remove(tp.c_str());
+    return false;
+  }
+  Bitmap bmp(file);
+  const auto err = bmp.parseHeaders();
+  file.close();
+  if (err != BmpReaderError::Ok || bmp.getWidth() <= 0 || bmp.getHeight() <= 0) {
+    Storage.remove(tp.c_str());
+    return false;
+  }
+  return true;
+}
 
 void BatchCoverGenerationActivity::scanMissingCovers() {
   missingBooks_.clear();
@@ -29,17 +53,17 @@ void BatchCoverGenerationActivity::scanMissingCovers() {
   finished_ = false;
   scanning_ = false;
 
-  // Use the current library layout to determine cover size.
+  // Use the same cover sizes as LibraryActivity so we match existing thumbs.
   const uint8_t layout = SETTINGS.libraryLayout;
   if (layout == CrossPointSettings::LIBRARY_LAYOUT_4X4) {
     coverWidth_ = 100;
     coverHeight_ = 150;
   } else if (layout == CrossPointSettings::LIBRARY_LAYOUT_3X3) {
-    coverWidth_ = 120;
-    coverHeight_ = 180;
+    coverWidth_ = 130;
+    coverHeight_ = 190;
   } else {
-    coverWidth_ = 140;
-    coverHeight_ = 210;
+    coverWidth_ = 202;
+    coverHeight_ = 306;
   }
 
   const int total = LibraryIndex::totalBooks();
@@ -115,6 +139,11 @@ void BatchCoverGenerationActivity::onExit() {
 
 void BatchCoverGenerationActivity::loop() {
   if (scanning_) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      onGoHome();
+      return;
+    }
+
     constexpr int kBatchSize = 8;
     const int total = totalCount_ > 0 ? totalCount_ : LibraryIndex::totalBooks();
     if (total <= 0) {
@@ -133,9 +162,7 @@ void BatchCoverGenerationActivity::loop() {
                                                  LibraryIndex::SortMode::TITLE_ASC);
       for (int i = 0; i < count; ++i) {
         if (page[i].path[0] == '\0') continue;
-        const std::string thumbPath = LibraryIndex::thumbPathFor(std::string(page[i].path), coverWidth_, coverHeight_);
-        if (thumbPath.empty()) continue;
-        if (Storage.exists(thumbPath.c_str())) continue;
+        if (isCoverReady(page[i].path, coverWidth_, coverHeight_)) continue;
 
         missingBooks_.push_back({page[i].path, page[i].title});
       }
@@ -160,7 +187,8 @@ void BatchCoverGenerationActivity::loop() {
   if (!running_) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
         mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      onGoHome();
+      activityManager.popActivity();
+      return;
     }
     return;
   }
@@ -199,7 +227,11 @@ void BatchCoverGenerationActivity::render(RenderLock&&) {
                             tr(STR_BATCH_GENERATE_COVERS), true, EpdFontFamily::BOLD);
 
   if (scanning_) {
-    renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, "Scanning library...", true);
+    char msg[80];
+    const int total = totalCount_ > 0 ? totalCount_ : LibraryIndex::totalBooks();
+    const int found = static_cast<int>(missingBooks_.size());
+    snprintf(msg, sizeof(msg), "Scanning... %d/%d (%d missing)", scanScannedCount_, total, found);
+    renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + 60, msg, true);
   } else if (finished_) {
     char msg[64];
     snprintf(msg, sizeof(msg), tr(STR_BATCH_GENERATE_COVERS_DONE), doneCount_, totalCount_);
