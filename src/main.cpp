@@ -262,9 +262,9 @@ bool deepSleepInProgress = false;
 // safe and recoverable.
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
-constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 2;
-constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;
-constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;
+constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 2;
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 3;
 
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
