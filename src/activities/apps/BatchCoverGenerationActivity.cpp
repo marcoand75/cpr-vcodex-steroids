@@ -93,6 +93,9 @@ void BatchCoverGenerationActivity::unlockPowerSaving() {
 }
 
 bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path) {
+  const unsigned long startMs = millis();
+  constexpr unsigned long kCoverTimeoutMs = 15000;
+
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   if (thumbPath.empty()) return false;
 
@@ -119,13 +122,30 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
       LOG_DBG(TAG, "Cover SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
       return false;
     }
-    return epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT after load: %s", path.c_str());
+      return false;
+    }
+    const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT during generation: %s", path.c_str());
+      return false;
+    }
+    return ok;
   }
 
   if (FsHelpers::hasXtcExtension(path)) {
     if (ESP.getFreeHeap() < 20000) return false;
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT before XTC load: %s", path.c_str());
+      return false;
+    }
     Xtc xtc(path, "/.crosspoint");
     if (!xtc.load()) return false;
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT after XTC load: %s", path.c_str());
+      return false;
+    }
     return xtc.generateThumbBmp(coverWidth_, coverHeight_);
   }
 
