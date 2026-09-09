@@ -248,7 +248,6 @@ const std::vector<SettingInfo>& getSettingsList() {
                           "librarySort", StrId::STR_APPS),
         SettingInfo::String(StrId::STR_LIBRARY_ROOT_DIR, SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir),
                             "libraryRootDir", StrId::STR_APPS),
-        SettingInfo::Action(StrId::STR_BATCH_GENERATE_COVERS, SettingAction::BatchGenerateCovers),
         SettingInfo::String(StrId::STR_SCREENSAVER_DIRECTORY, SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory),
                             "screenSaverDirectory", StrId::STR_APPS),
         SettingInfo::Enum(StrId::STR_SCREENSAVER_ORDER, &CrossPointSettings::screenSaverOrder,

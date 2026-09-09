@@ -315,6 +315,7 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Action(StrId::STR_UPDATE_LIBRARY, SettingAction::UpdateLibrary),
       SettingInfo::Action(StrId::STR_REBUILD_LIBRARY, SettingAction::RebuildLibrary),
       SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers),
+      SettingInfo::Action(StrId::STR_BATCH_GENERATE_COVERS, SettingAction::BatchGenerateCovers),
       SettingInfo::Section(StrId::STR_SCREENSAVER),
       SettingInfo::Action(StrId::STR_SCREENSAVER_DIRECTORY, SettingAction::ScreenSaverDir),
       SettingInfo::Enum(StrId::STR_SCREENSAVER_INTERVAL, &CrossPointSettings::screenSaverInterval,
