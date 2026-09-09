@@ -240,10 +240,10 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
                                    sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
                                    sizeof(spec.imageRendering) + sizeof(spec.bionicReadingEnabled) +
+                                   sizeof(spec.bionicReadingMode) +
                                    sizeof(spec.guideReadingEnabled) + sizeof(uint8_t) + sizeof(uint32_t) +
-                                   sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) +
-                                   sizeof(uint32_t),
-                "Header size mismatch");
+                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
+               "Header size mismatch");
   return serialization::tryWritePod(file, SECTION_CACHE_MAGIC) &&
          serialization::tryWritePod(file, SECTION_FILE_VERSION) && serialization::tryWritePod(file, spec.fontId) &&
          serialization::tryWritePod(file, spec.lineCompression) &&
@@ -255,8 +255,9 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
          serialization::tryWritePod(file, spec.hyphenationEnabled) &&
          serialization::tryWritePod(file, spec.embeddedStyle) &&
          serialization::tryWritePod(file, spec.imageRendering) &&
-         serialization::tryWritePod(file, spec.bionicReadingEnabled) &&
-         serialization::tryWritePod(file, spec.guideReadingEnabled) &&
+          serialization::tryWritePod(file, spec.bionicReadingEnabled) &&
+          serialization::tryWritePod(file, spec.bionicReadingMode) &&
+          serialization::tryWritePod(file, spec.guideReadingEnabled) &&
          serialization::tryWritePod(file, spec.wordSpacing) &&
          serialization::tryWritePod(file, static_cast<uint8_t>(spec.renderMode)) &&
          serialization::tryWritePod(file,
@@ -319,6 +320,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileEmbeddedStyle;
     uint8_t fileImageRendering;
     bool fileBionicReadingEnabled;
+    uint8_t fileBionicReadingMode;
     bool fileGuideReadingEnabled;
     uint8_t fileWordSpacing;
     uint8_t fileRenderMode;
@@ -330,6 +332,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         !serialization::tryReadPod(file, fileHyphenationEnabled) ||
         !serialization::tryReadPod(file, fileEmbeddedStyle) || !serialization::tryReadPod(file, fileImageRendering) ||
         !serialization::tryReadPod(file, fileBionicReadingEnabled) ||
+        !serialization::tryReadPod(file, fileBionicReadingMode) ||
         !serialization::tryReadPod(file, fileGuideReadingEnabled) ||
         !serialization::tryReadPod(file, fileWordSpacing) || !serialization::tryReadPod(file, fileRenderMode)) {
       file.close();
@@ -344,7 +347,8 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         spec.viewportWidth != fileViewportWidth || spec.viewportHeight != fileViewportHeight ||
         spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
         spec.imageRendering != fileImageRendering || spec.bionicReadingEnabled != fileBionicReadingEnabled ||
-        spec.guideReadingEnabled != fileGuideReadingEnabled || spec.wordSpacing != fileWordSpacing ||
+        spec.bionicReadingMode != fileBionicReadingMode || spec.guideReadingEnabled != fileGuideReadingEnabled ||
+        spec.wordSpacing != fileWordSpacing ||
         static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
@@ -631,7 +635,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   ChapterHtmlSlimParser visitor(
       *epub, parsePath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
       paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, effectiveBionicReadingEnabled,
-      effectiveGuideReadingEnabled, wordSpacing,
+      spec.bionicReadingMode, effectiveGuideReadingEnabled, wordSpacing,
       [this, &lut, &lutCapacity, &lutCount, &pageCompletionFailed, layoutAbortedForLowMemory](
           std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex,
           const uint32_t visibleTextOffset) {
@@ -995,7 +999,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
   BuildContext* ctxPtr = ctx.get();
   ctx->parser = makeUniqueNoThrow<ChapterHtmlSlimParser>(
       *epub, ctxPtr->parsePath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
-      paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, bionicReadingEnabled, guideReadingEnabled,
+      paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, bionicReadingEnabled,
+      spec.bionicReadingMode, guideReadingEnabled,
       wordSpacing,
       [this, ctxPtr](std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex,
                      const uint32_t visibleTextOffset) {
@@ -1883,6 +1888,7 @@ ReaderRenderSpec legacySpecFrom(int fontId, float lineCompression, bool extraPar
   spec.embeddedStyle = embeddedStyle;
   spec.imageRendering = imageRendering;
   spec.bionicReadingEnabled = bionicReadingEnabled;
+  spec.bionicReadingMode = bionicReadingEnabled ? (focusReadingEnabled ? 1 : 2) : 0;
   spec.guideReadingEnabled = (guideDotMinGap > 0);
   spec.wordSpacing = guideDotMinGap;
   spec.renderMode = isValidEpubRenderMode(renderMode) ? static_cast<EpubRenderMode>(renderMode)

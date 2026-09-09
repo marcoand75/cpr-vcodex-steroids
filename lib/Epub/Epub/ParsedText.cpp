@@ -279,7 +279,7 @@ uint32_t lastCodepointBeforeByteOffset(const std::string& word, const size_t byt
 }
 
 BionicTokenMetadata computeBionicMetadata(const std::string_view segment, const EpdFontFamily::Style baseStyle,
-                                          const bool bionicReadingEnabled) {
+                                          const bool bionicReadingEnabled, const uint8_t bionicReadingMode) {
   if (!bionicReadingEnabled || (baseStyle & EpdFontFamily::BOLD) != 0 || segment.empty()) {
     return {baseStyle, 0};
   }
@@ -303,8 +303,11 @@ BionicTokenMetadata computeBionicMetadata(const std::string_view segment, const 
     return {baseStyle, 0};
   }
 
+  constexpr size_t FOCUS_READING_PERCENT = 43;
+  constexpr size_t SUBTLE_FOCUS_READING_PERCENT = 30;
+  const size_t percent = (bionicReadingMode == 2) ? SUBTLE_FOCUS_READING_PERCENT : FOCUS_READING_PERCENT;
   // Target 43% for 1-bold at 4 chars and 3-bold at 7 chars with floor truncation.
-  size_t targetBoldChars = (charCount * FOCUS_READING_PERCENT) / 100;
+  size_t targetBoldChars = (charCount * percent) / 100;
   targetBoldChars = std::clamp<size_t>(targetBoldChars, 1, 9);
 
   if (targetBoldChars >= charCount) {
@@ -670,7 +673,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       // Punctuation and Numbers stay regular
       pushToken(std::string(segment), attach, noSpaceBefore, baseStyle, 0, segmentOffset);
     } else {
-      const BionicTokenMetadata bionic = computeBionicMetadata(segment, baseStyle, bionicReadingEnabled);
+      const BionicTokenMetadata bionic = computeBionicMetadata(segment, baseStyle, bionicReadingEnabled, bionicReadingMode);
       pushToken(std::string(segment), attach, noSpaceBefore, bionic.style, bionic.boundary, segmentOffset);
     }
   };
@@ -1316,7 +1319,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     if (needsHyphen) {
       prefix.push_back('-');
     }
-    const BionicTokenMetadata prefixBionic = computeBionicMetadata(prefix, style, bionicReadingEnabled);
+    const BionicTokenMetadata prefixBionic = computeBionicMetadata(prefix, style, bionicReadingEnabled, bionicReadingMode);
     const int prefixWidth =
         measureTokenWidth(renderer, fontId, prefix, prefixBionic.style, prefixBionic.boundary, /*appendHyphen=*/false);
     if (prefixWidth > availableWidth || prefixWidth <= chosenWidth) {
@@ -1347,12 +1350,12 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     words[wordIndex].push_back('-');
     wordBackgroundBlack[wordIndex] |= TextBlock::WORD_FLAG_INSERTED_HYPHEN;
   }
-  const BionicTokenMetadata prefixBionic = computeBionicMetadata(words[wordIndex], style, bionicReadingEnabled);
+  const BionicTokenMetadata prefixBionic = computeBionicMetadata(words[wordIndex], style, bionicReadingEnabled, bionicReadingMode);
   wordStyles[wordIndex] = prefixBionic.style;
   wordBionicBoundary[wordIndex] = prefixBionic.boundary;
 
   // Insert the remainder word (with matching style and continuation flag) directly after the prefix.
-  const BionicTokenMetadata remainderBionic = computeBionicMetadata(remainder, style, bionicReadingEnabled);
+  const BionicTokenMetadata remainderBionic = computeBionicMetadata(remainder, style, bionicReadingEnabled, bionicReadingMode);
   words.insert(words.begin() + wordIndex + 1, remainder);
   insertVisibleOffset(wordIndex + 1, remainderOffset);
   wordStyles.insert(wordStyles.begin() + wordIndex + 1, remainderBionic.style);
@@ -1425,7 +1428,7 @@ bool ParsedText::splitPathologicalTokenAtIndex(const size_t wordIndex, const int
   while (low <= high) {
     const size_t mid = low + (high - low) / 2;
     prefix.assign(word.data(), mid);
-    const BionicTokenMetadata prefixBionic = computeBionicMetadata(prefix, style, bionicReadingEnabled);
+    const BionicTokenMetadata prefixBionic = computeBionicMetadata(prefix, style, bionicReadingEnabled, bionicReadingMode);
     const int prefixWidth = measureTokenWidth(renderer, fontId, prefix, prefixBionic.style, prefixBionic.boundary);
     if (prefixWidth <= availableWidth) {
       chosenOffset = mid;
@@ -1449,10 +1452,10 @@ bool ParsedText::splitPathologicalTokenAtIndex(const size_t wordIndex, const int
     remainderOffset++;
   }
   words[wordIndex].resize(chosenOffset);
-  const BionicTokenMetadata prefixBionic = computeBionicMetadata(words[wordIndex], style, bionicReadingEnabled);
+  const BionicTokenMetadata prefixBionic = computeBionicMetadata(words[wordIndex], style, bionicReadingEnabled, bionicReadingMode);
   wordStyles[wordIndex] = prefixBionic.style;
   wordBionicBoundary[wordIndex] = prefixBionic.boundary;
-  const BionicTokenMetadata remainderBionic = computeBionicMetadata(remainder, style, bionicReadingEnabled);
+  const BionicTokenMetadata remainderBionic = computeBionicMetadata(remainder, style, bionicReadingEnabled, bionicReadingMode);
   words.insert(words.begin() + wordIndex + 1, remainder);
   insertVisibleOffset(wordIndex + 1, remainderOffset);
   wordStyles.insert(wordStyles.begin() + wordIndex + 1, remainderBionic.style);

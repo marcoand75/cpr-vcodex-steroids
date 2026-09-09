@@ -78,6 +78,7 @@ class ChapterHtmlSlimParser {
   uint16_t viewportHeight;
   bool hyphenationEnabled;
   bool bionicReadingEnabled;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
   bool guideReadingEnabled;
   uint8_t wordSpacing;
   CssParser* cssParser;
@@ -294,7 +295,8 @@ class ChapterHtmlSlimParser {
       Epub& epub, const std::string& filepath, GfxRenderer& renderer, const int fontId, const float lineCompression,
       const bool extraParagraphSpacing, const bool forceParagraphIndents, const uint8_t paragraphAlignment,
       const uint16_t viewportWidth, const uint16_t viewportHeight, const bool hyphenationEnabled,
-      const bool bionicReadingEnabled, const bool guideReadingEnabled, const uint8_t wordSpacing,
+      const bool bionicReadingEnabled, const uint8_t bionicReadingMode, const bool guideReadingEnabled,
+      const uint8_t wordSpacing,
       const std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)>& completePageFn,
       const bool embeddedStyle, const std::string& contentBase, const std::string& imageBasePath,
       const uint8_t imageRendering = 0, std::vector<std::string> tocAnchors = {},
@@ -314,6 +316,7 @@ class ChapterHtmlSlimParser {
         viewportHeight(viewportHeight),
         hyphenationEnabled(hyphenationEnabled),
         bionicReadingEnabled(bionicReadingEnabled),
+        bionicReadingMode(bionicReadingMode),
         guideReadingEnabled(guideReadingEnabled),
         wordSpacing(wordSpacing > 4 ? 4 : wordSpacing),
         completePageFn(completePageFn),

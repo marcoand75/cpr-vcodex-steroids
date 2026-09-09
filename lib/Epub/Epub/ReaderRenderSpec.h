@@ -24,6 +24,7 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool bionicReadingEnabled = false;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
   bool guideReadingEnabled = false;
   uint8_t wordSpacing = 0;
   EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
@@ -46,6 +47,7 @@ inline uint32_t readerRenderSpecSignature(const ReaderRenderSpec& spec) {
   mix(spec.embeddedStyle);
   mix(spec.imageRendering);
   mix(spec.bionicReadingEnabled);
+  mix(spec.bionicReadingMode);
   mix(spec.guideReadingEnabled);
   mix(spec.wordSpacing);
   mix(static_cast<uint8_t>(spec.renderMode));

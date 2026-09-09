@@ -47,6 +47,7 @@ class ParsedText {
   bool forceParagraphIndents;
   bool hyphenationEnabled;
   bool bionicReadingEnabled;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
   bool guideReadingEnabled;
   uint8_t wordSpacing;
   BlockStyle blockStyle;
@@ -104,12 +105,14 @@ class ParsedText {
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
                       const bool hyphenationEnabled = false, const bool bionicReadingEnabled = false,
-                      const bool guideReadingEnabled = false, const uint8_t wordSpacing = 0,
+                      const uint8_t bionicReadingMode = 0, const bool guideReadingEnabled = false,
+                      const uint8_t wordSpacing = 0,
                       const BlockStyle& blockStyle = BlockStyle())
       : extraParagraphSpacing(extraParagraphSpacing),
         forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
         bionicReadingEnabled(bionicReadingEnabled),
+        bionicReadingMode(bionicReadingMode),
         guideReadingEnabled(guideReadingEnabled),
         wordSpacing(wordSpacing),
         blockStyle(blockStyle),
