@@ -40,6 +40,13 @@ static bool parseRestartHeader(const char* value) {
 void PluginBrowserActivity::scanPlugins() {
   pluginList_.clear();
   selectedIndex_ = 0;
+  cachedHeights_.clear();
+  cachedTops_.clear();
+  cachedDescLines_.clear();
+  cachedTotal_ = 0;
+  cachedContentH_ = 0;
+  cachedFirst_ = 0;
+  cachedLast_ = 0;
 
   std::vector<String> files = Storage.listFiles("/custom", 100);
 
@@ -228,6 +235,13 @@ void PluginBrowserActivity::onEnter() {
 }
 
 void PluginBrowserActivity::onExit() {
+  cachedHeights_.clear();
+  cachedTops_.clear();
+  cachedDescLines_.clear();
+  cachedTotal_ = 0;
+  cachedContentH_ = 0;
+  cachedFirst_ = 0;
+  cachedLast_ = 0;
   Activity::onExit();
 }
 
