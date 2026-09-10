@@ -20,6 +20,8 @@
 #include "../home/BookContextMenuActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "../util/KeyboardEntryActivity.h"
+#include "CollectionManageActivity.h"
+#include "CollectionPickerActivity.h"
 #include "util/BookFilter.h"
 #include "util/StringUtils.h"
 #include "CrossPointSettings.h"
@@ -32,6 +34,7 @@
 #include "SdCardFontGlobals.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
+#include "components/icons/settings2.h"
 #include <Epub.h>
 #include <Xtc.h>
 #include <ZipFile.h>
@@ -603,6 +606,11 @@ void LibraryActivity::openFilterPopup() {
   mixedItem.selected = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
   popupOverlay_.items.push_back(mixedItem);
 
+  PopupItem manageItem; manageItem.label = I18N.get(StrId::STR_COLLECTIONS_MANAGE);
+  manageItem.icon = Settings2Icon; manageItem.iconW = 32; manageItem.iconH = 32;
+  manageItem.selected = false;
+  popupOverlay_.items.push_back(manageItem);
+
   requestUpdate();
 }
 
@@ -643,8 +651,18 @@ void LibraryActivity::selectPopupItem() {
     }
   } else if (popupMode_ == PopupMode::Filter) {
     // Popup order (one-of-many): 0=All, 1=Favourites, 2=Latest, 3=Unread,
-    // 4=Completed, 5=Hidden, 6=Serie (grouped shelf), 7=Serie + Libri (mixed).
-    if (idx == 6) {
+    // 4=Completed, 5=Hidden, 6=Serie (grouped shelf), 7=Serie + Libri (mixed), 8=Manage collections.
+    if (idx == 8) {
+      closePopup();
+      startActivityForResult(
+          std::make_unique<CollectionManageActivity>(renderer, mappedInput),
+          [this](const ActivityResult&) {
+            pendingCollectionsRebuild_ = true;
+            forceRender_ = true;
+            requestUpdate();
+          });
+      return;
+    } else if (idx == 6) {
       currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
@@ -1003,6 +1021,17 @@ void LibraryActivity::loop() {
                   bumpLibEpoch();
                   refreshPageCache();
                   forceRender_ = true; requestUpdate(); return;
+                case BookContextMenuActivity::MenuAction::ADD_TO_COLLECTION: {
+                  const uint32_t bookId = static_cast<uint32_t>(pageCache_[slot].id);
+                  startActivityForResult(
+                      std::make_unique<CollectionPickerActivity>(renderer, mappedInput, bookId),
+                      [this](const ActivityResult&) {
+                        pendingCollectionsRebuild_ = true;
+                        forceRender_ = true;
+                        requestUpdate();
+                      });
+                  return;
+                }
                 case BookContextMenuActivity::MenuAction::DELETE_BOOK_FILE: {
                   const bool isManual = (SETTINGS.libraryUpdateMode != CrossPointSettings::LIBRARY_UPDATE_AUTO);
                   const char* confirmMsg = isManual ? tr(STR_DELETE_BOOK_FILE_CONFIRM_MANUAL)
@@ -1818,6 +1847,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   // A tile represents a collection/series when we are at a root listing
   // (collections mode or the Series+Books root), never inside a collection.
   const bool isCollectionTile = isSeriesTile && currentCollectionIdx_ < 0;
+  const bool isUserCollection = isCollectionTile && pageCache_[i].isCollection;
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
 
@@ -1839,8 +1869,29 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   }
 
   if (!drawn) {
-    if (isCollectionTile) {
-      // Collection placeholder: deeper stack + centered title, no icon.
+    if (isUserCollection) {
+      // User collection placeholder: distinct visual style with folder icon
+      const int stackOffset = 4;
+      renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
+      renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
+      const int iconSize = std::min(28, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
+      const int iconX = x + (coverWidth_ - iconSize) / 2;
+      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
+      renderer.drawIcon(::LibraryIcon, iconX, iconY, iconSize, iconSize);
+
+      const int textAreaH = 2 * coverHeight_ / 3 - 8;
+      if (i < static_cast<int>(pageTitleCache_.size())) {
+        const auto& lines = pageTitleCache_[i];
+        int lh = renderer.getLineHeight(SMALL_FONT_ID);
+        int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
+        for (auto& ln : lines) {
+          int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
+          renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
+          ty += lh;
+        }
+      }
+    } else if (isCollectionTile) {
+      // Auto series placeholder: stacked outlines + centered title, no icon
       const int stackOffset = 6;
       renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
       renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
@@ -1856,28 +1907,8 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
           ty += lh;
         }
       }
-    } else if (isSeriesTile) {
-      // Series placeholder: stacked outlines + centered icon + count badge
-      const int stackOffset = 4;
-      renderer.drawRoundedRect(x + stackOffset, y + stackOffset, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
-      renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
-      const int iconSize = std::min(28, std::min(coverWidth_ - 4, coverHeight_ / 3 - 4));
-      const int iconX = x + (coverWidth_ - iconSize) / 2;
-      const int iconY = y + std::max(4, (coverHeight_ / 3 - iconSize) / 2);
-      renderer.drawIcon(::CoverIcon, iconX, iconY, iconSize, iconSize);
-
-      const int textAreaH = 2 * coverHeight_ / 3 - 8;
-      if (i < static_cast<int>(pageTitleCache_.size())) {
-        const auto& lines = pageTitleCache_[i];
-        int lh = renderer.getLineHeight(SMALL_FONT_ID);
-        int ty = y + coverHeight_ / 3 + (textAreaH - static_cast<int>(lines.size()) * lh) / 2;
-        for (auto& ln : lines) {
-          int tw = renderer.getTextWidth(SMALL_FONT_ID, ln.c_str(), EpdFontFamily::BOLD);
-          renderer.drawText(SMALL_FONT_ID, x + (coverWidth_ - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-          ty += lh;
-        }
-      }
     } else {
+      // Book placeholder
       renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
       renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1,
                                COVER_CORNER_RADIUS, false, false, true, true, Color::Black);
