@@ -4,9 +4,11 @@
 #include <Logging.h>
 
 #include "StoreManager.h"
+#include "components/LibraryIndex.h"
 #include "components/UITheme.h"
 #include "../util/ListLayout.h"
 #include "../util/ListRenderHelper.h"
+#include "../util/KeyboardEntryActivity.h"
 #include "MappedInputManager.h"
 
 static void s_onBack(void* ctx) {
@@ -63,6 +65,14 @@ void CollectionPickerActivity::onExit() {
 }
 
 void CollectionPickerActivity::loop() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    finish();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+    createCollection();
+    return;
+  }
   listInputMapper_.loop(mappedInput);
 }
 
@@ -72,6 +82,11 @@ void CollectionPickerActivity::render(RenderLock&&) {
 
   if (collections_.empty()) {
     GUI.drawPopup(renderer, tr(STR_COLLECTION_EMPTY));
+    ListRenderHelper::drawHints(renderer, mappedInput,
+                                tr(STR_BACK),
+                                nullptr,
+                                tr(STR_COLLECTION_CREATE),
+                                nullptr);
     renderer.displayBuffer();
     return;
   }
@@ -83,8 +98,19 @@ void CollectionPickerActivity::render(RenderLock&&) {
                                return collections_[index].hasBook ? tr(STR_COLLECTION_ADD_BOOK) : std::string();
                              },
                              true);
-  ListRenderHelper::drawStandardHints(renderer, mappedInput);
+  ListRenderHelper::drawHints(renderer, mappedInput,
+                              tr(STR_BACK),
+                              tr(STR_COLLECTION_ADD_BOOK),
+                              tr(STR_COLLECTION_CREATE),
+                              nullptr);
   renderer.displayBuffer();
+}
+
+void CollectionPickerActivity::createCollection() {
+  char id[16] = {};
+  if (LibraryIndex::createUserCollection("New Collection", id, sizeof(id))) {
+    refreshCollections();
+  }
 }
 
 void CollectionPickerActivity::refreshCollections() {

@@ -33,5 +33,5 @@ class CollectionManageActivity final : public Activity {
   void refreshCollections();
   void createCollection();
   void deleteSelected();
-  void renameSelected();
+  void startRename(int index);
 };

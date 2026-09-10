@@ -22,6 +22,7 @@
 #include "ScreenCleanActivity.h"
 #include "ScreenSaverActivity.h"
 #include "ClippingsAppActivity.h"
+#include "CollectionManageActivity.h"
 #include "SleepAppActivity.h"
 #include "SyncDayActivity.h"
 #include "../home/FileBrowserActivity.h"
@@ -246,6 +247,9 @@ void AppsActivity::openSelectedApp() {
       // setConfirmHandler (useRelease=false), where getHeldTime() is always 0.
       activityManager.goToLibrary(true);
       return;
+    case ShortcutId::Collections:
+      activity = std::make_unique<CollectionManageActivity>(renderer, mappedInput);
+      break;
     case ShortcutId::ScreenClean:
       activity = std::make_unique<ScreenCleanActivity>(renderer, mappedInput);
       break;

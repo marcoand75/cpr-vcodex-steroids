@@ -24,7 +24,9 @@ class BookContextMenuActivity final : public Activity {
     CLEAR_THEME_CACHE,
     HIDE_BOOK,           // Hide from library shelf
     DELETE_BOOK_FILE,    // Permanently delete book file + cache
-    ADD_TO_COLLECTION    // Add book to a user collection (library mode only)
+    ADD_TO_COLLECTION,   // Add book to a user collection (library mode only)
+    RENAME_BOOK,         // Rename book file (library mode only)
+    MOVE_BOOK            // Move book file to another path (library mode only)
   };
 
   explicit BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

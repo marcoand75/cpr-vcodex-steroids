@@ -8,6 +8,7 @@
 #include "components/UITheme.h"
 #include "../util/ListLayout.h"
 #include "../util/ListRenderHelper.h"
+#include "../util/KeyboardEntryActivity.h"
 #include "MappedInputManager.h"
 
 static void s_onBack(void* ctx) {
@@ -19,7 +20,7 @@ static void s_onConfirm(void* ctx) {
   if (self->collections_.empty()) return;
   const int idx = self->selectedIndex_;
   if (idx < 0 || idx >= self->collections_.size()) return;
-  self->renameSelected();
+  self->startRename(idx);
 }
 
 static void s_onNavRelease(void* ctx, int delta) {
@@ -61,6 +62,18 @@ void CollectionManageActivity::onExit() {
 }
 
 void CollectionManageActivity::loop() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    finish();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+    createCollection();
+    return;
+  }
+  if (!collections_.empty() && mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
+    deleteSelected();
+    return;
+  }
   listInputMapper_.loop(mappedInput);
 }
 
@@ -70,6 +83,11 @@ void CollectionManageActivity::render(RenderLock&&) {
 
   if (collections_.empty()) {
     GUI.drawPopup(renderer, tr(STR_COLLECTION_EMPTY));
+    ListRenderHelper::drawHints(renderer, mappedInput,
+                                tr(STR_BACK),
+                                nullptr,
+                                tr(STR_COLLECTION_CREATE),
+                                nullptr);
     renderer.displayBuffer();
     return;
   }
@@ -83,7 +101,11 @@ void CollectionManageActivity::render(RenderLock&&) {
                                return buf;
                              },
                              true);
-  ListRenderHelper::drawStandardHints(renderer, mappedInput);
+  ListRenderHelper::drawHints(renderer, mappedInput,
+                              tr(STR_BACK),
+                              tr(STR_COLLECTION_RENAME),
+                              tr(STR_COLLECTION_CREATE),
+                              tr(STR_COLLECTION_DELETE));
   renderer.displayBuffer();
 }
 
@@ -101,6 +123,21 @@ void CollectionManageActivity::refreshCollections() {
   requestUpdate();
 }
 
+void CollectionManageActivity::startRename(int index) {
+  if (index < 0 || index >= collections_.size()) return;
+  const std::string currentName = collections_[index].name;
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_COLLECTION_RENAME), currentName, 64),
+      [this, index](const ActivityResult& result) {
+        if (result.isCancelled) { requestUpdate(); return; }
+        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+        if (!kbResult || kbResult->text.empty()) { requestUpdate(); return; }
+        USER_COLLECTIONS.ensureLoaded();
+        USER_COLLECTIONS.renameCollection(collections_[index].id, kbResult->text);
+        refreshCollections();
+      });
+}
+
 void CollectionManageActivity::createCollection() {
   char id[16] = {};
   if (LibraryIndex::createUserCollection("New Collection", id, sizeof(id))) {
@@ -115,12 +152,4 @@ void CollectionManageActivity::deleteSelected() {
   USER_COLLECTIONS.ensureLoaded();
   USER_COLLECTIONS.deleteCollection(collections_[idx].id);
   refreshCollections();
-}
-
-void CollectionManageActivity::renameSelected() {
-  if (collections_.empty()) return;
-  const int idx = selectedIndex_;
-  if (idx < 0 || idx >= collections_.size()) return;
-  // Full rename requires KeyboardActivity; placeholder for now
-  LOG_DBG("COLL", "Rename requested for collection %s", collections_[idx].id.c_str());
 }

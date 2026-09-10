@@ -189,10 +189,11 @@ void LibraryActivity::deleteBookFile(const std::string& bookPath) {
     Storage.remove(thumbPath.c_str());
   }
 
-  // 4. Remove from hidden books, recents, and favourites
+  // 4. Remove from hidden books, recents, favourites, and user collections
   HIDDEN_BOOKS.removeBook(bookPath);
   FAVORITES.removeBook(bookPath);
   RECENT_BOOKS.removeBook(bookPath);
+  LibraryIndex::removeBookFromAllCollectionsByPath(bookPath.c_str());
 
   // 5. Re-scan the library index to remove the entry
   LibraryIndex::sync();
@@ -314,8 +315,8 @@ void LibraryActivity::scanSd() {
     renderer.displayBuffer();
 
     LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
-    LibraryIndex::buildIndices();
     LibraryIndex::buildCollectionsIndex();
+    LibraryIndex::buildIndices();
     clearPageFrameCache();  // library contents changed -> all frames stale
     bumpLibEpoch();
     totalBooks_ = collectionsMode_
@@ -345,8 +346,8 @@ void LibraryActivity::scanSd() {
       renderer.clearScreen();
       GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
       renderer.displayBuffer();
-      LibraryIndex::buildIndices();
       LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildIndices();
       clearPageFrameCache();  // library contents changed -> all frames stale
       bumpLibEpoch();
     }
@@ -926,10 +927,18 @@ void LibraryActivity::loop() {
       if (held >= long_press::kDefaultMs) {
         const int idx = selectorIndex_;
         const int slot = idx % gridsPerPage_;
-        const std::string path(pageCache_[slot].path);
-        if (collectionsMode_ && currentCollectionIdx_ < 0) {
-          return;  // no context menu on collections list items
-        }
+      const std::string path(pageCache_[slot].path);
+      if (collectionsMode_ && currentCollectionIdx_ < 0) {
+        // Long-press on collection tile: open manage collections
+        startActivityForResult(
+            std::make_unique<CollectionManageActivity>(renderer, mappedInput),
+            [this](const ActivityResult&) {
+              pendingCollectionsRebuild_ = true;
+              forceRender_ = true;
+              requestUpdate();
+            });
+        return;
+      }
         const std::string title = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(path);
         const bool isEpub = FsHelpers::hasEpubExtension(std::string_view{path.c_str()});
         const bool isFav = FAVORITES.isFavorite(path);
@@ -1053,6 +1062,83 @@ void LibraryActivity::loop() {
                         }
                         forceRender_ = true;
                         requestUpdate();
+                      });
+                  return;
+                }
+                case BookContextMenuActivity::MenuAction::RENAME_BOOK: {
+                  const uint32_t bookId = static_cast<uint32_t>(pageCache_[slot].id);
+                  const std::string dir = path.substr(0, path.find_last_of('/'));
+                  const std::string filename = path.substr(path.find_last_of('/') + 1);
+                  startActivityForResult(
+                      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput,
+                          tr(STR_LIBRARY_RENAME_BOOK), filename, 64),
+                      [this, path, dir, bookId](const ActivityResult& result) {
+                        if (result.isCancelled) { forceRender_ = true; requestUpdate(); return; }
+                        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+                        if (!kbResult || kbResult->text.empty()) { forceRender_ = true; requestUpdate(); return; }
+
+                        // 1. Remove from all user collections before changing identity
+                        LibraryIndex::removeBookFromAllCollections(bookId);
+
+                        // 2. Build new path in the same directory
+                        std::string newPath = dir;
+                        if (!newPath.empty()) newPath.push_back('/');
+                        newPath.append(kbResult->text);
+
+                        // 3. Move file on disk
+                        if (Storage.rename(path.c_str(), newPath.c_str())) {
+                          // 4. Update library.dat path
+                          LibraryIndex::updateRecordPath(bookId, newPath.c_str());
+
+                          // 5. Update path-dependent stores
+                          HIDDEN_BOOKS.removeBook(path);
+                          HIDDEN_BOOKS.addBook(newPath);
+                          FAVORITES.updateBookPath(path, newPath);
+                          RECENT_BOOKS.updateBookPath(path, newPath);
+
+                          // 6. Refresh UI
+                          refreshPageCache();
+                          forceRender_ = true;
+                          requestUpdate();
+                        }
+                      });
+                  return;
+                }
+                case BookContextMenuActivity::MenuAction::MOVE_BOOK: {
+                  const uint32_t bookId = static_cast<uint32_t>(pageCache_[slot].id);
+                  startActivityForResult(
+                      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput,
+                          tr(STR_LIBRARY_MOVE_BOOK), "", 128),
+                      [this, path, bookId](const ActivityResult& result) {
+                        if (result.isCancelled) { forceRender_ = true; requestUpdate(); return; }
+                        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+                        if (!kbResult || kbResult->text.empty()) { forceRender_ = true; requestUpdate(); return; }
+
+                        std::string newPath = kbResult->text;
+                        // If user entered a relative path, make it absolute under the current root
+                        if (!newPath.empty() && newPath[0] != '/') {
+                          newPath = std::string(SETTINGS.libraryRootDir) + "/" + newPath;
+                        }
+
+                        // 1. Remove from all user collections before changing identity
+                        LibraryIndex::removeBookFromAllCollections(bookId);
+
+                        // 2. Move file on disk
+                        if (Storage.rename(path.c_str(), newPath.c_str())) {
+                          // 3. Update library.dat path
+                          LibraryIndex::updateRecordPath(bookId, newPath.c_str());
+
+                          // 4. Update path-dependent stores
+                          HIDDEN_BOOKS.removeBook(path);
+                          HIDDEN_BOOKS.addBook(newPath);
+                          FAVORITES.updateBookPath(path, newPath);
+                          RECENT_BOOKS.updateBookPath(path, newPath);
+
+                          // 5. Refresh UI
+                          refreshPageCache();
+                          forceRender_ = true;
+                          requestUpdate();
+                        }
                       });
                   return;
                 }

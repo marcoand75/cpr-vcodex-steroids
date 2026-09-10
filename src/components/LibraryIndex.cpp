@@ -246,6 +246,67 @@ bool readRecordByBookId(uint32_t bookId, Record& rec) {
   return false;
 }
 
+// Find a Record by its absolute path in library.dat.
+// Linear scan; acceptable for one-off lookups during delete/rename.
+// Returns true on success.  RAM: 256 bytes stack.
+static bool readRecordByPath(const char* path, Record& rec) {
+  if (!path || !*path) return false;
+  HalFile f = Storage.open(kDatFile);
+  if (!f) return false;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (!rec.tombstone() && strcmp(rec.path, path) == 0) {
+      f.close();
+      return true;
+    }
+  }
+  f.close();
+  return false;
+}
+
+// Update the path of an existing record by bookId.
+// Used by rename/move operations.  The record must already exist.
+bool updateRecordPath(uint32_t bookId, const char* newPath) {
+  if (bookId == 0 || !newPath || !*newPath) return false;
+  HalFile f = Storage.open(kDatFile, O_WRONLY);
+  if (!f) return false;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    Record rec;
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (rec.id == bookId && !rec.tombstone()) {
+      std::strncpy(rec.path, newPath, sizeof(rec.path) - 1);
+      rec.path[sizeof(rec.path) - 1] = '\0';
+      f.seek(static_cast<uint32_t>(rp) * kRecordSize);
+      f.write(reinterpret_cast<const uint8_t*>(&rec), kRecordSize);
+      f.close();
+      return true;
+    }
+  }
+  f.close();
+  return false;
+}
+
+// Remove a book from all user collections by path.
+// Looks up the bookId internally; safe to call before the record is tombstoned.
+void removeBookFromAllCollectionsByPath(const char* path) {
+  if (!path || !*path) return;
+  Record rec;
+  HalFile f = Storage.open(kDatFile);
+  if (!f) return;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (!rec.tombstone() && strcmp(rec.path, path) == 0) {
+      f.close();
+      removeBookFromAllCollections(rec.id);
+      return;
+    }
+  }
+  f.close();
+}
+
 // Append one Record to library.dat.  Returns the new record position (index).
 // Returns UINT32_MAX on error.
 uint32_t appendRecord(const Record& rec) {
@@ -463,6 +524,48 @@ static uint32_t hashPath(const char* p) {
 
 }  // namespace
 
+// Update the path of an existing record by bookId.
+// Used by rename/move operations.  The record must already exist.
+bool updateRecordPath(uint32_t bookId, const char* newPath) {
+  if (bookId == 0 || !newPath || !*newPath) return false;
+  HalFile f = Storage.open(kDatFile, O_WRONLY);
+  if (!f) return false;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    Record rec;
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (rec.id == bookId && !rec.tombstone()) {
+      std::strncpy(rec.path, newPath, sizeof(rec.path) - 1);
+      rec.path[sizeof(rec.path) - 1] = '\0';
+      f.seek(static_cast<uint32_t>(rp) * kRecordSize);
+      f.write(reinterpret_cast<const uint8_t*>(&rec), kRecordSize);
+      f.close();
+      return true;
+    }
+  }
+  f.close();
+  return false;
+}
+
+// Remove a book from all user collections by path.
+// Looks up the bookId internally; safe to call before the record is tombstoned.
+void removeBookFromAllCollectionsByPath(const char* path) {
+  if (!path || !*path) return;
+  Record rec;
+  HalFile f = Storage.open(kDatFile);
+  if (!f) return;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (!rec.tombstone() && strcmp(rec.path, path) == 0) {
+      f.close();
+      removeBookFromAllCollections(rec.id);
+      return;
+    }
+  }
+  f.close();
+}
+
 bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
           int* outAdded, int* outRemoved) {
   LOG_DBG("LIB", "Scan: start root=%s", rootDir ? rootDir : "/");
@@ -599,30 +702,19 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
 
     // Folder fallback: if no series metadata, use parent folder name (if not root)
     if (series[0] == '\0') {
-      // Simple parent path extraction
-      char parentPath[256] = {};
+      // Extract parent folder name from the path.
+      // For "/books/Mystery/Book1.epub" this yields "Mystery".
       const char* lastSlash = strrchr(p, '/');
       if (lastSlash && lastSlash > p) {
-        size_t parentLen = static_cast<size_t>(lastSlash - p);
-        if (parentLen < sizeof(parentPath)) {
-          memcpy(parentPath, p, parentLen);
-          parentPath[parentLen] = '\0';
-        }
-      }
-      if (parentPath[0] != '\0' && strcmp(parentPath, "/.crosspoint") != 0 && strcmp(parentPath, "/") != 0) {
-        char folderName[128] = {};
-        const char* folderStart = lastSlash + 1;
-        size_t folderLen = 0;
-        const char* scan = folderStart;
-        while (*scan && *scan != '/' && folderLen < sizeof(folderName) - 1) {
-          folderLen++;
-          scan++;
-        }
-        if (folderLen > 0) {
-          memcpy(folderName, folderStart, folderLen);
-          folderName[folderLen] = '\0';
-          std::strncpy(series, folderName, sizeof(series)-1); series[sizeof(series)-1] = '\0';
-          seriesFromFolder = true;
+        const char* prevSlash = lastSlash;
+        while (prevSlash > p && *(prevSlash - 1) != '/') --prevSlash;
+        if (prevSlash > p && prevSlash < lastSlash) {
+          const size_t folderLen = static_cast<size_t>(lastSlash - prevSlash);
+          if (folderLen < sizeof(series)) {
+            memcpy(series, prevSlash, folderLen);
+            series[folderLen] = '\0';
+            seriesFromFolder = true;
+          }
         }
       }
     }
@@ -671,6 +763,9 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
           HalFile f = Storage.open(kDatFile, O_WRONLY);
           if (f) { f.seek(rp * kRecordSize); f.write(reinterpret_cast<const uint8_t*>(&rec), kRecordSize); f.close(); }
           ++removed;
+          // Clean up user-collection memberships for the removed book.
+          USER_COLLECTIONS.ensureLoaded();
+          removeBookFromAllCollections(old.id);
           break;
         }
       }
@@ -992,8 +1087,7 @@ bool buildCollectionsIndex() {
       const String json = Storage.readFile(jsonPath.c_str());
       if (!json.isEmpty()) {
         // Parse JSON manually (avoid heavy JSON library)
-        // Expected format: {"version":1,"collections":[...],"members":[...]}
-        // We just need collection names and counts
+        // Expected format: {"version":1,"collections":[{"id":"c_001","name":"...","createdAt":...}],...}
         const char* p = json.c_str();
         const char* collectionsStart = strstr(p, "\"collections\"");
         if (collectionsStart) {
@@ -1001,10 +1095,10 @@ bool buildCollectionsIndex() {
           if (arrStart) {
             const char* scan = arrStart + 1;
             while (*scan && *scan != ']') {
-              // Find "name":"..."
-              const char* nameKey = strstr(scan, "\"name\"");
-              if (!nameKey) break;
-              const char* colon = strchr(nameKey, ':');
+              // Find "id":"..."
+              const char* idKey = strstr(scan, "\"id\"");
+              if (!idKey) break;
+              const char* colon = strchr(idKey, ':');
               if (!colon) break;
               const char* valStart = strchr(colon, '"');
               if (!valStart) break;
@@ -1025,40 +1119,7 @@ bool buildCollectionsIndex() {
           }
         }
 
-        // Count members per collection
-        const char* membersStart = strstr(p, "\"members\"");
-        if (membersStart) {
-          const char* arrStart = strchr(membersStart, '[');
-          if (arrStart) {
-            const char* scan = arrStart + 1;
-            while (*scan && *scan != ']') {
-              const char* collIdKey = strstr(scan, "\"collectionId\"");
-              if (!collIdKey) break;
-              // Find matching collection by scanning userCollections
-              const char* colon = strchr(collIdKey, ':');
-              if (!colon) break;
-              const char* valStart = strchr(colon, '"');
-              if (!valStart) break;
-              const char* valEnd = strchr(valStart + 1, '"');
-              if (!valEnd) break;
-
-              char collId[32] = {};
-              const size_t idLen = std::min<size_t>(sizeof(collId) - 1, static_cast<size_t>(valEnd - valStart - 1));
-              std::strncpy(collId, valStart + 1, idLen);
-              collId[idLen] = '\0';
-
-              // Find collection and increment count
-              for (auto& uc : userCollections) {
-                // Simple matching: we match by index order since both are parsed in order
-                // In a real implementation, we'd build a map from id to CollectionIndexRec
-              }
-
-              scan = valEnd + 1;
-            }
-          }
-        }
-
-        // Count members properly
+        // Count members per collection by matching collectionId in members array
         const char* membersStr = strstr(p, "\"members\"");
         if (membersStr) {
           const char* arrStart = strchr(membersStr, '[');
@@ -1083,6 +1144,7 @@ bool buildCollectionsIndex() {
                   break;
                 }
               }
+
               scan = valEnd + 1;
             }
           }
@@ -1284,6 +1346,45 @@ bool buildMixedIndex() {
 
 // ---- Collections query ----
 
+// Compute a disambiguation subtitle for folder-fallback series.
+// Returns the parent folder basename if the series is folder-fallback,
+// empty string otherwise. For user collections, always returns empty.
+static std::string getCollectionSubtitle(const CollectionIndexRec& ci, HalFile& sf, HalFile& df) {
+  if ((ci.flags & 1) != 0) return "";  // user collection: no subtitle
+  if (!sf || !df) return "";
+
+  // Check if any book in this series is folder-fallback
+  sf.seek(ci.firstSeriesOffset);
+  SeriesRec sr;
+  for (uint32_t b = 0; b < ci.bookCount; ++b) {
+    if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+    if (sr.bookId == 0) continue;
+    if ((sr.flags & 1) != 0) {
+      // Found folder-fallback entry; resolve book path
+      df.seek(0);
+      Record rec;
+      while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+        if (rec.id == sr.bookId && !rec.tombstone()) {
+          // Extract parent folder basename from path
+          const char* p = rec.path;
+          const char* lastSlash = strrchr(p, '/');
+          if (lastSlash && lastSlash > p) {
+            // Find the slash before the last component
+            const char* prevSlash = lastSlash;
+            while (prevSlash > p && *(prevSlash - 1) != '/') --prevSlash;
+            if (prevSlash > p) {
+              return std::string(prevSlash, static_cast<size_t>(lastSlash - prevSlash));
+            }
+          }
+          return "";
+        }
+      }
+      return "";
+    }
+  }
+  return "";
+}
+
 int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight) {
   HalFile f = Storage.open(kIdxCollections);
   if (!f) return 0;
@@ -1301,7 +1402,24 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
     if (f.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != static_cast<int>(sizeof(CollectionIndexRec))) break;
     BookRef& ref = out[count];
     ref.id = 0x80000000u | static_cast<uint32_t>(i);
-    std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
+    
+    // Resolve display name for user collections from UserCollectionsStore.
+    std::string displayName = ci.collectionName;
+    if ((ci.flags & 1) != 0) {
+      USER_COLLECTIONS.ensureLoaded();
+      const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+      if (uc) displayName = uc->name;
+    }
+
+    // Append folder-fallback disambiguation subtitle if needed
+    std::string subtitle = getCollectionSubtitle(ci, sf, df);
+    if (!subtitle.empty()) {
+      char combined[80];
+      std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
+      std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
+    } else {
+      std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
+    }
     snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
     ref.path[0] = '\0';
     ref.isFavorite = false;
@@ -1595,7 +1713,16 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
           BookRef& ref = out[count];
           ref.id = ir.bookId;
-          std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
+          
+          // Append folder-fallback disambiguation subtitle if needed
+          std::string subtitle = getCollectionSubtitle(ci, sf, df);
+          if (!subtitle.empty()) {
+            char combined[80];
+            std::snprintf(combined, sizeof(combined), "%s / %s", ci.collectionName, subtitle.c_str());
+            std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
+          } else {
+            std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
+          }
           snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
           ref.path[0] = '\0';
           ref.isFavorite = false;

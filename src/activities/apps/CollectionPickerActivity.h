@@ -34,4 +34,5 @@ class CollectionPickerActivity final : public Activity {
 
  private:
   void refreshCollections();
+  void createCollection();
 };

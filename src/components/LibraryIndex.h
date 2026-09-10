@@ -192,4 +192,11 @@ bool removeBookFromCollection(const char* collectionId, uint32_t bookId);
 // Remove a book from all user collections (called on book delete/rename).
 void removeBookFromAllCollections(uint32_t bookId);
 
+// Remove a book from all user collections by path.
+// Looks up the bookId internally; safe to call before the record is tombstoned.
+void removeBookFromAllCollectionsByPath(const char* path);
+
+// Update the stored path for a book record.  Used by rename/move.
+bool updateRecordPath(uint32_t bookId, const char* newPath);
+
 }  // namespace LibraryIndex

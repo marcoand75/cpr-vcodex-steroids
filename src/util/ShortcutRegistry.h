@@ -17,6 +17,7 @@ enum class ShortcutId {
   ReadingHeatmap,
   ReadingProfile,
   Library,
+  Collections,
   Achievements,
   IfFound,
   RecentBooks,
@@ -29,10 +30,10 @@ enum class ShortcutId {
   Sleep,
   OpdsBrowser,
    ScreenSaver,
-    Clippings,
-   Wikipedia,
-   QuickCards,
-   Plugins,
+     Clippings,
+    Wikipedia,
+    QuickCards,
+    Plugins,
 };
 
 struct ShortcutDefinition {
@@ -45,8 +46,8 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 23> definitions = {
+inline const std::array<ShortcutDefinition, 24>& getShortcutDefinitions() {
+  static const std::array<ShortcutDefinition, 24> definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},
@@ -70,6 +71,9 @@ inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
       ShortcutDefinition{ShortcutId::Library, StrId::STR_MENU_LIBRARY, StrId::STR_LIBRARY_APP_DESC, UIIcon::LibraryNew,
                          &CrossPointSettings::libraryShortcut, &CrossPointSettings::libraryShortcutOrder,
                          &CrossPointSettings::libraryShortcutVisible},
+      ShortcutDefinition{ShortcutId::Collections, StrId::STR_COLLECTIONS, StrId::STR_COLLECTIONS_APP_DESC, UIIcon::Bookshelf,
+                         &CrossPointSettings::collectionsShortcut, &CrossPointSettings::collectionsShortcutOrder,
+                         &CrossPointSettings::collectionsShortcutVisible},
       ShortcutDefinition{ShortcutId::Achievements, StrId::STR_ACHIEVEMENTS, StrId::STR_ACHIEVEMENTS_APP_DESC,
                          UIIcon::MedalAlt, &CrossPointSettings::achievementsShortcut,
                          &CrossPointSettings::achievementsShortcutOrder, &CrossPointSettings::achievementsShortcutVisible},
