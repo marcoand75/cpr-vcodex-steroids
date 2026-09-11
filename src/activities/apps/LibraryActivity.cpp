@@ -320,7 +320,10 @@ void LibraryActivity::scanSd() {
   currentSearchText_ = SETTINGS.librarySearchText;
   collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
   mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
-  if (collectionsMode_) currentCollectionIdx_ = -1;
+  if (collectionsMode_) {
+    currentCollectionIdx_ = -1;
+    currentCollectionIsUser_ = false;
+  }
 
   // Init LibraryIndex if needed
   LibraryIndex::init();
@@ -476,6 +479,7 @@ void LibraryActivity::applyFilterAndSort() {
   if (!collectionsMode_ && !mixedMode_) lastFlatSort_ = currentSort_;  // remember flat ordering
   if (collectionsMode_ || mixedMode_) {
     currentCollectionIdx_ = -1;
+    currentCollectionIsUser_ = false;
   }
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
@@ -740,6 +744,7 @@ void LibraryActivity::beginTextSearch() {
 
 void LibraryActivity::loop() {
   // ---- User collections rebuild (debounced) ----
+  bool collectionsRebuilt = false;
   if (pendingCollectionsRebuild_) {
     USER_COLLECTIONS.ensureLoaded();
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
@@ -748,8 +753,22 @@ void LibraryActivity::loop() {
       lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
       clearPageFrameCache();
       bumpLibEpoch();
+      collectionsRebuilt = true;
     }
     pendingCollectionsRebuild_ = false;
+  }
+  if (collectionsRebuilt && (collectionsMode_ || mixedMode_)) {
+    totalBooks_ = collectionsMode_
+        ? LibraryIndex::totalCollections()
+        : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                            static_cast<LibraryIndex::FilterMode>(currentFilter_));
+    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    if (selectorIndex_ >= totalBooks_) {
+      selectorIndex_ = std::max(0, totalBooks_ - 1);
+    }
+    refreshPageCache();
+    forceRender_ = true;
+    requestUpdate();
   }
 
   // ---- Cover generation: one slot per frame, after grid is rendered -------
@@ -942,23 +961,27 @@ void LibraryActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (total > 0 && selectorIndex_ < total) {
       const unsigned long held = mappedInput.getHeldTime();
-      // Long press: context menu (skip for collections list items)
+      // Long press: context menu (skip for collections/series tiles)
       if (held >= long_press::kDefaultMs) {
         const int idx = selectorIndex_;
         const int slot = idx % gridsPerPage_;
-      const std::string path(pageCache_[slot].path);
-      if (collectionsMode_ && currentCollectionIdx_ < 0) {
-        // Long-press on collection tile: open manage collections
-        selectorBeforeManage_ = selectorIndex_;
-        startActivityForResult(
-            std::make_unique<CollectionManageActivity>(renderer, mappedInput),
-            [this](const ActivityResult&) {
-              pendingCollectionsRebuild_ = true;
-              forceRender_ = true;
-              requestUpdate();
-            });
-        return;
-      }
+        const std::string path(pageCache_[slot].path);
+        if (collectionsMode_ && currentCollectionIdx_ < 0) {
+          // Long-press on collection tile: open manage collections
+          selectorBeforeManage_ = selectorIndex_;
+          startActivityForResult(
+              std::make_unique<CollectionManageActivity>(renderer, mappedInput),
+              [this](const ActivityResult&) {
+                pendingCollectionsRebuild_ = true;
+                forceRender_ = true;
+                requestUpdate();
+              });
+          return;
+        }
+        if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ < 0 && (pageCache_[slot].id & 0x80000000u)) {
+          // Collection/series tile: no book context menu
+          return;
+        }
         const std::string title = pageCache_[slot].title[0] ? pageCache_[slot].title : book_filter::filenameWithoutExtension(path);
         const bool isEpub = FsHelpers::hasEpubExtension(std::string_view{path.c_str()});
         const bool isFav = FAVORITES.isFavorite(path);
@@ -966,9 +989,10 @@ void LibraryActivity::loop() {
         const auto* stats = READING_STATS.getHomeBookStatsForRender("", path);
         const bool isCompleted = stats && stats->completed;
         const bool isHidden = HIDDEN_BOOKS.isHidden(path);
+        const bool isInUserCollection = (currentCollectionIdx_ >= 0 && currentCollectionIsUser_);
 
         startActivityForResult(
-            std::make_unique<BookContextMenuActivity>(renderer, mappedInput, title, isFav, isCompleted, isEpub, true, isHidden),
+            std::make_unique<BookContextMenuActivity>(renderer, mappedInput, title, isFav, isCompleted, isEpub, true, isHidden, isInUserCollection),
             [this, idx, slot, path, title, isEpub](const ActivityResult& result) {
               if (result.isCancelled) { forceRender_ = true; requestUpdate(); return; }
               const auto* menuResult = std::get_if<MenuResult>(&result.data);
@@ -1060,6 +1084,20 @@ void LibraryActivity::loop() {
                         forceRender_ = true;
                         requestUpdate();
                       });
+                  return;
+                }
+                case BookContextMenuActivity::MenuAction::REMOVE_FROM_COLLECTION: {
+                  if (currentCollectionIdx_ >= 0 && currentCollectionIsUser_) {
+                    USER_COLLECTIONS.ensureLoaded();
+                    const UserCollection* uc = USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str());
+                    if (uc) {
+                      const uint32_t bookId = static_cast<uint32_t>(pageCache_[slot].id);
+                      USER_COLLECTIONS.removeBook(uc->id, bookId);
+                      pendingCollectionsRebuild_ = true;
+                      forceRender_ = true;
+                      requestUpdate();
+                    }
+                  }
                   return;
                 }
                 case BookContextMenuActivity::MenuAction::DELETE_BOOK_FILE: {
@@ -1176,6 +1214,8 @@ void LibraryActivity::loop() {
           prevSelectorBeforeCollection_ = selectorIndex_;
           currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFFu);
           currentCollectionName_ = pageCache_[slot].title;
+          USER_COLLECTIONS.ensureLoaded();
+          currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
           selectorIndex_ = 0;
           refreshPageCache();
           forceRender_ = true;
@@ -1189,6 +1229,8 @@ void LibraryActivity::loop() {
         prevSelectorBeforeCollection_ = selectorIndex_;
         currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFF);
         currentCollectionName_ = pageCache_[slot].title;
+        USER_COLLECTIONS.ensureLoaded();
+        currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
         selectorIndex_ = 0;
         refreshPageCache();
         forceRender_ = true;
@@ -1208,6 +1250,7 @@ void LibraryActivity::loop() {
       bumpLibEpoch();  // covers may have been generated inside -> root tiles changed
       currentCollectionIdx_ = -1;
       currentCollectionName_.clear();
+      currentCollectionIsUser_ = false;
       prevSelectorBeforeCollection_ = -1;
       totalBooks_ = collectionsMode_
           ? LibraryIndex::totalCollections()

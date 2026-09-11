@@ -42,6 +42,13 @@ const UserCollection* UserCollectionsStore::findCollection(const std::string& co
   return nullptr;
 }
 
+const UserCollection* UserCollectionsStore::findCollectionByName(const std::string& name) const {
+  for (const auto& c : collections_) {
+    if (c.name == name) return &c;
+  }
+  return nullptr;
+}
+
 int UserCollectionsStore::findCollectionIndex(const std::string& collectionId) const {
   for (int i = 0; i < static_cast<int>(collections_.size()); ++i) {
     if (collections_[i].id == collectionId) return i;

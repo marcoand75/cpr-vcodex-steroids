@@ -25,13 +25,15 @@ class BookContextMenuActivity final : public Activity {
     HIDE_BOOK,           // Hide from library shelf
     DELETE_BOOK_FILE,    // Permanently delete book file + cache
     ADD_TO_COLLECTION,   // Add book to a user collection (library mode only)
+    REMOVE_FROM_COLLECTION, // Remove book from current collection (library mode only)
     RENAME_BOOK,         // Rename book file (library mode only)
     MOVE_BOOK            // Move book file to another path (library mode only)
   };
 
   explicit BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                     const std::string& bookTitle, bool isFavorite, bool isCompleted,
-                                    bool isEpubFormat, bool isLibraryMode = false, bool isHidden = false);
+                                    bool isEpubFormat, bool isLibraryMode = false, bool isHidden = false,
+                                    bool isInUserCollection = false);
 
   void onEnter() override;
   void loop() override;
@@ -47,7 +49,8 @@ class BookContextMenuActivity final : public Activity {
   };
 
   static std::vector<MenuItem> buildMenuItems(bool isFavorite, bool isCompleted, bool isEpubFormat,
-                                                bool isLibraryMode = false, bool isHidden = false);
+                                                bool isLibraryMode = false, bool isHidden = false,
+                                                bool isInUserCollection = false);
 
   const std::vector<MenuItem> menuItems;
   const std::string bookTitle;

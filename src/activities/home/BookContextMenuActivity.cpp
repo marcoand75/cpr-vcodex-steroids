@@ -26,14 +26,16 @@
 BookContextMenuActivity::BookContextMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                  const std::string& bookTitle, const bool isFavorite,
                                                  const bool isCompleted, const bool isEpubFormat, 
-                                                 const bool isLibraryMode, const bool isHidden)
+                                                 const bool isLibraryMode, const bool isHidden,
+                                                 const bool isInUserCollection)
     : Activity("BookContextMenu", renderer, mappedInput),
-      menuItems(buildMenuItems(isFavorite, isCompleted, isEpubFormat, isLibraryMode, isHidden)),
+      menuItems(buildMenuItems(isFavorite, isCompleted, isEpubFormat, isLibraryMode, isHidden, isInUserCollection)),
       bookTitle(bookTitle) {}
 
 std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMenuItems(
     const bool isFavorite, const bool isCompleted, const bool isEpubFormat,
-    const bool isLibraryMode, const bool isHidden) {
+    const bool isLibraryMode, const bool isHidden,
+    const bool isInUserCollection) {
     
     std::vector<MenuItem> items;
     items.reserve(isLibraryMode ? 15 : 8);
@@ -74,6 +76,9 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
                          isHidden ? StrId::STR_UNHIDE_BOOK : StrId::STR_HIDE_BOOK,
                          LibraryIcon, 32, 32});
         items.push_back({MenuAction::ADD_TO_COLLECTION, StrId::STR_COLLECTION_ADD_BOOK, LibraryIcon, 32, 32});
+        if (isInUserCollection) {
+          items.push_back({MenuAction::REMOVE_FROM_COLLECTION, StrId::STR_COLLECTION_REMOVE_BOOK, LibraryIcon, 32, 32});
+        }
         items.push_back({MenuAction::RENAME_BOOK, StrId::STR_LIBRARY_RENAME_BOOK, BookIcon, 32, 32});
         items.push_back({MenuAction::MOVE_BOOK, StrId::STR_LIBRARY_MOVE_BOOK, LibraryIcon, 32, 32});
         items.push_back({MenuAction::DELETE_COVER_THUMB, StrId::STR_LIBRARY_DELETE_COVER, ImageIcon, 32, 32});

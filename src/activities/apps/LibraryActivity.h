@@ -63,6 +63,7 @@ class LibraryActivity final : public Activity {
   bool collectionsMode_ = false;         // true when browsing collections
   int  currentCollectionIdx_ = -1;       // selected collection index (-1 = list of collections)
   std::string currentCollectionName_;    // name of currently opened collection
+  bool currentCollectionIsUser_ = false; // true when the opened collection is a user collection
   int  prevSelectorBeforeCollection_ = -1; // selector index before entering a collection
 
   // Selector position before opening collection-management UI, restored after

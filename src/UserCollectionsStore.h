@@ -49,7 +49,8 @@ class UserCollectionsStore {
   std::vector<CollectionMember> members(const std::string& collectionId) const;
   int memberCount(const std::string& collectionId) const;
   bool hasBook(const std::string& collectionId, uint32_t bookId) const;
-  const UserCollection* findCollection(const std::string& collectionId) const;
+   const UserCollection* findCollection(const std::string& collectionId) const;
+   const UserCollection* findCollectionByName(const std::string& name) const;
 
   // Mutations
   bool createCollection(const std::string& name, std::string& outId);
