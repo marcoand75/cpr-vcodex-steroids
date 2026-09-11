@@ -982,7 +982,6 @@ bool buildCollectionsIndex() {
   }
 
   const int totalSeries = static_cast<int>(seriesFileSize / sizeof(SeriesRec));
-  if (totalSeries == 0) { return false; }
 
   // Build bookId -> path map from library.dat for folder-fallback scoping
   std::unordered_map<uint32_t, std::string> bookIdToPath;
@@ -1442,8 +1441,8 @@ bool buildMixedIndex() {
       }
       
       std::vector<IndexRec> chunk; chunk.reserve(kChunkRecs);
-      int collectionIdx = 0;
-      for (const auto& ci : allCollections) {
+      for (int idx = 0; idx < static_cast<int>(allCollections.size()); ++idx) {
+        const auto& ci = allCollections[idx];
         IndexRec ir;
         if (ci.flags & 1) {
           USER_COLLECTIONS.ensureLoaded();
@@ -1461,7 +1460,7 @@ bool buildMixedIndex() {
         char key[82];
         std::snprintf(key, sizeof(key), "%s|%d", ci.collectionName, ci.flags);
         auto it = combinedIndexMap.find(key);
-        int combinedIdx = (it != combinedIndexMap.end()) ? it->second : collectionIdx;
+        int combinedIdx = (it != combinedIndexMap.end()) ? it->second : idx;
         ir.bookId = 0x80000000u | static_cast<uint32_t>(combinedIdx);
         
         // Resolve first book path now so queryMixed() does not need to
@@ -1484,9 +1483,8 @@ bool buildMixedIndex() {
         }
         ir.recordOffset = foundFirst ? static_cast<uint32_t>((firstRec.id > 0 ? (firstRec.id - 1) : 0) * kRecordSize) : 0xFFFFFFFFu;
         chunk.push_back(ir);
-        ++collectionIdx;
 
-        if (static_cast<int>(chunk.size()) >= kChunkRecs || collectionIdx == static_cast<int>(allCollections.size()) - 1) {
+        if (static_cast<int>(chunk.size()) >= kChunkRecs || idx == static_cast<int>(allCollections.size()) - 1) {
           std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
           char tmpPath[96];
           std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, chunkCount++);
