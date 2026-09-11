@@ -735,15 +735,23 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
     if (pos == UINT32_MAX) { LOG_ERR("LIB", "Scan: append failed for %s", p); return; }
     newScan.push_back({ph, mtime, (uint32_t)fsz, rec.id});
 
-    // Write series entry if book has series/collection metadata
+    // Write series entry if book has series/collection metadata.
+    // Metadata-derived series are gated by libraryMetadataSeries; folder-fallback
+    // series are gated by libraryFolderCollections.
     if (series[0] != '\0') {
-      SeriesRec sr = {};
-      sr.bookId = rec.id;
-      std::strncpy(sr.seriesName, series, sizeof(sr.seriesName)-1);
-      sr.seriesName[sizeof(sr.seriesName)-1] = '\0';
-      sr.seriesIndex = seriesIndex;
-      sr.flags = seriesFromFolder ? 1 : 0;
-      appendSeriesRec(sr);
+      if (!seriesFromFolder && !SETTINGS.libraryMetadataSeries) {
+        // metadata series disabled: skip
+      } else if (seriesFromFolder && !SETTINGS.libraryFolderCollections) {
+        // folder collections disabled: skip
+      } else {
+        SeriesRec sr = {};
+        sr.bookId = rec.id;
+        std::strncpy(sr.seriesName, series, sizeof(sr.seriesName)-1);
+        sr.seriesName[sizeof(sr.seriesName)-1] = '\0';
+        sr.seriesIndex = seriesIndex;
+        sr.flags = seriesFromFolder ? 1 : 0;
+        appendSeriesRec(sr);
+      }
     }
 
     ++added;
@@ -1031,6 +1039,10 @@ bool buildCollectionsIndex() {
       // Determine grouping scope based on flags
       const bool isFolderFallback = (series[i].flags & 1) != 0;
       if (isFolderFallback && !SETTINGS.libraryFolderCollections) {
+        ++i;
+        continue;
+      }
+      if (!isFolderFallback && !SETTINGS.libraryMetadataSeries) {
         ++i;
         continue;
       }

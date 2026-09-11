@@ -312,6 +312,7 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Enum(StrId::STR_LIBRARY_UPDATE_MODE, &CrossPointSettings::libraryUpdateMode,
                         {StrId::STR_LIBRARY_UPDATE_MANUAL, StrId::STR_LIBRARY_UPDATE_AUTO}),
       SettingInfo::Toggle(StrId::STR_LIBRARY_FOLDER_COLLECTIONS, &CrossPointSettings::libraryFolderCollections),
+      SettingInfo::Toggle(StrId::STR_LIBRARY_METADATA_SERIES, &CrossPointSettings::libraryMetadataSeries),
       SettingInfo::String(StrId::STR_LIBRARY_ROOT_DIR, SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir)),
       SettingInfo::Action(StrId::STR_UPDATE_LIBRARY, SettingAction::UpdateLibrary),
       SettingInfo::Action(StrId::STR_REBUILD_LIBRARY, SettingAction::RebuildLibrary),

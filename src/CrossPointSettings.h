@@ -626,7 +626,8 @@ class CrossPointSettings {
   uint8_t libraryLayout = LIBRARY_LAYOUT_3X3;
   uint8_t libraryFilter = LIBRARY_FILTER_ALL;
   uint8_t librarySort = LIBRARY_SORT_TITLE_ASC;
-  uint8_t libraryFolderCollections = 0;  // 1 = auto-create collections from folders, 0 = disable
+  uint8_t libraryFolderCollections = 0;        // 1 = auto-create collections from folders, 0 = disable
+  uint8_t libraryMetadataSeries = 1;           // 1 = include metadata-derived series in collections/mixed views, 0 = disable
   char librarySearchText[64] = "";
   char libraryRootDir[128] = "/";
   uint8_t libraryLastCleanupDay = 0;  // day-of-year of last zero-size thumb cleanup

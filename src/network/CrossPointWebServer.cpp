@@ -2530,6 +2530,22 @@ void CrossPointWebServer::handleGetSteroidsSettings() const {
   }
   {
     JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryFolderCollections";
+    obj["name"] = "Enable Collection from Folders";
+    obj["category"] = "Library";
+    obj["type"] = "toggle";
+    obj["value"] = s.libraryFolderCollections;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryMetadataSeries";
+    obj["name"] = "Enable Series from Metadata";
+    obj["category"] = "Library";
+    obj["type"] = "toggle";
+    obj["value"] = s.libraryMetadataSeries;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
     obj["key"] = "libraryRootDir";
     obj["name"] = "Library Root Directory";
     obj["category"] = "Library";
@@ -2792,6 +2808,8 @@ void CrossPointWebServer::handlePostSteroidsSettings() {
   applyEnum("libraryFilter", s.libraryFilter, CrossPointSettings::LIBRARY_FILTER_COUNT);
   applyEnum("librarySort", s.librarySort, CrossPointSettings::LIBRARY_SORT_COUNT);
   applyEnum("libraryUpdateMode", s.libraryUpdateMode, CrossPointSettings::LIBRARY_UPDATE_MODE_COUNT);
+  applyToggle("libraryFolderCollections", s.libraryFolderCollections);
+  applyToggle("libraryMetadataSeries", s.libraryMetadataSeries);
   applyString("libraryRootDir", s.libraryRootDir, sizeof(s.libraryRootDir));
   applyString("screenSaverDirectory", s.screenSaverDirectory, sizeof(s.screenSaverDirectory));
   applyEnum("screenSaverOrder", s.screenSaverOrder, CrossPointSettings::SCREENSAVER_ORDER_COUNT);
