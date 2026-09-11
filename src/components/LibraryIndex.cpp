@@ -1124,62 +1124,86 @@ bool buildCollectionsIndex() {
           }
         }
 
-        // Count members per collection by matching collectionId in members array
-        const char* membersStr = strstr(p, "\"members\"");
-        if (membersStr) {
-          const char* arrStart = strchr(membersStr, '[');
-          if (arrStart) {
-            const char* scan = arrStart + 1;
-            while (*scan && *scan != ']') {
-              const char* cid = strstr(scan, "\"collectionId\"");
-              if (!cid) break;
-              const char* valStart = strchr(cid, '"');
-              if (!valStart) break;
-              const char* valEnd = strchr(valStart + 1, '"');
-              if (!valEnd) break;
+         // Count members per collection by matching collectionId in members array
+         const char* membersStr = strstr(p, "\"members\"");
+         if (membersStr) {
+           const char* arrStart = strchr(membersStr, '[');
+           if (arrStart) {
+             const char* scan = arrStart + 1;
+             while (*scan && *scan != ']') {
+                const char* cidKey = strstr(scan, "\"collectionId\"");
+                if (!cidKey) break;
+                const char* colon = strchr(cidKey, ':');
+                if (!colon) break;
+                const char* valStart = strchr(colon + 1, '"');
+                if (!valStart) break;
+                const char* valEnd = strchr(valStart + 1, '"');
+                if (!valEnd) break;
 
-              char collId[32] = {};
-              const size_t idLen = std::min<size_t>(sizeof(collId) - 1, static_cast<size_t>(valEnd - valStart - 1));
-              std::strncpy(collId, valStart + 1, idLen);
-              collId[idLen] = '\0';
+                char collId[32] = {};
+                const size_t idLen = std::min<size_t>(sizeof(collId) - 1, static_cast<size_t>(valEnd - valStart - 1));
+                std::strncpy(collId, valStart + 1, idLen);
+                collId[idLen] = '\0';
 
-              for (auto& uc : userCollections) {
-                if (strcmp(uc.collectionName, collId) == 0) {
-                  uc.bookCount++;
-                  break;
+                for (auto& uc : userCollections) {
+                  if (strcmp(uc.collectionName, collId) == 0) {
+                    uc.bookCount++;
+                    break;
+                  }
                 }
-              }
 
-              scan = valEnd + 1;
-            }
-          }
-        }
-      }
-    }
-  }
+                scan = valEnd + 1;
+             }
+           }
+         }
+       }
+     }
+   }
 
-  // Merge auto collections and user collections into a single sorted index
-  std::vector<CollectionIndexRec> merged;
-  merged.reserve(collections.size() + userCollections.size());
-  size_t autoIdx = 0, userIdx = 0;
-  while (autoIdx < collections.size() || userIdx < userCollections.size()) {
-    if (autoIdx >= collections.size()) {
-      merged.push_back(userCollections[userIdx++]);
-    } else if (userIdx >= userCollections.size()) {
-      merged.push_back(collections[autoIdx++]);
-    } else {
-      int c = cmpSortKey(collections[autoIdx].collectionName, userCollections[userIdx].collectionName);
-      if (c < 0) {
-        merged.push_back(collections[autoIdx++]);
-      } else if (c > 0) {
-        merged.push_back(userCollections[userIdx++]);
-      } else {
-        // Same name: auto series first, then user collection
-        merged.push_back(collections[autoIdx++]);
-        merged.push_back(userCollections[userIdx++]);
-      }
-    }
-  }
+   // Sort user collections by display name so they interleave correctly
+   // with metadata series in the merged index.
+   USER_COLLECTIONS.ensureLoaded();
+   auto sortKeyFor = [&](const CollectionIndexRec& ci) -> const char* {
+     static thread_local char key[20];
+     if (ci.flags & 1) {
+       const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+       if (uc) {
+         makeTitleSortKey(uc->name.c_str(), key);
+         return key;
+       }
+     }
+     makeTitleSortKey(ci.collectionName, key);
+     return key;
+   };
+   std::sort(userCollections.begin(), userCollections.end(), [&](const CollectionIndexRec& a, const CollectionIndexRec& b) {
+     return cmpSortKey(sortKeyFor(a), sortKeyFor(b)) < 0;
+   });
+
+   // Merge auto collections and user collections into a single sorted index
+   std::vector<CollectionIndexRec> merged;
+   merged.reserve(collections.size() + userCollections.size());
+   size_t autoIdx = 0, userIdx = 0;
+   while (autoIdx < collections.size() || userIdx < userCollections.size()) {
+     if (autoIdx >= collections.size()) {
+       merged.push_back(userCollections[userIdx++]);
+     } else if (userIdx >= userCollections.size()) {
+       merged.push_back(collections[autoIdx++]);
+     } else {
+       char keyAuto[20];
+       makeTitleSortKey(collections[autoIdx].collectionName, keyAuto);
+       const char* keyUser = sortKeyFor(userCollections[userIdx]);
+       int c = cmpSortKey(keyAuto, keyUser);
+       if (c < 0) {
+         merged.push_back(collections[autoIdx++]);
+       } else if (c > 0) {
+         merged.push_back(userCollections[userIdx++]);
+       } else {
+         // Same name: auto series first, then user collection
+         merged.push_back(collections[autoIdx++]);
+         merged.push_back(userCollections[userIdx++]);
+       }
+     }
+   }
 
   // Write idx_collections.bin
   HalFile outF = Storage.open(kIdxCollections, O_CREAT | O_WRONLY | O_TRUNC);
@@ -1201,23 +1225,31 @@ bool buildMixedIndex() {
   LOG_DBG("LIB", "BuildMixedIdx: start");
   const unsigned long t0 = millis();
 
-  // Phase 0: read series.dat and build a sorted set of book IDs that belong
-  // to a series/collection.  Used to skip them when emitting standalone entries.
-  std::vector<uint32_t> seriesBookIds;
+  // Phase 0: read series.dat and user collections, build a sorted set of book IDs that belong
+  // to a series/collection. Used to skip them when emitting standalone entries.
+  std::vector<uint32_t> collectionBookIds;
   {
     HalFile sf = Storage.open(kSeriesDat);
     if (sf) {
       const size_t totalSeries = sf.size() / sizeof(SeriesRec);
-      seriesBookIds.reserve(totalSeries);
+      collectionBookIds.reserve(totalSeries);
       SeriesRec sr;
       for (size_t i = 0; i < totalSeries; ++i) {
         if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == sizeof(SeriesRec)) {
-          if (sr.bookId > 0) seriesBookIds.push_back(sr.bookId);
+          if (sr.bookId > 0) collectionBookIds.push_back(sr.bookId);
         }
       }
       sf.close();
-      std::sort(seriesBookIds.begin(), seriesBookIds.end());
     }
+
+    // Include user collection members so they don't appear as standalone books.
+    USER_COLLECTIONS.ensureLoaded();
+    const auto& members = USER_COLLECTIONS.allMembers();
+    collectionBookIds.reserve(collectionBookIds.size() + members.size());
+    for (const auto& m : members) {
+      if (m.bookId > 0) collectionBookIds.push_back(m.bookId);
+    }
+    std::sort(collectionBookIds.begin(), collectionBookIds.end());
   }
 
   int chunkCount = 0;
@@ -1233,7 +1265,7 @@ bool buildMixedIndex() {
     for (int rp = 0; rp < totalRecs; ++rp) {
       if (!readRecord(static_cast<uint32_t>(rp), rec)) continue;
       if (rec.tombstone()) continue;
-      if (std::binary_search(seriesBookIds.begin(), seriesBookIds.end(), rec.id)) continue;
+      if (std::binary_search(collectionBookIds.begin(), collectionBookIds.end(), rec.id)) continue;
 
       IndexRec ir;
       makeTitleSortKey(rec.title, ir.sortKey);
@@ -1266,9 +1298,19 @@ bool buildMixedIndex() {
         CollectionIndexRec ci;
         for (int i = 0; i < totalColls; ++i) {
           if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != static_cast<int>(sizeof(CollectionIndexRec))) break;
-          IndexRec ir;
-          makeTitleSortKey(ci.collectionName, ir.sortKey);
-          ir.bookId = 0x80000000u | static_cast<uint32_t>(i);
+           IndexRec ir;
+           if (ci.flags & 1) {
+             USER_COLLECTIONS.ensureLoaded();
+             const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+             if (uc) {
+               makeTitleSortKey(uc->name.c_str(), ir.sortKey);
+             } else {
+               makeTitleSortKey(ci.collectionName, ir.sortKey);
+             }
+           } else {
+             makeTitleSortKey(ci.collectionName, ir.sortKey);
+           }
+           ir.bookId = 0x80000000u | static_cast<uint32_t>(i);
 
           // Resolve first book path now so queryMixed() does not need to
           // scan series.dat + library.dat at runtime.
@@ -1594,6 +1636,15 @@ int collectionBookCount(int collectionIdx) {
     cf.close(); return 0;
   }
   cf.close();
+
+  if (ci.flags & 1) {
+    USER_COLLECTIONS.ensureLoaded();
+    const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+    if (uc) {
+      return USER_COLLECTIONS.memberCount(uc->id);
+    }
+    return 0;
+  }
   return static_cast<int>(ci.bookCount);
 }
 
@@ -1716,19 +1767,27 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
         CollectionIndexRec ci;
         if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
-          BookRef& ref = out[count];
-          ref.id = ir.bookId;
-          
-          // Append folder-fallback disambiguation subtitle if needed
-          std::string subtitle = getCollectionSubtitle(ci, sf, df);
-          if (!subtitle.empty()) {
-            char combined[80];
-            std::snprintf(combined, sizeof(combined), "%s / %s", ci.collectionName, subtitle.c_str());
-            std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
-          } else {
-            std::strncpy(ref.title, ci.collectionName, 64); ref.title[64] = '\0';
-          }
-          snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
+           BookRef& ref = out[count];
+           ref.id = ir.bookId;
+           
+           // Resolve display name for user collections from UserCollectionsStore.
+           std::string displayName = ci.collectionName;
+           if ((ci.flags & 1) != 0) {
+             USER_COLLECTIONS.ensureLoaded();
+             const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+             if (uc) displayName = uc->name;
+           }
+           
+           // Append folder-fallback disambiguation subtitle if needed
+           std::string subtitle = getCollectionSubtitle(ci, sf, df);
+           if (!subtitle.empty()) {
+             char combined[80];
+             std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
+             std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
+           } else {
+             std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
+           }
+           snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
           ref.path[0] = '\0';
           ref.isFavorite = false;
           ref.isOpened = false;
@@ -1841,42 +1900,74 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
         CollectionIndexRec ci;
         if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
-          if (hasSearch) {
-            char key[20]; makeTitleSortKey(ci.collectionName, key);
-            matches = substringMatch(key, searchFilter);
-          } else {
-            matches = true;
-          }
+           if (hasSearch) {
+             char key[20];
+             if (ci.flags & 1) {
+               USER_COLLECTIONS.ensureLoaded();
+               const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+               if (uc) {
+                 makeTitleSortKey(uc->name.c_str(), key);
+               } else {
+                 makeTitleSortKey(ci.collectionName, key);
+               }
+             } else {
+               makeTitleSortKey(ci.collectionName, key);
+             }
+             matches = substringMatch(key, searchFilter);
+           } else {
+             matches = true;
+           }
 
-          if (matches && filterMode != FilterMode::ALL) {
-            HalFile sf = Storage.open(kSeriesDat);
-            HalFile df = Storage.open(kDatFile);
-            if (sf && df) {
-              sf.seek(ci.firstSeriesOffset);
-              SeriesRec sr;
-              bool anyMatch = false;
-              for (uint32_t b = 0; b < ci.bookCount; ++b) {
-                if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-                if (sr.bookId == 0) continue;
-                df.seek(0);
-                Record rec;
-                uint32_t rp = 0;
-                while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-                  if (rec.id == sr.bookId && !rec.tombstone()) {
-                    if (matchesFilter(rec, filterMode)) {
-                      anyMatch = true;
-                      break;
-                    }
-                  }
-                  ++rp;
-                }
-                if (anyMatch) break;
-              }
-              matches = anyMatch;
-            }
-            if (sf) sf.close();
-            if (df) df.close();
-          }
+           if (matches && filterMode != FilterMode::ALL) {
+             if (ci.flags & 1) {
+               // User collection: resolve members from UserCollectionsStore
+               USER_COLLECTIONS.ensureLoaded();
+               const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+               if (uc) {
+                 auto members = USER_COLLECTIONS.members(uc->id);
+                 for (const auto& m : members) {
+                   Record rec;
+                   if (readRecordByBookId(m.bookId, rec) && !rec.tombstone()) {
+                     if (matchesFilter(rec, filterMode)) {
+                       matches = true;
+                       break;
+                     }
+                   }
+                 }
+                 if (members.empty()) matches = false;
+               } else {
+                 matches = false;
+               }
+             } else {
+               HalFile sf = Storage.open(kSeriesDat);
+               HalFile df = Storage.open(kDatFile);
+               if (sf && df) {
+                 sf.seek(ci.firstSeriesOffset);
+                 SeriesRec sr;
+                 bool anyMatch = false;
+                 for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                   if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                   if (sr.bookId == 0) continue;
+                   df.seek(0);
+                   Record rec;
+                   uint32_t rp = 0;
+                   while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                     if (rec.id == sr.bookId && !rec.tombstone()) {
+                       if (matchesFilter(rec, filterMode)) {
+                         anyMatch = true;
+                         break;
+                       }
+                     }
+                     ++rp;
+                   }
+                   if (anyMatch) break;
+                 }
+                 matches = anyMatch;
+               }
+               if (sf) sf.close();
+               if (df) df.close();
+             }
+           }
         }
       }
     } else {
