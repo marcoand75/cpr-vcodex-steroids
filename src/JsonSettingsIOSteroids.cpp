@@ -65,6 +65,8 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   doc["libraryLastCleanupDay"] = s.libraryLastCleanupDay;
   doc["librarySort"] = s.librarySort;
   doc["libraryUpdateMode"] = s.libraryUpdateMode;
+  doc["libraryFolderCollections"] = s.libraryFolderCollections;
+  doc["libraryMetadataSeries"] = s.libraryMetadataSeries;
   {
     const std::string searchText(s.librarySearchText);
     if (!searchText.empty()) {
@@ -227,6 +229,8 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   s.libraryLastCleanupDay = doc["libraryLastCleanupDay"] | static_cast<uint8_t>(0);
   loadEnum("librarySort", s.librarySort, S::LIBRARY_SORT_COUNT);
   loadEnum("libraryUpdateMode", s.libraryUpdateMode, S::LIBRARY_UPDATE_MODE_COUNT);
+  loadToggle("libraryFolderCollections", s.libraryFolderCollections);
+  loadToggle("libraryMetadataSeries", s.libraryMetadataSeries);
   {
     const std::string searchText = doc["librarySearchText"] | std::string("");
     StringUtils::copyToFixedBuffer(s.librarySearchText, sizeof(s.librarySearchText), searchText);

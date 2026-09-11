@@ -1234,7 +1234,26 @@ void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
           renderer.truncatedText(UI_10_FONT_ID, getSettingNameText(*setting), labelWidth, EpdFontFamily::REGULAR);
       renderer.drawText(UI_10_FONT_ID, rowRect.x + leftPadding, rowRect.y + 9, titleText.c_str(), true,
                         EpdFontFamily::REGULAR);
-      if (!valueText.empty()) {
+      if (setting->type == SettingType::TOGGLE && setting->valuePtr != nullptr) {
+        const bool checked = SETTINGS.*(setting->valuePtr);
+        const int checkboxSize = 16;
+        const int checkboxX = rowRect.x + rowRect.width - rightPadding - checkboxSize;
+        const int checkboxY = rowRect.y + (itemHeight - checkboxSize) / 2 - 2;
+        // Draw checkbox: white background, black V-checkmark when enabled
+        renderer.fillRect(checkboxX, checkboxY, checkboxSize, checkboxSize, false); // white fill
+        renderer.drawRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 1, true); // black border
+        if (checked) {
+          // V-shaped checkmark, same style as LyraMarcoand75 goal badge
+          const int leftX = checkboxX + checkboxSize * 3 / 16;
+          const int midX = checkboxX + checkboxSize * 7 / 16;
+          const int rightX = checkboxX + checkboxSize * 13 / 16;
+          const int leftY = checkboxY + checkboxSize * 9 / 16;
+          const int midY = checkboxY + checkboxSize * 12 / 16;
+          const int rightY = checkboxY + checkboxSize * 4 / 16;
+          renderer.drawLine(leftX, leftY, midX, midY, 2, true);
+          renderer.drawLine(midX, midY, rightX, rightY, 2, true);
+        }
+      } else if (!valueText.empty()) {
         renderer.drawText(UI_10_FONT_ID, rowRect.x + rowRect.width - rightPadding - valueWidth, rowRect.y + 9,
                           valueText.c_str(), true, EpdFontFamily::REGULAR);
       }
