@@ -225,12 +225,19 @@ void LibraryActivity::onEnter() {
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
   USER_COLLECTIONS.ensureLoaded();
-  lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
-  pendingCollectionsRebuild_ = false;
-  // READING_STATS is intentionally NOT loaded here: the grid reads badges
-  // through the lightweight summary.json path (see LibraryIndex::recordToBookRef /
-  // matchesFilter). The full store is materialized only when a progress/recency
-  // sort or a context-menu action (mark read/unread, view stats) needs it.
+
+  // If we returned from collection management, rebuild indices now so the
+  // library grid reflects added/removed/renamed collections before we render.
+  if (pendingCollectionsRebuild_) {
+    if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildMixedIndex();
+    }
+    lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
+    pendingCollectionsRebuild_ = false;
+  } else {
+    lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
+  }
 
   // Preload the best installed SD CJK family so non-Latin titles render with
   // glyphs everywhere in the grid/header (no-op when no CJK font is installed).
@@ -255,6 +262,17 @@ void LibraryActivity::onEnter() {
   currentSearchText_ = SETTINGS.librarySearchText;
 
   scanSd();
+
+  // If we came back from collection-management UI, try to return to the same
+  // page/selection instead of always resetting to the first item.
+  if (selectorBeforeManage_ >= 0) {
+    selectorIndex_ = selectorBeforeManage_;
+    if (selectorIndex_ >= totalBooks_) {
+      selectorIndex_ = std::max(0, totalBooks_ - 1);
+    }
+    refreshPageCache();
+    selectorBeforeManage_ = -1;
+  }
 
   LOG_DBG("LIB", "onEnter: after scanSd heap=%u maxA=%u total=%d",
                ESP.getFreeHeap(), ESP.getMaxAllocHeap(), totalBooks_);
@@ -655,6 +673,7 @@ void LibraryActivity::selectPopupItem() {
     // 4=Completed, 5=Hidden, 6=Serie (grouped shelf), 7=Serie + Libri (mixed), 8=Manage collections.
     if (idx == 8) {
       closePopup();
+      selectorBeforeManage_ = selectorIndex_;
       startActivityForResult(
           std::make_unique<CollectionManageActivity>(renderer, mappedInput),
           [this](const ActivityResult&) {
@@ -930,6 +949,7 @@ void LibraryActivity::loop() {
       const std::string path(pageCache_[slot].path);
       if (collectionsMode_ && currentCollectionIdx_ < 0) {
         // Long-press on collection tile: open manage collections
+        selectorBeforeManage_ = selectorIndex_;
         startActivityForResult(
             std::make_unique<CollectionManageActivity>(renderer, mappedInput),
             [this](const ActivityResult&) {
@@ -1032,6 +1052,7 @@ void LibraryActivity::loop() {
                   forceRender_ = true; requestUpdate(); return;
                 case BookContextMenuActivity::MenuAction::ADD_TO_COLLECTION: {
                   const uint32_t bookId = static_cast<uint32_t>(pageCache_[slot].id);
+                  selectorBeforeManage_ = selectorIndex_;
                   startActivityForResult(
                       std::make_unique<CollectionPickerActivity>(renderer, mappedInput, bookId),
                       [this](const ActivityResult&) {

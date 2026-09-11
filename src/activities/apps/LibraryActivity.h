@@ -65,6 +65,10 @@ class LibraryActivity final : public Activity {
   std::string currentCollectionName_;    // name of currently opened collection
   int  prevSelectorBeforeCollection_ = -1; // selector index before entering a collection
 
+  // Selector position before opening collection-management UI, restored after
+  // a pending collections rebuild so the user returns to roughly the same page.
+  int selectorBeforeManage_ = -1;
+
   // User collections rebuild tracking (Steroids extension)
   uint32_t lastUserCollectionsGeneration_ = 0;
   bool pendingCollectionsRebuild_ = false;
