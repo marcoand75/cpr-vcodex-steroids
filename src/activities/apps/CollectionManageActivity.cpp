@@ -21,15 +21,12 @@ static void s_onConfirm(void* ctx) {
     if (self->collections_.empty()) return;
     const int idx = self->selectedIndex_;
     if (idx < 0 || idx >= self->collections_.size()) return;
-    self->openMembers(self->collections_[idx].id, self->collections_[idx].name);
+    self->startRename(idx);
     return;
   }
 
   if (self->viewMode_ == CollectionManageActivity::ViewMode::Members) {
-    if (self->members_.empty()) return;
-    const int idx = self->selectedMemberIndex_;
-    if (idx < 0 || idx >= self->members_.size()) return;
-    LOG_DBG("COLL", "Open member %u from collection %s", self->members_[idx].id, self->currentCollectionId_.c_str());
+    self->renameCurrentCollection();
   }
 }
 
@@ -90,7 +87,6 @@ void CollectionManageActivity::onEnter() {
   Activity::onEnter();
   pageItems_ = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
   listInputMapper_.setBackHandler(s_onBack, this, false);
-  listInputMapper_.setConfirmHandler(s_onConfirm, this, false);
   listInputMapper_.setNavReleaseAndContinuous(s_onNavRelease, s_onNavContinuous, this);
   refreshCollections();
 }
@@ -111,6 +107,22 @@ void CollectionManageActivity::loop() {
     }
     finish();
     return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (viewMode_ == ViewMode::Collections) {
+      if (!collections_.empty()) {
+        if (mappedInput.getHeldTime() > 1000) {
+          openMembers(collections_[selectedIndex_].id, collections_[selectedIndex_].name);
+        } else {
+          startRename(selectedIndex_);
+        }
+      }
+      return;
+    }
+    if (viewMode_ == ViewMode::Members) {
+      renameCurrentCollection();
+      return;
+    }
   }
   if (viewMode_ == ViewMode::Collections) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
@@ -178,9 +190,9 @@ void CollectionManageActivity::render(RenderLock&&) {
       GUI.drawPopup(renderer, tr(STR_COLLECTION_EMPTY));
       ListRenderHelper::drawHints(renderer, mappedInput,
                                   tr(STR_COLLECTION_BACK_TO_LIST),
-                                  nullptr,
+                                  tr(STR_COLLECTION_RENAME),
                                   tr(STR_COLLECTION_ADD_BOOK),
-                                  nullptr);
+                                  tr(STR_COLLECTION_REMOVE_BOOK));
       renderer.displayBuffer();
       return;
     }
@@ -191,9 +203,9 @@ void CollectionManageActivity::render(RenderLock&&) {
                                true);
     ListRenderHelper::drawHints(renderer, mappedInput,
                                 tr(STR_COLLECTION_BACK_TO_LIST),
-                                tr(STR_COLLECTION_REMOVE_BOOK),
+                                tr(STR_COLLECTION_RENAME),
                                 tr(STR_COLLECTION_ADD_BOOK),
-                                nullptr);
+                                tr(STR_COLLECTION_REMOVE_BOOK));
     renderer.displayBuffer();
     return;
   }
@@ -224,7 +236,7 @@ void CollectionManageActivity::refreshMembers() {
 
   for (const auto& m : members) {
     LibraryIndex::BookRef ref;
-    if (LibraryIndex::queryUserCollectionBooks(&ref, 0, 1, currentCollectionId_.c_str()) == 1) {
+    if (LibraryIndex::queryBookByBookId(&ref, m.bookId) == 1) {
       members_.push_back(ref);
     }
   }
@@ -253,11 +265,37 @@ void CollectionManageActivity::startRename(int index) {
       });
 }
 
+void CollectionManageActivity::renameCurrentCollection() {
+  if (currentCollectionId_.empty()) return;
+  USER_COLLECTIONS.ensureLoaded();
+  const UserCollection* uc = USER_COLLECTIONS.findCollection(currentCollectionId_);
+  if (!uc) return;
+
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_COLLECTION_RENAME), uc->name, 64),
+      [this](const ActivityResult& result) {
+        if (result.isCancelled) { requestUpdate(); return; }
+        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+        if (!kbResult || kbResult->text.empty()) { requestUpdate(); return; }
+        USER_COLLECTIONS.ensureLoaded();
+        USER_COLLECTIONS.renameCollection(currentCollectionId_, kbResult->text);
+        currentCollectionName_ = kbResult->text;
+        requestUpdate();
+      });
+}
+
 void CollectionManageActivity::createCollection() {
-  char id[16] = {};
-  if (LibraryIndex::createUserCollection("New Collection", id, sizeof(id))) {
-    refreshCollections();
-  }
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_COLLECTION_NEW_NAME), "", 64),
+      [this](const ActivityResult& result) {
+        if (result.isCancelled) { requestUpdate(); return; }
+        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+        if (!kbResult || kbResult->text.empty()) { requestUpdate(); return; }
+        char id[16] = {};
+        if (LibraryIndex::createUserCollection(kbResult->text.c_str(), id, sizeof(id))) {
+          refreshCollections();
+        }
+      });
 }
 
 void CollectionManageActivity::deleteSelected() {

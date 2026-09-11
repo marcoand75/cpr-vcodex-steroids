@@ -45,6 +45,7 @@ class CollectionManageActivity final : public Activity {
   void createCollection();
   void deleteSelected();
   void startRename(int index);
+  void renameCurrentCollection();
   void openMembers(const std::string& collectionId, const std::string& collectionName);
   void addBookToCurrentCollection();
   void removeSelectedMember();

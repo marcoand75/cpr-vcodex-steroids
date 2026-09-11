@@ -18,6 +18,7 @@ static void s_onBack(void* ctx) {
 static void s_onConfirm(void* ctx) {
   auto* self = static_cast<CollectionPickerActivity*>(ctx);
   if (self->collections_.empty()) return;
+  if (self->bookId_ == 0) return;
   const int idx = self->selectedIndex_;
   if (idx < 0 || idx >= self->collections_.size()) return;
   USER_COLLECTIONS.ensureLoaded();
@@ -107,10 +108,17 @@ void CollectionPickerActivity::render(RenderLock&&) {
 }
 
 void CollectionPickerActivity::createCollection() {
-  char id[16] = {};
-  if (LibraryIndex::createUserCollection("New Collection", id, sizeof(id))) {
-    refreshCollections();
-  }
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_COLLECTION_NEW_NAME), "", 64),
+      [this](const ActivityResult& result) {
+        if (result.isCancelled) { requestUpdate(); return; }
+        const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+        if (!kbResult || kbResult->text.empty()) { requestUpdate(); return; }
+        char id[16] = {};
+        if (LibraryIndex::createUserCollection(kbResult->text.c_str(), id, sizeof(id))) {
+          refreshCollections();
+        }
+      });
 }
 
 void CollectionPickerActivity::refreshCollections() {
@@ -120,7 +128,11 @@ void CollectionPickerActivity::refreshCollections() {
     CollectionEntry entry;
     entry.id = c.id;
     entry.name = c.name;
-    entry.hasBook = bookId_ != 0 ? USER_COLLECTIONS.hasBook(c.id, bookId_) : true;
+    if (bookId_ != 0) {
+      entry.hasBook = USER_COLLECTIONS.hasBook(c.id, bookId_);
+    } else {
+      entry.hasBook = false;
+    }
     collections_.push_back(entry);
   }
   if (selectedIndex_ >= collections_.size()) selectedIndex_ = collections_.size() - 1;
