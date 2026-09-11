@@ -333,8 +333,13 @@ void LibraryActivity::scanSd() {
   currentFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(SETTINGS.libraryFilter);
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
-  collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
-  mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
+  viewMode_ = LibraryViewMode::Flat;
+  if (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS) viewMode_ = LibraryViewMode::Collections;
+  if (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED) viewMode_ = LibraryViewMode::Mixed;
+  sortModeBeforeSearch_ = currentSort_;
+  viewModeBeforeSearch_ = viewMode_;
+  collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
+  mixedMode_ = (viewMode_ == LibraryViewMode::Mixed);
   if (collectionsMode_) {
     currentCollectionIdx_ = -1;
     currentCollectionIsUser_ = false;
@@ -490,12 +495,17 @@ void LibraryActivity::refreshPageCache() {
 }
 
 void LibraryActivity::applyFilterAndSort() {
-  collectionsMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS);
-  mixedMode_ = (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED);
+  collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
+  mixedMode_ = (viewMode_ == LibraryViewMode::Mixed);
   if (!collectionsMode_ && !mixedMode_) lastFlatSort_ = currentSort_;  // remember flat ordering
   if (collectionsMode_ || mixedMode_) {
     currentCollectionIdx_ = -1;
     currentCollectionIsUser_ = false;
+  }
+  // Keep the search-restore target aligned with the current view/ordem mode.
+  if (currentSearchText_.empty()) {
+    sortModeBeforeSearch_ = currentSort_;
+    viewModeBeforeSearch_ = viewMode_;
   }
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
@@ -682,6 +692,7 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.librarySearchText[0] = '\0';
       if (hadSearch) {
         currentSort_ = sortModeBeforeSearch_;
+        viewMode_ = viewModeBeforeSearch_;
         SETTINGS.librarySort = currentSort_;
       }
       SETTINGS.saveToFile();
@@ -712,16 +723,14 @@ void LibraryActivity::selectPopupItem() {
           });
       return;
     } else if (idx == 6) {
-      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
-      currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
+      viewMode_ = LibraryViewMode::Collections;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx == 7) {
-      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
-      currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
+      viewMode_ = LibraryViewMode::Mixed;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
       SETTINGS.libraryFilter = currentFilter_;
@@ -729,13 +738,6 @@ void LibraryActivity::selectPopupItem() {
       applyFilterAndSort();
     } else if (idx >= 0 && idx <= 5) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
-      // A book filter always targets the flat shelf: leave Serie modes and
-      // restore the remembered flat ordering.
-      if (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS ||
-          currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED) {
-        currentSort_ = lastFlatSort_;
-        SETTINGS.librarySort = currentSort_;
-      }
       static const CrossPointSettings::LIBRARY_FILTER kFilters[6] = {
           CrossPointSettings::LIBRARY_FILTER_ALL, CrossPointSettings::LIBRARY_FILTER_FAVOURITES,
           CrossPointSettings::LIBRARY_FILTER_LATEST_READ, CrossPointSettings::LIBRARY_FILTER_UNREAD,
