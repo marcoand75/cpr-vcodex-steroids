@@ -26,13 +26,23 @@ class CollectionPickerActivity final : public Activity {
     bool hasBook;
   };
 
+  struct BookEntry {
+    uint32_t id;
+    char title[64];
+    char path[128];
+  };
+
   std::vector<CollectionEntry> collections_;
   int selectedIndex_ = 0;
   int pageItems_ = 0;
   ListInputMapper listInputMapper_;
   uint32_t bookId_ = 0;
 
+  std::vector<BookEntry> books_;
+  int selectedBookIndex_ = 0;
+
  private:
   void refreshCollections();
+  void refreshBooks();
   void createCollection();
 };
