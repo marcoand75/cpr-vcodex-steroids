@@ -120,7 +120,7 @@ void CollectionPickerActivity::refreshCollections() {
     CollectionEntry entry;
     entry.id = c.id;
     entry.name = c.name;
-    entry.hasBook = USER_COLLECTIONS.hasBook(c.id, bookId_);
+    entry.hasBook = bookId_ != 0 ? USER_COLLECTIONS.hasBook(c.id, bookId_) : true;
     collections_.push_back(entry);
   }
   if (selectedIndex_ >= collections_.size()) selectedIndex_ = collections_.size() - 1;

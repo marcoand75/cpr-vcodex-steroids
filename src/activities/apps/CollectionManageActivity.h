@@ -5,6 +5,8 @@
 
 #include "../Activity.h"
 #include "../util/ListInputMapper.h"
+#include "components/LibraryIndex.h"
+#include "CollectionPickerActivity.h"
 
 class CollectionManageActivity final : public Activity {
  public:
@@ -25,13 +27,25 @@ class CollectionManageActivity final : public Activity {
     int bookCount;
   };
 
+  enum class ViewMode { Collections, Members };
+
   std::vector<CollectionEntry> collections_;
   int selectedIndex_ = 0;
   int pageItems_ = 0;
   ListInputMapper listInputMapper_;
 
+  ViewMode viewMode_ = ViewMode::Collections;
+  std::string currentCollectionId_;
+  std::string currentCollectionName_;
+  std::vector<LibraryIndex::BookRef> members_;
+  int selectedMemberIndex_ = 0;
+
   void refreshCollections();
+  void refreshMembers();
   void createCollection();
   void deleteSelected();
   void startRename(int index);
+  void openMembers(const std::string& collectionId, const std::string& collectionName);
+  void addBookToCurrentCollection();
+  void removeSelectedMember();
 };
