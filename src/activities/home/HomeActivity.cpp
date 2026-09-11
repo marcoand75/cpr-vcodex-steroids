@@ -44,6 +44,7 @@
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/apps/ScreenSaverActivity.h"
 #include "activities/apps/ClippingsAppActivity.h"
+#include "activities/apps/CollectionManageActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/WikipediaActivity.h"
 #include "activities/apps/QuickCardsActivity.h"
@@ -1353,10 +1354,14 @@ case static_cast<int>(BookContextMenuActivity::MenuAction::CLEAR_THEME_CACHE): {
            startActivityForResult(std::make_unique<ClippingsAppActivity>(renderer, mappedInput),
                                   [this](const ActivityResult&) { requestFreshHomeRender(true); });
            break;
-          case ShortcutId::Wikipedia:
-            onWikipediaOpen();
-            break;
-          case ShortcutId::QuickCards:
+        case ShortcutId::Wikipedia:
+          onWikipediaOpen();
+          break;
+        case ShortcutId::Collections:
+          startActivityForResult(std::make_unique<CollectionManageActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::QuickCards:
             startActivityForResult(std::make_unique<QuickCardsActivity>(renderer, mappedInput),
                                    [this](const ActivityResult&) { requestFreshHomeRender(true); });
             break;
