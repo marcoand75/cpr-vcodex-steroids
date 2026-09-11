@@ -171,6 +171,9 @@ int userCollectionBookCount(const char* collectionId);
 // List user collection tiles. Returns count written (0 on end/error).
 int queryUserCollections(BookRef* out, int page, int pageSize, int coverWidth, int coverHeight);
 
+// Query a single book by its unique bookId. Returns 1 if found, 0 otherwise.
+int queryBookByBookId(BookRef* out, uint32_t bookId);
+
 // Books within a specific user collection (by collection id string).
 int queryUserCollectionBooks(BookRef* out, int page, int pageSize, const char* collectionId);
 

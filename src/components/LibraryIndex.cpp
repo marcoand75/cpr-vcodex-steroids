@@ -2231,6 +2231,24 @@ int queryUserCollections(BookRef* out, int page, int pageSize, int coverWidth, i
   return count;
 }
 
+int queryBookByBookId(BookRef* out, uint32_t bookId) {
+  if (!out || bookId == 0) return 0;
+  HalFile f = Storage.open(kDatFile);
+  if (!f) return 0;
+  const int totalRecs = static_cast<int>(f.size() / kRecordSize);
+  for (int rp = 0; rp < totalRecs; ++rp) {
+    Record rec;
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
+    if (rec.id == bookId && !rec.tombstone()) {
+      recordToBookRef(rec, *out);
+      f.close();
+      return 1;
+    }
+  }
+  f.close();
+  return 0;
+}
+
 int queryUserCollectionBooks(BookRef* out, int page, int pageSize, const char* collectionId) {
   if (!out || pageSize <= 0 || !collectionId || !*collectionId) return 0;
   USER_COLLECTIONS.ensureLoaded();
