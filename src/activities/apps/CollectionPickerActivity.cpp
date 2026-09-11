@@ -145,17 +145,17 @@ void CollectionPickerActivity::render(RenderLock&&) {
   }
 
   const auto layout = ListLayout::compute(renderer);
-  ListRenderHelper::drawList(renderer, layout, static_cast<int>(collections_.size()), selectedIndex_,
-                             [this](int index) { return collections_[index].name; }, nullptr, nullptr,
-                             [this](int index) -> std::string {
-                               return collections_[index].hasBook ? tr(STR_COLLECTION_ADD_BOOK) : std::string();
-                             },
-                             true);
-  ListRenderHelper::drawHints(renderer, mappedInput,
-                              tr(STR_BACK),
-                              tr(STR_COLLECTION_ADD_BOOK),
-                              tr(STR_COLLECTION_CREATE),
-                              nullptr);
+   ListRenderHelper::drawList(renderer, layout, static_cast<int>(collections_.size()), selectedIndex_,
+                              [this](int index) { return collections_[index].name; }, nullptr, nullptr,
+                              [this](int index) -> std::string {
+                                return collections_[index].hasBook ? "✓" : std::string();
+                              },
+                              true);
+   ListRenderHelper::drawHints(renderer, mappedInput,
+                               tr(STR_BACK),
+                               tr(STR_COLLECTION_ADD),
+                               tr(STR_COLLECTION_CREATE),
+                               nullptr);
   renderer.displayBuffer();
 }
 
