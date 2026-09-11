@@ -677,8 +677,13 @@ void LibraryActivity::selectPopupItem() {
     }
     if (idx == 5) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
+      const bool hadSearch = !currentSearchText_.empty();
       currentSearchText_.clear();
       SETTINGS.librarySearchText[0] = '\0';
+      if (hadSearch) {
+        currentSort_ = sortModeBeforeSearch_;
+        SETTINGS.librarySort = currentSort_;
+      }
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx >= 0 && idx < 4) {
@@ -745,6 +750,7 @@ void LibraryActivity::selectPopupItem() {
 }
 
 void LibraryActivity::beginTextSearch() {
+  sortModeBeforeSearch_ = currentSort_;
   startActivityForResult(
       std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH_LIBRARY), currentSearchText_, 30),
       [this](const ActivityResult& result) {

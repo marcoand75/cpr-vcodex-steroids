@@ -59,7 +59,8 @@ class LibraryActivity final : public Activity {
   std::string currentSearchText_;
   uint8_t lastLayoutSetting_ = CrossPointSettings::LIBRARY_LAYOUT_4X4;
 
-  // Collections mode
+  // Remember sort mode before entering search so clearing search restores it.
+  CrossPointSettings::LIBRARY_SORT sortModeBeforeSearch_ = CrossPointSettings::LIBRARY_SORT_MIXED;
   bool collectionsMode_ = false;         // true when browsing collections
   int  currentCollectionIdx_ = -1;       // selected collection index (-1 = list of collections)
   std::string currentCollectionName_;    // name of currently opened collection
