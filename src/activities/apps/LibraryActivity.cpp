@@ -34,6 +34,7 @@
 #include "SdCardFontGlobals.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
+#include "util/PopupUtils.h"
 #include "components/icons/settings2.h"
 #include <Epub.h>
 #include <Xtc.h>
@@ -230,6 +231,7 @@ void LibraryActivity::onEnter() {
   // library grid reflects added/removed/renamed collections before we render.
   if (pendingCollectionsRebuild_) {
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex();
     }
@@ -262,6 +264,19 @@ void LibraryActivity::onEnter() {
   currentSearchText_ = SETTINGS.librarySearchText;
 
   scanSd();
+
+  // If indices were rebuilt above, refresh totals and page cache now.
+  if (pendingCollectionsRebuild_) {
+    totalBooks_ = collectionsMode_
+        ? LibraryIndex::totalCollections()
+        : (mixedMode_
+           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
+           : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                          static_cast<LibraryIndex::FilterMode>(currentFilter_)));
+    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshPageCache();
+  }
 
   // If we came back from collection-management UI, try to return to the same
   // page/selection instead of always resetting to the first item.
@@ -388,6 +403,7 @@ void LibraryActivity::scanSd() {
 }
 
 void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
+  PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
   currentFilter_ = filter;
   totalBooks_ = LibraryIndex::totalMatching(nullptr, static_cast<LibraryIndex::FilterMode>(filter));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
@@ -500,6 +516,8 @@ void LibraryActivity::applyFilterAndSort() {
   cachedCollectionIdx_ = -2;
   cachedCollectionName_.clear();
   refreshPageCache();
+  forceRender_ = true;
+  requestUpdate();
 }
 
 
@@ -658,11 +676,13 @@ void LibraryActivity::selectPopupItem() {
       return;
     }
     if (idx == 5) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       currentSearchText_.clear();
       SETTINGS.librarySearchText[0] = '\0';
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx >= 0 && idx < 4) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       CrossPointSettings::LIBRARY_SORT sorts[] = {
         CrossPointSettings::LIBRARY_SORT_TITLE_ASC, CrossPointSettings::LIBRARY_SORT_TITLE_DESC,
         CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC, CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC,
@@ -687,6 +707,7 @@ void LibraryActivity::selectPopupItem() {
           });
       return;
     } else if (idx == 6) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
@@ -694,6 +715,7 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx == 7) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
@@ -701,6 +723,7 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx >= 0 && idx <= 5) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       // A book filter always targets the flat shelf: leave Serie modes and
       // restore the remembered flat ordering.
       if (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS ||
@@ -731,6 +754,7 @@ void LibraryActivity::beginTextSearch() {
         currentSearchText_ = kbResult->text;
         StringUtils::copyToFixedBuffer(SETTINGS.librarySearchText, sizeof(SETTINGS.librarySearchText), currentSearchText_);
         SETTINGS.saveToFile();
+        PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
         applyFilterAndSort();
         forceRender_ = true;
         requestUpdate();
@@ -748,6 +772,7 @@ void LibraryActivity::loop() {
   if (pendingCollectionsRebuild_) {
     USER_COLLECTIONS.ensureLoaded();
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex();
       lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
