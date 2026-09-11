@@ -134,7 +134,8 @@ void CollectionPickerActivity::render(RenderLock&&) {
 
   ListRenderHelper::drawHeader(renderer, tr(STR_COLLECTION_PICK));
   if (collections_.empty()) {
-    GUI.drawPopup(renderer, tr(STR_COLLECTION_EMPTY));
+    const char* emptyMsg = (bookId_ != 0) ? tr(STR_COLLECTION_NO_AVAILABLE) : tr(STR_COLLECTION_EMPTY);
+    GUI.drawPopup(renderer, emptyMsg);
     ListRenderHelper::drawHints(renderer, mappedInput,
                                 tr(STR_BACK),
                                 nullptr,
@@ -146,10 +147,7 @@ void CollectionPickerActivity::render(RenderLock&&) {
 
   const auto layout = ListLayout::compute(renderer);
    ListRenderHelper::drawList(renderer, layout, static_cast<int>(collections_.size()), selectedIndex_,
-                              [this](int index) { return collections_[index].name; }, nullptr, nullptr,
-                              [this](int index) -> std::string {
-                                return collections_[index].hasBook ? "✓" : std::string();
-                              },
+                              [this](int index) { return collections_[index].name; }, nullptr, nullptr, nullptr,
                               true);
    ListRenderHelper::drawHints(renderer, mappedInput,
                                tr(STR_BACK),
@@ -177,14 +175,10 @@ void CollectionPickerActivity::refreshCollections() {
   USER_COLLECTIONS.ensureLoaded();
   collections_.clear();
   for (const auto& c : USER_COLLECTIONS.collections()) {
+    if (bookId_ != 0 && USER_COLLECTIONS.hasBook(c.id, bookId_)) continue;
     CollectionEntry entry;
     entry.id = c.id;
     entry.name = c.name;
-    if (bookId_ != 0) {
-      entry.hasBook = USER_COLLECTIONS.hasBook(c.id, bookId_);
-    } else {
-      entry.hasBook = false;
-    }
     collections_.push_back(entry);
   }
   if (selectedIndex_ >= collections_.size()) selectedIndex_ = collections_.size() - 1;

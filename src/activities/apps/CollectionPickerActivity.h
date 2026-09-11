@@ -23,7 +23,6 @@ class CollectionPickerActivity final : public Activity {
   struct CollectionEntry {
     std::string id;
     std::string name;
-    bool hasBook;
   };
 
   struct BookEntry {
