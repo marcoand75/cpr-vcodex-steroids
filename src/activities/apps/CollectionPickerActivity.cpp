@@ -69,7 +69,7 @@ void CollectionPickerActivity::loop() {
     finish();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     createCollection();
     return;
   }

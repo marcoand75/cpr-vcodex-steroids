@@ -66,11 +66,11 @@ void CollectionManageActivity::loop() {
     finish();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     createCollection();
     return;
   }
-  if (!collections_.empty() && mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
+  if (!collections_.empty() && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     deleteSelected();
     return;
   }

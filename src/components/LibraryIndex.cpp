@@ -16,6 +16,7 @@
 #include <functional>
 #include <unordered_map>
 
+#include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "EpubParser.h"
 #include "FavoritesStore.h"
@@ -701,7 +702,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir,
     }
 
     // Folder fallback: if no series metadata, use parent folder name (if not root)
-    if (series[0] == '\0') {
+    if (series[0] == '\0' && SETTINGS.libraryFolderCollections) {
       // Extract parent folder name from the path.
       // For "/books/Mystery/Book1.epub" this yields "Mystery".
       const char* lastSlash = strrchr(p, '/');
@@ -1029,6 +1030,10 @@ bool buildCollectionsIndex() {
     while (i < series.size()) {
       // Determine grouping scope based on flags
       const bool isFolderFallback = (series[i].flags & 1) != 0;
+      if (isFolderFallback && !SETTINGS.libraryFolderCollections) {
+        ++i;
+        continue;
+      }
       const char* groupKey = series[i].seriesName;
       std::string folderPath;
       if (isFolderFallback) {
