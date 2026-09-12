@@ -196,8 +196,10 @@ void LibraryActivity::deleteBookFile(const std::string& bookPath) {
   RECENT_BOOKS.removeBook(bookPath);
   LibraryIndex::removeBookFromAllCollectionsByPath(bookPath.c_str());
 
-  // 5. Re-scan the library index to remove the entry
+  // 5. Refresh library view with feedback
+  PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
   LibraryIndex::sync();
+  applyFilterAndSort();
 }
 
 // ============================================================================
