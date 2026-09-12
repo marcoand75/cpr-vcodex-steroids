@@ -233,7 +233,7 @@ void LibraryActivity::onEnter() {
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
-      LibraryIndex::buildMixedIndex();
+      LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
     }
     lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
     pendingCollectionsRebuild_ = false;
@@ -425,7 +425,8 @@ void LibraryActivity::refreshPageCache() {
     slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
                                          currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                          static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                         coverWidth_, coverHeight_);
+                                         coverWidth_, coverHeight_,
+                                         static_cast<LibraryIndex::SortMode>(currentSort_));
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
     slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
@@ -463,7 +464,8 @@ void LibraryActivity::refreshPageCache() {
       slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
                                            currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                            static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                           coverWidth_, coverHeight_);
+                                           coverWidth_, coverHeight_,
+                                           static_cast<LibraryIndex::SortMode>(currentSort_));
     else if (collectionsMode_ && currentCollectionIdx_ < 0)
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_, coverWidth_, coverHeight_);
     else if (mixedMode_ && currentCollectionIdx_ >= 0)
@@ -724,6 +726,7 @@ void LibraryActivity::selectPopupItem() {
       return;
     } else if (idx == 6) {
       viewMode_ = LibraryViewMode::Collections;
+      currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
       SETTINGS.libraryFilter = currentFilter_;
@@ -731,6 +734,7 @@ void LibraryActivity::selectPopupItem() {
       applyFilterAndSort();
     } else if (idx == 7) {
       viewMode_ = LibraryViewMode::Mixed;
+      currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
       SETTINGS.libraryFilter = currentFilter_;
@@ -753,6 +757,7 @@ void LibraryActivity::selectPopupItem() {
 
 void LibraryActivity::beginTextSearch() {
   sortModeBeforeSearch_ = currentSort_;
+  viewModeBeforeSearch_ = viewMode_;
   startActivityForResult(
       std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH_LIBRARY), currentSearchText_, 30),
       [this](const ActivityResult& result) {
@@ -782,7 +787,7 @@ void LibraryActivity::loop() {
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
-      LibraryIndex::buildMixedIndex();
+      LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
       lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
       clearPageFrameCache();
       bumpLibEpoch();

@@ -105,7 +105,7 @@ bool buildCollectionsIndex();
 
 // Build mixed index from library.dat + series.dat + collections index.
 // One entry per standalone book + one entry per collection/series tile.
-bool buildMixedIndex();
+bool buildMixedIndex(SortMode sortMode = SortMode::TITLE_ASC);
 
 // Incremental sync: runs scan() only if library.dat is stale or missing.
 // Falls back to a fast path when nothing changed.
@@ -126,7 +126,7 @@ int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
               int coverWidth = 0, int coverHeight = 0);
 
 // Mixed view: standalone books + series tiles together
-int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL, int coverWidth = 0, int coverHeight = 0);
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter = nullptr, FilterMode filterMode = FilterMode::ALL, int coverWidth = 0, int coverHeight = 0, SortMode sortMode = SortMode::TITLE_ASC);
 int totalMixed();
 int totalMixedMatching(const char* searchFilter, FilterMode filterMode = FilterMode::ALL);
 

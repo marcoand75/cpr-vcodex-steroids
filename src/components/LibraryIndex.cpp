@@ -941,7 +941,7 @@ bool buildIndices() {
     LOG_ERR("LIB", "BuildIndices: author index failed");
     return false;
   }
-  if (!buildMixedIndex()) {
+  if (!buildMixedIndex(SortMode::TITLE_ASC)) {
     LOG_ERR("LIB", "BuildIndices: mixed index failed");
     return false;
   }
@@ -1305,7 +1305,7 @@ bool buildCollectionsIndex() {
 // Mixed index builder (series tiles + standalone books together)
 // =========================================================================
 
-bool buildMixedIndex() {
+bool buildMixedIndex(SortMode sortMode) {
   LOG_DBG("LIB", "BuildMixedIdx: start");
   const unsigned long t0 = millis();
 
@@ -1352,13 +1352,21 @@ bool buildMixedIndex() {
       if (std::binary_search(collectionBookIds.begin(), collectionBookIds.end(), rec.id)) continue;
 
       IndexRec ir;
-      makeTitleSortKey(rec.title, ir.sortKey);
+      if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+        makeSortKey(rec.author, ir.sortKey);
+      } else {
+        makeTitleSortKey(rec.title, ir.sortKey);
+      }
       ir.bookId = rec.id;
       ir.recordOffset = static_cast<uint32_t>(rp * kRecordSize);
       chunk.push_back(ir);
 
       if (static_cast<int>(chunk.size()) >= kChunkRecs || rp == totalRecs - 1) {
-        std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+        if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+          std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByAuthor);
+        } else {
+          std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+        }
         char tmpPath[96];
         std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, chunkCount++);
         HalFile tf = Storage.open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC);
@@ -1448,12 +1456,24 @@ bool buildMixedIndex() {
           USER_COLLECTIONS.ensureLoaded();
           const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
           if (uc) {
-            makeTitleSortKey(uc->name.c_str(), ir.sortKey);
+            if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+              makeSortKey(uc->name.c_str(), ir.sortKey);
+            } else {
+              makeTitleSortKey(uc->name.c_str(), ir.sortKey);
+            }
+          } else {
+            if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+              makeSortKey(ci.collectionName, ir.sortKey);
+            } else {
+              makeTitleSortKey(ci.collectionName, ir.sortKey);
+            }
+          }
+        } else {
+          if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+            makeSortKey(ci.collectionName, ir.sortKey);
           } else {
             makeTitleSortKey(ci.collectionName, ir.sortKey);
           }
-        } else {
-          makeTitleSortKey(ci.collectionName, ir.sortKey);
         }
         
         // Look up the index in the combined kIdxCollections
@@ -1485,7 +1505,11 @@ bool buildMixedIndex() {
         chunk.push_back(ir);
 
         if (static_cast<int>(chunk.size()) >= kChunkRecs || idx == static_cast<int>(allCollections.size()) - 1) {
-          std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+          if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+            std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByAuthor);
+          } else {
+            std::qsort(chunk.data(), chunk.size(), sizeof(IndexRec), cmpByTitle);
+          }
           char tmpPath[96];
           std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, chunkCount++);
           HalFile tf = Storage.open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC);
@@ -1519,7 +1543,13 @@ bool buildMixedIndex() {
     int best = -1;
     for (int i = 0; i < chunkCount; ++i) {
       if (readers[i].eof) continue;
-      if (best < 0 || cmpByTitle(&readers[i].cur, &readers[best].cur) < 0) best = i;
+      if (best < 0) {
+        best = i;
+      } else if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+        if (cmpByAuthor(&readers[i].cur, &readers[best].cur) < 0) best = i;
+      } else {
+        if (cmpByTitle(&readers[i].cur, &readers[best].cur) < 0) best = i;
+      }
     }
     if (best < 0) break;
     writeIndexRec(outF, readers[best].cur);
@@ -1846,7 +1876,7 @@ int collectionBookCount(int collectionIdx) {
 // Forward declaration for filter matching used by queryMixed/totalMixedMatching.
 static bool matchesFilter(const Record& rec, FilterMode m);
 
-int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight) {
+int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight, SortMode sortMode) {
   HalFile mf = Storage.open(kIdxMixed);
   if (!mf) return 0;
 
@@ -1857,16 +1887,17 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   HalFile sf = Storage.open(kSeriesDat);
   HalFile df = Storage.open(kDatFile);
 
-  int count = 0;
-  int skipped = 0;
-  const int wantSkip = page * pageSize;
+   // Collect matching entries into a temporary buffer so we can sort by the
+  // requested sortMode before returning the requested page.
+  std::vector<BookRef> matches;
+  matches.reserve(std::min(total, 512));
 
-  for (int i = 0; i < total && count < pageSize; ++i) {
+  for (int i = 0; i < total; ++i) {
     mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
     IndexRec ir;
     if (!readIndexRec(mf, ir)) break;
 
-    bool matches = true;
+    bool isMatch = true;
     if (ir.bookId & 0x80000000u) {
       // Series/collection tile: match if any book passes filter + search
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
@@ -1877,30 +1908,30 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
           // Check collection name for search
           if (searchFilter && searchFilter[0] != '\0') {
             char key[20]; makeTitleSortKey(ci.collectionName, key);
-            matches = substringMatch(key, searchFilter);
+            isMatch = substringMatch(key, searchFilter);
           }
 
           // Check if any book in the collection matches the filter
-          if (matches && filterMode != FilterMode::ALL) {
+          if (isMatch && filterMode != FilterMode::ALL) {
             if (ci.flags & 1) {
               // User collection: resolve members from UserCollectionsStore
               USER_COLLECTIONS.ensureLoaded();
               const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
               if (uc) {
                 auto members = USER_COLLECTIONS.members(uc->id);
-                for (const auto& m : members) {
-                  Record rec;
-                  if (readRecordByBookId(m.bookId, rec) && !rec.tombstone()) {
-                    if (matchesFilter(rec, filterMode)) {
-                      matches = true;
-                      break;
+                  for (const auto& m : members) {
+                    Record rec;
+                    if (readRecordByBookId(m.bookId, rec) && !rec.tombstone()) {
+                      if (matchesFilter(rec, filterMode)) {
+                        isMatch = true;
+                        break;
+                      }
                     }
                   }
+                  if (members.empty()) isMatch = false;
+                } else {
+                  isMatch = false;
                 }
-                if (members.empty()) matches = false;
-              } else {
-                matches = false;
-              }
             } else if (sf && df) {
               // Auto series: read from series.dat
               sf.seek(ci.firstSeriesOffset);
@@ -1922,9 +1953,9 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
                   ++rp;
                 }
                 if (anyMatch) break;
+                }
+                isMatch = anyMatch;
               }
-              matches = anyMatch;
-            }
           }
         }
       }
@@ -1932,35 +1963,27 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
       // Standalone book: match against filter + search
       Record rec;
       if (readRecord(ir.recordOffset / kRecordSize, rec)) {
-        matches = matchesFilter(rec, filterMode);
-        if (matches && searchFilter && searchFilter[0] != '\0') {
+        isMatch = matchesFilter(rec, filterMode);
+        if (isMatch && searchFilter && searchFilter[0] != '\0') {
           char titleKey[20]; makeTitleSortKey(rec.title, titleKey);
           char authorKey[20]; makeSortKey(rec.author, authorKey);
-          matches = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
+          isMatch = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
         }
       } else {
-        matches = false;
+        isMatch = false;
       }
     }
 
-    if (!matches) {
-      ++skipped;
-      continue;
-    }
+    if (!isMatch) continue;
 
-    if (skipped < wantSkip) {
-      ++skipped;
-      continue;
-    }
-
-    // This item is on the requested page
+    // This item matched; materialize a BookRef now so we can sort by sortMode.
+    BookRef ref;
     if (ir.bookId & 0x80000000u) {
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
         cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
         CollectionIndexRec ci;
         if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
-           BookRef& ref = out[count];
            ref.id = ir.bookId;
            
            // Resolve display name for user collections from UserCollectionsStore.
@@ -1981,63 +2004,61 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
              std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
            }
            snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
-          ref.path[0] = '\0';
-          ref.isFavorite = false;
-          ref.isOpened = false;
-          ref.isCompleted = false;
-          ref.isHidden = false;
-          ref.isCollection = (ci.flags & 1) != 0;
+           ref.path[0] = '\0';
+           ref.isFavorite = false;
+           ref.isOpened = false;
+           ref.isCompleted = false;
+           ref.isHidden = false;
+           ref.isCollection = (ci.flags & 1) != 0;
 
-          // Resolve first book with an existing cover, if available.
-          if (coverWidth > 0 && coverHeight > 0) {
-            if (ci.flags & 1) {
-              // User collection: resolve from UserCollectionsStore
-              USER_COLLECTIONS.ensureLoaded();
-              const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
-              if (uc) {
-                auto members = USER_COLLECTIONS.members(uc->id);
-                for (const auto& m : members) {
-                  Record rec;
-                  if (readRecordByBookId(m.bookId, rec)) {
-                    const std::string bookPath(rec.path);
-                    const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-                    if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                      std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                      ref.path[sizeof(ref.path) - 1] = '\0';
-                      break;
-                    }
-                  }
-                }
-              }
-            } else if (sf && df) {
-              // Auto series: resolve from series.dat
-              sf.seek(ci.firstSeriesOffset);
-              SeriesRec sr;
-              for (uint32_t b = 0; b < ci.bookCount; ++b) {
-                if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-                if (sr.bookId == 0) continue;
-                df.seek(0);
-                Record rec;
-                uint32_t rp = 0;
-                while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-                  if (rec.id == sr.bookId && !rec.tombstone()) {
-                    const std::string bookPath(rec.path);
-                    const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-                    if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                      std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                      ref.path[sizeof(ref.path) - 1] = '\0';
-                      break;
-                    }
-                  }
-                  ++rp;
-                }
-                if (ref.path[0] != '\0') break;
-              }
-            }
-          }
-
-          ++count;
-        }
+           // Resolve first book with an existing cover, if available.
+           if (coverWidth > 0 && coverHeight > 0) {
+             if (ci.flags & 1) {
+               // User collection: resolve from UserCollectionsStore
+               USER_COLLECTIONS.ensureLoaded();
+               const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+               if (uc) {
+                 auto members = USER_COLLECTIONS.members(uc->id);
+                 for (const auto& m : members) {
+                   Record rec;
+                   if (readRecordByBookId(m.bookId, rec)) {
+                     const std::string bookPath(rec.path);
+                     const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                     if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                       std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                       ref.path[sizeof(ref.path) - 1] = '\0';
+                       break;
+                     }
+                   }
+                 }
+               }
+             } else if (sf && df) {
+               // Auto series: resolve from series.dat
+               sf.seek(ci.firstSeriesOffset);
+               SeriesRec sr;
+               for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                 if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                 if (sr.bookId == 0) continue;
+                 df.seek(0);
+                 Record rec;
+                 uint32_t rp = 0;
+                 while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
+                   if (rec.id == sr.bookId && !rec.tombstone()) {
+                     const std::string bookPath(rec.path);
+                     const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                     if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                       std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                       ref.path[sizeof(ref.path) - 1] = '\0';
+                       break;
+                     }
+                   }
+                   ++rp;
+                 }
+                 if (ref.path[0] != '\0') break;
+               }
+             }
+           }
+         }
       }
     } else {
       Record rec;
@@ -2045,16 +2066,66 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         // Full flag population (favorite/opened/completed/hidden) via the
         // same code path as the other queries — the Record flag bits are
         // never written by scan, so reading them here would always be false.
-        recordToBookRef(rec, out[count]);
-        ++count;
+        recordToBookRef(rec, ref);
+      } else {
+        continue;
       }
     }
+
+    matches.push_back(ref);
+  }
+
+  // Sort the collected matches by the requested sortMode
+  const bool reverse = (sortMode == SortMode::TITLE_DESC || sortMode == SortMode::AUTHOR_DESC);
+  if (sortMode == SortMode::TITLE_ASC || sortMode == SortMode::TITLE_DESC) {
+    std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
+      int c = cmpSortKey(a.title, b.title);
+      return c < 0;
+    });
+  } else if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
+    std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
+      int c = cmpSortKey(a.author, b.author);
+      if (c != 0) return c < 0;
+      return cmpSortKey(a.title, b.title) < 0;
+    });
+  } else if (sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS) {
+    READING_STATS.ensureLoaded();
+    std::sort(matches.begin(), matches.end(), [sortMode](const BookRef& a, const BookRef& b) {
+      const auto* sa = READING_STATS.findBook(a.path);
+      const auto* sb = READING_STATS.findBook(b.path);
+      if (sortMode == SortMode::RECENT) {
+        uint32_t ta = sa ? sa->lastReadAt : 0;
+        uint32_t tb = sb ? sb->lastReadAt : 0;
+        if (ta != tb) return ta > tb;  // most recent first
+      } else {
+        bool ca = sa ? sa->completed : false;
+        bool cb = sb ? sb->completed : false;
+        if (ca != cb) return cb;  // unread first
+        uint8_t pa = sa ? sa->lastProgressPercent : 0;
+        uint8_t pb = sb ? sb->lastProgressPercent : 0;
+        if (pa != pb) return pa > pb;  // highest progress first
+      }
+      int c = cmpSortKey(a.title, b.title);
+      return c < 0;
+    });
+  }
+
+  if (reverse) {
+    std::reverse(matches.begin(), matches.end());
   }
 
   if (hasCollIndex) cf.close();
   if (df) df.close();
   if (sf) sf.close();
   mf.close();
+
+  const int start = page * pageSize;
+  const int end = std::min(start + pageSize, static_cast<int>(matches.size()));
+  int count = 0;
+  for (int i = start; i < end; ++i) {
+    if (count >= pageSize) break;
+    out[count++] = matches[i];
+  }
   return count;
 }
 
@@ -2388,7 +2459,7 @@ int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode,
   }
 
   if (sortMode == SortMode::MIXED) {
-    return queryMixed(out, page, pageSize, searchFilter, filterMode, coverWidth, coverHeight);
+    return queryMixed(out, page, pageSize, searchFilter, filterMode, coverWidth, coverHeight, sortMode);
   }
 
   const bool hasSearch = (searchFilter && searchFilter[0] != '\0');
