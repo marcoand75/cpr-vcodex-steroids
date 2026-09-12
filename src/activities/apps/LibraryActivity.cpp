@@ -304,6 +304,19 @@ void LibraryActivity::ensureLayoutUpToDate() {
 
 void LibraryActivity::onExit() {
   Activity::onExit();
+  // Save current library UI state so it can be restored on next enter.
+  SETTINGS.libraryViewMode = static_cast<uint8_t>(viewMode_);
+  SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
+  SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
+  StringUtils::copyToFixedBuffer(SETTINGS.librarySearchText, sizeof(SETTINGS.librarySearchText), currentSearchText_);
+  SETTINGS.librarySelectorIndex = selectorIndex_;
+  SETTINGS.libraryCollectionIdx = (currentCollectionIdx_ >= 0) ? currentCollectionIdx_ : -1;
+  if (currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
+    StringUtils::copyToFixedBuffer(SETTINGS.libraryCollectionName, sizeof(SETTINGS.libraryCollectionName), currentCollectionName_);
+  } else {
+    SETTINGS.libraryCollectionName[0] = '\0';
+  }
+  SETTINGS.saveToFile();
   pageTitleCache_.clear();
   pageTitleCacheKey_ = -1;
   cachedTotalBooks_ = -1;
@@ -334,8 +347,8 @@ void LibraryActivity::scanSd() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
   viewMode_ = LibraryViewMode::Flat;
-  if (currentSort_ == CrossPointSettings::LIBRARY_SORT_COLLECTIONS) viewMode_ = LibraryViewMode::Collections;
-  if (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED) viewMode_ = LibraryViewMode::Mixed;
+  if (SETTINGS.libraryViewMode == 1) viewMode_ = LibraryViewMode::Collections;
+  if (SETTINGS.libraryViewMode == 2) viewMode_ = LibraryViewMode::Mixed;
   sortModeBeforeSearch_ = currentSort_;
   viewModeBeforeSearch_ = viewMode_;
   collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
@@ -509,6 +522,10 @@ void LibraryActivity::applyFilterAndSort() {
     sortModeBeforeSearch_ = currentSort_;
     viewModeBeforeSearch_ = viewMode_;
   }
+  SETTINGS.libraryViewMode = static_cast<uint8_t>(viewMode_);
+  SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
+  SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
+  SETTINGS.saveToFile();
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
       : (mixedMode_
@@ -1152,7 +1169,27 @@ void LibraryActivity::loop() {
                             // Force re-scan now — the file is gone but the
                             // in-RAM index still has its entry.
                             forceScanOnNextOpen_ = true;
-                            scanSd();
+  scanSd();
+
+  // Restore saved UI state: selector position and opened collection.
+  if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
+    selectorIndex_ = SETTINGS.librarySelectorIndex;
+  } else {
+    selectorIndex_ = 0;
+  }
+  if (SETTINGS.libraryCollectionIdx >= 0 && SETTINGS.libraryCollectionName[0] != '\0') {
+    USER_COLLECTIONS.ensureLoaded();
+    const UserCollection* uc = USER_COLLECTIONS.findCollectionByName(SETTINGS.libraryCollectionName);
+    if (uc) {
+      currentCollectionIdx_ = SETTINGS.libraryCollectionIdx;
+      currentCollectionName_ = SETTINGS.libraryCollectionName;
+      currentCollectionIsUser_ = true;
+      selectorIndex_ = 0;
+    } else {
+      SETTINGS.libraryCollectionIdx = -1;
+      SETTINGS.libraryCollectionName[0] = '\0';
+    }
+  }
                             selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
                             if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
                           }
@@ -1494,17 +1531,29 @@ bool LibraryActivity::rebuildInfoCacheIfChanged(int curPageRaw, int total) {
     case CrossPointSettings::LIBRARY_FILTER_UNREAD:     cachedInfo_ = tr(STR_UNREAD); break;
     case CrossPointSettings::LIBRARY_FILTER_COMPLETED:  cachedInfo_ = tr(STR_COMPLETED); break;
     case CrossPointSettings::LIBRARY_FILTER_HIDDEN:     cachedInfo_ = tr(STR_HIDDEN_FILTER); break;
-    default: cachedInfo_ = collectionsMode_ ? tr(STR_SORT_COLLECTIONS)
-                      : mixedMode_      ? tr(STR_SORT_MIXED)
-                      : tr(STR_ALL_BOOKS); break;
+    default:
+      if (collectionsMode_) {
+        cachedInfo_ = tr(STR_SORT_COLLECTIONS);
+      } else if (mixedMode_) {
+        cachedInfo_ = tr(STR_SORT_MIXED);
+      } else {
+        cachedInfo_ = tr(STR_ALL_BOOKS);
+      }
+      break;
   }
   if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
     cachedInfo_ = currentCollectionName_;
   }
   const char* sortLabel = nullptr;
-  // Don't show sort label when in collections/mixed mode — the info line
-  // already says "Collections", "Series + Books", or "Name".
-  if (!collectionsMode_ && !mixedMode_) {
+  if (collectionsMode_ || mixedMode_) {
+    switch (currentSort_) {
+      case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_ASC: sortLabel = tr(STR_SORT_AUTHOR_ASC); break;
+      case CrossPointSettings::LIBRARY_SORT_AUTHOR_DESC: sortLabel = tr(STR_SORT_AUTHOR_DESC); break;
+      default: break;
+    }
+  } else {
     switch (currentSort_) {
       case CrossPointSettings::LIBRARY_SORT_TITLE_ASC:  sortLabel = tr(STR_SORT_TITLE_ASC); break;
       case CrossPointSettings::LIBRARY_SORT_TITLE_DESC: sortLabel = tr(STR_SORT_TITLE_DESC); break;

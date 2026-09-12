@@ -64,6 +64,12 @@ void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
   }
   doc["libraryLastCleanupDay"] = s.libraryLastCleanupDay;
   doc["librarySort"] = s.librarySort;
+  doc["libraryViewMode"] = s.libraryViewMode;
+  doc["librarySelectorIndex"] = s.librarySelectorIndex;
+  doc["libraryCollectionIdx"] = s.libraryCollectionIdx;
+  if (s.libraryCollectionName[0] != '\0') {
+    doc["libraryCollectionName"] = std::string(s.libraryCollectionName);
+  }
   doc["libraryUpdateMode"] = s.libraryUpdateMode;
   doc["libraryFolderCollections"] = s.libraryFolderCollections;
   doc["libraryMetadataSeries"] = s.libraryMetadataSeries;
@@ -228,6 +234,13 @@ void readSteroidsSettingsDoc(const JsonDocument& doc, CrossPointSettings& s, boo
   loadString("libraryRootDir", s.libraryRootDir, sizeof(s.libraryRootDir));
   s.libraryLastCleanupDay = doc["libraryLastCleanupDay"] | static_cast<uint8_t>(0);
   loadEnum("librarySort", s.librarySort, S::LIBRARY_SORT_COUNT);
+  loadEnum("libraryViewMode", s.libraryViewMode, static_cast<uint8_t>(3));
+  s.librarySelectorIndex = doc["librarySelectorIndex"] | s.librarySelectorIndex;
+  s.libraryCollectionIdx = doc["libraryCollectionIdx"] | s.libraryCollectionIdx;
+  if (doc.containsKey("libraryCollectionName")) {
+    const std::string name = doc["libraryCollectionName"] | std::string("");
+    StringUtils::copyToFixedBuffer(s.libraryCollectionName, sizeof(s.libraryCollectionName), name);
+  }
   loadEnum("libraryUpdateMode", s.libraryUpdateMode, S::LIBRARY_UPDATE_MODE_COUNT);
   loadToggle("libraryFolderCollections", s.libraryFolderCollections);
   loadToggle("libraryMetadataSeries", s.libraryMetadataSeries);
