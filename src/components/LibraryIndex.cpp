@@ -2263,7 +2263,7 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
 // =========================================================================
 
 bool sync(const char* rootDir) {
-  if (!LibraryIndex::exists()) return false;  // caller must do full scan
+  if (!LibraryIndex::exists()) return false;
   // For incremental: we just re-scan.  The scan function compares against
   // scan_state.dat and only processes changed/new/removed files.
   // We don't need buildIndices() if nothing changed (scan returns true

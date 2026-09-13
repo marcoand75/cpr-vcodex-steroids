@@ -196,9 +196,10 @@ void LibraryActivity::deleteBookFile(const std::string& bookPath) {
   RECENT_BOOKS.removeBook(bookPath);
   LibraryIndex::removeBookFromAllCollectionsByPath(bookPath.c_str());
 
-  // 5. Refresh library view with feedback
+// 5. Refresh library view with feedback
   PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
-  LibraryIndex::sync();
+  LibraryIndex::scan(renderer, Rect());
+  LibraryIndex::buildIndices();
   applyFilterAndSort();
 }
 
@@ -265,17 +266,37 @@ void LibraryActivity::onEnter() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
 
-  scanSd();
+scanSd();
+
+  // Restore saved UI state: selector position and opened collection.
+  if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
+    selectorIndex_ = SETTINGS.librarySelectorIndex;
+  } else {
+    selectorIndex_ = 0;
+  }
+  if (SETTINGS.libraryCollectionIdx >= 0 && SETTINGS.libraryCollectionName[0] != '\0') {
+    USER_COLLECTIONS.ensureLoaded();
+    const UserCollection* uc = USER_COLLECTIONS.findCollectionByName(SETTINGS.libraryCollectionName);
+    if (uc) {
+      currentCollectionIdx_ = SETTINGS.libraryCollectionIdx;
+      currentCollectionName_ = SETTINGS.libraryCollectionName;
+      currentCollectionIsUser_ = true;
+      selectorIndex_ = 0;
+    } else {
+      SETTINGS.libraryCollectionIdx = -1;
+      SETTINGS.libraryCollectionName[0] = '\0';
+    }
+  }
 
   // If indices were rebuilt above, refresh totals and page cache now.
   if (pendingCollectionsRebuild_) {
     totalBooks_ = collectionsMode_
         ? LibraryIndex::totalCollections()
         : (mixedMode_
-           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
-           : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                          static_cast<LibraryIndex::FilterMode>(currentFilter_)));
+            ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                                static_cast<LibraryIndex::FilterMode>(currentFilter_))
+            : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                           static_cast<LibraryIndex::FilterMode>(currentFilter_)));
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     refreshPageCache();
   }
@@ -536,7 +557,10 @@ void LibraryActivity::applyFilterAndSort() {
          : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                         static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  selectorIndex_ = 0;
+  // Clamp selector to valid range after filter/sort changes
+  if (selectorIndex_ >= totalBooks_) {
+    selectorIndex_ = totalBooks_ > 0 ? totalBooks_ - 1 : 0;
+  }
   pageTitleCacheKey_ = -1;
   cachedRenderSelector_ = -1;
   cachedRenderPage_ = -1;
@@ -743,17 +767,20 @@ void LibraryActivity::selectPopupItem() {
             requestUpdate();
           });
       return;
-    } else if (idx == 6) {
+} else if (idx == 6) {
       viewMode_ = LibraryViewMode::Collections;
-      currentSort_ = CrossPointSettings::LIBRARY_SORT_COLLECTIONS;
+      currentSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
       SETTINGS.librarySort = currentSort_;
-      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;  // group view ignores book filter
+      currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
       SETTINGS.libraryFilter = currentFilter_;
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx == 7) {
       viewMode_ = LibraryViewMode::Mixed;
-      currentSort_ = CrossPointSettings::LIBRARY_SORT_MIXED;
+      // Keep current sort mode, default to TITLE_ASC if currently in MIXED
+      if (currentSort_ == CrossPointSettings::LIBRARY_SORT_MIXED) {
+        currentSort_ = CrossPointSettings::LIBRARY_SORT_TITLE_ASC;
+      }
       SETTINGS.librarySort = currentSort_;
       currentFilter_ = CrossPointSettings::LIBRARY_FILTER_ALL;
       SETTINGS.libraryFilter = currentFilter_;
