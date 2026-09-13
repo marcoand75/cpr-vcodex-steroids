@@ -1682,17 +1682,18 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
       if (uc) displayName = uc->name;
     }
 
-    // Append folder-fallback disambiguation subtitle if needed
-    std::string subtitle = getCollectionSubtitle(ci, sf, df);
-    if (!subtitle.empty()) {
-      char combined[80];
-      std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
-      std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
-    } else {
-      std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
-    }
-    snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
-    ref.path[0] = '\0';
+// Append folder-fallback disambiguation subtitle if needed
+            std::string subtitle = getCollectionSubtitle(ci, sf, df);
+            if (!subtitle.empty()) {
+              char combined[80];
+              std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
+              std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
+            } else {
+              std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
+            }
+            // For user collections, leave author empty so they interleave properly with books when sorting by author
+            ref.author[0] = '\0';
+            ref.path[0] = '\0';
     ref.isFavorite = false;
     ref.isOpened = false;
     ref.isCompleted = false;
@@ -2086,6 +2087,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
     std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
       int c = cmpSortKey(a.author, b.author);
       if (c != 0) return c < 0;
+      // Fallback to title for items with same author (or empty author for collections)
       return cmpSortKey(a.title, b.title) < 0;
     });
   } else if (sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS) {
