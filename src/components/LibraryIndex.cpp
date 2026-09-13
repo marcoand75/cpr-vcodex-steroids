@@ -131,8 +131,12 @@ void makeSortKey(const char* src, char* dst) {
   while (w < 20) dst[w++] = '\0';
 }
 
+// Case-sensitive string comparison for sort keys (used in index building)
+int cmpSortKey(const char* a, const char* b) {
+  return std::strncmp(a, b, 20);
+}
+
 // Normalise string for title sort key with natural/alphanumeric ordering:
-// lowercase, strip accents/diacritics, zero-pad digit runs to 4 digits so
 // "Lightlark 2" sorts before "Lightlark 10".  Truncates to 20 bytes.
 // Used only for the title index; author index keeps the plain makeSortKey().
 void makeTitleSortKey(const char* src, char* dst) {
@@ -179,8 +183,15 @@ void makeTitleSortKey(const char* src, char* dst) {
 }
 
 // Compare two sort keys (memcmp-like)
-int cmpSortKey(const char* a, const char* b) {
-  return std::strncmp(a, b, 20);
+// Case-insensitive string comparison for sorting
+static int cmpSortKeyCI(const char* a, const char* b) {
+  for (int i = 0; i < 20; ++i) {
+    unsigned char ca = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(a[i])));
+    unsigned char cb = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(b[i])));
+    if (ca != cb) return ca < cb ? -1 : 1;
+    if (ca == 0) return 0;
+  }
+  return 0;
 }
 
 // Check if needle (lowercase, accent-folded) is a substring of haystack.
@@ -1174,50 +1185,88 @@ bool buildCollectionsIndex() {
      }
    }
 
-   // Sort user collections by display name so they interleave correctly
-   // with metadata series in the merged index.
-   USER_COLLECTIONS.ensureLoaded();
-   auto sortKeyFor = [&](const CollectionIndexRec& ci) -> const char* {
-     static thread_local char key[20];
-     if (ci.flags & 1) {
-       const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
-       if (uc) {
-         makeTitleSortKey(uc->name.c_str(), key);
-         return key;
-       }
-     }
-     makeTitleSortKey(ci.collectionName, key);
-     return key;
-   };
-   std::sort(userCollections.begin(), userCollections.end(), [&](const CollectionIndexRec& a, const CollectionIndexRec& b) {
-     return cmpSortKey(sortKeyFor(a), sortKeyFor(b)) < 0;
-   });
+// Sort user collections by display name so they interleave correctly
+    // with metadata series in the merged index.
+    USER_COLLECTIONS.ensureLoaded();
+    auto getSortKey = [](const CollectionIndexRec& ci, char* outKey) {
+      if (ci.flags & 1) {
+        USER_COLLECTIONS.ensureLoaded();
+        const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+        if (uc) {
+          makeTitleSortKey(uc->name.c_str(), outKey);
+        } else {
+          makeTitleSortKey(ci.collectionName, outKey);
+        }
+      } else {
+        makeTitleSortKey(ci.collectionName, outKey);
+      }
+      outKey[19] = '\0';
+    };
+    std::sort(userCollections.begin(), userCollections.end(), [&](const CollectionIndexRec& a, const CollectionIndexRec& b) {
+      char keyA[20];
+      char keyB[20];
+      if (a.flags & 1) {
+        USER_COLLECTIONS.ensureLoaded();
+        const UserCollection* uc = USER_COLLECTIONS.findCollection(a.collectionName);
+        if (uc) {
+          makeTitleSortKey(uc->name.c_str(), keyA);
+        } else {
+          makeTitleSortKey(a.collectionName, keyA);
+        }
+      } else {
+        makeTitleSortKey(a.collectionName, keyA);
+      }
+      if (b.flags & 1) {
+        USER_COLLECTIONS.ensureLoaded();
+        const UserCollection* uc = USER_COLLECTIONS.findCollection(b.collectionName);
+        if (uc) {
+          makeTitleSortKey(uc->name.c_str(), keyB);
+        } else {
+          makeTitleSortKey(b.collectionName, keyB);
+        }
+      } else {
+        makeTitleSortKey(b.collectionName, keyB);
+      }
+      return cmpSortKey(keyA, keyB) < 0;
+    });
 
-   // Merge auto collections and user collections into a single sorted index
-   std::vector<CollectionIndexRec> merged;
-   merged.reserve(collections.size() + userCollections.size());
-   size_t autoIdx = 0, userIdx = 0;
-   while (autoIdx < collections.size() || userIdx < userCollections.size()) {
-     if (autoIdx >= collections.size()) {
-       merged.push_back(userCollections[userIdx++]);
-     } else if (userIdx >= userCollections.size()) {
-       merged.push_back(collections[autoIdx++]);
-     } else {
-       char keyAuto[20];
-       makeTitleSortKey(collections[autoIdx].collectionName, keyAuto);
-       const char* keyUser = sortKeyFor(userCollections[userIdx]);
-       int c = cmpSortKey(keyAuto, keyUser);
-       if (c < 0) {
-         merged.push_back(collections[autoIdx++]);
-       } else if (c > 0) {
-         merged.push_back(userCollections[userIdx++]);
-       } else {
-         // Same name: auto series first, then user collection
-         merged.push_back(collections[autoIdx++]);
-         merged.push_back(userCollections[userIdx++]);
-       }
-     }
-   }
+    // Merge auto collections and user collections into a single sorted index
+    std::vector<CollectionIndexRec> merged;
+    merged.reserve(collections.size() + userCollections.size());
+    size_t autoIdx = 0, userIdx = 0;
+    while (autoIdx < collections.size() || userIdx < userCollections.size()) {
+      if (autoIdx >= collections.size()) {
+        merged.push_back(userCollections[userIdx++]);
+      } else if (userIdx >= userCollections.size()) {
+        merged.push_back(collections[autoIdx++]);
+      } else {
+        char keyAuto[20];
+        makeTitleSortKey(collections[autoIdx].collectionName, keyAuto);
+        char keyUser[20];
+        // Get sort key for user collection
+        if (userCollections[userIdx].flags & 1) {
+          USER_COLLECTIONS.ensureLoaded();
+          const UserCollection* uc = USER_COLLECTIONS.findCollection(userCollections[userIdx].collectionName);
+          if (uc) {
+            makeTitleSortKey(uc->name.c_str(), keyUser);
+          } else {
+            makeTitleSortKey(userCollections[userIdx].collectionName, keyUser);
+          }
+        } else {
+          makeTitleSortKey(userCollections[userIdx].collectionName, keyUser);
+        }
+        int c = cmpSortKey(keyAuto, keyUser);
+        if (c < 0) {
+          merged.push_back(collections[autoIdx++]);
+        } else if (c > 0) {
+          merged.push_back(userCollections[userIdx++]);
+        } else {
+          // Same name: auto series first, then user collection
+          merged.push_back(collections[autoIdx++]);
+          merged.push_back(userCollections[userIdx++]);
+        }
+      }
+    }
 
    // Write auto series to their respective index files
    std::vector<CollectionIndexRec> metadataSeries;
@@ -2092,15 +2141,14 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   const bool reverse = (sortMode == SortMode::TITLE_DESC || sortMode == SortMode::AUTHOR_DESC);
   if (sortMode == SortMode::TITLE_ASC || sortMode == SortMode::TITLE_DESC) {
     std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
-      int c = cmpSortKey(a.title, b.title);
-      return c < 0;
+      return cmpSortKeyCI(a.title, b.title) < 0;
     });
   } else if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
     std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
-      int c = cmpSortKey(a.author, b.author);
+      int c = cmpSortKeyCI(a.author, b.author);
       if (c != 0) return c < 0;
       // Fallback to title for items with same author (or empty author for collections)
-      return cmpSortKey(a.title, b.title) < 0;
+      return cmpSortKeyCI(a.title, b.title) < 0;
     });
   } else if (sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS) {
     READING_STATS.ensureLoaded();
@@ -2119,13 +2167,9 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         uint8_t pb = sb ? sb->lastProgressPercent : 0;
         if (pa != pb) return pa > pb;  // highest progress first
       }
-      int c = cmpSortKey(a.title, b.title);
+      int c = cmpSortKeyCI(a.title, b.title);
       return c < 0;
     });
-  }
-
-  if (reverse) {
-    std::reverse(matches.begin(), matches.end());
   }
 
   if (hasCollIndex) cf.close();
