@@ -2004,8 +2004,20 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
            } else {
              std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
            }
-           snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
-           ref.path[0] = '\0';
+// For user collections (manual), use collection name as author for proper sorting
+            // For auto series, use series name as author for proper sorting
+            std::string authorForSort;
+            if ((ci.flags & 1) != 0) {
+              // User collection: use collection name for author sorting
+              authorForSort = displayName;
+            } else {
+              // Auto series: use series name for author sorting
+              authorForSort = ci.collectionName;
+            }
+            // Truncate to fit author field
+            strncpy(ref.author, authorForSort.c_str(), sizeof(ref.author) - 1);
+            ref.author[sizeof(ref.author) - 1] = '\0';
+            ref.path[0] = '\0';
            ref.isFavorite = false;
            ref.isOpened = false;
            ref.isCompleted = false;
