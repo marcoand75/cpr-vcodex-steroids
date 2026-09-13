@@ -1115,11 +1115,11 @@ bool buildCollectionsIndex() {
             const char* scan = arrStart + 1;
             while (*scan && *scan != ']') {
               // Find "id":"..."
-              const char* idKey = strstr(scan, "\"id\"");
-              if (!idKey) break;
-              const char* colon = strchr(idKey, ':');
+              const char* nameKey = strstr(scan, "\"name\"");
+              if (!nameKey) break;
+              const char* colon = strchr(nameKey, ':');
               if (!colon) break;
-              const char* valStart = strchr(colon, '"');
+              const char* valStart = strchr(colon + 1, '"');
               if (!valStart) break;
               const char* valEnd = strchr(valStart + 1, '"');
               if (!valEnd) break;
