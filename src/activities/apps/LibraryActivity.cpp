@@ -1538,6 +1538,7 @@ void LibraryActivity::loop() {
       int curPage = selectorIndex_ / gridsPerPage_;
       if (curPage != lastPage_) {
         lastPage_ = curPage;
+        LibraryPerf::ScopedTimer navTimer("nav_up_pageTurn");
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1564,6 +1565,7 @@ void LibraryActivity::loop() {
       int curPage = selectorIndex_ / gridsPerPage_;
       if (curPage != lastPage_) {
         lastPage_ = curPage;
+        LibraryPerf::ScopedTimer navTimer("nav_down_pageTurn");
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1581,6 +1583,7 @@ void LibraryActivity::loop() {
       selectorIndex_ = prevPage * gridsPerPage_;
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = prevPage;
+      LibraryPerf::ScopedTimer navTimer("nav_left_pageTurn");
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1603,6 +1606,7 @@ void LibraryActivity::loop() {
       selectorIndex_ = nextPage * gridsPerPage_;
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = nextPage;
+      LibraryPerf::ScopedTimer navTimer("nav_right_pageTurn");
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1620,6 +1624,7 @@ void LibraryActivity::loop() {
     int curPage = selectorIndex_ / gridsPerPage_;
     if (curPage != lastPage_) {
       lastPage_ = curPage;
+      LibraryPerf::ScopedTimer navTimer("nav_move_pageTurn");
       forceRender_ = true;
       refreshPageCache();
     }
@@ -1951,6 +1956,7 @@ void LibraryActivity::render(RenderLock&&) {
   esp_task_wdt_reset();
   const int total = totalBooks_;
   const int curPageRaw = total > 0 ? selectorIndex_ / gridsPerPage_ : 0;
+  LibraryPerf::ScopedTimer renderTimer("render_total");
 
   // ---- Early-out guard: nothing changed -----------------------------------
   if (!forceRender_ && popupMode_ == PopupMode::None &&
@@ -1963,6 +1969,7 @@ void LibraryActivity::render(RenderLock&&) {
   if (!forceRender_ && popupMode_ == PopupMode::None &&
       curPageRaw == lastRenderedPage_ &&
       selectorIndex_ != lastRenderedSelectorIndex_ && total > 0) {
+    LibraryPerf::logElapsed("render_partial_start", renderTimer.start);
 
       const auto pageWidth = renderer.getScreenWidth();
       const auto& metrics = UITheme::getInstance().getMetrics();
@@ -2034,10 +2041,12 @@ void LibraryActivity::render(RenderLock&&) {
     const int pageStartForLoad = curPageRaw * gridsPerPage_;
     const int pageCountForLoad = std::min(gridsPerPage_, total - pageStartForLoad);
     if (tryLoadPageFrame(pageStartForLoad, pageCountForLoad)) {
+      LibraryPerf::logElapsed("render_frameCacheHit", renderTimer.start);
       return;
     }
   }
   lastFrameHitPage_ = -1;
+  LibraryPerf::logElapsed("render_afterFrameCacheMiss", renderTimer.start);
 
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
@@ -2191,6 +2200,7 @@ void LibraryActivity::render(RenderLock&&) {
   prevBorderIdx_ = selectorIndex_;
 
   renderer.displayBuffer();
+  LibraryPerf::logElapsed("render_displayBuffer", renderTimer.start);
 }
 
 void LibraryActivity::reloadPageCovers() {
