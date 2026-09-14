@@ -6,9 +6,10 @@
 > utility procedures** that the Steroids fork has extracted to reduce
 > code duplication, ensure consistent behavior, and minimize heap pressure.
 >
-> The other two Steroids definition files are:
-> - `STEROIDS-ADDICTIONS.md` — All Steroids apps, screensavers, sleep/deep-sleep handling, and every enhancement.
+> The other Steroids definition files are:
+> - [`STEROIDS-ADDICTIONS.md`](STEROIDS-ADDICTIONS.md) — Master index for all Steroids apps, screensavers, sleep/deep-sleep handling, and enhancements. **Individual feature docs:** [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md), [`STEROIDS-ADDICTIONS-WIKIPEDIA.md`](STEROIDS-ADDICTIONS-WIKIPEDIA.md), [`STEROIDS-ADDICTIONS-SCREENSAVER.md`](STEROIDS-ADDICTIONS-SCREENSAVER.md), [`STEROIDS-ADDICTIONS-READING-STATS.md`](STEROIDS-ADDICTIONS-READING-STATS.md), [`STEROIDS-ADDICTIONS-DICTIONARY.md`](STEROIDS-ADDICTIONS-DICTIONARY.md), [`STEROIDS-ADDICTIONS-FLASHCARDS.md`](STEROIDS-ADDICTIONS-FLASHCARDS.md), [`STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md`](STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md), [`STEROIDS-ADDICTIONS-QUICK-CARDS.md`](STEROIDS-ADDICTIONS-QUICK-CARDS.md), [`STEROIDS-ADDICTIONS-APPS.md`](STEROIDS-ADDICTIONS-APPS.md)
 > - `STEROIDS-ALIGN-TO-UPSTREAM.md` — Workflow to merge a new upstream release while preserving Steroids features.
+> - `STEROIDS-ADDICTIONS-LUA.md` — Lua plugin development guide.
 >
 > Use this file as a **mandatory line-guida** when:
 > - Adding a new app / screen / panel that draws text or lists.
@@ -299,8 +300,8 @@ class MyActivity : public Activity {
 
 ### Deliberate exclusions
 The following activities are **excluded** from ListInputMapper migration
-per the Steroids refactoring policy (in `STEROIDS-ADDICTIONS.md` and the
-branch commit `b9a4db52`):
+per the Steroids refactoring policy (in [`STEROIDS-ADDICTIONS.md`](STEROIDS-ADDICTIONS.md) §3.6
+and the branch commit `b9a4db52`):
 - `FlashcardRecentsActivity`, `FlashcardStatsActivity` — page-nav with continuous paging at the page boundary.
 - `BookmarksActivity`, `ClippingsActivity`, `OpdsBookBrowserActivity` — preview / scrolling views.
 - `WifiSelectionActivity` — multi-state dynamic hints.
@@ -981,7 +982,7 @@ cover generation.
 The library grid is now **V3** (`feature/mixed-library-series-view`): it keeps the
 V2 fixed-RAM page-cache model and adds a mixed Series + Books view, natural title
 sort, and collection-tile covers. These are the RAM/query constraints that the
-implementation must respect (see `STEROIDS-ADDICTIONS.md` §6.6 for the feature
+implementation must respect (see [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md) for the complete feature
 description).
 
 - **Page cache unchanged**: 16 `BookRef` ≈ ~4 KB in RAM; `queryMixed()` and
