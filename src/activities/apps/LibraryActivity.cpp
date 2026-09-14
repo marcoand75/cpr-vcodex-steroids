@@ -394,6 +394,7 @@ void LibraryActivity::freeBackgroundMemory() {
 // ============================================================================
 
 void LibraryActivity::scanSd() {
+  LibraryPerf::ScopedTimer totalTimer("scanSd_total");
   currentFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(SETTINGS.libraryFilter);
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
@@ -408,6 +409,7 @@ void LibraryActivity::scanSd() {
     currentCollectionIdx_ = -1;
     currentCollectionIsUser_ = false;
   }
+  LibraryPerf::logElapsed("scanSd_afterViewSetup", totalTimer.start);
 
   // Init LibraryIndex if needed
   LibraryIndex::init();
@@ -419,9 +421,17 @@ void LibraryActivity::scanSd() {
     GUI.fillPopupProgress(renderer, popupRect, 0);
     renderer.displayBuffer();
 
-    LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
-    LibraryIndex::buildCollectionsIndex();
-    LibraryIndex::buildIndices();
+    {
+      LibraryPerf::ScopedTimer scanTimer("scanSd_cold_scan");
+      LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
+    }
+    LibraryPerf::logElapsed("scanSd_cold_afterScan", totalTimer.start);
+    {
+      LibraryPerf::ScopedTimer buildTimer("scanSd_cold_build");
+      LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildIndices();
+    }
+    LibraryPerf::logElapsed("scanSd_cold_afterBuild", totalTimer.start);
     clearPageFrameCache();  // library contents changed -> all frames stale
     bumpLibEpoch();
     totalBooks_ = collectionsMode_
@@ -432,7 +442,12 @@ void LibraryActivity::scanSd() {
            : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                           static_cast<LibraryIndex::FilterMode>(currentFilter_)));
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-    refreshPageCache();
+    LibraryPerf::logElapsed("scanSd_cold_afterCounts", totalTimer.start);
+    {
+      LibraryPerf::ScopedTimer refreshTimer("scanSd_cold_refreshPageCache");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("scanSd_cold_end", totalTimer.start);
     return;
   }
 
@@ -446,13 +461,21 @@ void LibraryActivity::scanSd() {
 
   if (doScan) {
     int added = 0, removed = 0;
-    LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
+    {
+      LibraryPerf::ScopedTimer scanTimer("scanSd_fast_scan");
+      LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
+    }
+    LibraryPerf::logElapsed("scanSd_fast_afterScan", totalTimer.start);
     if (added > 0 || removed > 0) {
       renderer.clearScreen();
       GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
       renderer.displayBuffer();
-      LibraryIndex::buildCollectionsIndex();
-      LibraryIndex::buildIndices();
+      {
+        LibraryPerf::ScopedTimer buildTimer("scanSd_fast_build");
+        LibraryIndex::buildCollectionsIndex();
+        LibraryIndex::buildIndices();
+      }
+      LibraryPerf::logElapsed("scanSd_fast_afterBuild", totalTimer.start);
       clearPageFrameCache();  // library contents changed -> all frames stale
       bumpLibEpoch();
     }
@@ -466,9 +489,14 @@ void LibraryActivity::scanSd() {
          : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                         static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  LibraryPerf::logElapsed("scanSd_fast_afterCounts", totalTimer.start);
+  {
+    LibraryPerf::ScopedTimer refreshTimer("scanSd_fast_refreshPageCache");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("scanSd_fast_end", totalTimer.start);
   LOG_DBG("LIB", "scanSd: existing index, doScan=%d total=%d collMode=%d mixMode=%d",
           static_cast<int>(doScan), totalBooks_, collectionsMode_, mixedMode_);
-  refreshPageCache();
 }
 
 void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
