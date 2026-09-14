@@ -880,6 +880,10 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx >= 0 && idx <= 5) {
+      // Book filters only apply to flat view. Switch back to Flat so the
+      // selected filter actually takes effect instead of staying hidden
+      // inside Collections/Mixed mode.
+      viewMode_ = LibraryViewMode::Flat;
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       static const CrossPointSettings::LIBRARY_FILTER kFilters[6] = {
           CrossPointSettings::LIBRARY_FILTER_ALL, CrossPointSettings::LIBRARY_FILTER_FAVOURITES,
