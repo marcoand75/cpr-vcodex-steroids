@@ -899,11 +899,13 @@ void LibraryActivity::selectPopupItem() {
 }
 
 void LibraryActivity::beginTextSearch() {
+  LibraryPerf::ScopedTimer searchTimer("beginTextSearch_total");
   sortModeBeforeSearch_ = currentSort_;
   viewModeBeforeSearch_ = viewMode_;
   startActivityForResult(
       std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH_LIBRARY), currentSearchText_, 30),
-      [this](const ActivityResult& result) {
+      [this, searchTimer](const ActivityResult& result) {
+        LibraryPerf::logElapsed("beginTextSearch_afterKeyboard", searchTimer.start);
         if (result.isCancelled) { forceRender_ = true; requestUpdate(); return; }
         const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
         if (!kbResult) { forceRender_ = true; requestUpdate(); return; }
@@ -912,6 +914,7 @@ void LibraryActivity::beginTextSearch() {
         SETTINGS.saveToFile();
         PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
         applyFilterAndSort();
+        LibraryPerf::logElapsed("beginTextSearch_afterApply", searchTimer.start);
         forceRender_ = true;
         requestUpdate();
       });
@@ -928,6 +931,7 @@ void LibraryActivity::loop() {
   if (pendingCollectionsRebuild_) {
     USER_COLLECTIONS.ensureLoaded();
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      LibraryPerf::ScopedTimer rebuildTimer("loop_collectionsRebuild");
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
@@ -947,6 +951,7 @@ void LibraryActivity::loop() {
     if (selectorIndex_ >= totalBooks_) {
       selectorIndex_ = std::max(0, totalBooks_ - 1);
     }
+    LibraryPerf::ScopedTimer refreshTimer("loop_collectionsRefresh");
     refreshPageCache();
     forceRender_ = true;
     requestUpdate();
@@ -962,6 +967,7 @@ void LibraryActivity::loop() {
   if (coverGen_.active) {
     const int total = totalBooks_;
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+    LibraryPerf::ScopedTimer coverTimer("loop_coverGeneration");
     
     // First frame: count missing covers, let grid render first
     if (coverGen_.slot == 0 && coverGen_.total == 0) {
@@ -1044,6 +1050,7 @@ void LibraryActivity::loop() {
       coverGen_.slot = 0;
       coverGen_.done = 0;
       coverGen_.total = 0;
+      LibraryPerf::logElapsed("loop_coverGeneration_done", coverTimer.start);
       // Force a full render at finish to ensure:
       // - All generated covers appear on screen
       // - The progress text "X/Y Loading..." disappears
