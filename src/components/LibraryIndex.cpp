@@ -948,6 +948,7 @@ static bool buildIndexFile(const char* outPath, int (*cmp)(const void*, const vo
 
 bool buildIndices() {
   LOG_DBG("LIB", "BuildIndices: start");
+  invalidateBookLookup();
   const unsigned long t0 = millis();
 
   if (!buildIndexFile(kIdxTitle, cmpByTitle, false)) {
@@ -986,6 +987,7 @@ static_assert(sizeof(CollectionIndexRec) == 92, "CollectionIndexRec must be 92 b
 
 bool buildCollectionsIndex() {
   LOG_DBG("LIB", "BuildCollIdx: start");
+  invalidateBookLookup();
   HalFile sf = Storage.open(kSeriesDat);
   if (!sf) return false;
 
@@ -2761,6 +2763,7 @@ bool removeBookFromCollection(const char* collectionId, uint32_t bookId) {
 }
 
 void removeBookFromAllCollections(uint32_t bookId) {
+  invalidateBookLookup();
   if (bookId == 0) return;
   USER_COLLECTIONS.ensureLoaded();
   USER_COLLECTIONS.removeBookFromAll(bookId);
