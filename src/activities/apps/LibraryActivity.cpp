@@ -34,6 +34,7 @@
 #include "SdCardFontGlobals.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
+#include "util/LibraryPerfLog.h"
 #include "util/PopupUtils.h"
 #include "components/icons/settings2.h"
 #include <Epub.h>
@@ -225,14 +226,17 @@ void LibraryActivity::applyLayoutFromSettings() {
 void LibraryActivity::onEnter() {
   Activity::onEnter();
   LOG_DBG("LIB", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LibraryPerf::ScopedTimer totalTimer("onEnter_total");
 
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
   USER_COLLECTIONS.ensureLoaded();
+  LibraryPerf::logElapsed("onEnter_stores_ensureLoaded", totalTimer.start);
 
   // If we returned from collection management, rebuild indices now so the
   // library grid reflects added/removed/renamed collections before we render.
   if (pendingCollectionsRebuild_) {
+    LibraryPerf::ScopedTimer rebuildTimer("onEnter_pendingRebuild");
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
@@ -243,15 +247,19 @@ void LibraryActivity::onEnter() {
   } else {
     lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
   }
+  LibraryPerf::logElapsed("onEnter_afterRebuild", totalTimer.start);
 
   // Preload the best installed SD CJK family so non-Latin titles render with
   // glyphs everywhere in the grid/header (no-op when no CJK font is installed).
   sdFontSystem.ensureCjkFontLoaded(renderer);
+  LibraryPerf::logElapsed("onEnter_afterCjkFont", totalTimer.start);
 
   // Drop any page frames cached by a previous session (index/state may differ).
   clearPageFrameCache();
+  LibraryPerf::logElapsed("onEnter_afterClearFrameCache", totalTimer.start);
 
   applyLayoutFromSettings();
+  LibraryPerf::logElapsed("onEnter_afterLayout", totalTimer.start);
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;
   forceRender_ = true;
@@ -266,7 +274,11 @@ void LibraryActivity::onEnter() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
 
-scanSd();
+  {
+    LibraryPerf::ScopedTimer scanTimer("onEnter_scanSd");
+    scanSd();
+  }
+  LibraryPerf::logElapsed("onEnter_afterScanSd", totalTimer.start);
 
   // Restore saved UI state: selector position and opened collection.
   if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
@@ -287,9 +299,14 @@ scanSd();
       SETTINGS.libraryCollectionName[0] = '\0';
     }
   }
+  LibraryPerf::logElapsed("onEnter_afterRestoreState", totalTimer.start);
 
   // Ensure page cache matches the restored selector position.
-  refreshPageCache();
+  {
+    LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_1");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("onEnter_afterFirstRefresh", totalTimer.start);
 
   // If indices were rebuilt above, refresh totals and page cache now.
   if (pendingCollectionsRebuild_) {
@@ -301,7 +318,11 @@ scanSd();
             : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                            static_cast<LibraryIndex::FilterMode>(currentFilter_)));
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-    refreshPageCache();
+    {
+      LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_2");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("onEnter_afterRebuildRefresh", totalTimer.start);
   }
 
   // If we came back from collection-management UI, try to return to the same
@@ -311,7 +332,11 @@ scanSd();
     if (selectorIndex_ >= totalBooks_) {
       selectorIndex_ = std::max(0, totalBooks_ - 1);
     }
-    refreshPageCache();
+    {
+      LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_3");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("onEnter_afterManageRefresh", totalTimer.start);
     selectorBeforeManage_ = -1;
   }
 
