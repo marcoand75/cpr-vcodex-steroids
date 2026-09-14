@@ -7,6 +7,27 @@ and OTA configuration. It is based on the 1.3.0 → 1.4.5 merge performed on
 
 ---
 
+## Documentation References
+
+For detailed technical specifications of each Steroids feature, see the modular documentation:
+
+| Feature | Document |
+|---------|----------|
+| **Library (V3)** | [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md) |
+| **Wikipedia** | [`STEROIDS-ADDICTIONS-WIKIPEDIA.md`](STEROIDS-ADDICTIONS-WIKIPEDIA.md) |
+| **Screensaver & Sleep** | [`STEROIDS-ADDICTIONS-SCREENSAVER.md`](STEROIDS-ADDICTIONS-SCREENSAVER.md) |
+| **Reading Statistics** | [`STEROIDS-ADDICTIONS-READING-STATS.md`](STEROIDS-ADDICTIONS-READING-STATS.md) |
+| **Dictionary** | [`STEROIDS-ADDICTIONS-DICTIONARY.md`](STEROIDS-ADDICTIONS-DICTIONARY.md) |
+| **Flashcards** | [`STEROIDS-ADDICTIONS-FLASHCARDS.md`](STEROIDS-ADDICTIONS-FLASHCARDS.md) |
+| **Bookmarks & Clippings** | [`STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md`](STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md) |
+| **Quick Cards** | [`STEROIDS-ADDICTIONS-QUICK-CARDS.md`](STEROIDS-ADDICTIONS-QUICK-CARDS.md) |
+| **Apps System** | [`STEROIDS-ADDICTIONS-APPS.md`](STEROIDS-ADDICTIONS-APPS.md) |
+| **Lua Plugins** | [`STEROIDS-ADDICTIONS-LUA.md`](STEROIDS-ADDICTIONS-LUA.md) |
+| **Optimizations** | [`STEROIDS-OPTIMIZATION.md`](STEROIDS-OPTIMIZATION.md) |
+| **Master Index** | [`STEROIDS-ADDICTIONS.md`](STEROIDS-ADDICTIONS.md) |
+
+---
+
 ## Quick Reference: Files You MUST NOT Overwrite
 
 These files contain Steroids-only features. **Never `git checkout --theirs`**
@@ -18,7 +39,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | `src/activities/reader/ClippingsActivity.cpp/h` | In-reader clipping UI |
 | `src/activities/apps/ClippingsAppActivity.cpp/h` | Clippings browser app |
 | `src/activities/apps/BookmarksAppActivity.cpp/h` | Bookmarks browser app |
-| `src/activities/apps/LibraryActivity.cpp/h` | Full e-book library browser (Steroids **Library V3**: mixed Series+Books view, collection-tile covers + white-title ribbon, natural title sort, back-restores-selection) |
+| `src/activities/apps/LibraryActivity.cpp/h` | Full e-book library browser (Steroids **Library V3**: mixed Series+Books view, collection-tile covers + white-title ribbon, natural title sort, back-restores-selection). **Full spec:** [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md) |
 | `src/activities/apps/ScreenSaverActivity.cpp/h` | Screensaver app |
 | `src/activities/apps/ScreenSaverDirActivity.cpp/h` | Screensaver directory selector |
 | `src/activities/apps/ScreenSaverPreviewActivity.cpp/h` | Screensaver preview |
@@ -63,7 +84,7 @@ These files contain Steroids-only features. **Never `git checkout --theirs`**
 | **`src/ReadingStatsStore.h`** | **Steroids pace-tracking fields (avgSecondsPerForwardPage, paceSampleCount) + Home summary.json fast path (SummaryJSON, getGlobalSummary/getBookProgressForHome/getBookHomeStats/getHomeBookStatsForRender/preloadHomeSummary) + dailyAverageMs for Home trend indicator** |
 | **`src/ReadingStatsStore.cpp`** | **Steroids pace-tracking implementation (recordForwardPageRead, mark-as-unread) + summary.json save/load + summary-aware getters (Home renders without the ~41 KB store at boot) + daily average computation from all stored reading days except today** |
 | **`src/ReadingStatsActivity.cpp/h`** | **selectedBookPath constructor param (pre-select book in stats)** |
-| **`src/components/LibraryIndex.cpp`** | **Library V3 index engine: incremental scan vector pre-allocation, null-terminated ZIP reads, `SortMode::MIXED` + `idx_mixed.bin` (`buildMixedIndex()`/`queryMixed()`/`totalMixedMatching()`), natural title sort (`makeTitleSortKey()`), cover-aware collection queries, `queryCollectionBooks()` seriesIndex ordering** |
+| **`src/components/LibraryIndex.cpp`** | **Library V3 index engine: incremental scan vector pre-allocation, null-terminated ZIP reads, `SortMode::MIXED` + `idx_mixed.bin` (`buildMixedIndex()`/`queryMixed()`/`totalMixedMatching()`), natural title sort (`makeTitleSortKey()`), cover-aware collection queries, `queryCollectionBooks()` seriesIndex ordering. **Full spec:** [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md)** |
 | **`src/activities/settings/StatusBarSettingsActivity.cpp`** | **Clock position, clock format, sync clock now in status bar menu** |
 | **`src/util/TimeUtils.cpp`** | **applySystemClockFromRtc: no clockHasBeenSynced guard, DS3231 time used immediately** |
 | **`src/network/OtaUpdater.h`** | **Added ABORTED error code + cancelFlag parameter to installUpdate** |
@@ -293,7 +314,7 @@ a `returnToPluginBrowser` flag. In `setup()`, the snapshot logic checks
 variables — `silentRebootPluginName[32]`, `silentRebootCaller`, `silentRebootReturnToPluginBrowser`,
 `SILENT_REBOOT_TARGET_PLUGIN`, `SILENT_REBOOT_TARGET_PLUGIN_BROWSER` — must ALL be present
 in `src/main.cpp`. If `silentRebootTarget` is not assigned in `silentRestartToPlugin()`,
-the device silently routes to Home instead of the plugin. See `STEROIDS-LUA.md` for the
+the device silently routes to Home instead of the plugin. See `STEROIDS-ADDICTIONS-LUA.md` for the
 full plugin lifecycle.
 
 ---
@@ -505,7 +526,7 @@ These files implement the sandboxed Lua 5.4.7 plugin runtime. Must never be over
 | `src/LuaPluginAPI.cpp` | `lcd.*`, `fs.*`, `input.*`, `sys.*`, `plugin_str.*` C bindings; `lua_plugin_register_libs()` |
 | `lib/lua/` | Lua 5.4.7 source tree (standard + custom `linit.c` registering 8 libraries) |
 | `plugins/*.lua` | Example plugin scripts (hello_world, snake, breakout, sudoku, todo_list) |
-| `STEROIDS-LUA.md` | Complete Lua plugin development reference (not in upstream) |
+| `STEROIDS-ADDICTIONS-LUA.md` | Complete Lua plugin development reference (not in upstream) |
 
 | File | Steroids Feature |
 |---|---|

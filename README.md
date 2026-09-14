@@ -1133,6 +1133,26 @@ python scripts/pre_release_check.py --tag 1.3.0.35-cpr-vcodex
 - the auto-flash sync workflow then mirrors that published release asset into
   `docs/firmware/firmware.bin` and updates `docs/firmware/manifest.json`
 
+## Technical Documentation
+
+The following markdown files in the repository root contain complete technical specifications for each Steroids subsystem:
+
+| Document | Scope |
+|----------|-------|
+| [`STEROIDS-ADDICTIONS.md`](STEROIDS-ADDICTIONS.md) | Master index — all Steroids apps, screensavers, sleep, enhancements |
+| [`STEROIDS-ADDICTIONS-LIBRARY.md`](STEROIDS-ADDICTIONS-LIBRARY.md) | Library V3: grid browser, indices, queries, sorting, collections/series, state persistence, covers, frame cache |
+| [`STEROIDS-ADDICTIONS-WIKIPEDIA.md`](STEROIDS-ADDICTIONS-WIKIPEDIA.md) | Wikipedia app: search, download, cache, summary preview, article reader |
+| [`STEROIDS-ADDICTIONS-SCREENSAVER.md`](STEROIDS-ADDICTIONS-SCREENSAVER.md) | Dual-mode screensaver, transparent PNG compositing, deep-sleep, power button state machine |
+| [`STEROIDS-ADDICTIONS-READING-STATS.md`](STEROIDS-ADDICTIONS-READING-STATS.md) | Reading stats, pace tracking, heatmap, profile, achievements, summary.json fast path |
+| [`STEROIDS-ADDICTIONS-DICTIONARY.md`](STEROIDS-ADDICTIONS-DICTIONARY.md) | Multi-dictionary lookup, failover/manual modes, reorderable list, progress indicator |
+| [`STEROIDS-ADDICTIONS-FLASHCARDS.md`](STEROIDS-ADDICTIONS-FLASHCARDS.md) | SM-2 spaced repetition, decks, review sessions, statistics |
+| [`STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md`](STEROIDS-ADDICTIONS-BOOKMARKS-CLIPPINGS.md) | Layout-independent bookmarks/clippings, cross-book browsers |
+| [`STEROIDS-ADDICTIONS-QUICK-CARDS.md`](STEROIDS-ADDICTIONS-QUICK-CARDS.md) | Image/QR/barcode viewer, 10 QR formats, Code-128 |
+| [`STEROIDS-ADDICTIONS-APPS.md`](STEROIDS-ADDICTIONS-APPS.md) | App registration, icon mapping, shortcut persistence, 5-piece checklist |
+| [`STEROIDS-ADDICTIONS-LUA.md`](STEROIDS-ADDICTIONS-LUA.md) | Lua plugin development guide (lifecycle, API, sandboxing, debugging) |
+| [`STEROIDS-ALIGN-TO-UPSTREAM.md`](STEROIDS-ALIGN-TO-UPSTREAM.md) | Upstream merge workflow, protected files list |
+| [`STEROIDS-OPTIMIZATION.md`](STEROIDS-OPTIMIZATION.md) | Shared utilities, optimization patterns, pre-merge checklist |
+
 ## Credits
 
 Huge credit goes to:
