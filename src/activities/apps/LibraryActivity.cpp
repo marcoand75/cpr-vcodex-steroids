@@ -288,6 +288,9 @@ scanSd();
     }
   }
 
+  // Ensure page cache matches the restored selector position.
+  refreshPageCache();
+
   // If indices were rebuilt above, refresh totals and page cache now.
   if (pendingCollectionsRebuild_) {
     totalBooks_ = collectionsMode_

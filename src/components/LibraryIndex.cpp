@@ -183,6 +183,17 @@ int cmpSortKey(const char* a, const char* b) {
   return std::strncmp(a, b, 20);
 }
 
+// Case-insensitive string comparison for sort keys (used in query sorting)
+static int cmpSortKeyCI(const char* a, const char* b) {
+  for (int i = 0; i < 20; ++i) {
+    unsigned char ca = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(a[i])));
+    unsigned char cb = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(b[i])));
+    if (ca != cb) return ca < cb ? -1 : 1;
+    if (ca == 0) return 0;
+  }
+  return 0;
+}
+
 // Check if needle (lowercase, accent-folded) is a substring of haystack.
 // Both must be null-terminated.  Accent-folds haystack on the fly.
 bool substringMatch(const char* haystack, const char* needle) {
@@ -1691,7 +1702,16 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
     } else {
       std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
     }
-    snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
+    // Get accurate book count for user collections from UserCollectionsStore
+    int bookCount = ci.bookCount;
+    if ((ci.flags & 1) != 0) {
+      USER_COLLECTIONS.ensureLoaded();
+      const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+      if (uc) {
+        bookCount = USER_COLLECTIONS.memberCount(uc->id);
+      }
+    }
+    snprintf(ref.author, sizeof(ref.author), "%d books", bookCount);
     ref.path[0] = '\0';
     ref.isFavorite = false;
     ref.isOpened = false;
@@ -1994,17 +2014,26 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
              if (uc) displayName = uc->name;
            }
            
-           // Append folder-fallback disambiguation subtitle if needed
-           std::string subtitle = getCollectionSubtitle(ci, sf, df);
-           if (!subtitle.empty()) {
-             char combined[80];
-             std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
-             std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
-           } else {
-             std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
-           }
-           snprintf(ref.author, sizeof(ref.author), "%d books", ci.bookCount);
-           ref.path[0] = '\0';
+// Append folder-fallback disambiguation subtitle if needed
+            std::string subtitle = getCollectionSubtitle(ci, sf, df);
+            if (!subtitle.empty()) {
+              char combined[80];
+              std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
+              std::strncpy(ref.title, combined, 64); ref.title[64] = '\0';
+            } else {
+              std::strncpy(ref.title, displayName.c_str(), 64); ref.title[64] = '\0';
+            }
+            // Get accurate book count for user collections from UserCollectionsStore
+            int bookCount = ci.bookCount;
+            if ((ci.flags & 1) != 0) {
+              USER_COLLECTIONS.ensureLoaded();
+              const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+              if (uc) {
+                bookCount = USER_COLLECTIONS.memberCount(uc->id);
+              }
+            }
+            snprintf(ref.author, sizeof(ref.author), "%d books", bookCount);
+            ref.path[0] = '\0';
            ref.isFavorite = false;
            ref.isOpened = false;
            ref.isCompleted = false;
@@ -2078,15 +2107,20 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   // Sort the collected matches by the requested sortMode
   const bool reverse = (sortMode == SortMode::TITLE_DESC || sortMode == SortMode::AUTHOR_DESC);
   if (sortMode == SortMode::TITLE_ASC || sortMode == SortMode::TITLE_DESC) {
-    std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
-      int c = cmpSortKey(a.title, b.title);
-      return c < 0;
+    std::sort(matches.begin(), matches.end(), [reverse](const BookRef& a, const BookRef& b) {
+      int c = cmpSortKeyCI(a.title, b.title);
+      return reverse ? c > 0 : c < 0;
     });
   } else if (sortMode == SortMode::AUTHOR_ASC || sortMode == SortMode::AUTHOR_DESC) {
-    std::sort(matches.begin(), matches.end(), [](const BookRef& a, const BookRef& b) {
-      int c = cmpSortKey(a.author, b.author);
-      if (c != 0) return c < 0;
-      return cmpSortKey(a.title, b.title) < 0;
+    std::sort(matches.begin(), matches.end(), [reverse](const BookRef& a, const BookRef& b) {
+      // For collections, sort by title (collection name); for books, sort by author
+      const char* authorA = a.isCollection ? a.title : a.author;
+      const char* authorB = b.isCollection ? b.title : b.author;
+      int c = cmpSortKeyCI(authorA, authorB);
+      if (c != 0) return reverse ? c > 0 : c < 0;
+      // Fallback to title for items with same author
+      int c2 = cmpSortKeyCI(a.title, b.title);
+      return reverse ? c2 > 0 : c2 < 0;
     });
   } else if (sortMode == SortMode::RECENT || sortMode == SortMode::PROGRESS) {
     READING_STATS.ensureLoaded();
@@ -2105,13 +2139,9 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         uint8_t pb = sb ? sb->lastProgressPercent : 0;
         if (pa != pb) return pa > pb;  // highest progress first
       }
-      int c = cmpSortKey(a.title, b.title);
+      int c = cmpSortKeyCI(a.title, b.title);
       return c < 0;
     });
-  }
-
-  if (reverse) {
-    std::reverse(matches.begin(), matches.end());
   }
 
   if (hasCollIndex) cf.close();
