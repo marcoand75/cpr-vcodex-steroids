@@ -509,40 +509,62 @@ void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter
 }
 
 void LibraryActivity::refreshPageCache() {
+  LibraryPerf::ScopedTimer totalTimer("refreshPageCache_total");
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
   const bool hasSearch = !currentSearchText_.empty();
   if (mixedMode_ && currentCollectionIdx_ < 0) {
     // Mixed view: root shows series + standalone; inside a series shows books
-    slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
-                                         currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                         static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                         coverWidth_, coverHeight_,
-                                         static_cast<LibraryIndex::SortMode>(currentSort_));
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryMixed");
+      slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
+                                           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+                                           static_cast<LibraryIndex::FilterMode>(currentFilter_),
+                                           coverWidth_, coverHeight_,
+                                           static_cast<LibraryIndex::SortMode>(currentSort_));
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterQueryMixed", totalTimer.start);
   } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
     // Browsing list of collections
-    slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollections");
+      slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollections", totalTimer.start);
   } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
     // Inside a series in mixed view
-    slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollectionBooks_mixed");
+      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollectionBooks_mixed", totalTimer.start);
     totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
   } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
     // Browsing books within a collection
-    slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollectionBooks_coll");
+      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollectionBooks_coll", totalTimer.start);
     totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
   } else {
     // Normal book browsing, or mixed mode with active search
-    slotCount = LibraryIndex::queryPage(
-        pageCache_, curPage, gridsPerPage_,
-        static_cast<LibraryIndex::SortMode>(currentSort_),
-        currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-        static_cast<LibraryIndex::FilterMode>(currentFilter_),
-        coverWidth_, coverHeight_);
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryPage");
+      slotCount = LibraryIndex::queryPage(
+          pageCache_, curPage, gridsPerPage_,
+          static_cast<LibraryIndex::SortMode>(currentSort_),
+          currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+          static_cast<LibraryIndex::FilterMode>(currentFilter_),
+          coverWidth_, coverHeight_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterQueryPage", totalTimer.start);
   }
   // If the page had fewer items than requested, update totalBooks_
   if (slotCount == 0 && curPage > 0) {
+    LibraryPerf::ScopedTimer fallbackTimer("refreshPageCache_fallbackLastPage");
     totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
         ? LibraryIndex::totalCollections()
         : (mixedMode_ && currentCollectionIdx_ < 0
@@ -552,25 +574,32 @@ void LibraryActivity::refreshPageCache() {
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_ && currentCollectionIdx_ < 0)
+    if (mixedMode_ && currentCollectionIdx_ < 0) {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryMixed");
       slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
                                            currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                            static_cast<LibraryIndex::FilterMode>(currentFilter_),
                                            coverWidth_, coverHeight_,
                                            static_cast<LibraryIndex::SortMode>(currentSort_));
-    else if (collectionsMode_ && currentCollectionIdx_ < 0)
+    } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollections");
       slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_, coverWidth_, coverHeight_);
-    else if (mixedMode_ && currentCollectionIdx_ >= 0)
+    } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollectionBooks_mixed");
       slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    else if (collectionsMode_ && currentCollectionIdx_ >= 0)
+    } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollectionBooks_coll");
       slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    else
+    } else {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryPage");
       slotCount = LibraryIndex::queryPage(
           pageCache_, lastPage, gridsPerPage_,
           static_cast<LibraryIndex::SortMode>(currentSort_),
           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
           static_cast<LibraryIndex::FilterMode>(currentFilter_),
           coverWidth_, coverHeight_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterFallback", totalTimer.start);
   }
   // Zero out remaining slots
   for (int i = slotCount; i < gridsPerPage_; ++i) {
@@ -589,6 +618,7 @@ void LibraryActivity::refreshPageCache() {
 }
 
 void LibraryActivity::applyFilterAndSort() {
+  LibraryPerf::ScopedTimer totalTimer("applyFilterAndSort_total");
   collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
   mixedMode_ = (viewMode_ == LibraryViewMode::Mixed);
   if (!collectionsMode_ && !mixedMode_) lastFlatSort_ = currentSort_;  // remember flat ordering
@@ -605,6 +635,8 @@ void LibraryActivity::applyFilterAndSort() {
   SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
   SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
   SETTINGS.saveToFile();
+  LibraryPerf::logElapsed("applyFilterAndSort_afterSettingsSave", totalTimer.start);
+
   totalBooks_ = collectionsMode_
       ? LibraryIndex::totalCollections()
       : (mixedMode_
@@ -613,6 +645,7 @@ void LibraryActivity::applyFilterAndSort() {
          : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
                                         static_cast<LibraryIndex::FilterMode>(currentFilter_)));
   totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  LibraryPerf::logElapsed("applyFilterAndSort_afterCounts", totalTimer.start);
   // Clamp selector to valid range after filter/sort changes
   if (selectorIndex_ >= totalBooks_) {
     selectorIndex_ = totalBooks_ > 0 ? totalBooks_ - 1 : 0;
@@ -626,7 +659,11 @@ void LibraryActivity::applyFilterAndSort() {
   cachedCollectionsMode_ = false;
   cachedCollectionIdx_ = -2;
   cachedCollectionName_.clear();
-  refreshPageCache();
+  {
+    LibraryPerf::ScopedTimer refreshTimer("applyFilterAndSort_refreshPageCache");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("applyFilterAndSort_afterRefresh", totalTimer.start);
   forceRender_ = true;
   requestUpdate();
 }
