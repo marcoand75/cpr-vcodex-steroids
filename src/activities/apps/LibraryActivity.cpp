@@ -258,8 +258,12 @@ void LibraryActivity::onEnter() {
   clearPageFrameCache();
   LibraryPerf::logElapsed("onEnter_afterClearFrameCache", totalTimer.start);
 
-  applyLayoutFromSettings();
+applyLayoutFromSettings();
   LibraryPerf::logElapsed("onEnter_afterLayout", totalTimer.start);
+
+  // Prime index caches early when heap is less fragmented
+  LibraryIndex::loadIndexCache();
+
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;
   forceRender_ = true;
