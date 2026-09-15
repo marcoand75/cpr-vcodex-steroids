@@ -1977,7 +1977,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
     }
 
     bool isMatch = true;
-
+    Record rec;
     if (ir.bookId & 0x80000000u) {
       // Series/collection tile
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
@@ -2068,7 +2068,6 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
       }
     } else {
       // Standalone book
-      Record rec;
       if (df && df.seek(ir.recordOffset) &&
           df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
         isMatch = matchesFilter(rec, filterMode);
@@ -2186,13 +2185,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         }
       }
     } else {
-      Record rec;
-      if (df && df.seek(ir.recordOffset) &&
-          df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
-        recordToBookRef(rec, ref);
-      } else {
-        continue;
-      }
+      recordToBookRef(rec, ref);
     }
 
     matches.push_back(ref);
