@@ -411,11 +411,7 @@ void LibraryActivity::refreshPageCache() {
   // retry on the last available page.
   if (slotCount == 0 && curPage > 0) {
     LibraryPerf::ScopedTimer fallbackTimer("refreshPageCache_fallbackLastPage");
-    totalBooks_ = LibraryPageCache::totalForMode(
-        collectionsMode_, mixedMode_,
-        currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-        static_cast<int>(currentFilter_), currentCollectionIdx_);
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshTotalCountsFromCurrentMode();
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
     {
@@ -1079,10 +1075,7 @@ void LibraryActivity::loop() {
                   // Reload grid and counts: hidden books must disappear / reappear.
                   // Select first available book on the current page.
                   selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-                  totalBooks_ = LibraryIndex::totalMatching(
-                      currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                      static_cast<LibraryIndex::FilterMode>(currentFilter_));
-                  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+                  refreshTotalCountsFromCurrentMode();
                   if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
                   bumpLibEpoch();
                   refreshPageCache();
