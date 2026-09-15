@@ -23,26 +23,27 @@ class IndexCacheManager {
  public:
   // Maximum cached entries per index. Chosen conservatively for ESP32-C3 RAM.
   static constexpr int kMaxMixedEntries = 4000;  // 4000 * 28 byte = 112 KB
+  static constexpr int kMaxCollectionsEntries = 2000;  // 2000 * 92 byte = 184 KB
 
-  // Load idx_mixed into RAM if memory allows and file exists.
-  // Returns true on success; cache stays valid until invalidateMixed().
+  // ---- idx_mixed cache ------------------------------------------------------
   static bool loadMixedIndex();
-
-  // Invalidate mixed cache. Must be called after scan/rebuild/mutation.
   static void invalidateMixed();
-
-  // Query mixed cache state.
   static bool hasMixedIndex();
   static int mixedIndexTotal();
   static const LibraryIndex::IndexRec* mixedIndexData();
-
-  // Binary search helper: returns insertion point or exact match for sortKey.
-  // Used by future indexed navigation; returns -1 if cache is unavailable.
   static int mixedIndexFind(const char* sortKey);
+  static size_t mixedIndexBytes();
+
+  // ---- idx_collections cache ------------------------------------------------
+  static bool loadCollectionsIndex();
+  static void invalidateCollections();
+  static bool hasCollectionsIndex();
+  static int collectionsIndexTotal();
+  static const LibraryIndex::CollectionIndexRec* collectionsIndexData();
+  static size_t collectionsIndexBytes();
 
   // RAM accounting.
-  static size_t mixedIndexBytes();
-  static size_t totalCachedBytes() { return mixedIndexBytes(); }
+  static size_t totalCachedBytes();
 
   // Generic memory check: true if we can still allocate `needed` bytes without
   // exceeding a conservative heap ceiling below the ESP32-C3 safe limit.

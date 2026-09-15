@@ -2,6 +2,8 @@
 
 #include "components/LibraryIndexCache.h"
 
+#include <util/LibraryPerfLog.h>
+
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -973,15 +975,6 @@ bool buildIndices() {
 
 static void recordToBookRef(const Record& rec, BookRef& ref);  // fwd decl
 
-struct __attribute__((packed)) CollectionIndexRec {
-  char     collectionName[80];
-  uint32_t firstSeriesOffset;  // byte offset into series.dat where this collection starts
-  uint32_t bookCount;          // number of books in this collection
-  uint8_t  flags;              // bit0 = user-defined collection
-  uint8_t  reserved[3];        // padding to 92 bytes
-};
-static_assert(sizeof(CollectionIndexRec) == 92, "CollectionIndexRec must be 92 bytes");
-
 bool buildCollectionsIndex() {
   LOG_DBG("LIB", "BuildCollIdx: start");
   invalidateBookLookup();
@@ -1312,9 +1305,10 @@ bool buildCollectionsIndex() {
      Storage.remove(kIdxCollections);
    }
 
-   LOG_DBG("LIB", "BuildCollIdx: %d metadata + %d folder + %d user = %d total entries",
-           metadataSeries.size(), folderCollections.size(), userCollections.size(), merged.size());
-   return true;
+    LOG_DBG("LIB", "BuildCollIdx: %d metadata + %d folder + %d user = %d total entries",
+            metadataSeries.size(), folderCollections.size(), userCollections.size(), merged.size());
+    IndexCacheManager::invalidateCollections();
+    return true;
 }
 
 // =========================================================================
@@ -1583,6 +1577,9 @@ bool buildMixedIndex(SortMode sortMode) {
   }
 
   LOG_DBG("LIB", "BuildMixedIdx: done in %lu ms, %d chunks", millis() - t0, chunkCount);
+  if (IndexCacheManager::loadMixedIndex()) {
+    LOG_DBG("LIB", "BuildMixedIdx: RAM cache loaded");
+  }
   return true;
 }
 
@@ -1957,6 +1954,7 @@ int collectionBookCount(int collectionIdx) {
 static bool matchesFilter(const Record& rec, FilterMode m);
 
 int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight, SortMode sortMode) {
+  unsigned long t_total = LibraryPerf::nowMs();
   buildBookLookup();
 
   HalFile mf;
@@ -1974,8 +1972,21 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
     mixedTotal = static_cast<int>(mf.size() / kIndexRecSize);
   }
 
-  HalFile cf = Storage.open(kIdxCollections);
-  const bool hasCollIndex = !!cf;
+  HalFile cf;
+  const LibraryIndex::CollectionIndexRec* collData = nullptr;
+  int collTotal = 0;
+  bool usingCollCache = false;
+
+  if (IndexCacheManager::hasCollectionsIndex()) {
+    collData = IndexCacheManager::collectionsIndexData();
+    collTotal = IndexCacheManager::collectionsIndexTotal();
+    usingCollCache = true;
+  } else {
+    cf = Storage.open(kIdxCollections);
+    if (!cf) return 0;
+    collTotal = static_cast<int>(cf.size() / sizeof(LibraryIndex::CollectionIndexRec));
+  }
+  const bool hasCollIndex = usingCollCache || !!cf;
 
   HalFile sf = Storage.open(kSeriesDat);
   HalFile df = Storage.open(kDatFile);
@@ -1985,6 +1996,11 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   std::vector<BookRef> matches;
   matches.reserve(std::min(mixedTotal, 512));
 
+  unsigned long t_iter = LibraryPerf::nowMs();
+  unsigned long t_coll = 0;
+  unsigned long t_series = 0;
+  unsigned long t_dat = 0;
+  unsigned long t_user = 0;
   for (int i = 0; i < mixedTotal; ++i) {
     IndexRec ir;
     if (usingCache) {
@@ -1999,9 +2015,20 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
       // Series/collection tile: match if any book passes filter + search
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
-        cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+        unsigned long t1 = LibraryPerf::nowMs();
         CollectionIndexRec ci;
-        if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+        if (usingCollCache) {
+          ci = collData[collIdx];
+          t_coll += LibraryPerf::nowMs() - t1;
+        } else {
+          cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+          if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+            t_coll += LibraryPerf::nowMs() - t1;
+          } else {
+            t_coll += LibraryPerf::nowMs() - t1;
+            continue;
+          }
+        }
           // Check collection name for search
           if (searchFilter && searchFilter[0] != '\0') {
             char key[20]; makeTitleSortKey(ci.collectionName, key);
@@ -2012,29 +2039,36 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
           if (isMatch && filterMode != FilterMode::ALL) {
              if (ci.flags & 1) {
                // User collection: resolve members from UserCollectionsStore
+               unsigned long t_user_start = LibraryPerf::nowMs();
                USER_COLLECTIONS.ensureLoaded();
                const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+               t_user += LibraryPerf::nowMs() - t_user_start;
                if (uc) {
                  auto members = USER_COLLECTIONS.members(uc->id);
                    for (const auto& m : members) {
                      uint32_t offset;
                      if (findRecordOffset(m.bookId, offset) && df) {
+                       unsigned long t_dat_start = LibraryPerf::nowMs();
                        df.seek(offset);
                        Record rec;
                        if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+                         t_dat += LibraryPerf::nowMs() - t_dat_start;
                          if (matchesFilter(rec, filterMode)) {
                            isMatch = true;
                            break;
                          }
+                       } else {
+                         t_dat += LibraryPerf::nowMs() - t_dat_start;
                        }
                      }
                    }
                    if (members.empty()) isMatch = false;
-                 } else {
-                   isMatch = false;
-                 }
+               } else {
+                 isMatch = false;
+               }
              } else if (sf && df) {
                // Auto series: read from series.dat
+               unsigned long t_series_start = LibraryPerf::nowMs();
                sf.seek(ci.firstSeriesOffset);
                SeriesRec sr;
                bool anyMatch = false;
@@ -2043,19 +2077,24 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
                  if (sr.bookId == 0) continue;
                  uint32_t offset;
                  if (findRecordOffset(sr.bookId, offset) && df) {
+                   unsigned long t_dat_start = LibraryPerf::nowMs();
                    df.seek(offset);
                    Record rec;
                    if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+                     t_dat += LibraryPerf::nowMs() - t_dat_start;
                      if (matchesFilter(rec, filterMode)) {
                        anyMatch = true;
                        break;
                      }
+                   } else {
+                     t_dat += LibraryPerf::nowMs() - t_dat_start;
                    }
                  }
-                 if (anyMatch) break;
-                 }
-                 isMatch = anyMatch;
                }
+               if (anyMatch) break;
+               t_series += LibraryPerf::nowMs() - t_series_start;
+               isMatch = anyMatch;
+             }
            }
          }
        }
@@ -2183,8 +2222,10 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
 
     matches.push_back(ref);
   }
+  LibraryPerf::logElapsed("queryMixed_iteration", t_iter);
 
   // Sort the collected matches by the requested sortMode
+  unsigned long t_sort = LibraryPerf::nowMs();
   const bool reverse = (sortMode == SortMode::TITLE_DESC || sortMode == SortMode::AUTHOR_DESC);
   if (sortMode == SortMode::TITLE_ASC || sortMode == SortMode::TITLE_DESC) {
     std::sort(matches.begin(), matches.end(), [reverse](const BookRef& a, const BookRef& b) {
@@ -2223,11 +2264,16 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
       return c < 0;
     });
   }
+  LibraryPerf::logElapsed("queryMixed_sort", t_sort);
 
   if (hasCollIndex) cf.close();
   if (df) df.close();
   if (sf) sf.close();
   if (!usingCache) mf.close();
+
+  LibraryPerf::logElapsed("queryMixed_total", t_total);
+  LOG_DBG("LIB-PERF", "queryMixed_breakdown: coll=%lu series=%lu dat=%lu user=%lu",
+          (unsigned long)t_coll, (unsigned long)t_series, (unsigned long)t_dat, (unsigned long)t_user);
 
   const int start = page * pageSize;
   const int end = std::min(start + pageSize, static_cast<int>(matches.size()));
@@ -2641,6 +2687,7 @@ void invalidate() {
   Storage.remove(kIdxMetadataSeries);
   Storage.remove(kIdxFolderCollections);
   Storage.remove(kIdxMixed);
+  Storage.remove(kIdxCollections);
   Storage.remove(kSeriesDat);
   // Clean temp merge-sort chunks
   for (int i = 0; i < 9999; ++i) {
@@ -2649,6 +2696,7 @@ void invalidate() {
     if (!Storage.exists(tmpPath)) break;
     Storage.remove(tmpPath);
   }
+  IndexCacheManager::releaseAll();
    LOG_DBG("LIB", "invalidate: automatic library indices deleted, user collections preserved");
 }
 

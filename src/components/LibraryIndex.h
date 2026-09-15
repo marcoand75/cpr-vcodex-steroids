@@ -49,6 +49,16 @@ struct __attribute__((packed)) IndexRec {
 };
 static_assert(sizeof(IndexRec) == 28, "IndexRec must be 28 bytes");
 
+// ---- Collection index record (on-disk, 92 bytes) ----
+struct __attribute__((packed)) CollectionIndexRec {
+  char     collectionName[80];
+  uint32_t firstSeriesOffset;  // byte offset into series.dat
+  uint32_t bookCount;          // number of books in this collection
+  uint8_t  flags;              // bit0 = user-defined collection
+  uint8_t  reserved[3];        // padding to 92 bytes
+};
+static_assert(sizeof(CollectionIndexRec) == 92, "CollectionIndexRec must be 92 bytes");
+
 // ---- In-RAM view for one rendered tile ----
 struct __attribute__((packed)) BookRef {
   uint32_t id;

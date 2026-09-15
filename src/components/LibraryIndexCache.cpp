@@ -18,6 +18,10 @@ constexpr size_t kCacheHeapCeiling = 80 * 1024;  // 80 KB
 static LibraryIndex::IndexRec* g_mixedData = nullptr;
 static int g_mixedCount = 0;
 
+// RAM cache state for idx_collections.
+static LibraryIndex::CollectionIndexRec* g_collectionsData = nullptr;
+static int g_collectionsCount = 0;
+
 }  // namespace
 
 // ---- Mixed index cache ------------------------------------------------------
@@ -148,4 +152,97 @@ bool IndexCacheManager::canAllocate(size_t needed) {
 
 void IndexCacheManager::releaseAll() {
   invalidateMixed();
+  invalidateCollections();
+}
+
+// ---- Collections index cache -----------------------------------------------
+
+bool IndexCacheManager::hasCollectionsIndex() {
+  return g_collectionsData != nullptr && g_collectionsCount > 0;
+}
+
+bool IndexCacheManager::loadCollectionsIndex() {
+  if (hasCollectionsIndex()) {
+    return true;
+  }
+
+  const char* kIdxCollections = "/.crosspoint/LIBRARY/idx_collections.bin";
+  HalFile f = Storage.open(kIdxCollections);
+  if (!f) {
+    LOG_DBG("LIB-IDX-CACHE", "loadCollectionsIndex: file missing");
+    return false;
+  }
+
+  const size_t fileSize = static_cast<size_t>(f.size());
+  const size_t recSize = sizeof(LibraryIndex::CollectionIndexRec);
+  if (fileSize == 0 || fileSize % recSize != 0) {
+    LOG_ERR("LIB-IDX-CACHE", "loadCollectionsIndex: bad size %u", (unsigned)fileSize);
+    f.close();
+    return false;
+  }
+
+  const int total = static_cast<int>(fileSize / recSize);
+  if (total > kMaxCollectionsEntries) {
+    LOG_ERR("LIB-IDX-CACHE", "loadCollectionsIndex: %d entries exceeds max %d", total, kMaxCollectionsEntries);
+    f.close();
+    return false;
+  }
+
+  if (!canAllocate(fileSize)) {
+    LOG_ERR("LIB-IDX-CACHE", "loadCollectionsIndex: skipped, not enough heap (%u bytes)", (unsigned)fileSize);
+    f.close();
+    return false;
+  }
+
+  uint8_t* raw = nullptr;
+  if (total > 0) {
+    raw = new (std::nothrow) uint8_t[fileSize];
+    if (!raw) {
+      LOG_ERR("LIB-IDX-CACHE", "loadCollectionsIndex: alloc failed for %u bytes", (unsigned)fileSize);
+      f.close();
+      return false;
+    }
+    if (f.read(raw, static_cast<int>(fileSize)) != static_cast<int>(fileSize)) {
+      LOG_ERR("LIB-IDX-CACHE", "loadCollectionsIndex: read failed");
+      delete[] raw;
+      f.close();
+      return false;
+    }
+  }
+
+  f.close();
+
+  g_collectionsData = reinterpret_cast<LibraryIndex::CollectionIndexRec*>(raw);
+  g_collectionsCount = total;
+  LOG_INF("LIB-IDX-CACHE", "loadCollectionsIndex: cached %d entries (%u bytes)", total, (unsigned)fileSize);
+  return true;
+}
+
+void IndexCacheManager::invalidateCollections() {
+  if (g_collectionsData) {
+    delete[] reinterpret_cast<uint8_t*>(g_collectionsData);
+    g_collectionsData = nullptr;
+    g_collectionsCount = 0;
+    LOG_DBG("LIB-IDX-CACHE", "invalidateCollections: released");
+  }
+}
+
+int IndexCacheManager::collectionsIndexTotal() {
+  return g_collectionsCount;
+}
+
+const LibraryIndex::CollectionIndexRec* IndexCacheManager::collectionsIndexData() {
+  return g_collectionsData;
+}
+
+size_t IndexCacheManager::mixedIndexBytes() {
+  return static_cast<size_t>(g_mixedCount) * sizeof(LibraryIndex::IndexRec);
+}
+
+size_t IndexCacheManager::collectionsIndexBytes() {
+  return static_cast<size_t>(g_collectionsCount) * sizeof(LibraryIndex::CollectionIndexRec);
+}
+
+size_t IndexCacheManager::totalCachedBytes() {
+  return mixedIndexBytes() + collectionsIndexBytes();
 }

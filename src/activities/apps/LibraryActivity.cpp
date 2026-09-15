@@ -190,6 +190,7 @@ void LibraryActivity::onEnter() {
   }
   LibraryPerf::logElapsed("onEnter_afterScanSd", totalTimer.start);
   IndexCacheManager::loadMixedIndex();
+  IndexCacheManager::loadCollectionsIndex();
 
   // Restore saved UI state: selector position and opened collection.
   if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
