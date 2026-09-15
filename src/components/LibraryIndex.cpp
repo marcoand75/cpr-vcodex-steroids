@@ -2135,54 +2135,9 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         ref.isHidden = false;
         ref.isCollection = (ci.flags & 1) != 0;
 
-        // Resolve first book with existing cover
-        if (coverWidth > 0 && coverHeight > 0) {
-          if (ci.flags & 1) {
-            USER_COLLECTIONS.ensureLoaded();
-            const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
-            if (uc) {
-              auto members = USER_COLLECTIONS.members(uc->id);
-              for (const auto& m : members) {
-                uint32_t offset;
-                if (findRecordOffset(m.bookId, offset) && df) {
-                  df.seek(offset);
-                  Record rec;
-                  if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                  const std::string bookPath(rec.path);
-                  const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-                  if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                    std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                    ref.path[sizeof(ref.path) - 1] = '\0';
-                    break;
-                  }
-                }
-              }
-            }
-            }
-          } else if (sf && df) {
-            sf.seek(ci.firstSeriesOffset);
-            SeriesRec sr;
-            for (uint32_t b = 0; b < ci.bookCount; ++b) {
-              if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-              if (sr.bookId == 0) continue;
-              uint32_t offset;
-              if (findRecordOffset(sr.bookId, offset)) {
-                df.seek(offset);
-                Record rec;
-                if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                  const std::string bookPath(rec.path);
-                  const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-                  if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                    std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                    ref.path[sizeof(ref.path) - 1] = '\0';
-                    break;
-                  }
-                }
-              }
-              if (ref.path[0] != '\0') break;
-            }
-          }
-        }
+        // Cover resolution is deferred to page output so we only stat the
+        // members of the collections actually visible on the current page.
+        // (ref.path stays empty here; filled in after pagination.)
       }
     } else {
       recordToBookRef(rec, ref);
@@ -2232,22 +2187,89 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   }
   LibraryPerf::logElapsed("queryMixed_sort", t_sort);
 
-  if (cf) cf.close();
-  if (df) df.close();
-  if (sf) sf.close();
-  if (!usingCache) mf.close();
-
   LibraryPerf::logElapsed("queryMixed_total", t_total);
   LOG_DBG("LIB-PERF", "queryMixed_breakdown: coll=%lu series=%lu dat=%lu user=%lu",
           (unsigned long)t_coll, (unsigned long)t_series, (unsigned long)t_dat, (unsigned long)t_user);
 
+  // Deferred cover resolution: only stat collection members that are on the
+  // page actually being returned (usually 1-3 tiles) instead of every matching
+  // collection tile (was ~340 Storage.exists calls per query).
   const int start = page * pageSize;
   const int end = std::min(start + pageSize, static_cast<int>(matches.size()));
   int count = 0;
   for (int i = start; i < end; ++i) {
     if (count >= pageSize) break;
-    out[count++] = matches[i];
+    out[count] = matches[i];
+    if (out[count].isCollection && coverWidth > 0 && coverHeight > 0 && (out[count].id & 0x80000000u)) {
+      const int collIdx = static_cast<int>(out[count].id & 0x7FFFFFFFu);
+      CollectionIndexRec ci;
+      if (hasCollIndex) {
+        if (usingCollCache) {
+          ci = collData[collIdx];
+        } else if (cf) {
+          cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+          if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != sizeof(CollectionIndexRec)) {
+            ++count;
+            continue;
+          }
+        } else {
+          ++count;
+          continue;
+        }
+        if (ci.flags & 1) {
+          USER_COLLECTIONS.ensureLoaded();
+          const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+          if (uc) {
+            auto members = USER_COLLECTIONS.members(uc->id);
+            for (const auto& m : members) {
+              uint32_t offset;
+              if (findRecordOffset(m.bookId, offset) && df) {
+                df.seek(offset);
+                Record rec;
+                if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+                  const std::string bookPath(rec.path);
+                  const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                  if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                    std::strncpy(out[count].path, rec.path, sizeof(out[count].path) - 1);
+                    out[count].path[sizeof(out[count].path) - 1] = '\0';
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        } else if (sf && df) {
+          sf.seek(ci.firstSeriesOffset);
+          SeriesRec sr;
+          for (uint32_t b = 0; b < ci.bookCount; ++b) {
+            if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+            if (sr.bookId == 0) continue;
+            uint32_t offset;
+            if (findRecordOffset(sr.bookId, offset)) {
+              df.seek(offset);
+              Record rec;
+              if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+                const std::string bookPath(rec.path);
+                const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                  std::strncpy(out[count].path, rec.path, sizeof(out[count].path) - 1);
+                  out[count].path[sizeof(out[count].path) - 1] = '\0';
+                  break;
+                }
+              }
+            }
+            if (out[count].path[0] != '\0') break;
+          }
+        }
+      }
+    }
+    ++count;
   }
+
+  if (cf) cf.close();
+  if (df) df.close();
+  if (sf) sf.close();
+  if (!usingCache) mf.close();
   return count;
 }
 
