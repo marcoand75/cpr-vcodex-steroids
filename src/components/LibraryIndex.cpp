@@ -2453,10 +2453,12 @@ static bool matchesFilter(const Record& rec, FilterMode m) {
       return false;
     }
     case FilterMode::UNREAD: {
+      READING_STATS.ensureLoaded();
       const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
       return !s || s->totalReadingMs == 0;
     }
     case FilterMode::COMPLETED: {
+      READING_STATS.ensureLoaded();
       const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
       return s && s->completed;
     }
