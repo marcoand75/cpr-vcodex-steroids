@@ -1811,31 +1811,52 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   }
   cf.close();
 
+  // Resolve library.dat records via the in-memory book lookup so deleted or
+  // tombstoned books are filtered out BEFORE pagination (keeps page alignment).
+  buildBookLookup();
+  HalFile df = Storage.open(kDatFile);
+
   // User collections: resolve books from UserCollectionsStore, not series.dat
   if (ci.flags & 1) {
     USER_COLLECTIONS.ensureLoaded();
-    // Find collection by name (collectionName stores the user collection name)
+    // collectionName stores the user collection id
     const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
-    if (!uc) return 0;
-    auto members = USER_COLLECTIONS.members(uc->id);
-    std::sort(members.begin(), members.end(), [](const CollectionMember& a, const CollectionMember& b) {
-      return a.position < b.position;
-    });
-    const int start = page * pageSize;
-    const int end = std::min(start + pageSize, static_cast<int>(members.size()));
-    int count = 0;
-    for (int i = start; i < end; ++i) {
-      Record rec;
-      if (readRecordByBookId(members[i].bookId, rec)) {
-        recordToBookRef(rec, out[count++]);
+    if (uc) {
+      auto members = USER_COLLECTIONS.members(uc->id);
+      std::sort(members.begin(), members.end(), [](const CollectionMember& a, const CollectionMember& b) {
+        return a.position < b.position;
+      });
+      // Filter to books that actually exist in library.dat so count/pagination
+      // matches collectionBookCount().
+      std::vector<CollectionMember> valid;
+      valid.reserve(members.size());
+      for (const auto& m : members) {
+        uint32_t offset;
+        if (findRecordOffset(m.bookId, offset)) valid.push_back(m);
       }
+      const int start = page * pageSize;
+      const int end = std::min(start + pageSize, static_cast<int>(valid.size()));
+      int count = 0;
+      for (int i = start; i < end; ++i) {
+        uint32_t offset;
+        if (findRecordOffset(valid[i].bookId, offset) && df) {
+          df.seek(offset);
+          Record rec;
+          if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+            recordToBookRef(rec, out[count++]);
+          }
+        }
+      }
+      if (df) df.close();
+      return count;
     }
-    return count;
+    if (df) df.close();
+    return 0;
   }
 
-  // Auto series: read from series.dat
+  // Auto series: read from series.dat, resolve via book lookup (no per-book SD open)
   HalFile sf = Storage.open(kSeriesDat);
-  if (!sf) return 0;
+  if (!sf) { if (df) df.close(); return 0; }
   sf.seek(ci.firstSeriesOffset);
 
   struct BookSlot {
@@ -1848,19 +1869,10 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   for (uint32_t i = 0; i < ci.bookCount; ++i) {
     if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != static_cast<int>(sizeof(SeriesRec))) break;
     if (sr.bookId == 0) continue;
-    // Find Record by bookId in library.dat
-    HalFile df = Storage.open(kDatFile);
-    if (df) {
-      Record rec;
-      uint32_t rp = 0;
-      while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-        if (rec.id == sr.bookId && !rec.tombstone()) {
-          slots.push_back({sr.bookId, static_cast<uint32_t>(sr.seriesIndex), rp * kRecordSize});
-          break;
-        }
-        ++rp;
-      }
-      df.close();
+    // Find Record by bookId in library.dat using book lookup (fast, no per-book SD open)
+    uint32_t offset;
+    if (findRecordOffset(sr.bookId, offset)) {
+      slots.push_back({sr.bookId, static_cast<uint32_t>(sr.seriesIndex), offset});
     }
   }
   sf.close();
@@ -1876,9 +1888,12 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   int count = 0;
   for (int i = start; i < end; ++i) {
     Record rec;
-    if (!readRecord(slots[i].recordOffset / kRecordSize, rec)) continue;
-    recordToBookRef(rec, out[count++]);
+    if (df && df.seek(slots[i].recordOffset) &&
+        df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+      recordToBookRef(rec, out[count++]);
+    }
   }
+  if (df) df.close();
   return count;
 }
 
@@ -1906,11 +1921,38 @@ int collectionBookCount(int collectionIdx) {
     USER_COLLECTIONS.ensureLoaded();
     const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
     if (uc) {
-      return USER_COLLECTIONS.memberCount(uc->id);
+      // Count only members that actually exist in library.dat (not tombstoned/deleted)
+      // to match queryCollectionBooks pagination.
+      buildBookLookup();
+      auto members = USER_COLLECTIONS.members(uc->id);
+      int validCount = 0;
+      for (const auto& m : members) {
+        uint32_t offset;
+        if (findRecordOffset(m.bookId, offset)) ++validCount;
+      }
+      return validCount;
     }
     return 0;
   }
-  return static_cast<int>(ci.bookCount);
+
+  // Auto series: count only books that actually exist in library.dat (not tombstoned/deleted)
+  buildBookLookup();
+  HalFile sf = Storage.open(kSeriesDat);
+  if (!sf) return 0;
+  sf.seek(ci.firstSeriesOffset);
+
+  SeriesRec sr;
+  int validCount = 0;
+  for (uint32_t i = 0; i < ci.bookCount; ++i) {
+    if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != static_cast<int>(sizeof(SeriesRec))) break;
+    if (sr.bookId == 0) continue;
+    uint32_t offset;
+    if (findRecordOffset(sr.bookId, offset)) {
+      ++validCount;
+    }
+  }
+  sf.close();
+  return validCount;
 }
 
 // ---- Mixed view query ----
@@ -2200,7 +2242,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   for (int i = start; i < end; ++i) {
     if (count >= pageSize) break;
     out[count] = matches[i];
-    if (out[count].isCollection && coverWidth > 0 && coverHeight > 0 && (out[count].id & 0x80000000u)) {
+    if (coverWidth > 0 && coverHeight > 0 && (out[count].id & 0x80000000u)) {
       const int collIdx = static_cast<int>(out[count].id & 0x7FFFFFFFu);
       CollectionIndexRec ci;
       if (hasCollIndex) {
