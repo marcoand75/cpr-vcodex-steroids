@@ -41,6 +41,14 @@ struct __attribute__((packed)) Record {
 };
 static_assert(sizeof(Record) == 256, "Record must be 256 bytes");
 
+// ---- Index record (on-disk) ----
+struct __attribute__((packed)) IndexRec {
+  char sortKey[20];
+  uint32_t bookId;
+  uint32_t recordOffset;
+};
+static_assert(sizeof(IndexRec) == 28, "IndexRec must be 28 bytes");
+
 // ---- In-RAM view for one rendered tile ----
 struct __attribute__((packed)) BookRef {
   uint32_t id;

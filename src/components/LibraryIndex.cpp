@@ -1,5 +1,7 @@
 #include "LibraryIndex.h"
 
+#include "components/LibraryIndexCache.h"
+
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -68,12 +70,7 @@ constexpr int kChunkRecs = LIBIDX_CHUNK_RECS;           // records per temp chun
 constexpr int kSearchBlockRecs = LIBIDX_SEARCH_BLOCK_RECS;
 
 // ---- Index record (on-disk) ----
-struct __attribute__((packed)) IndexRec {
-  char     sortKey[20];
-  uint32_t bookId;
-  uint32_t recordOffset;
-};
-static_assert(sizeof(IndexRec) == 28, "IndexRec must be 28 bytes");
+// (defined in LibraryIndex.h as LibraryIndex::IndexRec)
 
 // ---- Series record (on-disk, one per book) ----
 struct __attribute__((packed)) SeriesRec {
@@ -1962,10 +1959,21 @@ static bool matchesFilter(const Record& rec, FilterMode m);
 int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, FilterMode filterMode, int coverWidth, int coverHeight, SortMode sortMode) {
   buildBookLookup();
 
-  HalFile mf = Storage.open(kIdxMixed);
-  if (!mf) return 0;
+  HalFile mf;
+  const IndexRec* mixedData = nullptr;
+  int mixedTotal = 0;
+  bool usingCache = false;
 
-  const int total = static_cast<int>(mf.size() / kIndexRecSize);
+  if (IndexCacheManager::hasMixedIndex()) {
+    mixedData = IndexCacheManager::mixedIndexData();
+    mixedTotal = IndexCacheManager::mixedIndexTotal();
+    usingCache = true;
+  } else {
+    mf = Storage.open(kIdxMixed);
+    if (!mf) return 0;
+    mixedTotal = static_cast<int>(mf.size() / kIndexRecSize);
+  }
+
   HalFile cf = Storage.open(kIdxCollections);
   const bool hasCollIndex = !!cf;
 
@@ -1973,14 +1981,18 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   HalFile df = Storage.open(kDatFile);
 
    // Collect matching entries into a temporary buffer so we can sort by the
-  // requested sortMode before returning the requested page.
+   // requested sortMode before returning the requested page.
   std::vector<BookRef> matches;
-  matches.reserve(std::min(total, 512));
+  matches.reserve(std::min(mixedTotal, 512));
 
-  for (int i = 0; i < total; ++i) {
-    mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+  for (int i = 0; i < mixedTotal; ++i) {
     IndexRec ir;
-    if (!readIndexRec(mf, ir)) break;
+    if (usingCache) {
+      ir = mixedData[i];
+    } else {
+      mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+      if (!readIndexRec(mf, ir)) break;
+    }
 
     bool isMatch = true;
     if (ir.bookId & 0x80000000u) {
@@ -2215,7 +2227,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   if (hasCollIndex) cf.close();
   if (df) df.close();
   if (sf) sf.close();
-  mf.close();
+  if (!usingCache) mf.close();
 
   const int start = page * pageSize;
   const int end = std::min(start + pageSize, static_cast<int>(matches.size()));

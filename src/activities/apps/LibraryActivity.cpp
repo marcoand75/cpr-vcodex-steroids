@@ -25,6 +25,7 @@
 #include "util/BookFilter.h"
 #include "util/StringUtils.h"
 #include "activities/apps/util/LibraryNavigation.h"
+#include "components/LibraryIndexCache.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
 #include "HiddenBooksStore.h"
@@ -188,6 +189,7 @@ void LibraryActivity::onEnter() {
     scanSd();
   }
   LibraryPerf::logElapsed("onEnter_afterScanSd", totalTimer.start);
+  IndexCacheManager::loadMixedIndex();
 
   // Restore saved UI state: selector position and opened collection.
   if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
