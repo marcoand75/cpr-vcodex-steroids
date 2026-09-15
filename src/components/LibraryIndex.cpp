@@ -1574,20 +1574,20 @@ static void invalidateBookLookup() {
 }
 
 static bool buildBookLookup() {
-  HalFile dat = Storage.open(kDatFile);
-  if (!dat) return false;
-  const size_t datSize = static_cast<size_t>(dat.size());
-  dat.close();
-  if (datSize == g_bookDatSize && !g_bookLookup.empty()) return true;
-  g_bookDatSize = datSize;
   HalFile f = Storage.open(kDatFile);
   if (!f) return false;
+  const size_t datSize = static_cast<size_t>(f.size());
+  if (datSize == g_bookDatSize && !g_bookLookup.empty()) {
+    f.close();
+    return true;
+  }
+  g_bookDatSize = datSize;
   const int totalRecs = static_cast<int>(datSize / kRecordSize);
   g_bookLookup.clear();
   g_bookLookup.reserve(totalRecs > 0 ? static_cast<size_t>(totalRecs) : 0);
   Record rec;
   for (int rp = 0; rp < totalRecs; ++rp) {
-    if (readRecord(static_cast<uint32_t>(rp), rec)) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
       g_bookLookup.push_back({rec.id, static_cast<uint32_t>(rp * kRecordSize)});
     }
   }
@@ -2488,27 +2488,32 @@ static int walkIndex(const char* idxPath, bool reverse, int skip, int needed,
   const int end   = reverse ? -1 : total;
   const int step  = reverse ? -1 : 1;
 
+  HalFile df = Storage.open(kDatFile);
+
   for (int pos = start; pos != end; pos += step) {
     const uint32_t off = static_cast<uint32_t>(pos) * kIndexRecSize;
     if (!f.seek(off)) break;
     if (!readIndexRec(f, ir)) break;
 
     Record rec;
-    if (!readRecord(ir.recordOffset / kRecordSize, rec)) continue;
-    if (rec.tombstone()) continue;
-    if (!matchesFilter(rec, filter)) continue;
+    if (df && df.seek(ir.recordOffset) &&
+        df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
+      if (rec.tombstone()) continue;
+      if (!matchesFilter(rec, filter)) continue;
 
-    if (search && search[0]) {
-      if (!substringMatch(rec.title, search) && !substringMatch(rec.author, search)) continue;
+      if (search && search[0]) {
+        if (!substringMatch(rec.title, search) && !substringMatch(rec.author, search)) continue;
+      }
+
+      if (skipped++ < skip) continue;
+
+      recordToBookRef(rec, out[collected]);
+      ++collected;
+      if (needed > 0 && collected >= needed) break;
     }
-
-    if (skipped++ < skip) continue;
-
-    recordToBookRef(rec, out[collected]);
-    ++collected;
-    if (needed > 0 && collected >= needed) break;
   }
 
+  if (df) df.close();
   f.close();
   return collected;
 }
@@ -2529,27 +2534,24 @@ static int scanFullText(BookRef* out, int page, int pageSize, SortMode sortMode,
   if (!f) return 0;
 
   const int total = static_cast<int>(f.size() / kRecordSize);
-  std::vector<uint32_t> matchOffsets;
-  matchOffsets.reserve(64);
+  // Store full records so the sort comparator never re-opens the SD card.
+  std::vector<Record> matchRecords;
+  matchRecords.reserve(std::min(total, 64));
 
   Record rec;
   for (int rp = 0; rp < total; ++rp) {
-    if (!f.seek(static_cast<uint32_t>(rp) * kRecordSize)) break;
     if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) != static_cast<int>(kRecordSize)) break;
     if (rec.tombstone()) continue;
     if (search && search[0]) {
       if (!substringMatch(rec.title, search) && !substringMatch(rec.author, search)) continue;
     }
     if (!matchesFilter(rec, filter)) continue;
-    matchOffsets.push_back(static_cast<uint32_t>(rp));
+    matchRecords.push_back(rec);
   }
   f.close();
 
-  // Sort matches by sortMode
-  std::sort(matchOffsets.begin(), matchOffsets.end(), [sortMode](uint32_t aOff, uint32_t bOff) {
-    Record ra, rb;
-    if (!readRecord(aOff, ra) || !readRecord(bOff, rb)) return aOff < bOff;
-
+  // Sort matches by sortMode — all in RAM, no SD access.
+  std::sort(matchRecords.begin(), matchRecords.end(), [sortMode](const Record& ra, const Record& rb) {
     if (sortMode == SortMode::RECENT) {
       const auto* sa = READING_STATS.findBook(ra.path);
       const auto* sb = READING_STATS.findBook(rb.path);
@@ -2581,12 +2583,11 @@ static int scanFullText(BookRef* out, int page, int pageSize, SortMode sortMode,
   });
 
   const int start = page * pageSize;
-  const int end = std::min(start + pageSize, static_cast<int>(matchOffsets.size()));
+  const int end = std::min(start + pageSize, static_cast<int>(matchRecords.size()));
   int count = 0;
   for (int i = start; i < end; ++i) {
     if (count >= pageSize) break;
-    Record r; if (!readRecord(matchOffsets[i], r)) continue;
-    recordToBookRef(r, out[count++]);
+    recordToBookRef(matchRecords[i], out[count++]);
   }
   return count;
 }
@@ -2649,17 +2650,21 @@ int totalMatching(const char* searchFilter, FilterMode filterMode) {
   int count = 0;
   HalFile f = Storage.open(kIdxTitle);
   if (!f) return 0;
+  HalFile df = Storage.open(kDatFile);
   IndexRec ir;
   while (readIndexRec(f, ir)) {
     Record rec;
-    if (!readRecord(ir.recordOffset / kRecordSize, rec)) continue;
-    if (rec.tombstone()) continue;
-    if (!matchesFilter(rec, filterMode)) continue;
-    if (hasSearch) {
-      if (!substringMatch(rec.title, searchFilter) && !substringMatch(rec.author, searchFilter)) continue;
+    if (df && df.seek(ir.recordOffset) &&
+        df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
+      if (rec.tombstone()) continue;
+      if (!matchesFilter(rec, filterMode)) continue;
+      if (hasSearch) {
+        if (!substringMatch(rec.title, searchFilter) && !substringMatch(rec.author, searchFilter)) continue;
+      }
+      ++count;
     }
-    ++count;
   }
+  if (df) df.close();
   f.close();
   return count;
 }
