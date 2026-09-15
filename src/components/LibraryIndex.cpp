@@ -2264,38 +2264,73 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
   HalFile sf = Storage.open(kSeriesDat);
   HalFile df = Storage.open(kDatFile);
 
-  HalFile mf = Storage.open(kIdxMixed);
-  if (!mf) {
-    if (sf) sf.close();
-    if (df) df.close();
-    return 0;
+  HalFile mf;
+  const LibraryIndex::IndexRec* mixedData = nullptr;
+  int mixedTotal = 0;
+  bool usingCache = false;
+
+  if (IndexCacheManager::hasMixedIndex()) {
+    mixedData = IndexCacheManager::mixedIndexData();
+    mixedTotal = IndexCacheManager::mixedIndexTotal();
+    usingCache = true;
+  } else {
+    mf = Storage.open(kIdxMixed);
+    if (!mf) {
+      if (sf) sf.close();
+      if (df) df.close();
+      return 0;
+    }
+    mixedTotal = static_cast<int>(mf.size() / kIndexRecSize);
   }
 
   const bool hasSearch = (searchFilter && searchFilter[0] != '\0');
   if (!hasSearch && filterMode == FilterMode::ALL) {
-    mf.close();
+    if (usingCache) {
+      // cache read-only; nothing to close for mf
+    } else {
+      mf.close();
+    }
     if (sf) sf.close();
     if (df) df.close();
     return totalMixed();
   }
 
-  HalFile cf = Storage.open(kIdxCollections);
-  const bool hasCollIndex = !!cf;
+  HalFile cf;
+  const LibraryIndex::CollectionIndexRec* collData = nullptr;
+  int collTotal = 0;
+  bool usingCollCache = false;
+  if (IndexCacheManager::hasCollectionsIndex()) {
+    collData = IndexCacheManager::collectionsIndexData();
+    collTotal = IndexCacheManager::collectionsIndexTotal();
+    usingCollCache = true;
+  } else {
+    cf = Storage.open(kIdxCollections);
+  }
+  const bool hasCollIndex = usingCollCache || !!cf;
 
   int count = 0;
-  const int total = static_cast<int>(mf.size() / kIndexRecSize);
-  for (int i = 0; i < total; ++i) {
-    mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+  for (int i = 0; i < mixedTotal; ++i) {
     IndexRec ir;
-    if (!readIndexRec(mf, ir)) break;
+    if (usingCache) {
+      ir = mixedData[i];
+    } else {
+      mf.seek(static_cast<uint32_t>(i) * kIndexRecSize);
+      if (!readIndexRec(mf, ir)) break;
+    }
 
     bool matches = false;
     if (ir.bookId & 0x80000000u) {
       const int collIdx = static_cast<int>(ir.bookId & 0x7FFFFFFFu);
       if (hasCollIndex) {
-        cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
         CollectionIndexRec ci;
-        if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
+        if (usingCollCache) {
+          ci = collData[collIdx];
+        } else {
+          cf.seek(static_cast<uint32_t>(collIdx) * sizeof(CollectionIndexRec));
+          if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) != sizeof(CollectionIndexRec)) {
+            continue;
+          }
+        }
            if (hasSearch) {
              char key[20];
              if (ci.flags & 1) {
@@ -2361,10 +2396,8 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
                   }
                   matches = anyMatch;
                 }
-                if (sf) sf.close();
               }
            }
-        }
       }
     } else {
       Record rec;
@@ -2385,7 +2418,7 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
   if (cf) cf.close();
   if (sf) sf.close();
   if (df) df.close();
-  mf.close();
+  if (!usingCache) mf.close();
   return count;
 }
 
