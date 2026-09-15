@@ -24,6 +24,7 @@
 #include "CollectionPickerActivity.h"
 #include "util/BookFilter.h"
 #include "util/StringUtils.h"
+#include "activities/apps/util/LibraryNavigation.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
 #include "HiddenBooksStore.h"
@@ -1233,56 +1234,59 @@ void LibraryActivity::loop() {
         return;
       }
       // Short press: open book or enter collection/series
-      if (mixedMode_ && currentCollectionIdx_ < 0) {
-        // In mixed root view: check if selected item is a series tile
-        int slot = selectorIndex_ % gridsPerPage_;
-        if (pageCache_[slot].id & 0x80000000u) {
-          prevSelectorBeforeCollection_ = selectorIndex_;
-          currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFFu);
-          currentCollectionName_ = pageCache_[slot].title;
-          USER_COLLECTIONS.ensureLoaded();
-          currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
-          selectorIndex_ = 0;
-          refreshPageCache();
-          forceRender_ = true;
-          requestUpdate();
-          return;
-        }
-      }
-      if (collectionsMode_ && currentCollectionIdx_ < 0) {
-        // Enter the selected collection
-        int slot = selectorIndex_ % gridsPerPage_;
-        prevSelectorBeforeCollection_ = selectorIndex_;
-        currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFF);
-        currentCollectionName_ = pageCache_[slot].title;
+      int slot = selectorIndex_ % gridsPerPage_;
+      LibraryNavState navState;
+      navState.collectionsMode = collectionsMode_;
+      navState.mixedMode = mixedMode_;
+      navState.currentCollectionIdx = currentCollectionIdx_;
+      navState.currentCollectionName = currentCollectionName_;
+      navState.currentCollectionIsUser = currentCollectionIsUser_;
+      navState.selectorIndex = selectorIndex_;
+      navState.prevSelectorBeforeCollection = prevSelectorBeforeCollection_;
+      LibraryNavActionResult action;
+      if (LibraryNavigation::handleConfirm(navState, pageCache_[slot], &action) && action.handled) {
         USER_COLLECTIONS.ensureLoaded();
-        currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
-        selectorIndex_ = 0;
+        currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(action.newCollectionName.c_str()) != nullptr);
+        currentCollectionIdx_ = action.newCollectionIdx;
+        currentCollectionName_ = std::move(action.newCollectionName);
+        prevSelectorBeforeCollection_ = action.newPrevSelectorBeforeCollection;
+        selectorIndex_ = action.newSelectorIndex;
         refreshPageCache();
         forceRender_ = true;
         requestUpdate();
         return;
       }
-      onSelectBook(std::string(pageCache_[selectorIndex_ % gridsPerPage_].path));
+      onSelectBook(std::string(pageCache_[slot].path));
       return;
     }
   }
 
   // ---- Back button --------------------------------------------------------
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    // In mixed/collections mode: go back to root from a specific collection/series
-    if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0) {
-      const int prevSelector = prevSelectorBeforeCollection_;
-      bumpLibEpoch();  // covers may have been generated inside -> root tiles changed
-      currentCollectionIdx_ = -1;
-      currentCollectionName_.clear();
-      currentCollectionIsUser_ = false;
-      prevSelectorBeforeCollection_ = -1;
-      refreshTotalCountsFromCurrentMode();
-      selectorIndex_ = (prevSelector >= 0 && prevSelector < totalBooks_) ? prevSelector : 0;
-      refreshPageCache();
-      forceRender_ = true;
-      requestUpdate();
+    LibraryNavState navState;
+    navState.collectionsMode = collectionsMode_;
+    navState.mixedMode = mixedMode_;
+    navState.currentCollectionIdx = currentCollectionIdx_;
+    navState.currentCollectionName = currentCollectionName_;
+    navState.currentCollectionIsUser = currentCollectionIsUser_;
+    navState.selectorIndex = selectorIndex_;
+    navState.prevSelectorBeforeCollection = prevSelectorBeforeCollection_;
+    LibraryNavActionResult action;
+    if (LibraryNavigation::handleBack(navState, launchFromApps, &action)) {
+      if (action.handled) {
+        bumpLibEpoch();
+        currentCollectionIdx_ = action.newCollectionIdx;
+        currentCollectionName_ = std::move(action.newCollectionName);
+        currentCollectionIsUser_ = action.newCollectionIsUser;
+        prevSelectorBeforeCollection_ = action.newPrevSelectorBeforeCollection;
+        refreshTotalCountsFromCurrentMode();
+        selectorIndex_ = (action.newSelectorIndex >= 0 && action.newSelectorIndex < totalBooks_)
+                             ? action.newSelectorIndex
+                             : 0;
+        refreshPageCache();
+        forceRender_ = true;
+        requestUpdate();
+      }
       return;
     }
     if (upPress_.wasPressed() || downPress_.wasPressed() || leftPress_.wasPressed() || rightPress_.wasPressed()) {
