@@ -114,6 +114,7 @@ class LibraryActivity final : public Activity {
   void ensureLayoutUpToDate();
   void scanSd();
   void refreshPageCache();  // re-fetches current page from LibraryIndex
+  void refreshTotalCountsFromCurrentMode();
   void applyFilterAndSort();
   bool isBookCoverReady(const std::string& path) const;
   void drawTileContent(int i, int x, int y) const;

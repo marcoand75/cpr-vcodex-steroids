@@ -218,14 +218,7 @@ void LibraryActivity::onEnter() {
 
   // If indices were rebuilt above, refresh totals and page cache now.
   if (pendingCollectionsRebuild_) {
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_
-            ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                                static_cast<LibraryIndex::FilterMode>(currentFilter_))
-            : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshTotalCountsFromCurrentMode();
     {
       LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_2");
       refreshPageCache();
@@ -342,14 +335,7 @@ void LibraryActivity::scanSd() {
     LibraryPerf::logElapsed("scanSd_cold_afterBuild", totalTimer.start);
     clearPageFrameCache();  // library contents changed -> all frames stale
     bumpLibEpoch();
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_
-           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
-           : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                          static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshTotalCountsFromCurrentMode();
     LibraryPerf::logElapsed("scanSd_cold_afterCounts", totalTimer.start);
     {
       LibraryPerf::ScopedTimer refreshTimer("scanSd_cold_refreshPageCache");
@@ -389,14 +375,7 @@ void LibraryActivity::scanSd() {
     }
   }
 
-  totalBooks_ = collectionsMode_
-      ? LibraryIndex::totalCollections()
-      : (mixedMode_
-         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                             static_cast<LibraryIndex::FilterMode>(currentFilter_))
-         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  refreshTotalCountsFromCurrentMode();
   LibraryPerf::logElapsed("scanSd_fast_afterCounts", totalTimer.start);
   {
     LibraryPerf::ScopedTimer refreshTimer("scanSd_fast_refreshPageCache");
@@ -410,8 +389,7 @@ void LibraryActivity::scanSd() {
 void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
   PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
   currentFilter_ = filter;
-  totalBooks_ = LibraryIndex::totalMatching(nullptr, static_cast<LibraryIndex::FilterMode>(filter));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  refreshTotalCountsFromCurrentMode();
   selectorIndex_ = 0;
   refreshPageCache();
 }
@@ -467,6 +445,14 @@ void LibraryActivity::refreshPageCache() {
   coverGen_.total = 0;
 }
 
+void LibraryActivity::refreshTotalCountsFromCurrentMode() {
+  totalBooks_ = LibraryPageCache::totalForMode(
+      collectionsMode_, mixedMode_,
+      currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+      static_cast<int>(currentFilter_), currentCollectionIdx_);
+  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+}
+
 void LibraryActivity::applyFilterAndSort() {
   LibraryPerf::ScopedTimer totalTimer("applyFilterAndSort_total");
   collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
@@ -487,14 +473,7 @@ void LibraryActivity::applyFilterAndSort() {
   SETTINGS.saveToFile();
   LibraryPerf::logElapsed("applyFilterAndSort_afterSettingsSave", totalTimer.start);
 
-  totalBooks_ = collectionsMode_
-      ? LibraryIndex::totalCollections()
-      : (mixedMode_
-         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                            static_cast<LibraryIndex::FilterMode>(currentFilter_))
-         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  refreshTotalCountsFromCurrentMode();
   LibraryPerf::logElapsed("applyFilterAndSort_afterCounts", totalTimer.start);
   // Clamp selector to valid range after filter/sort changes
   if (selectorIndex_ >= totalBooks_) {
@@ -793,11 +772,7 @@ void LibraryActivity::loop() {
     pendingCollectionsRebuild_ = false;
   }
   if (collectionsRebuilt && (collectionsMode_ || mixedMode_)) {
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                            static_cast<LibraryIndex::FilterMode>(currentFilter_));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshTotalCountsFromCurrentMode();
     if (selectorIndex_ >= totalBooks_) {
       selectorIndex_ = std::max(0, totalBooks_ - 1);
     }
@@ -1310,11 +1285,7 @@ void LibraryActivity::loop() {
       currentCollectionName_.clear();
       currentCollectionIsUser_ = false;
       prevSelectorBeforeCollection_ = -1;
-      totalBooks_ = collectionsMode_
-          ? LibraryIndex::totalCollections()
-          : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                              static_cast<LibraryIndex::FilterMode>(currentFilter_));
-      totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+      refreshTotalCountsFromCurrentMode();
       selectorIndex_ = (prevSelector >= 0 && prevSelector < totalBooks_) ? prevSelector : 0;
       refreshPageCache();
       forceRender_ = true;
