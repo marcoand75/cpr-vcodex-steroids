@@ -62,101 +62,9 @@ bool LibraryActivity::forceScanOnNextOpen_ = false;
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "../util/ListRenderHelper.h"
-#include "SilentRestart.h"
-
-// Compile-time verification: the largest icon (32×32 1‑bpp) is exactly 128 B.
-static_assert(sizeof(CoverIcon) == 128, "unexpected icon size, update kMaxIconBytes");
-
-// ============================================================================
-// SECTION 1: Anonymous namespace — drawing helpers and string utilities
-// ============================================================================
-namespace {
-
-constexpr int COVER_CORNER_RADIUS = 2;
-
-// ---- Geometric drawing helpers --------------------------------------------
-
-static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
-  for (int dy = 0; dy < leg; ++dy)
-    r.fillRect(x + dy, y + dy, leg - dy, 1, black);
-}
-
-void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int w, int h, bool color = true) {
-  constexpr int c = 4;
-  constexpr int cl = 5;
-  constexpr int cg = 2;
-  const int bx = x - 5;
-  const int by = y - 5;
-  const int bw = w + 10;
-  const int bh = h + 10;
-  renderer.drawRect(bx, by, bw, bh, color);
-  renderer.drawLine(bx + cg, by, bx + cg + cl, by, 1, color);
-  renderer.drawLine(bx, by + cg, bx, by + cg + cl, 1, color);
-  renderer.drawLine(bx + bw - cg - cl, by, bx + bw - cg, by, 1, color);
-  renderer.drawLine(bx + bw, by + cg, bx + bw, by + cg + cl, 1, color);
-  renderer.drawLine(bx + cg, by + bh, bx + cg + cl, by + bh, 1, color);
-  renderer.drawLine(bx, by + bh - cg, bx, by + bh - cg - cl, 1, color);
-  renderer.drawLine(bx + bw - cg - cl, by + bh, bx + bw - cg, by + bh, 1, color);
-  renderer.drawLine(bx + bw, by + bh - cg, bx + bw, by + bh - cg - cl, 1, color);
-}
-
-void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
-                     bool completed, bool favorite, bool opened) {
-  (void)ch;
-  const int leg = std::max(20, std::min(cw * 2 / 5, 44));
-  const int rx = cx + cw - leg;
-  const int ry = cy;
-
-  fillTopRightTri(r, rx - 3, ry - 3, leg + 6, false);
-  fillTopRightTri(r, rx - 2, ry - 2, leg + 4, true);
-  fillTopRightTri(r, rx - 1, ry - 1, leg + 2, false);
-  fillTopRightTri(r, rx,     ry,     leg,     true);
-
-  const int symCx = cx + cw - leg / 3;
-  const int symCy = cy + leg / 3;
-  const int symSz = std::max(8, leg * 22 / 100);
-
-  if (completed) {
-    r.drawLine(symCx - 5, symCy,     symCx - 1, symCy + 4, 2, false);
-    r.drawLine(symCx - 1, symCy + 4, symCx + 6, symCy - 4, 2, false);
-  } else if (favorite) {
-    constexpr int kHeartSz = 24;
-    if (leg >= kHeartSz) {
-      int hx = symCx - kHeartSz / 2;
-      int hy = symCy - kHeartSz / 2;
-      r.drawIconInverted(::Heart24Icon, hx, hy, kHeartSz, kHeartSz);
-    }
-  } else if (opened) {
-    const int dotR = std::max(1, symSz / 4);
-    for (int y2 = -dotR; y2 <= dotR; ++y2)
-      for (int x2 = -dotR; x2 <= dotR; ++x2)
-        if (x2 * x2 + y2 * y2 <= dotR * dotR + dotR)
-          r.drawLine(symCx + x2, symCy + y2, symCx + x2, symCy + y2, 1, false);
-  }
-}
-
-// ---- Filter predicate ------------------------------------------------------
-//
-// The 3 filter modes that don't need extra data plumbing (All / Favourites /
-// LatestRead) are kept inline; the FAVOURITES / LATEST_READ check uses the
-// process-global stores. CrossPointSettings is required for the enum.
-
-static bool includeBookByFilter(const LibraryCache::Entry& e, CrossPointSettings::LIBRARY_FILTER filter) {
-  switch (filter) {
-    case CrossPointSettings::LIBRARY_FILTER_ALL: return true;
-    case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: return FAVORITES.isFavorite(e.path);
-    case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: {
-      const auto& recent = RECENT_BOOKS.getBooks();
-      for (const auto& rb : recent) {
-        if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) return true;
-      }
-      return false;
-    }
-  }
-  return false;
-}
-
-}  // namespace
+#include "util/LibraryCoverHelper.h"
+#include "activities/apps/util/LibraryDrawHelpers.h"
+#include "activities/apps/util/LibraryPageCache.h"
 
 void LibraryActivity::deleteBookFile(const std::string& bookPath) {
   // Permanently delete the book file + its rendering cache + cover thumb.
@@ -258,12 +166,8 @@ void LibraryActivity::onEnter() {
   clearPageFrameCache();
   LibraryPerf::logElapsed("onEnter_afterClearFrameCache", totalTimer.start);
 
-applyLayoutFromSettings();
+  applyLayoutFromSettings();
   LibraryPerf::logElapsed("onEnter_afterLayout", totalTimer.start);
-
-  // Prime index caches early when heap is less fragmented
-  LibraryIndex::loadIndexCache();
-
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;
   forceRender_ = true;
@@ -516,92 +420,34 @@ void LibraryActivity::refreshPageCache() {
   LibraryPerf::ScopedTimer totalTimer("refreshPageCache_total");
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
-  const bool hasSearch = !currentSearchText_.empty();
-  if (mixedMode_ && currentCollectionIdx_ < 0) {
-    // Mixed view: root shows series + standalone; inside a series shows books
-    {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryMixed");
-      slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
-                                           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                           coverWidth_, coverHeight_,
-                                           static_cast<LibraryIndex::SortMode>(currentSort_));
-    }
-    LibraryPerf::logElapsed("refreshPageCache_afterQueryMixed", totalTimer.start);
-  } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
-    // Browsing list of collections
-    {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollections");
-      slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
-    }
-    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollections", totalTimer.start);
-  } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
-    // Inside a series in mixed view
-    {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollectionBooks_mixed");
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
-    }
-    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollectionBooks_mixed", totalTimer.start);
-    totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
-    // Browsing books within a collection
-    {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryCollectionBooks_coll");
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
-    }
-    LibraryPerf::logElapsed("refreshPageCache_afterQueryCollectionBooks_coll", totalTimer.start);
-    totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  } else {
-    // Normal book browsing, or mixed mode with active search
-    {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_queryPage");
-      slotCount = LibraryIndex::queryPage(
-          pageCache_, curPage, gridsPerPage_,
-          static_cast<LibraryIndex::SortMode>(currentSort_),
-          currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-          static_cast<LibraryIndex::FilterMode>(currentFilter_),
-          coverWidth_, coverHeight_);
-    }
-    LibraryPerf::logElapsed("refreshPageCache_afterQueryPage", totalTimer.start);
+  {
+    LibraryPerf::ScopedTimer queryTimer("refreshPageCache_query");
+    slotCount = LibraryPageCache::queryForCurrentMode(
+        pageCache_, curPage, gridsPerPage_,
+        currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+        static_cast<int>(currentFilter_), static_cast<int>(currentSort_),
+        coverWidth_, coverHeight_, collectionsMode_, mixedMode_, currentCollectionIdx_);
   }
-  // If the page had fewer items than requested, update totalBooks_
+  LibraryPerf::logElapsed("refreshPageCache_afterQuery", totalTimer.start);
+  // If the page had fewer items than requested, update totalBooks_ and
+  // retry on the last available page.
   if (slotCount == 0 && curPage > 0) {
     LibraryPerf::ScopedTimer fallbackTimer("refreshPageCache_fallbackLastPage");
-    totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_ && currentCollectionIdx_ < 0
-           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
-           : LibraryIndex::totalBooks());
+    totalBooks_ = LibraryPageCache::totalForMode(
+        collectionsMode_, mixedMode_,
+        currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+        static_cast<int>(currentFilter_), currentCollectionIdx_);
     totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_ && currentCollectionIdx_ < 0) {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryMixed");
-      slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
-                                           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                           coverWidth_, coverHeight_,
-                                           static_cast<LibraryIndex::SortMode>(currentSort_));
-    } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollections");
-      slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_, coverWidth_, coverHeight_);
-    } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollectionBooks_mixed");
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryCollectionBooks_coll");
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    } else {
-      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQueryPage");
-      slotCount = LibraryIndex::queryPage(
-          pageCache_, lastPage, gridsPerPage_,
-          static_cast<LibraryIndex::SortMode>(currentSort_),
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQuery");
+      slotCount = LibraryPageCache::queryForCurrentModeFallback(
+          pageCache_, gridsPerPage_,
           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-          static_cast<LibraryIndex::FilterMode>(currentFilter_),
-          coverWidth_, coverHeight_);
+          static_cast<int>(currentFilter_), static_cast<int>(currentSort_),
+          coverWidth_, coverHeight_, collectionsMode_, mixedMode_, currentCollectionIdx_,
+          totalBooks_);
     }
     LibraryPerf::logElapsed("refreshPageCache_afterFallback", totalTimer.start);
   }
@@ -1030,7 +876,7 @@ void LibraryActivity::loop() {
         requestUpdate();
 
         // Generate cover using Epub/Xtc parser
-        if (generatePageCover(pageCache_[slot].path)) {
+        if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
           ++coverGen_.done;
         }
 
@@ -1209,7 +1055,7 @@ void LibraryActivity::loop() {
                   forceRender_ = true; requestUpdate(); return;
                 }
                 case BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB:
-                  deleteLibraryCovers(path);
+                  LibraryCoverHelper::deleteLibraryCovers(path, coverWidth_, coverHeight_);
                   bumpLibEpoch();
                   refreshPageCache();
                   forceRender_ = true; requestUpdate(); return;
@@ -1219,7 +1065,7 @@ void LibraryActivity::loop() {
                           tr(STR_LIBRARY_DELETE_PAGE_COVERS), tr(STR_LIBRARY_DELETE_PAGE_COVERS_CONFIRM)),
                       [this](const ActivityResult& r) {
                         if (!r.isCancelled) {
-                          deletePageCovers();
+                          LibraryCoverHelper::deletePageCovers(gridsPerPage_, pageCache_, coverWidth_, coverHeight_);
                         }
                         bumpLibEpoch();
                         refreshPageCache();
@@ -1240,7 +1086,7 @@ void LibraryActivity::loop() {
                           tr(STR_LIBRARY_DELETE_ALL_COVERS), tr(STR_LIBRARY_DELETE_ALL_COVERS_CONFIRM)),
                       [this](const ActivityResult& r) {
                         if (!r.isCancelled) {
-                          deleteAllLibraryCovers();
+                          LibraryCoverHelper::deleteAllLibraryCovers(coverWidth_, coverHeight_);
                         }
                         bumpLibEpoch();
                         refreshPageCache();
@@ -1746,6 +1592,7 @@ void LibraryActivity::refreshSelectedTitleAuthor(int selectorIndex, int total, i
 namespace {
 constexpr const char* kLibFrameDir = "/.crosspoint/libframes";
 constexpr uint32_t kFrameMagic = 0x4C46524Du;  // "LFRM"
+constexpr int COVER_CORNER_RADIUS = 2;
 
 uint32_t fnv1aByte(uint32_t h, uint8_t v) {
   h ^= v;
@@ -2386,267 +2233,4 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     if (!isSeriesTile && (isComplete || isFav || isOpened))
       drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
   }
-}
-
-
-// ============================================================================
-// SECTION 9: Cover deletion helpers
-// ============================================================================
-
-void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {
-  std::string thumbPath = LibraryCache::thumbPathFor(bookPath, coverWidth_, coverHeight_);
-  LOG_DBG("LIB", "DelCovers: single path=%s thumb=%s exists=%d", bookPath.c_str(), thumbPath.c_str(),
-          !thumbPath.empty() && Storage.exists(thumbPath.c_str()));
-  if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-    Storage.remove(thumbPath.c_str());
-    LOG_DBG("LIB", "DelCovers: removed %s", thumbPath.c_str());
-  }
-}
-
-void LibraryActivity::deletePageCovers() {
-  int slotCount = gridsPerPage_;
-  LOG_DBG("LIB", "DelCovers: page range [0..%d) total=%d sel=%d grids=%d", slotCount, totalBooks_, selectorIndex_, gridsPerPage_);
-  for (int i = 0; i < slotCount && pageCache_[i].id != 0; ++i) {
-    std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
-    if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-      Storage.remove(thumbPath.c_str());
-      LOG_DBG("LIB", "DelCovers: removed [%d] %s -> %s", i, pageCache_[i].path, thumbPath.c_str());
-    }
-  }
-}
-
-void LibraryActivity::deleteAllLibraryCovers() {
-  LOG_DBG("LIB", "DelCovers: ALL total=%d", totalBooks_);
-  // Walk all pages and delete thumbs (slow but thorough)
-  int pg = 0;
-  LibraryIndex::BookRef buf[kMaxPageSlots];
-  while (true) {
-    int n = LibraryIndex::queryPage(buf, pg, kMaxPageSlots, static_cast<LibraryIndex::SortMode>(currentSort_));
-    if (n == 0) break;
-    for (int i = 0; i < n; ++i) {
-      std::string thumbPath = LibraryIndex::thumbPathFor(std::string(buf[i].path), coverWidth_, coverHeight_);
-      if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-        Storage.remove(thumbPath.c_str());
-      }
-    }
-    ++pg;
-  }
-}
-
-// Persistent text title-card cover (1-bit BMP) used when a book has no
-// extractable cover image (EPUB without a cover, TXT/Markdown). The title is
-// rasterized into an isolated strip scratch (never touches the screen) with the
-// normal UI fonts, then saved as a 1-bit top-down BMP whose bit layout matches
-// the JPG/PNG thumbnail pipeline (bit 0 = black, bit 1 = white, MSB-first).
-bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
-  if (path.empty() || coverWidth_ <= 0 || coverHeight_ <= 0) return false;
-  if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) {
-    LOG_DBG("LIB", "CovGen: text cover SKIP low heap free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return false;
-  }
-
-  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (thumbPath.empty()) return false;
-  const size_t slash = thumbPath.find_last_of('/');
-  if (slash != std::string::npos && !Storage.exists(thumbPath.substr(0, slash).c_str())) {
-    Storage.mkdir(thumbPath.substr(0, slash).c_str());
-  }
-  // Keep a stable title for the fallback across grid sizes: derive from the
-  // file name (same source the placeholders use when a cover is missing).
-  std::string title = book_filter::filenameWithoutExtension(path);
-
-  const int w = coverWidth_;
-  const int h = coverHeight_;
-  const int rowBytesFb = renderer.getDisplayWidthBytes();  // full panel row bytes
-  const size_t scratchBytes = static_cast<size_t>(rowBytesFb) * static_cast<size_t>(h);
-  std::vector<uint8_t> scratch(scratchBytes);
-  if (scratch.size() < scratchBytes) return false;
-
-  {
-    GfxStripTargetScope stripScope(renderer, scratch.data(), 0, h);
-    // Dark "card" background (cleared bit = black), thin white frame.
-    renderer.fillRect(0, 0, w, h, true);
-    renderer.drawRect(1, 1, w - 2, h - 2, false);
-
-    // Centered wrapped title in white (state=false = white).
-    constexpr int kPad = 6;
-    constexpr int kMaxLines = 4;
-    std::string t = title;
-    const int maxLineW = w - 2 * kPad;
-
-    // Pick a font that can render the title. Titles with non-Latin (CJK)
-    // codepoints load the best installed SD CJK family on demand; the built-in
-    // SMALL_FONT lacks CJK glyphs.
-    int titleFont = SMALL_FONT_ID;
-    bool hasNonLatin = false;
-    for (unsigned char ch : title) {
-      if (ch >= 0x80) { hasNonLatin = true; break; }
-    }
-    if (hasNonLatin) {
-      const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer, title.c_str());
-      if (cjkId > 0) titleFont = cjkId;
-      // Only rasterize when the chosen font really covers every non-Latin
-      // codepoint; a partial/Traditional-only CJK family would otherwise render
-      // U+FFFD boxes (black card). Fall back to the placeholder when missing.
-      const auto& fontMap = renderer.getFontMap();
-      auto it = fontMap.find(titleFont);
-      if (it == fontMap.end()) {
-        LOG_DBG("LIB", "CovGen: text cover skipped - font %d not found for %s", titleFont, path.c_str());
-        return false;
-      }
-      const uint8_t* p = reinterpret_cast<const uint8_t*>(title.c_str());
-      bool missing = false;
-      while (*p && !missing) {
-        uint32_t cp = 0;
-        if (*p < 0x80) { cp = *p++; }
-        else if ((*p & 0xE0) == 0xC0) { cp = (*p++ & 0x1F) << 6; cp |= (*p++ & 0x3F); }
-        else if ((*p & 0xF0) == 0xE0) { cp = (*p++ & 0x0F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
-        else if ((*p & 0xF8) == 0xF0) { cp = (*p++ & 0x07) << 18; cp |= (*p++ & 0x3F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
-        else { ++p; continue; }
-        if (cp >= 0x80 &&
-            !it->second.hasCodepoint(cp, EpdFontFamily::BOLD) &&
-            !it->second.hasCodepoint(cp, EpdFontFamily::REGULAR)) {
-          missing = true;
-        }
-      }
-      if (missing) {
-        LOG_DBG("LIB", "CovGen: text cover skipped - font id %d lacks glyphs for %s", titleFont, path.c_str());
-        return false;
-      }
-    }
-
-    const int lh = renderer.getLineHeight(titleFont);
-    const auto lines = renderer.wrappedText(titleFont, t.c_str(), maxLineW, kMaxLines, EpdFontFamily::BOLD);
-    const int blockH = static_cast<int>(lines.size()) * lh;
-    int ty = (h - blockH) / 2;
-    if (ty < 4) ty = 4;
-    for (const auto& ln : lines) {
-      const int tw = renderer.getTextWidth(titleFont, ln.c_str(), EpdFontFamily::BOLD);
-      renderer.drawText(titleFont, (w - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-      ty += lh;
-    }
-  }  // strip scope ends -> renderer target restored to the screen buffer
-
-  // Encode 1-bit BMP: row bytes = ceil(w/8), padded to a 4-byte boundary.
-  const int bmpRow = (w + 7) / 8;
-  const int padRow = (bmpRow + 3) & ~3;
-  const int imageSize = padRow * h;
-  const uint32_t fileSize = 62u + static_cast<uint32_t>(imageSize);
-
-  FsFile out;
-  if (!Storage.openFileForWrite("LIB", thumbPath, out)) return false;
-
-  auto write32 = [&out](uint32_t v) {
-    out.write(static_cast<uint8_t>(v & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 16) & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 24) & 0xFF));
-  };
-  auto write16 = [&out](uint16_t v) {
-    out.write(static_cast<uint8_t>(v & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
-  };
-
-  out.write('B'); out.write('M');
-  write32(fileSize);
-  write32(0);
-  write32(62);
-  write32(40);
-  write32(static_cast<uint32_t>(w));
-  write32(static_cast<uint32_t>(0xFFFFFFFFu - h + 1));  // negative height = top-down
-  write16(1);
-  write16(1);
-  write32(0);
-  write32(static_cast<uint32_t>(imageSize));
-  write32(2835);
-  write32(2835);
-  write32(2);
-  write32(2);
-  const uint8_t palette[8] = {0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00};
-  for (uint8_t p : palette) out.write(p);
-
-  std::vector<uint8_t> rowBuf(padRow, 0);
-  for (int y = 0; y < h; ++y) {
-    const uint8_t* src = scratch.data() + static_cast<size_t>(y) * rowBytesFb;
-    std::fill(rowBuf.begin(), rowBuf.end(), 0);
-    std::memcpy(rowBuf.data(), src, bmpRow);
-    out.write(rowBuf.data(), padRow);
-  }
-  out.close();
-
-  if (!Storage.exists(thumbPath.c_str()) || !isBookCoverReady(path)) {
-    Storage.remove(thumbPath.c_str());
-    return false;
-  }
-  LOG_DBG("LIB", "CovGen: text cover OK %s (%dx%d)", path.c_str(), w, h);
-  return true;
-}
-
-bool LibraryActivity::generatePageCover(const std::string& path) {
-
-  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (thumbPath.empty()) return false;
-
-  // Ensure the cache directory exists (hash must match the Epub/Xtc cache path)
-  char cacheDir[64] = {};
-  if (FsHelpers::hasEpubExtension(path)) {
-    const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
-  } else if (FsHelpers::hasXtcExtension(path)) {
-    const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
-  } else if (!FsHelpers::hasTxtExtension(path) && !FsHelpers::hasMarkdownExtension(path)) {
-    LOG_DBG("LIB", "CovGen: unsupported extension, cover skipped: %s", path.c_str());
-    return false;  // unsupported format
-  }
-  if (cacheDir[0] && !Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
-
-  if (FsHelpers::hasEpubExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    Epub epub(path, "/.crosspoint");
-    if (!epub.load(true, true)) {
-      LOG_DBG("LIB", "CovGen: EPUB load FAIL %s", path.c_str());
-      return false;
-    }
-    if (ESP.getMaxAllocHeap() < 28 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    // Adaptive contain: the resulting BMP is never larger than the tile box, so
-    // the runtime drawBitmap() never needs to crop a "fill" (oversized) image,
-    // which produced out-of-range pixels on non-3:5 cover ratios.
-    const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
-    if (ok) {
-      LOG_DBG("LIB", "CovGen: EPUB thumb gen=1 path=%s heap=%u maxA=%u",
-              path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      return true;
-    }
-    // EPUB without an embedded cover image: render a persistent text title card.
-    LOG_DBG("LIB", "CovGen: EPUB no cover -> text fallback path=%s heap=%u maxA=%u",
-            path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return writeTextFallbackCover(path);
-  }
-
-  if (FsHelpers::hasXtcExtension(path)) {
-    if (ESP.getFreeHeap() < 20000) return false;
-    Xtc xtc(path, "/.crosspoint");
-    if (!xtc.load()) return false;
-    const bool ok = xtc.generateThumbBmp(coverWidth_, coverHeight_);
-    LOG_DBG("LIB", "CovGen: XTC thumb gen=%d path=%s heap=%u maxA=%u",
-            ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return ok;
-  }
-
-  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    // TXT/Markdown have no embedded cover; render a persistent text title card.
-    if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
-    const bool fb = writeTextFallbackCover(path);
-    LOG_DBG("LIB", "CovGen: TXT text cover gen=%d path=%s", fb ? 1 : 0, path.c_str());
-    return fb;
-  }
-
-  return false;
 }

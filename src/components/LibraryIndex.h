@@ -86,11 +86,6 @@ enum class FilterMode {
 // RAM: <1 KB.
 bool init();
 
-// Load all index caches into RAM (idx_mixed, idx_collections, series.dat, compact records).
-// Call after init() and after any scan/buildIndices to prime the cache.
-// RAM: ~171 KB for 1000 books (see .cpp for breakdown).
-bool loadIndexCache();
-
 // Returns true if library.dat exists and has at least one non-tombstone record.
 bool exists();
 

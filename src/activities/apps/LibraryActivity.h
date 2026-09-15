@@ -8,6 +8,8 @@
 #include "components/LibraryIndex.h"
 #include "components/LibraryPopupOverlay.h"
 #include "util/LongPress.h"
+#include "util/LibraryCoverHelper.h"
+#include "activities/apps/util/LibraryDrawHelpers.h"
 
 class LibraryActivity final : public Activity {
  private:
@@ -115,15 +117,8 @@ class LibraryActivity final : public Activity {
   void applyFilterAndSort();
   bool isBookCoverReady(const std::string& path) const;
   void drawTileContent(int i, int x, int y) const;
-  void deleteLibraryCovers(const std::string& bookPath);
   void deleteBookFile(const std::string& bookPath);
-  void deletePageCovers();
-  void deleteAllLibraryCovers();
   void reloadPageCovers();
-  bool generatePageCover(const std::string& path);
-  // Persistent text title-card cover (1-bit BMP) for books that have no
-  // extractable cover image (EPUB without a cover, TXT/Markdown).
-  bool writeTextFallbackCover(const std::string& path);
   void rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter);
 
   void openSortPopup();
