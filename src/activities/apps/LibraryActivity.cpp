@@ -211,6 +211,9 @@ void LibraryActivity::onEnter() {
       SETTINGS.libraryCollectionName[0] = '\0';
     }
   }
+  if (currentCollectionIdx_ >= 0) {
+    refreshTotalCountsFromCurrentMode();
+  }
   LibraryPerf::logElapsed("onEnter_afterRestoreState", totalTimer.start);
 
   // Ensure page cache matches the restored selector position.
@@ -1139,12 +1142,13 @@ void LibraryActivity::loop() {
       currentCollectionName_ = SETTINGS.libraryCollectionName;
       currentCollectionIsUser_ = true;
       selectorIndex_ = 0;
+      refreshTotalCountsFromCurrentMode();
     } else {
       SETTINGS.libraryCollectionIdx = -1;
       SETTINGS.libraryCollectionName[0] = '\0';
     }
   }
-                            selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+  selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
                             if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
                           }
                         }
