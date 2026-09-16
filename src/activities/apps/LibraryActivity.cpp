@@ -358,6 +358,7 @@ void LibraryActivity::scanSd() {
   //   - libraryUpdateMode == AUTO
   const bool doScan = forceScanOnNextOpen_ ||
       SETTINGS.libraryUpdateMode == CrossPointSettings::LIBRARY_UPDATE_AUTO;
+  const bool forceRebuild = forceScanOnNextOpen_;
   forceScanOnNextOpen_ = false;
 
   if (doScan) {
@@ -367,7 +368,7 @@ void LibraryActivity::scanSd() {
       LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
     }
     LibraryPerf::logElapsed("scanSd_fast_afterScan", totalTimer.start);
-    if (added > 0 || removed > 0) {
+    if (added > 0 || removed > 0 || forceRebuild) {
       renderer.clearScreen();
       GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
       renderer.displayBuffer();
