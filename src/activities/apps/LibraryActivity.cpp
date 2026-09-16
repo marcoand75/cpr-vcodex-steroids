@@ -1337,6 +1337,22 @@ void LibraryActivity::loop() {
       leftPress_.reset();
       rightPress_.reset();
     } else {
+      // Persist library UI state before silent restart so it is available on
+      // next boot. The normal `onExit()` path is skipped by ESP.restart().
+      SETTINGS.libraryViewMode = static_cast<uint8_t>(viewMode_);
+      SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
+      SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
+      StringUtils::copyToFixedBuffer(SETTINGS.librarySearchText, sizeof(SETTINGS.librarySearchText), currentSearchText_);
+      if (currentCollectionIdx_ < 0) {
+        SETTINGS.librarySelectorIndex = selectorIndex_;
+      }
+      SETTINGS.libraryCollectionIdx = (currentCollectionIdx_ >= 0) ? currentCollectionIdx_ : -1;
+      if (currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
+        StringUtils::copyToFixedBuffer(SETTINGS.libraryCollectionName, sizeof(SETTINGS.libraryCollectionName), currentCollectionName_);
+      } else {
+        SETTINGS.libraryCollectionName[0] = '\0';
+      }
+      SETTINGS.saveToFile();
       LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       if (launchFromApps) {
