@@ -824,17 +824,9 @@ void LibraryActivity::loop() {
       unsigned long t_count = LibraryPerf::nowMs();
       for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
         if (pageCache_[i].id == 0) continue;
-        unsigned long t_item = LibraryPerf::nowMs();
         std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
-        unsigned long t_thumb = LibraryPerf::nowMs() - t_item;
         if (!Storage.exists(thumbPath.c_str())) {
-          LOG_DBG("LIB-PERF", "CovGen-count: miss exists path=%s thumbPath=%dus",
-                   pageCache_[i].path, (unsigned)t_thumb);
           ++coverGen_.total;
-        } else {
-          unsigned long t_ready = LibraryPerf::nowMs();
-          LOG_DBG("LIB-PERF", "CovGen-count: exists path=%s thumbPath=%dus ready=%lums",
-                   pageCache_[i].path, (unsigned)t_thumb, (unsigned long)(LibraryPerf::nowMs() - t_ready));
         }
       }
       LOG_DBG("LIB-PERF", "CovGen-count: total=%d items=%d countMs=%lu",
@@ -843,9 +835,6 @@ void LibraryActivity::loop() {
         coverGen_.active = false;
         return;
       }
-      // First frame: let the grid render without blocking; cover gen starts
-      // on the next frame. Don't force another full render here — the grid
-      // is already visible from the initial page render.
       LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGen_.total);
       coverGen_.slot = -1;
       requestUpdate();
@@ -859,11 +848,8 @@ void LibraryActivity::loop() {
     if (slot < gridsPerPage_ && (pageStart + slot) < total && pageCache_[slot].id != 0) {
       unsigned long t_slot = LibraryPerf::nowMs();
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
-      unsigned long t_thumb = LibraryPerf::nowMs() - t_slot;
       bool needsGenerate = !Storage.exists(thumbPath.c_str());
-      unsigned long t_exists = LibraryPerf::nowMs() - t_slot;
       if (!needsGenerate) {
-        unsigned long t_ready = LibraryPerf::nowMs();
         if (isBookCoverReady(pageCache_[slot].path)) {
           ++coverGen_.slot;
           if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
@@ -878,24 +864,15 @@ void LibraryActivity::loop() {
           }
           return;
         }
-        unsigned long t_ready_ms = LibraryPerf::nowMs() - t_ready;
-        LOG_DBG("LIB-PERF", "CovGen-slot: corrupt path=%s thumbPath=%dus ready=%lums",
-                 pageCache_[slot].path, (unsigned)t_thumb, (unsigned long)t_ready_ms);
         Storage.remove(thumbPath.c_str());
         needsGenerate = true;
       }
       if (needsGenerate) {
         yield(); esp_task_wdt_reset();
-        LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
-                coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
+        LOG_DBG("LIB", "CovGen: %d/%d heap=%u maxA=%u",
+                coverGen_.done + 1, coverGen_.total,
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d/%d path=%s thumbPath=%dus exists=%lums",
-                 (int)slot, (int)coverGen_.total, pageCache_[slot].path,
-                 (unsigned)t_thumb, (unsigned long)t_exists);
 
-        // Temporarily move the selector to this book so the selection
-        // frame, title and author update to show which book is being processed.
-        // Save originals for restoration after generation.
         const int savedSelector = selectorIndex_;
         const std::string savedSelTitle = cachedSelTitle_;
         const std::string savedSelAuthor = cachedSelAuthor_;
@@ -903,30 +880,22 @@ void LibraryActivity::loop() {
         cachedSelTitle_ = pageCache_[slot].title;
         cachedSelAuthor_ = pageCache_[slot].author[0] ? std::string(pageCache_[slot].author) : std::string{};
 
-        // Let the render show the updated selector + title/author + grid
-        // with placeholders. The cover generation happens after this.
         forceRender_ = true;
         requestUpdate();
 
-        // Generate cover using Epub/Xtc parser
         unsigned long t_gen = LibraryPerf::nowMs();
         bool generated = false;
         if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
           ++coverGen_.done;
           generated = true;
         }
-        unsigned long t_gen_ms = LibraryPerf::nowMs() - t_gen;
         LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d gen=%lums ok=%d",
-                 (int)slot, (unsigned long)t_gen_ms, (int)generated);
+                 (int)slot, (unsigned long)(LibraryPerf::nowMs() - t_gen), (int)generated);
 
-        // Restore original selector and title/author
         selectorIndex_ = savedSelector;
         cachedSelTitle_ = savedSelTitle;
         cachedSelAuthor_ = savedSelAuthor;
 
-        // Force full render after EVERY cover so the new BMP appears on
-        // screen immediately (covers the progress bar). Without forceRender
-        // the render early-out would skip the update (same page, same selector).
         forceRender_ = true;
         requestUpdate();
       }
