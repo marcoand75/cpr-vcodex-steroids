@@ -109,7 +109,7 @@ static_assert(sizeof(ScanRec) == 16, "ScanRec must be 16 bytes");
 namespace {
 constexpr size_t kDatBlockSize = 4096;          // must be multiple of record size
 constexpr size_t kDatBlockRecs = kDatBlockSize / static_cast<size_t>(kRecordSize); // 16
-constexpr size_t kDatCacheBlocks = 8;           // 8 blocks = 32KB total; stays under 32KB RAM budget
+constexpr size_t kDatCacheBlocks = 4;           // 4 blocks = 16KB total; stays under 32KB RAM budget
 static_assert(kDatBlockSize % kRecordSize == 0, "block size must align with record size");
 
 struct DatCacheBlock {
