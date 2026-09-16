@@ -799,20 +799,32 @@ void LibraryActivity::loop() {
     
     // First frame: count missing covers, let grid render first
     if (coverGen_.slot == 0 && coverGen_.total == 0) {
+      unsigned long t_count = LibraryPerf::nowMs();
       for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
         if (pageCache_[i].id == 0) continue;
+        unsigned long t_item = LibraryPerf::nowMs();
         std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
+        unsigned long t_thumb = LibraryPerf::nowMs() - t_item;
         if (!Storage.exists(thumbPath.c_str())) {
+          LOG_DBG("LIB-PERF", "CovGen-count: miss exists path=%s thumbPath=%dus",
+                   pageCache_[i].path, (unsigned)t_thumb);
           ++coverGen_.total;
         } else {
-          // Validate existing cover: ensure the BMP is actually readable
+          unsigned long t_ready = LibraryPerf::nowMs();
           if (!isBookCoverReady(pageCache_[i].path)) {
-            // Corrupt — delete and regenerate
+            unsigned long t_ready_ms = LibraryPerf::nowMs() - t_ready;
+            LOG_DBG("LIB-PERF", "CovGen-count: corrupt path=%s thumbPath=%dus ready=%lums",
+                     pageCache_[i].path, (unsigned)t_thumb, (unsigned long)t_ready_ms);
             Storage.remove(thumbPath.c_str());
             ++coverGen_.total;
+          } else {
+            LOG_DBG("LIB-PERF", "CovGen-count: ok path=%s thumbPath=%dus ready=%lums",
+                     pageCache_[i].path, (unsigned)t_thumb, (unsigned long)(LibraryPerf::nowMs() - t_ready));
           }
         }
       }
+      LOG_DBG("LIB-PERF", "CovGen-count: total=%d items=%d countMs=%lu",
+               (int)coverGen_.total, (int)gridsPerPage_, (unsigned long)(LibraryPerf::nowMs() - t_count));
       if (coverGen_.total == 0) {
         coverGen_.active = false;
         return;
@@ -831,12 +843,18 @@ void LibraryActivity::loop() {
     
     int slot = coverGen_.slot;
     if (slot < gridsPerPage_ && (pageStart + slot) < total && pageCache_[slot].id != 0) {
+      unsigned long t_slot = LibraryPerf::nowMs();
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
+      unsigned long t_thumb = LibraryPerf::nowMs() - t_slot;
       if (!Storage.exists(thumbPath.c_str())) {
+        unsigned long t_exists = LibraryPerf::nowMs() - t_slot;
         yield(); esp_task_wdt_reset();
         LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
                 coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d/%d path=%s thumbPath=%dus exists=%lums",
+                 (int)slot, (int)coverGen_.total, pageCache_[slot].path,
+                 (unsigned)t_thumb, (unsigned long)t_exists);
 
         // Temporarily move the selector to this book so the selection
         // frame, title and author update to show which book is being processed.
@@ -854,9 +872,15 @@ void LibraryActivity::loop() {
         requestUpdate();
 
         // Generate cover using Epub/Xtc parser
+        unsigned long t_gen = LibraryPerf::nowMs();
+        bool generated = false;
         if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
           ++coverGen_.done;
+          generated = true;
         }
+        unsigned long t_gen_ms = LibraryPerf::nowMs() - t_gen;
+        LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d gen=%lums ok=%d",
+                 (int)slot, (unsigned long)t_gen_ms, (int)generated);
 
         // Restore original selector and title/author
         selectorIndex_ = savedSelector;
