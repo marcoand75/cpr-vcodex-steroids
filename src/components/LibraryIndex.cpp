@@ -101,6 +101,101 @@ struct __attribute__((packed)) ScanRec {
 static_assert(sizeof(ScanRec) == 16, "ScanRec must be 16 bytes");
 
 // =========================================================================
+// Lightweight vector-read buffer for library.dat
+// Keeps only a few 4KB blocks cached to avoid per-record SD seeks while
+// staying well under the 32KB RAM budget.
+// The buffer lives in static storage to avoid stack overflow on loopTask.
+// =========================================================================
+namespace {
+constexpr size_t kDatBlockSize = 4096;          // must be multiple of record size
+constexpr size_t kDatBlockRecs = kDatBlockSize / static_cast<size_t>(kRecordSize); // 16
+constexpr size_t kDatCacheBlocks = 2;           // 2 blocks = 8KB total; stack-safe on loopTask
+static_assert(kDatBlockSize % kRecordSize == 0, "block size must align with record size");
+
+struct DatCacheBlock {
+  uint8_t data[kDatBlockSize];
+  size_t blockIndex;
+  bool valid;
+};
+
+struct LibraryDatVectorBuffer {
+  DatCacheBlock blocks[kDatCacheBlocks];
+  HalFile file;
+  size_t m_fileSize;
+  bool opened;
+  size_t nextSlot;
+
+  LibraryDatVectorBuffer() : m_fileSize(0), opened(false), nextSlot(0) {
+    for (size_t i = 0; i < kDatCacheBlocks; ++i) blocks[i].valid = false;
+  }
+
+  bool open() {
+    if (opened && file) return true;
+    file = Storage.open(kDatFile);
+    if (!file) return false;
+    m_fileSize = static_cast<size_t>(file.size());
+    opened = true;
+    return true;
+  }
+
+  void close() {
+    if (file) file.close();
+    file = HalFile();
+    opened = false;
+    nextSlot = 0;
+    for (size_t i = 0; i < kDatCacheBlocks; ++i) blocks[i].valid = false;
+  }
+
+  Record* getRecord(uint32_t offset) {
+    if (!opened || !file) {
+      if (!open()) return nullptr;
+    }
+    if (offset + kRecordSize > m_fileSize) return nullptr;
+
+    const size_t blockIndex = static_cast<size_t>(offset) / kDatBlockSize;
+    const size_t blockOffset = static_cast<size_t>(offset) % kDatBlockSize;
+
+    for (size_t i = 0; i < kDatCacheBlocks; ++i) {
+      if (blocks[i].valid && blocks[i].blockIndex == blockIndex) {
+        return reinterpret_cast<Record*>(blocks[i].data + blockOffset);
+      }
+    }
+
+    size_t slot = nextSlot;
+    for (size_t i = 0; i < kDatCacheBlocks; ++i) {
+      if (!blocks[i].valid) { slot = i; break; }
+    }
+    nextSlot = (nextSlot + 1) % kDatCacheBlocks;
+
+    blocks[slot].blockIndex = blockIndex;
+    blocks[slot].valid = true;
+
+    const size_t blockStart = blockIndex * kDatBlockSize;
+    size_t toRead = kDatBlockSize;
+    if (blockStart + toRead > m_fileSize) toRead = m_fileSize - blockStart;
+
+    if (!file.seek(blockStart)) {
+      blocks[slot].valid = false;
+      return nullptr;
+    }
+    const int read = file.read(blocks[slot].data, toRead);
+    if (read != static_cast<int>(toRead)) {
+      blocks[slot].valid = false;
+      return nullptr;
+    }
+
+    return reinterpret_cast<Record*>(blocks[slot].data + blockOffset);
+  }
+
+  bool isOpen() const { return opened && file; }
+  size_t fileSize() const { return m_fileSize; }
+};
+
+static LibraryDatVectorBuffer g_datBuffer;
+
+}  // namespace
+
+// =========================================================================
 // Helpers
 // =========================================================================
 
@@ -1311,6 +1406,11 @@ bool buildMixedIndex(SortMode sortMode) {
     std::sort(collectionBookIds.begin(), collectionBookIds.end());
   }
 
+  if (!buildBookLookup()) {
+    LOG_ERR("LIB", "BuildMixedIdx: book lookup build failed");
+    return false;
+  }
+
   int chunkCount = 0;
   {
     // Phase 1a: standalone books from library.dat
@@ -1476,7 +1576,14 @@ bool buildMixedIndex(SortMode sortMode) {
           }
           sf.close();
         }
-        ir.recordOffset = foundFirst ? static_cast<uint32_t>((firstRec.id > 0 ? (firstRec.id - 1) : 0) * kRecordSize) : 0xFFFFFFFFu;
+        uint32_t firstOffset = 0xFFFFFFFFu;
+        if (foundFirst && firstRec.id > 0) {
+          uint32_t off = 0;
+          if (findRecordOffset(firstRec.id, off)) {
+            firstOffset = off;
+          }
+        }
+        ir.recordOffset = firstOffset;
         chunk.push_back(ir);
 
         if (static_cast<int>(chunk.size()) >= kChunkRecs || idx == static_cast<int>(allCollections.size()) - 1) {
@@ -1558,7 +1665,8 @@ bool buildMixedIndex(SortMode sortMode) {
 // queryMixed() used to scan library.dat linearly for every series book.
 // With ~300 records that turns into O(collections * series_len * lib_size)
 // and was measured at ~9s. Build a sorted (bookId, offset) table so
-// lookups become O(log n).
+// lookups become O(log n). Actual record reads are served through a
+// small vector-read buffer (4 x 4KB blocks) to avoid per-record SD seeks.
 
 struct BookIdOffset {
   uint32_t id;
@@ -1606,9 +1714,9 @@ static bool findRecordOffset(uint32_t bookId, uint32_t& offset) {
   return true;
 }
 
-static std::string getCollectionSubtitle(const CollectionIndexRec& ci, HalFile& sf, HalFile& df) {
+static std::string getCollectionSubtitle(const CollectionIndexRec& ci, HalFile& sf) {
   if ((ci.flags & 1) != 0) return "";  // user collection: no subtitle
-  if (!sf || !df) return "";
+  if (!sf) return "";
 
   // Check if any book in this series is folder-fallback
   sf.seek(ci.firstSeriesOffset);
@@ -1620,11 +1728,10 @@ static std::string getCollectionSubtitle(const CollectionIndexRec& ci, HalFile& 
       // Found folder-fallback entry; resolve book path
       uint32_t offset;
       if (findRecordOffset(sr.bookId, offset)) {
-        df.seek(offset);
-        Record rec;
-        if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+        const Record* recPtr = g_datBuffer.getRecord(offset);
+        if (recPtr && !recPtr->tombstone()) {
           // Extract parent folder basename from path
-          const char* p = rec.path;
+          const char* p = recPtr->path;
           const char* lastSlash = strrchr(p, '/');
           if (lastSlash && lastSlash > p) {
             // Find the slash before the last component
@@ -1698,7 +1805,6 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
   if (start >= total) { return 0; }
 
   HalFile sf = Storage.open(kSeriesDat);
-  HalFile df = Storage.open(kDatFile);
 
   CollectionIndexRec ci;
   int count = 0;
@@ -1716,7 +1822,7 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
     }
 
     // Append folder-fallback disambiguation subtitle if needed
-    std::string subtitle = getCollectionSubtitle(ci, sf, df);
+    std::string subtitle = getCollectionSubtitle(ci, sf);
     if (!subtitle.empty()) {
       char combined[80];
       std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
@@ -1752,39 +1858,40 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
         if (uc) {
           auto members = USER_COLLECTIONS.members(uc->id);
           for (const auto& m : members) {
-            Record rec;
-            if (readRecordByBookId(m.bookId, rec)) {
-              const std::string bookPath(rec.path);
-              const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
-              if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
-                ref.path[sizeof(ref.path) - 1] = '\0';
-                break;
+            uint32_t offset;
+            if (findRecordOffset(m.bookId, offset)) {
+              const Record* recPtr = g_datBuffer.getRecord(offset);
+              if (recPtr && !recPtr->tombstone()) {
+                const std::string bookPath(recPtr->path);
+                const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
+                if (!thumb.empty() && Storage.exists(thumb.c_str())) {
+                  std::strncpy(ref.path, recPtr->path, sizeof(ref.path) - 1);
+                  ref.path[sizeof(ref.path) - 1] = '\0';
+                  break;
+                }
               }
             }
           }
         }
-      } else if (sf && df) {
+      } else if (sf) {
         // Auto series: resolve from series.dat
         sf.seek(ci.firstSeriesOffset);
         SeriesRec sr;
         for (uint32_t b = 0; b < ci.bookCount; ++b) {
           if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
           if (sr.bookId == 0) continue;
-          df.seek(0);
-          Record rec;
-          uint32_t rp = 0;
-          while (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
-            if (rec.id == sr.bookId && !rec.tombstone()) {
-              const std::string bookPath(rec.path);
+          uint32_t offset;
+          if (findRecordOffset(sr.bookId, offset)) {
+            const Record* recPtr = g_datBuffer.getRecord(offset);
+            if (recPtr && !recPtr->tombstone()) {
+              const std::string bookPath(recPtr->path);
               const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
               if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                std::strncpy(ref.path, rec.path, sizeof(ref.path) - 1);
+                std::strncpy(ref.path, recPtr->path, sizeof(ref.path) - 1);
                 ref.path[sizeof(ref.path) - 1] = '\0';
                 break;
               }
             }
-            ++rp;
           }
           if (ref.path[0] != '\0') break;
         }
@@ -1794,7 +1901,6 @@ int queryCollections(BookRef* out, int page, int pageSize, int coverWidth, int c
     ++count;
   }
 
-  if (df) df.close();
   if (sf) sf.close();
   return count;
 }
@@ -1814,7 +1920,6 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   // Resolve library.dat records via the in-memory book lookup so deleted or
   // tombstoned books are filtered out BEFORE pagination (keeps page alignment).
   buildBookLookup();
-  HalFile df = Storage.open(kDatFile);
 
   // User collections: resolve books from UserCollectionsStore, not series.dat
   if (ci.flags & 1) {
@@ -1839,24 +1944,21 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
       int count = 0;
       for (int i = start; i < end; ++i) {
         uint32_t offset;
-        if (findRecordOffset(valid[i].bookId, offset) && df) {
-          df.seek(offset);
-          Record rec;
-          if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-            recordToBookRef(rec, out[count++]);
+        if (findRecordOffset(valid[i].bookId, offset)) {
+          const Record* recPtr = g_datBuffer.getRecord(offset);
+          if (recPtr && !recPtr->tombstone()) {
+            recordToBookRef(*recPtr, out[count++]);
           }
         }
       }
-      if (df) df.close();
       return count;
     }
-    if (df) df.close();
     return 0;
   }
 
   // Auto series: read from series.dat, resolve via book lookup (no per-book SD open)
   HalFile sf = Storage.open(kSeriesDat);
-  if (!sf) { if (df) df.close(); return 0; }
+  if (!sf) return 0;
   sf.seek(ci.firstSeriesOffset);
 
   struct BookSlot {
@@ -1887,13 +1989,11 @@ int queryCollectionBooks(BookRef* out, int page, int pageSize, int collectionIdx
   const int end = std::min(start + pageSize, static_cast<int>(slots.size()));
   int count = 0;
   for (int i = start; i < end; ++i) {
-    Record rec;
-    if (df && df.seek(slots[i].recordOffset) &&
-        df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-      recordToBookRef(rec, out[count++]);
+    const Record* recPtr = g_datBuffer.getRecord(slots[i].recordOffset);
+    if (recPtr && !recPtr->tombstone()) {
+      recordToBookRef(*recPtr, out[count++]);
     }
   }
-  if (df) df.close();
   return count;
 }
 
@@ -1964,6 +2064,8 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   unsigned long t_total = LibraryPerf::nowMs();
   buildBookLookup();
 
+  if (!g_datBuffer.open()) return 0;
+
   HalFile mf;
   const IndexRec* mixedData = nullptr;
   int mixedTotal = 0;
@@ -1996,7 +2098,6 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   const bool hasCollIndex = usingCollCache || !!cf;
 
   HalFile sf = Storage.open(kSeriesDat);
-  HalFile df = Storage.open(kDatFile);
 
   // Collect matching entries into a temporary buffer so we can sort by the
   // requested sortMode before returning the requested page.
@@ -2054,31 +2155,29 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
             USER_COLLECTIONS.ensureLoaded();
             const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
             t_user += LibraryPerf::nowMs() - t_user_start;
-            if (uc) {
-              auto members = USER_COLLECTIONS.members(uc->id);
-              bool anyMatch = false;
-              for (const auto& m : members) {
-                uint32_t offset;
-                if (findRecordOffset(m.bookId, offset) && df) {
-                  unsigned long t_dat_start = LibraryPerf::nowMs();
-                  df.seek(offset);
-                  Record rec;
-                  if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                    t_dat += LibraryPerf::nowMs() - t_dat_start;
-                    if (matchesFilter(rec, filterMode)) {
-                      anyMatch = true;
-                      break;
+             if (uc) {
+               auto members = USER_COLLECTIONS.members(uc->id);
+               bool anyMatch = false;
+               for (const auto& m : members) {
+                 uint32_t offset;
+                  if (findRecordOffset(m.bookId, offset)) {
+                    unsigned long t_dat_start = LibraryPerf::nowMs();
+                    const Record* recPtr = g_datBuffer.getRecord(offset);
+                    if (recPtr && !recPtr->tombstone()) {
+                      t_dat += LibraryPerf::nowMs() - t_dat_start;
+                      if (matchesFilter(*recPtr, filterMode)) {
+                        anyMatch = true;
+                        break;
+                      }
                     }
-                  } else {
                     t_dat += LibraryPerf::nowMs() - t_dat_start;
                   }
-                }
-              }
-              isMatch = anyMatch;
+               }
+               isMatch = anyMatch;
             } else {
               isMatch = false;
             }
-          } else if (sf && df) {
+          } else if (sf) {
             // Auto series
             unsigned long t_series_start = LibraryPerf::nowMs();
             sf.seek(ci.firstSeriesOffset);
@@ -2088,19 +2187,17 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
               if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
               if (sr.bookId == 0) continue;
               uint32_t offset;
-              if (findRecordOffset(sr.bookId, offset) && df) {
+              if (findRecordOffset(sr.bookId, offset)) {
                 unsigned long t_dat_start = LibraryPerf::nowMs();
-                df.seek(offset);
-                Record rec;
-                if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
+                const Record* recPtr = g_datBuffer.getRecord(offset);
+                if (recPtr && !recPtr->tombstone()) {
                   t_dat += LibraryPerf::nowMs() - t_dat_start;
-                  if (matchesFilter(rec, filterMode)) {
+                  if (matchesFilter(*recPtr, filterMode)) {
                     anyMatch = true;
                     break;
                   }
-                } else {
-                  t_dat += LibraryPerf::nowMs() - t_dat_start;
                 }
+                t_dat += LibraryPerf::nowMs() - t_dat_start;
               }
             }
             t_series += LibraryPerf::nowMs() - t_series_start;
@@ -2110,8 +2207,9 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
       }
     } else {
       // Standalone book
-      if (df && df.seek(ir.recordOffset) &&
-          df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
+      const Record* recPtr = g_datBuffer.getRecord(ir.recordOffset);
+      if (recPtr) {
+        rec = *recPtr;
         isMatch = matchesFilter(rec, filterMode);
         if (isMatch && searchFilter && searchFilter[0] != '\0') {
           char titleKey[20]; makeTitleSortKey(rec.title, titleKey);
@@ -2151,7 +2249,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
         }
 
         // Folder-fallback disambiguation subtitle
-        std::string subtitle = getCollectionSubtitle(ci, sf, df);
+        std::string subtitle = getCollectionSubtitle(ci, sf);
         if (!subtitle.empty()) {
           char combined[80];
           std::snprintf(combined, sizeof(combined), "%s / %s", displayName.c_str(), subtitle.c_str());
@@ -2265,14 +2363,13 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
             auto members = USER_COLLECTIONS.members(uc->id);
             for (const auto& m : members) {
               uint32_t offset;
-              if (findRecordOffset(m.bookId, offset) && df) {
-                df.seek(offset);
-                Record rec;
-                if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                  const std::string bookPath(rec.path);
+              if (findRecordOffset(m.bookId, offset)) {
+                const Record* recPtr = g_datBuffer.getRecord(offset);
+                if (recPtr && !recPtr->tombstone()) {
+                  const std::string bookPath(recPtr->path);
                   const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
                   if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                    std::strncpy(out[count].path, rec.path, sizeof(out[count].path) - 1);
+                    std::strncpy(out[count].path, recPtr->path, sizeof(out[count].path) - 1);
                     out[count].path[sizeof(out[count].path) - 1] = '\0';
                     break;
                   }
@@ -2280,7 +2377,7 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
               }
             }
           }
-        } else if (sf && df) {
+        } else if (sf) {
           sf.seek(ci.firstSeriesOffset);
           SeriesRec sr;
           for (uint32_t b = 0; b < ci.bookCount; ++b) {
@@ -2288,13 +2385,12 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
             if (sr.bookId == 0) continue;
             uint32_t offset;
             if (findRecordOffset(sr.bookId, offset)) {
-              df.seek(offset);
-              Record rec;
-              if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                const std::string bookPath(rec.path);
+              const Record* recPtr = g_datBuffer.getRecord(offset);
+              if (recPtr && !recPtr->tombstone()) {
+                const std::string bookPath(recPtr->path);
                 const std::string thumb = thumbPathFor(bookPath, coverWidth, coverHeight);
                 if (!thumb.empty() && Storage.exists(thumb.c_str())) {
-                  std::strncpy(out[count].path, rec.path, sizeof(out[count].path) - 1);
+                  std::strncpy(out[count].path, recPtr->path, sizeof(out[count].path) - 1);
                   out[count].path[sizeof(out[count].path) - 1] = '\0';
                   break;
                 }
@@ -2309,7 +2405,6 @@ int queryMixed(BookRef* out, int page, int pageSize, const char* searchFilter, F
   }
 
   if (cf) cf.close();
-  if (df) df.close();
   if (sf) sf.close();
   if (!usingCache) mf.close();
   return count;
@@ -2325,8 +2420,9 @@ int totalMixed() {
 
 int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
   buildBookLookup();
+
+  if (!g_datBuffer.open()) return 0;
   HalFile sf = Storage.open(kSeriesDat);
-  HalFile df = Storage.open(kDatFile);
 
   HalFile mf;
   const LibraryIndex::IndexRec* mixedData = nullptr;
@@ -2341,7 +2437,6 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
     mf = Storage.open(kIdxMixed);
     if (!mf) {
       if (sf) sf.close();
-      if (df) df.close();
       return 0;
     }
     mixedTotal = static_cast<int>(mf.size() / kIndexRecSize);
@@ -2355,7 +2450,6 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
       mf.close();
     }
     if (sf) sf.close();
-    if (df) df.close();
     return totalMixed();
   }
 
@@ -2415,73 +2509,66 @@ int totalMixedMatching(const char* searchFilter, FilterMode filterMode) {
 
            if (matches && filterMode != FilterMode::ALL) {
              if (ci.flags & 1) {
-               // User collection: resolve members from UserCollectionsStore
-               USER_COLLECTIONS.ensureLoaded();
-               const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
-                if (uc) {
-                  auto members = USER_COLLECTIONS.members(uc->id);
-                  bool anyMatch = false;
-                  for (const auto& m : members) {
-                    uint32_t offset;
-                    if (findRecordOffset(m.bookId, offset) && df) {
-                      df.seek(offset);
-                      Record rec;
-                      if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                        if (matchesFilter(rec, filterMode)) {
+                // User collection: resolve members from UserCollectionsStore
+                USER_COLLECTIONS.ensureLoaded();
+                const UserCollection* uc = USER_COLLECTIONS.findCollection(ci.collectionName);
+                  if (uc) {
+                    auto members = USER_COLLECTIONS.members(uc->id);
+                    bool anyMatch = false;
+                    for (const auto& m : members) {
+                      uint32_t offset;
+                      if (findRecordOffset(m.bookId, offset)) {
+                        const Record* recPtr = g_datBuffer.getRecord(offset);
+                        if (recPtr && !recPtr->tombstone() && matchesFilter(*recPtr, filterMode)) {
                           anyMatch = true;
                           break;
                         }
                       }
                     }
+                    matches = anyMatch;
+                  } else {
+                    matches = false;
                   }
-                  matches = anyMatch;
                 } else {
-                  matches = false;
-                }
-              } else {
-                if (sf && df) {
-                  sf.seek(ci.firstSeriesOffset);
-                  SeriesRec sr;
-                  bool anyMatch = false;
-                  for (uint32_t b = 0; b < ci.bookCount; ++b) {
-                    if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
-                    if (sr.bookId == 0) continue;
-                    uint32_t offset;
-                    if (findRecordOffset(sr.bookId, offset)) {
-                      df.seek(offset);
-                      Record rec;
-                      if (df.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == sizeof(Record) && !rec.tombstone()) {
-                        if (matchesFilter(rec, filterMode)) {
+                  if (sf) {
+                    sf.seek(ci.firstSeriesOffset);
+                    SeriesRec sr;
+                    bool anyMatch = false;
+                    for (uint32_t b = 0; b < ci.bookCount; ++b) {
+                      if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) != sizeof(SeriesRec)) break;
+                      if (sr.bookId == 0) continue;
+                      uint32_t offset;
+                      if (findRecordOffset(sr.bookId, offset)) {
+                        const Record* recPtr = g_datBuffer.getRecord(offset);
+                        if (recPtr && !recPtr->tombstone() && matchesFilter(*recPtr, filterMode)) {
                           anyMatch = true;
                           break;
                         }
                       }
                     }
+                    matches = anyMatch;
                   }
-                  matches = anyMatch;
                 }
-              }
-           }
-      }
-    } else {
-      Record rec;
-      if (df && df.seek(ir.recordOffset) &&
-          df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
-        matches = matchesFilter(rec, filterMode);
-        if (matches && hasSearch) {
-          char titleKey[20]; makeTitleSortKey(rec.title, titleKey);
-          char authorKey[20]; makeSortKey(rec.author, authorKey);
-          matches = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
+             }
+       }
+      } else {
+        bool matches = false;
+        const Record* recPtr = g_datBuffer.getRecord(ir.recordOffset);
+        if (recPtr) {
+          matches = matchesFilter(*recPtr, filterMode);
+          if (matches && hasSearch) {
+            char titleKey[20]; makeTitleSortKey(recPtr->title, titleKey);
+            char authorKey[20]; makeSortKey(recPtr->author, authorKey);
+            matches = substringMatch(titleKey, searchFilter) || substringMatch(authorKey, searchFilter);
+          }
         }
       }
-    }
 
     if (matches) ++count;
   }
 
   if (cf) cf.close();
   if (sf) sf.close();
-  if (df) df.close();
   if (!usingCache) mf.close();
   return count;
 }
