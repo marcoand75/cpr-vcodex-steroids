@@ -25,13 +25,53 @@ constexpr uint8_t SECTION_FILE_VERSION = 60;
 // under a different layout contract.
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xF9;
 constexpr uint16_t INITIAL_SECTION_PAGE_LUT_ENTRIES = 1024;
+// SectionCacheHeader layout (50 bytes total):
+//  4 magic + 1 version + 4 fontId + 4 lineCompression + 1 extraParagraphSpacing
+// + 1 forceParagraphIndents + 1 paragraphAlignment + 2 viewportWidth + 2 viewportHeight
+// + 2 pageCount + 1 hyphenationEnabled + 1 embeddedStyle + 1 imageRendering
+// + 1 bionicReadingEnabled + 1 bionicReadingMode + 1 guideReadingEnabled
+// + 1 wordSpacing + 1 renderMode + 5*4 placeholders = 50
 constexpr uint32_t HEADER_SIZE = sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) +
                                  sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) +
                                  sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(bool) +
-                                 sizeof(bool) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint32_t) +
-                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
+                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint8_t) +
+                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 constexpr size_t SECTION_HTML_STREAM_CHUNK_SIZE = 8192;
 constexpr size_t LOW_MEMORY_SECTION_HTML_STREAM_CHUNK_SIZE = 1024;
+
+// ============================================================================
+// SectionCacheHeader: shared binary layout for section cache files
+// This struct MUST match the exact byte order in writeSectionFileHeader and
+// loadSectionFile. Use serialization::tryWritePod/tryReadPod for each field.
+// DO NOT use sizeof(SectionCacheHeader) for writing/reading - serialize field by
+// field to ensure compatibility across compilers and padding.
+// ============================================================================
+struct SectionCacheHeader {
+  uint32_t magic;                    // SECTION_CACHE_MAGIC (0x535843FF)
+  uint8_t version;                   // SECTION_FILE_VERSION (60) or SECTION_FILE_PARTIAL_VERSION (0xF9)
+  int fontId;                        // Font ID used for rendering
+  float lineCompression;             // Line compression factor
+  bool extraParagraphSpacing;        // Extra paragraph spacing enabled
+  bool forceParagraphIndents;        // Force paragraph indents enabled
+  uint8_t paragraphAlignment;        // Paragraph alignment mode
+  uint16_t viewportWidth;            // Viewport width in pixels
+  uint16_t viewportHeight;           // Viewport height in pixels
+  uint16_t pageCount;                // Number of pages in this section
+  bool hyphenationEnabled;           // Hyphenation enabled
+  bool embeddedStyle;                // Publisher styles embedded
+  uint8_t imageRendering;            // Image rendering mode
+  bool bionicReadingEnabled;         // Bionic reading enabled
+  uint8_t bionicReadingMode;         // Bionic reading mode
+  bool guideReadingEnabled;          // Guide reading enabled
+  uint8_t wordSpacing;               // Word spacing setting
+  uint8_t renderMode;                // EpubRenderMode (0=CrossInkDefault, 1=Balanced, 2=Light)
+  // Placeholders (patched after build completes):
+  uint32_t lutOffset;                // Page LUT file offset
+  uint32_t anchorMapOffset;          // Anchor map file offset
+  uint32_t paragraphLutOffset;       // Paragraph LUT file offset
+  uint32_t liLutOffset;              // List item LUT file offset
+  uint32_t visibleTextLutOffset;     // Visible text LUT file offset
+};
 
 struct PageLutEntry {
   uint32_t fileOffset;
@@ -121,9 +161,12 @@ void recoverSectionCacheBackup(const std::string& filePath) {
 }
 
 bool promoteSectionCache(const std::string& tmpPath, const std::string& filePath) {
+  LOG_DBG("SCT", "Promoting section cache: tmp=%s final=%s", tmpPath.c_str(), filePath.c_str());
   recoverSectionCacheBackup(filePath);
   if (!Storage.exists(filePath.c_str())) {
-    return Storage.rename(tmpPath.c_str(), filePath.c_str());
+    const bool ok = Storage.rename(tmpPath.c_str(), filePath.c_str());
+    LOG_DBG("SCT", "Promote result (no existing): %d", ok ? 1 : 0);
+    return ok;
   }
 
   const std::string backupPath = sectionBackupPath(filePath);
@@ -133,6 +176,7 @@ bool promoteSectionCache(const std::string& tmpPath, const std::string& filePath
   }
   if (Storage.rename(tmpPath.c_str(), filePath.c_str())) {
     Storage.remove(backupPath.c_str());
+    LOG_DBG("SCT", "Promote result (replaced existing): 1");
     return true;
   }
 
@@ -234,46 +278,56 @@ bool Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
     LOG_DBG("SCT", "File not open for writing header");
     return false;
   }
-  static_assert(HEADER_SIZE == sizeof(SECTION_CACHE_MAGIC) + sizeof(SECTION_FILE_VERSION) + sizeof(spec.fontId) +
-                                   sizeof(spec.lineCompression) + sizeof(spec.extraParagraphSpacing) +
-                                   sizeof(spec.forceParagraphIndents) + sizeof(spec.paragraphAlignment) +
-                                   sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
-                                   sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
-                                   sizeof(spec.imageRendering) + sizeof(spec.bionicReadingEnabled) +
-                                   sizeof(spec.bionicReadingMode) +
-                                   sizeof(spec.guideReadingEnabled) + sizeof(uint8_t) + sizeof(uint32_t) +
-                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
+  LOG_DBG("SCT", "Writing section header: renderMode=%u fontId=%d viewport=%ux%u",
+          static_cast<uint8_t>(spec.renderMode), spec.fontId, spec.viewportWidth, spec.viewportHeight);
+static_assert(HEADER_SIZE == sizeof(SECTION_CACHE_MAGIC) + sizeof(SECTION_FILE_VERSION) + sizeof(spec.fontId) +
+                                     sizeof(spec.lineCompression) + sizeof(spec.extraParagraphSpacing) +
+                                     sizeof(spec.forceParagraphIndents) + sizeof(spec.paragraphAlignment) +
+                                     sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
+                                     sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
+                                     sizeof(spec.imageRendering) + sizeof(spec.bionicReadingEnabled) +
+                                     sizeof(spec.bionicReadingMode) +
+                                     sizeof(spec.guideReadingEnabled) + sizeof(spec.wordSpacing) +
+                                     sizeof(spec.renderMode) + sizeof(uint32_t) +
+                                     sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
                "Header size mismatch");
-  return serialization::tryWritePod(file, SECTION_CACHE_MAGIC) &&
-         serialization::tryWritePod(file, SECTION_FILE_VERSION) && serialization::tryWritePod(file, spec.fontId) &&
-         serialization::tryWritePod(file, spec.lineCompression) &&
-         serialization::tryWritePod(file, spec.extraParagraphSpacing) &&
-         serialization::tryWritePod(file, spec.forceParagraphIndents) &&
-         serialization::tryWritePod(file, spec.paragraphAlignment) &&
-         serialization::tryWritePod(file, spec.viewportWidth) &&
-         serialization::tryWritePod(file, spec.viewportHeight) &&
-         serialization::tryWritePod(file, spec.hyphenationEnabled) &&
-         serialization::tryWritePod(file, spec.embeddedStyle) &&
-         serialization::tryWritePod(file, spec.imageRendering) &&
-          serialization::tryWritePod(file, spec.bionicReadingEnabled) &&
-          serialization::tryWritePod(file, spec.bionicReadingMode) &&
-          serialization::tryWritePod(file, spec.guideReadingEnabled) &&
-         serialization::tryWritePod(file, spec.wordSpacing) &&
-         serialization::tryWritePod(file, static_cast<uint8_t>(spec.renderMode)) &&
-         serialization::tryWritePod(file,
-                                    pageCount) &&  // Placeholder for page count (will be initially 0, patched later)
-         serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // Placeholder for LUT offset (patched later)
-         serialization::tryWritePod(file,
-                                    static_cast<uint32_t>(0)) &&  // Placeholder for anchor map offset (patched later)
-         serialization::tryWritePod(
-             file,
-             static_cast<uint32_t>(0)) &&  // Placeholder for paragraph LUT offset (patched later)
-         serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // li LUT offset
-         serialization::tryWritePod(file, static_cast<uint32_t>(0));    // visible text LUT offset
+  
+  // Write header fields in exact SectionCacheHeader order
+  bool ok = serialization::tryWritePod(file, SECTION_CACHE_MAGIC) &&
+            serialization::tryWritePod(file, SECTION_FILE_VERSION) &&
+            serialization::tryWritePod(file, spec.fontId) &&
+            serialization::tryWritePod(file, spec.lineCompression) &&
+            serialization::tryWritePod(file, spec.extraParagraphSpacing) &&
+            serialization::tryWritePod(file, spec.forceParagraphIndents) &&
+            serialization::tryWritePod(file, spec.paragraphAlignment) &&
+            serialization::tryWritePod(file, spec.viewportWidth) &&
+            serialization::tryWritePod(file, spec.viewportHeight) &&
+            serialization::tryWritePod(file, pageCount) &&  // pageCount at correct position (after viewportHeight)
+            serialization::tryWritePod(file, spec.hyphenationEnabled) &&
+            serialization::tryWritePod(file, spec.embeddedStyle) &&
+            serialization::tryWritePod(file, spec.imageRendering) &&
+            serialization::tryWritePod(file, spec.bionicReadingEnabled) &&
+            serialization::tryWritePod(file, spec.bionicReadingMode) &&
+            serialization::tryWritePod(file, spec.guideReadingEnabled) &&
+            serialization::tryWritePod(file, spec.wordSpacing) &&
+serialization::tryWritePod(file, static_cast<uint8_t>(spec.renderMode)) &&
+            serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // lutOffset
+            serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // anchorMapOffset
+            serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // paragraphLutOffset
+            serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // liLutOffset
+            serialization::tryWritePod(file, static_cast<uint32_t>(0));    // visibleTextLutOffset
+  
+  if (!ok) {
+    LOG_ERR("SCT", "Failed to write section header");
+  }
+  return ok;
 }
 
 bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
+  LOG_DBG("SCT", "Loading section cache: %s renderMode=%u fontId=%d viewport=%ux%u",
+          filePath.c_str(), static_cast<uint8_t>(spec.renderMode), spec.fontId, spec.viewportWidth, spec.viewportHeight);
   if (!Storage.openFileForRead("SCT", filePath, file)) {
+    LOG_DBG("SCT", "Cache file not found: %s", filePath.c_str());
     return false;
   }
 
@@ -289,7 +343,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     }
     if (magic != SECTION_CACHE_MAGIC) {
       file.close();
-      LOG_ERR("SCT", "Deserialization failed: cache magic mismatch");
+      LOG_ERR("SCT", "Deserialization failed: cache magic mismatch (got 0x%X, expected 0x%X)", magic, SECTION_CACHE_MAGIC);
       clearCache();
       return false;
     }
@@ -312,6 +366,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
 
     int fileFontId;
     uint16_t fileViewportWidth, fileViewportHeight;
+    uint16_t filePageCount;
     float fileLineCompression;
     bool fileExtraParagraphSpacing;
     bool fileForceParagraphIndents;
@@ -329,6 +384,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         !serialization::tryReadPod(file, fileForceParagraphIndents) ||
         !serialization::tryReadPod(file, fileParagraphAlignment) ||
         !serialization::tryReadPod(file, fileViewportWidth) || !serialization::tryReadPod(file, fileViewportHeight) ||
+        !serialization::tryReadPod(file, filePageCount) ||  // Read pageCount at correct position (after viewportHeight)
         !serialization::tryReadPod(file, fileHyphenationEnabled) ||
         !serialization::tryReadPod(file, fileEmbeddedStyle) || !serialization::tryReadPod(file, fileImageRendering) ||
         !serialization::tryReadPod(file, fileBionicReadingEnabled) ||
@@ -337,6 +393,19 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         !serialization::tryReadPod(file, fileWordSpacing) || !serialization::tryReadPod(file, fileRenderMode)) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: truncated section header");
+      clearCache();
+      return false;
+    }
+
+    LOG_DBG("SCT", "Read header: magic=0x%X version=%u fontId=%d lineComp=%.2f extraPara=%d forceIndent=%d align=%d vp=%ux%u pages=%u hyph=%d embed=%d imgRend=%d bionic=%d bionicMode=%d guide=%d wordSpace=%d renderMode=%u",
+            magic, version, fileFontId, fileLineCompression, fileExtraParagraphSpacing, fileForceParagraphIndents,
+            fileParagraphAlignment, fileViewportWidth, fileViewportHeight, filePageCount, fileHyphenationEnabled,
+            fileEmbeddedStyle, fileImageRendering, fileBionicReadingEnabled, fileBionicReadingMode,
+            fileGuideReadingEnabled, fileWordSpacing, fileRenderMode);
+
+    if (!isValidEpubRenderMode(fileRenderMode)) {
+      file.close();
+      LOG_ERR("SCT", "Deserialization failed: invalid cached renderMode=%u", fileRenderMode);
       clearCache();
       return false;
     }
@@ -351,17 +420,32 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         spec.wordSpacing != fileWordSpacing ||
         static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
       file.close();
-      LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
+      LOG_ERR("SCT",
+              "Deserialization failed: Parameters do not match "
+              "fontId=%d/%d lineCompression=%f/%f extraParagraphSpacing=%d/%d "
+              "forceParagraphIndents=%d/%d paragraphAlignment=%d/%d "
+              "viewportWidth=%u/%u viewportHeight=%u/%u",
+              spec.fontId, fileFontId, spec.lineCompression, fileLineCompression,
+              spec.extraParagraphSpacing, fileExtraParagraphSpacing,
+              spec.forceParagraphIndents, fileForceParagraphIndents, spec.paragraphAlignment, fileParagraphAlignment,
+              spec.viewportWidth, fileViewportWidth, spec.viewportHeight, fileViewportHeight);
+      LOG_ERR("SCT",
+              "Deserialization failed: Parameters do not match "
+              "hyphenationEnabled=%d/%d embeddedStyle=%d/%d imageRendering=%d/%d "
+              "bionicReadingEnabled=%d/%d bionicReadingMode=%d/%d guideReadingEnabled=%d/%d "
+              "wordSpacing=%d/%d renderMode=%u/%u",
+              spec.hyphenationEnabled, fileHyphenationEnabled, spec.embeddedStyle, fileEmbeddedStyle,
+              spec.imageRendering, fileImageRendering,
+              spec.bionicReadingEnabled, fileBionicReadingEnabled,
+              spec.bionicReadingMode, fileBionicReadingMode,
+              spec.guideReadingEnabled, fileGuideReadingEnabled,
+              spec.wordSpacing, fileWordSpacing,
+              static_cast<uint8_t>(spec.renderMode), fileRenderMode);
       clearCache();
       return false;
     }
-  }
 
-  if (!serialization::tryReadPod(file, pageCount)) {
-    file.close();
-    LOG_ERR("SCT", "Deserialization failed: missing page count");
-    clearCache();
-    return false;
+    pageCount = filePageCount;
   }
 
   if (filePartial) {
@@ -425,7 +509,7 @@ bool Section::clearCache() const {
     LOG_ERR("SCT", "Failed to clear cache");
     return false;
   }
-
+  LOG_DBG("SCT", "Cleared section cache: %s", filePath.c_str());
   return true;
 }
 
@@ -801,9 +885,14 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   }
 
   // Patch header with final pageCount and all cache lookup-table offsets.
-  if (!file.seek(HEADER_SIZE - sizeof(uint32_t) * 5 - sizeof(pageCount)) ||
-      !serialization::tryWritePod(file, pageCount) || !serialization::tryWritePod(file, lutOffset) ||
-      !serialization::tryWritePod(file, anchorMapOffset) || !serialization::tryWritePod(file, paragraphLutOffset) ||
+  // Same offsets as commitBuildFile - must match SectionCacheHeader layout.
+  constexpr size_t OFFSET_PAGE_COUNT = 20;
+  constexpr size_t OFFSET_LUT_OFFSET = 30;
+  if (!file.seek(OFFSET_PAGE_COUNT) ||
+      !serialization::tryWritePod(file, pageCount) ||
+      !file.seek(OFFSET_LUT_OFFSET) ||
+      !serialization::tryWritePod(file, lutOffset) || !serialization::tryWritePod(file, anchorMapOffset) ||
+      !serialization::tryWritePod(file, paragraphLutOffset) ||
       !serialization::tryWritePod(file, liLutFileOffset) || !serialization::tryWritePod(file, visibleTextLutOffset) ||
       !file.sync()) {
     LOG_ERR("SCT", "Failed to finalize section cache");
@@ -945,6 +1034,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const SectionBuildOptions
     cleanupTempHtml();
     return false;
   }
+  ctx->renderMode = spec.renderMode;
   ctx->lutCapacity = INITIAL_SECTION_PAGE_LUT_ENTRIES;
   ctx->lut = makeUniqueNoThrow<Section::PageLutEntry[]>(ctx->lutCapacity);
   if (!ctx->lut) {
@@ -1228,12 +1318,46 @@ bool Section::commitBuildFile(const uint8_t version, const uint32_t bytesConsume
     }
   }
 
-  // Patch header with the built page count and section offsets...
-  if (!file.seek(HEADER_SIZE - sizeof(uint32_t) * 5 - sizeof(builtPageCount_)) ||
-      !serialization::tryWritePod(file, builtPageCount_) || !serialization::tryWritePod(file, lutOffset) ||
-      !serialization::tryWritePod(file, anchorMapOffset) || !serialization::tryWritePod(file, paragraphLutOffset) ||
-      !serialization::tryWritePod(file, liLutFileOffset) || !serialization::tryWritePod(file, visibleTextLutOffset) ||
-      !file.seek(sizeof(SECTION_CACHE_MAGIC)) || !serialization::tryWritePod(file, version) || !file.sync()) {
+  // Patch header with the built page count and section offsets.
+  // SectionCacheHeader layout (matching writeSectionFileHeader order):
+  // offset 0:   magic (4)
+  // offset 4:   version (1)
+  // offset 5:   fontId (4)
+  // offset 9:   lineCompression (4)
+  // offset 13:  extraParagraphSpacing (1)
+  // offset 14:  forceParagraphIndents (1)
+  // offset 15:  paragraphAlignment (1)
+  // offset 16:  viewportWidth (2)
+  // offset 18:  viewportHeight (2)
+  // offset 20:  pageCount (2)        <-- patch here
+  // offset 22:  hyphenationEnabled (1)
+  // offset 23:  embeddedStyle (1)
+  // offset 24:  imageRendering (1)
+  // offset 25:  bionicReadingEnabled (1)
+  // offset 26:  bionicReadingMode (1)
+  // offset 27:  guideReadingEnabled (1)
+  // offset 28:  wordSpacing (1)
+  // offset 29:  renderMode (1)
+  // offset 30:  lutOffset (4)        <-- 5 placeholders start here
+  // offset 34:  anchorMapOffset (4)
+  // offset 38:  paragraphLutOffset (4)
+  // offset 42:  liLutOffset (4)
+  // offset 46:  visibleTextLutOffset (4)
+  // Total header = 50 bytes
+  constexpr size_t OFFSET_PAGE_COUNT = 20;
+  constexpr size_t OFFSET_LUT_OFFSET = 30;
+  constexpr size_t OFFSET_VERSION = 4;
+
+  if (!file.seek(OFFSET_PAGE_COUNT) ||
+      !serialization::tryWritePod(file, builtPageCount_) ||
+      !file.seek(OFFSET_LUT_OFFSET) ||
+      !serialization::tryWritePod(file, lutOffset) ||
+      !serialization::tryWritePod(file, anchorMapOffset) ||
+      !serialization::tryWritePod(file, paragraphLutOffset) ||
+      !serialization::tryWritePod(file, liLutFileOffset) ||
+      !serialization::tryWritePod(file, visibleTextLutOffset) ||
+      !file.seek(OFFSET_VERSION) ||
+      !serialization::tryWritePod(file, version) || !file.sync()) {
     LOG_ERR("SCT", "Failed to commit section cache");
     return failCommit();
   }
@@ -1247,6 +1371,81 @@ bool Section::commitBuildFile(const uint8_t version, const uint32_t bytesConsume
     Storage.remove(build_->tmpSectionPath.c_str());
     return false;
   }
+
+  // Verify the cache file was written correctly by reading back the renderMode
+  {
+    HalFile verifyFile;
+    if (Storage.openFileForRead("SCT", filePath, verifyFile)) {
+      uint32_t magic;
+      uint8_t version;
+      uint16_t readPageCount;
+      int readFontId;
+      float readLineCompression;
+      bool readExtraParagraphSpacing;
+      bool readForceParagraphIndents;
+      uint8_t readParagraphAlignment;
+      uint16_t readViewportWidth, readViewportHeight;
+      bool readHyphenationEnabled;
+      bool readEmbeddedStyle;
+      uint8_t readImageRendering;
+      bool readBionicReadingEnabled;
+      uint8_t readBionicReadingMode;
+      bool readGuideReadingEnabled;
+      uint8_t readWordSpacing;
+      uint8_t readFileRenderMode;
+
+      bool readOk = serialization::tryReadPod(verifyFile, magic) &&
+                    serialization::tryReadPod(verifyFile, version) &&
+                    serialization::tryReadPod(verifyFile, readFontId) &&
+                    serialization::tryReadPod(verifyFile, readLineCompression) &&
+                    serialization::tryReadPod(verifyFile, readExtraParagraphSpacing) &&
+                    serialization::tryReadPod(verifyFile, readForceParagraphIndents) &&
+                    serialization::tryReadPod(verifyFile, readParagraphAlignment) &&
+                    serialization::tryReadPod(verifyFile, readViewportWidth) &&
+                    serialization::tryReadPod(verifyFile, readViewportHeight) &&
+                    serialization::tryReadPod(verifyFile, readPageCount) &&
+                    serialization::tryReadPod(verifyFile, readHyphenationEnabled) &&
+                    serialization::tryReadPod(verifyFile, readEmbeddedStyle) &&
+                    serialization::tryReadPod(verifyFile, readImageRendering) &&
+                    serialization::tryReadPod(verifyFile, readBionicReadingEnabled) &&
+                    serialization::tryReadPod(verifyFile, readBionicReadingMode) &&
+                    serialization::tryReadPod(verifyFile, readGuideReadingEnabled) &&
+                    serialization::tryReadPod(verifyFile, readWordSpacing) &&
+                    serialization::tryReadPod(verifyFile, readFileRenderMode);
+
+      LOG_DBG("SCT", "Verify read: magic=0x%X version=%u fontId=%d lineComp=%.2f extraPara=%d forceIndent=%d align=%d vp=%ux%u pages=%u hyph=%d embed=%d imgRend=%d bionic=%d bionicMode=%d guide=%d wordSpace=%d renderMode=%u",
+              magic, version, readFontId, readLineCompression, readExtraParagraphSpacing, readForceParagraphIndents,
+              readParagraphAlignment, readViewportWidth, readViewportHeight, readPageCount, readHyphenationEnabled,
+              readEmbeddedStyle, readImageRendering, readBionicReadingEnabled, readBionicReadingMode,
+              readGuideReadingEnabled, readWordSpacing, readFileRenderMode);
+
+      verifyFile.close();
+
+      if (readOk && magic == SECTION_CACHE_MAGIC && version == SECTION_FILE_VERSION) {
+        // Check if the renderMode matches what we intended to write
+        const EpubRenderMode intendedRenderMode = build_->renderMode;
+        if (static_cast<uint8_t>(intendedRenderMode) != readFileRenderMode) {
+          LOG_ERR("SCT", "Cache verification failed: intended renderMode=%u, on-disk renderMode=%u",
+                  static_cast<uint8_t>(intendedRenderMode), readFileRenderMode);
+          // Try to clear the corrupted cache
+          clearCache();
+          return false;
+        }
+        LOG_DBG("SCT", "Cache verification passed: renderMode=%u", readFileRenderMode);
+      } else {
+        LOG_ERR("SCT", "Cache verification failed: could not read back header");
+        clearCache();
+        return false;
+      }
+    } else {
+      LOG_ERR("SCT", "Cache verification failed: could not open file for verification");
+      clearCache();
+      return false;
+    }
+  }
+
+  // Ensure the file system flushes the data to the storage medium
+  // HalFile.sync() is used instead as Storage doesn't have a sync method
   return true;
 }
 
