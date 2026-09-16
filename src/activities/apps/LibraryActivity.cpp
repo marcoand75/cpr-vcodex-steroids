@@ -24,6 +24,8 @@
 #include "CollectionPickerActivity.h"
 #include "util/BookFilter.h"
 #include "util/StringUtils.h"
+#include "activities/apps/util/LibraryNavigation.h"
+#include "components/LibraryIndexCache.h"
 #include "CrossPointSettings.h"
 #include "FavoritesStore.h"
 #include "HiddenBooksStore.h"
@@ -34,6 +36,7 @@
 #include "SdCardFontGlobals.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
+#include "util/LibraryPerfLog.h"
 #include "util/PopupUtils.h"
 #include "components/icons/settings2.h"
 #include <Epub.h>
@@ -61,101 +64,9 @@ bool LibraryActivity::forceScanOnNextOpen_ = false;
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "../util/ListRenderHelper.h"
-#include "SilentRestart.h"
-
-// Compile-time verification: the largest icon (32×32 1‑bpp) is exactly 128 B.
-static_assert(sizeof(CoverIcon) == 128, "unexpected icon size, update kMaxIconBytes");
-
-// ============================================================================
-// SECTION 1: Anonymous namespace — drawing helpers and string utilities
-// ============================================================================
-namespace {
-
-constexpr int COVER_CORNER_RADIUS = 2;
-
-// ---- Geometric drawing helpers --------------------------------------------
-
-static void fillTopRightTri(GfxRenderer& r, int x, int y, int leg, bool black) {
-  for (int dy = 0; dy < leg; ++dy)
-    r.fillRect(x + dy, y + dy, leg - dy, 1, black);
-}
-
-void drawCyberpunkSelectionBorder(const GfxRenderer& renderer, int x, int y, int w, int h, bool color = true) {
-  constexpr int c = 4;
-  constexpr int cl = 5;
-  constexpr int cg = 2;
-  const int bx = x - 5;
-  const int by = y - 5;
-  const int bw = w + 10;
-  const int bh = h + 10;
-  renderer.drawRect(bx, by, bw, bh, color);
-  renderer.drawLine(bx + cg, by, bx + cg + cl, by, 1, color);
-  renderer.drawLine(bx, by + cg, bx, by + cg + cl, 1, color);
-  renderer.drawLine(bx + bw - cg - cl, by, bx + bw - cg, by, 1, color);
-  renderer.drawLine(bx + bw, by + cg, bx + bw, by + cg + cl, 1, color);
-  renderer.drawLine(bx + cg, by + bh, bx + cg + cl, by + bh, 1, color);
-  renderer.drawLine(bx, by + bh - cg, bx, by + bh - cg - cl, 1, color);
-  renderer.drawLine(bx + bw - cg - cl, by + bh, bx + bw - cg, by + bh, 1, color);
-  renderer.drawLine(bx + bw, by + bh - cg, bx + bw, by + bh - cg - cl, 1, color);
-}
-
-void drawRibbonBadge(GfxRenderer& r, int cx, int cy, int cw, int ch,
-                     bool completed, bool favorite, bool opened) {
-  (void)ch;
-  const int leg = std::max(20, std::min(cw * 2 / 5, 44));
-  const int rx = cx + cw - leg;
-  const int ry = cy;
-
-  fillTopRightTri(r, rx - 3, ry - 3, leg + 6, false);
-  fillTopRightTri(r, rx - 2, ry - 2, leg + 4, true);
-  fillTopRightTri(r, rx - 1, ry - 1, leg + 2, false);
-  fillTopRightTri(r, rx,     ry,     leg,     true);
-
-  const int symCx = cx + cw - leg / 3;
-  const int symCy = cy + leg / 3;
-  const int symSz = std::max(8, leg * 22 / 100);
-
-  if (completed) {
-    r.drawLine(symCx - 5, symCy,     symCx - 1, symCy + 4, 2, false);
-    r.drawLine(symCx - 1, symCy + 4, symCx + 6, symCy - 4, 2, false);
-  } else if (favorite) {
-    constexpr int kHeartSz = 24;
-    if (leg >= kHeartSz) {
-      int hx = symCx - kHeartSz / 2;
-      int hy = symCy - kHeartSz / 2;
-      r.drawIconInverted(::Heart24Icon, hx, hy, kHeartSz, kHeartSz);
-    }
-  } else if (opened) {
-    const int dotR = std::max(1, symSz / 4);
-    for (int y2 = -dotR; y2 <= dotR; ++y2)
-      for (int x2 = -dotR; x2 <= dotR; ++x2)
-        if (x2 * x2 + y2 * y2 <= dotR * dotR + dotR)
-          r.drawLine(symCx + x2, symCy + y2, symCx + x2, symCy + y2, 1, false);
-  }
-}
-
-// ---- Filter predicate ------------------------------------------------------
-//
-// The 3 filter modes that don't need extra data plumbing (All / Favourites /
-// LatestRead) are kept inline; the FAVOURITES / LATEST_READ check uses the
-// process-global stores. CrossPointSettings is required for the enum.
-
-static bool includeBookByFilter(const LibraryCache::Entry& e, CrossPointSettings::LIBRARY_FILTER filter) {
-  switch (filter) {
-    case CrossPointSettings::LIBRARY_FILTER_ALL: return true;
-    case CrossPointSettings::LIBRARY_FILTER_FAVOURITES: return FAVORITES.isFavorite(e.path);
-    case CrossPointSettings::LIBRARY_FILTER_LATEST_READ: {
-      const auto& recent = RECENT_BOOKS.getBooks();
-      for (const auto& rb : recent) {
-        if (rb.path == e.path || (!rb.bookId.empty() && rb.bookId == e.path)) return true;
-      }
-      return false;
-    }
-  }
-  return false;
-}
-
-}  // namespace
+#include "util/LibraryCoverHelper.h"
+#include "activities/apps/util/LibraryDrawHelpers.h"
+#include "activities/apps/util/LibraryPageCache.h"
 
 void LibraryActivity::deleteBookFile(const std::string& bookPath) {
   // Permanently delete the book file + its rendering cache + cover thumb.
@@ -225,33 +136,46 @@ void LibraryActivity::applyLayoutFromSettings() {
 void LibraryActivity::onEnter() {
   Activity::onEnter();
   LOG_DBG("LIB", "onEnter: start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LibraryPerf::ScopedTimer totalTimer("onEnter_total");
 
   HIDDEN_BOOKS.ensureLoaded();
   FAVORITES.ensureLoaded();
   USER_COLLECTIONS.ensureLoaded();
+  LibraryPerf::logElapsed("onEnter_stores_ensureLoaded", totalTimer.start);
 
   // If we returned from collection management, rebuild indices now so the
   // library grid reflects added/removed/renamed collections before we render.
   if (pendingCollectionsRebuild_) {
+    LibraryPerf::ScopedTimer rebuildTimer("onEnter_pendingRebuild");
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
     }
     lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
     pendingCollectionsRebuild_ = false;
   } else {
     lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
   }
+  LibraryPerf::logElapsed("onEnter_afterRebuild", totalTimer.start);
 
   // Preload the best installed SD CJK family so non-Latin titles render with
   // glyphs everywhere in the grid/header (no-op when no CJK font is installed).
   sdFontSystem.ensureCjkFontLoaded(renderer);
+  LibraryPerf::logElapsed("onEnter_afterCjkFont", totalTimer.start);
 
   // Drop any page frames cached by a previous session (index/state may differ).
   clearPageFrameCache();
+  bumpLibEpoch();
+  lastRenderedPage_ = -1;
+  lastRenderedSelectorIndex_ = -1;
+  lastFrameHitPage_ = -1;
+  LibraryPerf::logElapsed("onEnter_afterClearFrameCache", totalTimer.start);
 
   applyLayoutFromSettings();
+  LibraryPerf::logElapsed("onEnter_afterLayout", totalTimer.start);
   selectorIndex_ = 0;
   lastRenderedPage_ = -1;
   forceRender_ = true;
@@ -266,7 +190,13 @@ void LibraryActivity::onEnter() {
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
 
-scanSd();
+  {
+    LibraryPerf::ScopedTimer scanTimer("onEnter_scanSd");
+    scanSd();
+  }
+  LibraryPerf::logElapsed("onEnter_afterScanSd", totalTimer.start);
+  IndexCacheManager::loadMixedIndex();
+  IndexCacheManager::loadCollectionsIndex();
 
   // Restore saved UI state: selector position and opened collection.
   if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
@@ -287,21 +217,26 @@ scanSd();
       SETTINGS.libraryCollectionName[0] = '\0';
     }
   }
+  if (currentCollectionIdx_ >= 0) {
+    refreshTotalCountsFromCurrentMode();
+  }
+  LibraryPerf::logElapsed("onEnter_afterRestoreState", totalTimer.start);
 
   // Ensure page cache matches the restored selector position.
-  refreshPageCache();
+  {
+    LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_1");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("onEnter_afterFirstRefresh", totalTimer.start);
 
   // If indices were rebuilt above, refresh totals and page cache now.
   if (pendingCollectionsRebuild_) {
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_
-            ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                                static_cast<LibraryIndex::FilterMode>(currentFilter_))
-            : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-    refreshPageCache();
+    refreshTotalCountsFromCurrentMode();
+    {
+      LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_2");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("onEnter_afterRebuildRefresh", totalTimer.start);
   }
 
   // If we came back from collection-management UI, try to return to the same
@@ -311,7 +246,11 @@ scanSd();
     if (selectorIndex_ >= totalBooks_) {
       selectorIndex_ = std::max(0, totalBooks_ - 1);
     }
-    refreshPageCache();
+    {
+      LibraryPerf::ScopedTimer refreshTimer("onEnter_refreshPageCache_3");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("onEnter_afterManageRefresh", totalTimer.start);
     selectorBeforeManage_ = -1;
   }
 
@@ -369,6 +308,7 @@ void LibraryActivity::freeBackgroundMemory() {
 // ============================================================================
 
 void LibraryActivity::scanSd() {
+  LibraryPerf::ScopedTimer totalTimer("scanSd_total");
   currentFilter_ = static_cast<CrossPointSettings::LIBRARY_FILTER>(SETTINGS.libraryFilter);
   currentSort_ = static_cast<CrossPointSettings::LIBRARY_SORT>(SETTINGS.librarySort);
   currentSearchText_ = SETTINGS.librarySearchText;
@@ -383,6 +323,7 @@ void LibraryActivity::scanSd() {
     currentCollectionIdx_ = -1;
     currentCollectionIsUser_ = false;
   }
+  LibraryPerf::logElapsed("scanSd_afterViewSetup", totalTimer.start);
 
   // Init LibraryIndex if needed
   LibraryIndex::init();
@@ -394,20 +335,31 @@ void LibraryActivity::scanSd() {
     GUI.fillPopupProgress(renderer, popupRect, 0);
     renderer.displayBuffer();
 
-    LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
-    LibraryIndex::buildCollectionsIndex();
-    LibraryIndex::buildIndices();
+    {
+      LibraryPerf::ScopedTimer scanTimer("scanSd_cold_scan");
+      LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
+    }
+    LibraryPerf::logElapsed("scanSd_cold_afterScan", totalTimer.start);
+    {
+      LibraryPerf::ScopedTimer buildTimer("scanSd_cold_build");
+      LibraryIndex::buildCollectionsIndex();
+      LibraryIndex::buildIndices();
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
+    }
+    LibraryPerf::logElapsed("scanSd_cold_afterBuild", totalTimer.start);
     clearPageFrameCache();  // library contents changed -> all frames stale
     bumpLibEpoch();
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_
-           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
-           : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                          static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-    refreshPageCache();
+    lastRenderedPage_ = -1;
+    lastRenderedSelectorIndex_ = -1;
+    lastFrameHitPage_ = -1;
+    refreshTotalCountsFromCurrentMode();
+    LibraryPerf::logElapsed("scanSd_cold_afterCounts", totalTimer.start);
+    {
+      LibraryPerf::ScopedTimer refreshTimer("scanSd_cold_refreshPageCache");
+      refreshPageCache();
+    }
+    LibraryPerf::logElapsed("scanSd_cold_end", totalTimer.start);
     return;
   }
 
@@ -417,107 +369,85 @@ void LibraryActivity::scanSd() {
   //   - libraryUpdateMode == AUTO
   const bool doScan = forceScanOnNextOpen_ ||
       SETTINGS.libraryUpdateMode == CrossPointSettings::LIBRARY_UPDATE_AUTO;
+  const bool forceRebuild = forceScanOnNextOpen_;
   forceScanOnNextOpen_ = false;
 
   if (doScan) {
     int added = 0, removed = 0;
-    LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
-    if (added > 0 || removed > 0) {
+    {
+      LibraryPerf::ScopedTimer scanTimer("scanSd_fast_scan");
+      LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
+    }
+    LibraryPerf::logElapsed("scanSd_fast_afterScan", totalTimer.start);
+    if (added > 0 || removed > 0 || forceRebuild) {
       renderer.clearScreen();
       GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
       renderer.displayBuffer();
-      LibraryIndex::buildCollectionsIndex();
-      LibraryIndex::buildIndices();
+      {
+        LibraryPerf::ScopedTimer buildTimer("scanSd_fast_build");
+        LibraryIndex::buildCollectionsIndex();
+        LibraryIndex::buildIndices();
+        IndexCacheManager::invalidateMixed();
+        IndexCacheManager::invalidateCollections();
+      }
+      LibraryPerf::logElapsed("scanSd_fast_afterBuild", totalTimer.start);
       clearPageFrameCache();  // library contents changed -> all frames stale
       bumpLibEpoch();
+      lastRenderedPage_ = -1;
+      lastRenderedSelectorIndex_ = -1;
+      lastFrameHitPage_ = -1;
     }
   }
 
-  totalBooks_ = collectionsMode_
-      ? LibraryIndex::totalCollections()
-      : (mixedMode_
-         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                             static_cast<LibraryIndex::FilterMode>(currentFilter_))
-         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  refreshTotalCountsFromCurrentMode();
+  LibraryPerf::logElapsed("scanSd_fast_afterCounts", totalTimer.start);
+  {
+    LibraryPerf::ScopedTimer refreshTimer("scanSd_fast_refreshPageCache");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("scanSd_fast_end", totalTimer.start);
   LOG_DBG("LIB", "scanSd: existing index, doScan=%d total=%d collMode=%d mixMode=%d",
           static_cast<int>(doScan), totalBooks_, collectionsMode_, mixedMode_);
-  refreshPageCache();
 }
 
 void LibraryActivity::rebuildForFilter(CrossPointSettings::LIBRARY_FILTER filter) {
   PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
   currentFilter_ = filter;
-  totalBooks_ = LibraryIndex::totalMatching(nullptr, static_cast<LibraryIndex::FilterMode>(filter));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  refreshTotalCountsFromCurrentMode();
   selectorIndex_ = 0;
   refreshPageCache();
 }
 
 void LibraryActivity::refreshPageCache() {
+  LibraryPerf::ScopedTimer totalTimer("refreshPageCache_total");
   int curPage = selectorIndex_ / gridsPerPage_;
   int slotCount;
-  const bool hasSearch = !currentSearchText_.empty();
-  if (mixedMode_ && currentCollectionIdx_ < 0) {
-    // Mixed view: root shows series + standalone; inside a series shows books
-    slotCount = LibraryIndex::queryMixed(pageCache_, curPage, gridsPerPage_,
-                                         currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                         static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                         coverWidth_, coverHeight_,
-                                         static_cast<LibraryIndex::SortMode>(currentSort_));
-  } else if (collectionsMode_ && currentCollectionIdx_ < 0) {
-    // Browsing list of collections
-    slotCount = LibraryIndex::queryCollections(pageCache_, curPage, gridsPerPage_, coverWidth_, coverHeight_);
-  } else if (mixedMode_ && currentCollectionIdx_ >= 0) {
-    // Inside a series in mixed view
-    slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
-    totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  } else if (collectionsMode_ && currentCollectionIdx_ >= 0) {
-    // Browsing books within a collection
-    slotCount = LibraryIndex::queryCollectionBooks(pageCache_, curPage, gridsPerPage_, currentCollectionIdx_);
-    totalBooks_ = LibraryIndex::collectionBookCount(currentCollectionIdx_);
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-  } else {
-    // Normal book browsing, or mixed mode with active search
-    slotCount = LibraryIndex::queryPage(
+  {
+    LibraryPerf::ScopedTimer queryTimer("refreshPageCache_query");
+    slotCount = LibraryPageCache::queryForCurrentMode(
         pageCache_, curPage, gridsPerPage_,
-        static_cast<LibraryIndex::SortMode>(currentSort_),
         currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-        static_cast<LibraryIndex::FilterMode>(currentFilter_),
-        coverWidth_, coverHeight_);
+        static_cast<int>(currentFilter_), static_cast<int>(currentSort_),
+        coverWidth_, coverHeight_, collectionsMode_, mixedMode_, currentCollectionIdx_);
   }
-  // If the page had fewer items than requested, update totalBooks_
+  LibraryPerf::logElapsed("refreshPageCache_afterQuery", totalTimer.start);
+  // If the page had fewer items than requested, update totalBooks_ and
+  // retry on the last available page.
   if (slotCount == 0 && curPage > 0) {
-    totalBooks_ = (collectionsMode_ && currentCollectionIdx_ < 0)
-        ? LibraryIndex::totalCollections()
-        : (mixedMode_ && currentCollectionIdx_ < 0
-           ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                               static_cast<LibraryIndex::FilterMode>(currentFilter_))
-           : LibraryIndex::totalBooks());
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    LibraryPerf::ScopedTimer fallbackTimer("refreshPageCache_fallbackLastPage");
+    refreshTotalCountsFromCurrentMode();
     int lastPage = std::max(0, totalPages_ - 1);
     selectorIndex_ = lastPage * gridsPerPage_;
-    if (mixedMode_ && currentCollectionIdx_ < 0)
-      slotCount = LibraryIndex::queryMixed(pageCache_, lastPage, gridsPerPage_,
-                                           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                           static_cast<LibraryIndex::FilterMode>(currentFilter_),
-                                           coverWidth_, coverHeight_,
-                                           static_cast<LibraryIndex::SortMode>(currentSort_));
-    else if (collectionsMode_ && currentCollectionIdx_ < 0)
-      slotCount = LibraryIndex::queryCollections(pageCache_, lastPage, gridsPerPage_, coverWidth_, coverHeight_);
-    else if (mixedMode_ && currentCollectionIdx_ >= 0)
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    else if (collectionsMode_ && currentCollectionIdx_ >= 0)
-      slotCount = LibraryIndex::queryCollectionBooks(pageCache_, lastPage, gridsPerPage_, currentCollectionIdx_);
-    else
-      slotCount = LibraryIndex::queryPage(
-          pageCache_, lastPage, gridsPerPage_,
-          static_cast<LibraryIndex::SortMode>(currentSort_),
+    {
+      LibraryPerf::ScopedTimer queryTimer("refreshPageCache_fallbackQuery");
+      slotCount = LibraryPageCache::queryForCurrentModeFallback(
+          pageCache_, gridsPerPage_,
           currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-          static_cast<LibraryIndex::FilterMode>(currentFilter_),
-          coverWidth_, coverHeight_);
+          static_cast<int>(currentFilter_), static_cast<int>(currentSort_),
+          coverWidth_, coverHeight_, collectionsMode_, mixedMode_, currentCollectionIdx_,
+          totalBooks_);
+    }
+    LibraryPerf::logElapsed("refreshPageCache_afterFallback", totalTimer.start);
   }
   // Zero out remaining slots
   for (int i = slotCount; i < gridsPerPage_; ++i) {
@@ -535,7 +465,16 @@ void LibraryActivity::refreshPageCache() {
   coverGen_.total = 0;
 }
 
+void LibraryActivity::refreshTotalCountsFromCurrentMode() {
+  totalBooks_ = LibraryPageCache::totalForMode(
+      collectionsMode_, mixedMode_,
+      currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
+      static_cast<int>(currentFilter_), currentCollectionIdx_);
+  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+}
+
 void LibraryActivity::applyFilterAndSort() {
+  LibraryPerf::ScopedTimer totalTimer("applyFilterAndSort_total");
   collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
   mixedMode_ = (viewMode_ == LibraryViewMode::Mixed);
   if (!collectionsMode_ && !mixedMode_) lastFlatSort_ = currentSort_;  // remember flat ordering
@@ -552,14 +491,10 @@ void LibraryActivity::applyFilterAndSort() {
   SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
   SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
   SETTINGS.saveToFile();
-  totalBooks_ = collectionsMode_
-      ? LibraryIndex::totalCollections()
-      : (mixedMode_
-         ? LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                            static_cast<LibraryIndex::FilterMode>(currentFilter_))
-         : LibraryIndex::totalMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                        static_cast<LibraryIndex::FilterMode>(currentFilter_)));
-  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+  LibraryPerf::logElapsed("applyFilterAndSort_afterSettingsSave", totalTimer.start);
+
+  refreshTotalCountsFromCurrentMode();
+  LibraryPerf::logElapsed("applyFilterAndSort_afterCounts", totalTimer.start);
   // Clamp selector to valid range after filter/sort changes
   if (selectorIndex_ >= totalBooks_) {
     selectorIndex_ = totalBooks_ > 0 ? totalBooks_ - 1 : 0;
@@ -573,7 +508,11 @@ void LibraryActivity::applyFilterAndSort() {
   cachedCollectionsMode_ = false;
   cachedCollectionIdx_ = -2;
   cachedCollectionName_.clear();
-  refreshPageCache();
+  {
+    LibraryPerf::ScopedTimer refreshTimer("applyFilterAndSort_refreshPageCache");
+    refreshPageCache();
+  }
+  LibraryPerf::logElapsed("applyFilterAndSort_afterRefresh", totalTimer.start);
   forceRender_ = true;
   requestUpdate();
 }
@@ -790,6 +729,10 @@ void LibraryActivity::selectPopupItem() {
       SETTINGS.saveToFile();
       applyFilterAndSort();
     } else if (idx >= 0 && idx <= 5) {
+      // Book filters only apply to flat view. Switch back to Flat so the
+      // selected filter actually takes effect instead of staying hidden
+      // inside Collections/Mixed mode.
+      viewMode_ = LibraryViewMode::Flat;
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       static const CrossPointSettings::LIBRARY_FILTER kFilters[6] = {
           CrossPointSettings::LIBRARY_FILTER_ALL, CrossPointSettings::LIBRARY_FILTER_FAVOURITES,
@@ -805,11 +748,13 @@ void LibraryActivity::selectPopupItem() {
 }
 
 void LibraryActivity::beginTextSearch() {
+  LibraryPerf::ScopedTimer searchTimer("beginTextSearch_total");
   sortModeBeforeSearch_ = currentSort_;
   viewModeBeforeSearch_ = viewMode_;
   startActivityForResult(
       std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH_LIBRARY), currentSearchText_, 30),
-      [this](const ActivityResult& result) {
+      [this, searchTimer](const ActivityResult& result) {
+        LibraryPerf::logElapsed("beginTextSearch_afterKeyboard", searchTimer.start);
         if (result.isCancelled) { forceRender_ = true; requestUpdate(); return; }
         const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
         if (!kbResult) { forceRender_ = true; requestUpdate(); return; }
@@ -818,6 +763,7 @@ void LibraryActivity::beginTextSearch() {
         SETTINGS.saveToFile();
         PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
         applyFilterAndSort();
+        LibraryPerf::logElapsed("beginTextSearch_afterApply", searchTimer.start);
         forceRender_ = true;
         requestUpdate();
       });
@@ -834,25 +780,28 @@ void LibraryActivity::loop() {
   if (pendingCollectionsRebuild_) {
     USER_COLLECTIONS.ensureLoaded();
     if (USER_COLLECTIONS.generation() != lastUserCollectionsGeneration_) {
+      LibraryPerf::ScopedTimer rebuildTimer("loop_collectionsRebuild");
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
       lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
       clearPageFrameCache();
       bumpLibEpoch();
+      lastRenderedPage_ = -1;
+      lastRenderedSelectorIndex_ = -1;
+      lastFrameHitPage_ = -1;
       collectionsRebuilt = true;
     }
     pendingCollectionsRebuild_ = false;
   }
   if (collectionsRebuilt && (collectionsMode_ || mixedMode_)) {
-    totalBooks_ = collectionsMode_
-        ? LibraryIndex::totalCollections()
-        : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                            static_cast<LibraryIndex::FilterMode>(currentFilter_));
-    totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+    refreshTotalCountsFromCurrentMode();
     if (selectorIndex_ >= totalBooks_) {
       selectorIndex_ = std::max(0, totalBooks_ - 1);
     }
+    LibraryPerf::ScopedTimer refreshTimer("loop_collectionsRefresh");
     refreshPageCache();
     forceRender_ = true;
     requestUpdate();
@@ -868,30 +817,24 @@ void LibraryActivity::loop() {
   if (coverGen_.active) {
     const int total = totalBooks_;
     const int pageStart = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+    LibraryPerf::ScopedTimer coverTimer("loop_coverGeneration");
     
     // First frame: count missing covers, let grid render first
     if (coverGen_.slot == 0 && coverGen_.total == 0) {
+      unsigned long t_count = LibraryPerf::nowMs();
       for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
         if (pageCache_[i].id == 0) continue;
         std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
         if (!Storage.exists(thumbPath.c_str())) {
           ++coverGen_.total;
-        } else {
-          // Validate existing cover: ensure the BMP is actually readable
-          if (!isBookCoverReady(pageCache_[i].path)) {
-            // Corrupt — delete and regenerate
-            Storage.remove(thumbPath.c_str());
-            ++coverGen_.total;
-          }
         }
       }
+      LOG_DBG("LIB-PERF", "CovGen-count: total=%d items=%d countMs=%lu",
+               (int)coverGen_.total, (int)gridsPerPage_, (unsigned long)(LibraryPerf::nowMs() - t_count));
       if (coverGen_.total == 0) {
         coverGen_.active = false;
         return;
       }
-      // First frame: let the grid render without blocking; cover gen starts
-      // on the next frame. Don't force another full render here — the grid
-      // is already visible from the initial page render.
       LOG_DBG("LIB", "CovGen: start %d missing covers on page", coverGen_.total);
       coverGen_.slot = -1;
       requestUpdate();
@@ -903,16 +846,33 @@ void LibraryActivity::loop() {
     
     int slot = coverGen_.slot;
     if (slot < gridsPerPage_ && (pageStart + slot) < total && pageCache_[slot].id != 0) {
+      unsigned long t_slot = LibraryPerf::nowMs();
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
-      if (!Storage.exists(thumbPath.c_str())) {
+      bool needsGenerate = !Storage.exists(thumbPath.c_str());
+      if (!needsGenerate) {
+        if (isBookCoverReady(pageCache_[slot].path)) {
+          ++coverGen_.slot;
+          if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
+            LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+            coverGen_.active = false;
+            coverGen_.slot = 0;
+            coverGen_.done = 0;
+            coverGen_.total = 0;
+            LibraryPerf::logElapsed("loop_coverGeneration_done", coverTimer.start);
+            forceRender_ = true;
+            requestUpdate();
+          }
+          return;
+        }
+        Storage.remove(thumbPath.c_str());
+        needsGenerate = true;
+      }
+      if (needsGenerate) {
         yield(); esp_task_wdt_reset();
-        LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
-                coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
+        LOG_DBG("LIB", "CovGen: %d/%d heap=%u maxA=%u",
+                coverGen_.done + 1, coverGen_.total,
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-        // Temporarily move the selector to this book so the selection
-        // frame, title and author update to show which book is being processed.
-        // Save originals for restoration after generation.
         const int savedSelector = selectorIndex_;
         const std::string savedSelTitle = cachedSelTitle_;
         const std::string savedSelAuthor = cachedSelAuthor_;
@@ -920,24 +880,22 @@ void LibraryActivity::loop() {
         cachedSelTitle_ = pageCache_[slot].title;
         cachedSelAuthor_ = pageCache_[slot].author[0] ? std::string(pageCache_[slot].author) : std::string{};
 
-        // Let the render show the updated selector + title/author + grid
-        // with placeholders. The cover generation happens after this.
         forceRender_ = true;
         requestUpdate();
 
-        // Generate cover using Epub/Xtc parser
-        if (generatePageCover(pageCache_[slot].path)) {
+        unsigned long t_gen = LibraryPerf::nowMs();
+        bool generated = false;
+        if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
           ++coverGen_.done;
+          generated = true;
         }
+        LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d gen=%lums ok=%d",
+                 (int)slot, (unsigned long)(LibraryPerf::nowMs() - t_gen), (int)generated);
 
-        // Restore original selector and title/author
         selectorIndex_ = savedSelector;
         cachedSelTitle_ = savedSelTitle;
         cachedSelAuthor_ = savedSelAuthor;
 
-        // Force full render after EVERY cover so the new BMP appears on
-        // screen immediately (covers the progress bar). Without forceRender
-        // the render early-out would skip the update (same page, same selector).
         forceRender_ = true;
         requestUpdate();
       }
@@ -950,6 +908,7 @@ void LibraryActivity::loop() {
       coverGen_.slot = 0;
       coverGen_.done = 0;
       coverGen_.total = 0;
+      LibraryPerf::logElapsed("loop_coverGeneration_done", coverTimer.start);
       // Force a full render at finish to ensure:
       // - All generated covers appear on screen
       // - The progress text "X/Y Loading..." disappears
@@ -992,11 +951,10 @@ void LibraryActivity::loop() {
   ensureLayoutUpToDate();
 
   // ---- Cover generation (blocks input while running) ----------------------
-  // *** DISABLED: cover generation has been removed from the library path.
-  // *** Only placeholders are shown. Covers generated by the Home screen
-  // *** reader (Epub::generateThumbBmp) are still picked up if they exist.
-  // *** This avoids memory pressure, corrupt-ZIP crashes, and O(n) heap
-  // *** fragmentation during library browsing.
+  // Cover generation stays active in the library path: placeholders are shown
+  // first, then covers are generated slot-by-slot so the grid remains
+  // responsive.  Existing covers from the Home screen reader are still reused
+  // when present.
   // --------------------------------------------------------------------------
 
   // ---- Empty library state ------------------------------------------------
@@ -1104,7 +1062,7 @@ void LibraryActivity::loop() {
                   forceRender_ = true; requestUpdate(); return;
                 }
                 case BookContextMenuActivity::MenuAction::DELETE_COVER_THUMB:
-                  deleteLibraryCovers(path);
+                  LibraryCoverHelper::deleteLibraryCovers(path, coverWidth_, coverHeight_);
                   bumpLibEpoch();
                   refreshPageCache();
                   forceRender_ = true; requestUpdate(); return;
@@ -1114,7 +1072,7 @@ void LibraryActivity::loop() {
                           tr(STR_LIBRARY_DELETE_PAGE_COVERS), tr(STR_LIBRARY_DELETE_PAGE_COVERS_CONFIRM)),
                       [this](const ActivityResult& r) {
                         if (!r.isCancelled) {
-                          deletePageCovers();
+                          LibraryCoverHelper::deletePageCovers(gridsPerPage_, pageCache_, coverWidth_, coverHeight_);
                         }
                         bumpLibEpoch();
                         refreshPageCache();
@@ -1135,7 +1093,7 @@ void LibraryActivity::loop() {
                           tr(STR_LIBRARY_DELETE_ALL_COVERS), tr(STR_LIBRARY_DELETE_ALL_COVERS_CONFIRM)),
                       [this](const ActivityResult& r) {
                         if (!r.isCancelled) {
-                          deleteAllLibraryCovers();
+                          LibraryCoverHelper::deleteAllLibraryCovers(coverWidth_, coverHeight_);
                         }
                         bumpLibEpoch();
                         refreshPageCache();
@@ -1153,10 +1111,7 @@ void LibraryActivity::loop() {
                   // Reload grid and counts: hidden books must disappear / reappear.
                   // Select first available book on the current page.
                   selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
-                  totalBooks_ = LibraryIndex::totalMatching(
-                      currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                      static_cast<LibraryIndex::FilterMode>(currentFilter_));
-                  totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
+                  refreshTotalCountsFromCurrentMode();
                   if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
                   bumpLibEpoch();
                   refreshPageCache();
@@ -1217,12 +1172,13 @@ void LibraryActivity::loop() {
       currentCollectionName_ = SETTINGS.libraryCollectionName;
       currentCollectionIsUser_ = true;
       selectorIndex_ = 0;
+      refreshTotalCountsFromCurrentMode();
     } else {
       SETTINGS.libraryCollectionIdx = -1;
       SETTINGS.libraryCollectionName[0] = '\0';
     }
   }
-                            selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
+  selectorIndex_ = (selectorIndex_ / gridsPerPage_) * gridsPerPage_;
                             if (selectorIndex_ >= totalBooks_) selectorIndex_ = 0;
                           }
                         }
@@ -1314,60 +1270,65 @@ void LibraryActivity::loop() {
         return;
       }
       // Short press: open book or enter collection/series
-      if (mixedMode_ && currentCollectionIdx_ < 0) {
-        // In mixed root view: check if selected item is a series tile
-        int slot = selectorIndex_ % gridsPerPage_;
-        if (pageCache_[slot].id & 0x80000000u) {
-          prevSelectorBeforeCollection_ = selectorIndex_;
-          currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFFu);
-          currentCollectionName_ = pageCache_[slot].title;
-          USER_COLLECTIONS.ensureLoaded();
-          currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
-          selectorIndex_ = 0;
-          refreshPageCache();
-          forceRender_ = true;
-          requestUpdate();
-          return;
-        }
-      }
-      if (collectionsMode_ && currentCollectionIdx_ < 0) {
-        // Enter the selected collection
-        int slot = selectorIndex_ % gridsPerPage_;
-        prevSelectorBeforeCollection_ = selectorIndex_;
-        currentCollectionIdx_ = static_cast<int>(pageCache_[slot].id & 0x7FFFFFFF);
-        currentCollectionName_ = pageCache_[slot].title;
+      int slot = selectorIndex_ % gridsPerPage_;
+      LibraryNavState navState;
+      navState.collectionsMode = collectionsMode_;
+      navState.mixedMode = mixedMode_;
+      navState.currentCollectionIdx = currentCollectionIdx_;
+      navState.currentCollectionName = currentCollectionName_;
+      navState.currentCollectionIsUser = currentCollectionIsUser_;
+      navState.selectorIndex = selectorIndex_;
+      navState.prevSelectorBeforeCollection = prevSelectorBeforeCollection_;
+      LibraryNavActionResult action;
+      if (LibraryNavigation::handleConfirm(navState, pageCache_[slot], &action) && action.handled) {
         USER_COLLECTIONS.ensureLoaded();
-        currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(currentCollectionName_.c_str()) != nullptr);
-        selectorIndex_ = 0;
+        currentCollectionIsUser_ = (USER_COLLECTIONS.findCollectionByName(action.newCollectionName.c_str()) != nullptr);
+        currentCollectionIdx_ = action.newCollectionIdx;
+        currentCollectionName_ = std::move(action.newCollectionName);
+        prevSelectorBeforeCollection_ = action.newPrevSelectorBeforeCollection;
+        selectorIndex_ = action.newSelectorIndex;
+        refreshTotalCountsFromCurrentMode();
         refreshPageCache();
         forceRender_ = true;
         requestUpdate();
         return;
       }
-      onSelectBook(std::string(pageCache_[selectorIndex_ % gridsPerPage_].path));
+      // Guard: collection tiles have empty path; if handleConfirm didn't handle it,
+      // don't pass empty path to reader (would open file browser).
+      const std::string bookPath(pageCache_[slot].path);
+      if (!bookPath.empty()) {
+        onSelectBook(bookPath);
+      }
       return;
     }
   }
 
   // ---- Back button --------------------------------------------------------
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    // In mixed/collections mode: go back to root from a specific collection/series
-    if ((collectionsMode_ || mixedMode_) && currentCollectionIdx_ >= 0) {
-      const int prevSelector = prevSelectorBeforeCollection_;
-      bumpLibEpoch();  // covers may have been generated inside -> root tiles changed
-      currentCollectionIdx_ = -1;
-      currentCollectionName_.clear();
-      currentCollectionIsUser_ = false;
-      prevSelectorBeforeCollection_ = -1;
-      totalBooks_ = collectionsMode_
-          ? LibraryIndex::totalCollections()
-          : LibraryIndex::totalMixedMatching(currentSearchText_.empty() ? nullptr : currentSearchText_.c_str(),
-                                              static_cast<LibraryIndex::FilterMode>(currentFilter_));
-      totalPages_ = (totalBooks_ + gridsPerPage_ - 1) / gridsPerPage_;
-      selectorIndex_ = (prevSelector >= 0 && prevSelector < totalBooks_) ? prevSelector : 0;
-      refreshPageCache();
-      forceRender_ = true;
-      requestUpdate();
+    LibraryNavState navState;
+    navState.collectionsMode = collectionsMode_;
+    navState.mixedMode = mixedMode_;
+    navState.currentCollectionIdx = currentCollectionIdx_;
+    navState.currentCollectionName = currentCollectionName_;
+    navState.currentCollectionIsUser = currentCollectionIsUser_;
+    navState.selectorIndex = selectorIndex_;
+    navState.prevSelectorBeforeCollection = prevSelectorBeforeCollection_;
+    LibraryNavActionResult action;
+    if (LibraryNavigation::handleBack(navState, launchFromApps, &action)) {
+      if (action.handled) {
+        bumpLibEpoch();
+        currentCollectionIdx_ = action.newCollectionIdx;
+        currentCollectionName_ = std::move(action.newCollectionName);
+        currentCollectionIsUser_ = action.newCollectionIsUser;
+        prevSelectorBeforeCollection_ = action.newPrevSelectorBeforeCollection;
+        refreshTotalCountsFromCurrentMode();
+        selectorIndex_ = (action.newSelectorIndex >= 0 && action.newSelectorIndex < totalBooks_)
+                             ? action.newSelectorIndex
+                             : 0;
+        refreshPageCache();
+        forceRender_ = true;
+        requestUpdate();
+      }
       return;
     }
     if (upPress_.wasPressed() || downPress_.wasPressed() || leftPress_.wasPressed() || rightPress_.wasPressed()) {
@@ -1376,6 +1337,22 @@ void LibraryActivity::loop() {
       leftPress_.reset();
       rightPress_.reset();
     } else {
+      // Persist library UI state before silent restart so it is available on
+      // next boot. The normal `onExit()` path is skipped by ESP.restart().
+      SETTINGS.libraryViewMode = static_cast<uint8_t>(viewMode_);
+      SETTINGS.libraryFilter = static_cast<uint8_t>(currentFilter_);
+      SETTINGS.librarySort = static_cast<uint8_t>(currentSort_);
+      StringUtils::copyToFixedBuffer(SETTINGS.librarySearchText, sizeof(SETTINGS.librarySearchText), currentSearchText_);
+      if (currentCollectionIdx_ < 0) {
+        SETTINGS.librarySelectorIndex = selectorIndex_;
+      }
+      SETTINGS.libraryCollectionIdx = (currentCollectionIdx_ >= 0) ? currentCollectionIdx_ : -1;
+      if (currentCollectionIdx_ >= 0 && !currentCollectionName_.empty()) {
+        StringUtils::copyToFixedBuffer(SETTINGS.libraryCollectionName, sizeof(SETTINGS.libraryCollectionName), currentCollectionName_);
+      } else {
+        SETTINGS.libraryCollectionName[0] = '\0';
+      }
+      SETTINGS.saveToFile();
       LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       if (launchFromApps) {
@@ -1444,6 +1421,7 @@ void LibraryActivity::loop() {
       int curPage = selectorIndex_ / gridsPerPage_;
       if (curPage != lastPage_) {
         lastPage_ = curPage;
+        LibraryPerf::ScopedTimer navTimer("nav_up_pageTurn");
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1470,6 +1448,7 @@ void LibraryActivity::loop() {
       int curPage = selectorIndex_ / gridsPerPage_;
       if (curPage != lastPage_) {
         lastPage_ = curPage;
+        LibraryPerf::ScopedTimer navTimer("nav_down_pageTurn");
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1487,6 +1466,7 @@ void LibraryActivity::loop() {
       selectorIndex_ = prevPage * gridsPerPage_;
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = prevPage;
+      LibraryPerf::ScopedTimer navTimer("nav_left_pageTurn");
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1509,6 +1489,7 @@ void LibraryActivity::loop() {
       selectorIndex_ = nextPage * gridsPerPage_;
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = nextPage;
+      LibraryPerf::ScopedTimer navTimer("nav_right_pageTurn");
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1526,6 +1507,7 @@ void LibraryActivity::loop() {
     int curPage = selectorIndex_ / gridsPerPage_;
     if (curPage != lastPage_) {
       lastPage_ = curPage;
+      LibraryPerf::ScopedTimer navTimer("nav_move_pageTurn");
       forceRender_ = true;
       refreshPageCache();
     }
@@ -1636,6 +1618,7 @@ void LibraryActivity::refreshSelectedTitleAuthor(int selectorIndex, int total, i
 namespace {
 constexpr const char* kLibFrameDir = "/.crosspoint/libframes";
 constexpr uint32_t kFrameMagic = 0x4C46524Du;  // "LFRM"
+constexpr int COVER_CORNER_RADIUS = 2;
 
 uint32_t fnv1aByte(uint32_t h, uint8_t v) {
   h ^= v;
@@ -1857,6 +1840,7 @@ void LibraryActivity::render(RenderLock&&) {
   esp_task_wdt_reset();
   const int total = totalBooks_;
   const int curPageRaw = total > 0 ? selectorIndex_ / gridsPerPage_ : 0;
+  LibraryPerf::ScopedTimer renderTimer("render_total");
 
   // ---- Early-out guard: nothing changed -----------------------------------
   if (!forceRender_ && popupMode_ == PopupMode::None &&
@@ -1869,6 +1853,7 @@ void LibraryActivity::render(RenderLock&&) {
   if (!forceRender_ && popupMode_ == PopupMode::None &&
       curPageRaw == lastRenderedPage_ &&
       selectorIndex_ != lastRenderedSelectorIndex_ && total > 0) {
+    LibraryPerf::logElapsed("render_partial_start", renderTimer.start);
 
       const auto pageWidth = renderer.getScreenWidth();
       const auto& metrics = UITheme::getInstance().getMetrics();
@@ -1940,10 +1925,12 @@ void LibraryActivity::render(RenderLock&&) {
     const int pageStartForLoad = curPageRaw * gridsPerPage_;
     const int pageCountForLoad = std::min(gridsPerPage_, total - pageStartForLoad);
     if (tryLoadPageFrame(pageStartForLoad, pageCountForLoad)) {
+      LibraryPerf::logElapsed("render_frameCacheHit", renderTimer.start);
       return;
     }
   }
   lastFrameHitPage_ = -1;
+  LibraryPerf::logElapsed("render_afterFrameCacheMiss", renderTimer.start);
 
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
@@ -2097,6 +2084,7 @@ void LibraryActivity::render(RenderLock&&) {
   prevBorderIdx_ = selectorIndex_;
 
   renderer.displayBuffer();
+  LibraryPerf::logElapsed("render_displayBuffer", renderTimer.start);
 }
 
 void LibraryActivity::reloadPageCovers() {
@@ -2271,267 +2259,4 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     if (!isSeriesTile && (isComplete || isFav || isOpened))
       drawRibbonBadge(renderer, x, y, coverWidth_, coverHeight_, isComplete, isFav, isOpened);
   }
-}
-
-
-// ============================================================================
-// SECTION 9: Cover deletion helpers
-// ============================================================================
-
-void LibraryActivity::deleteLibraryCovers(const std::string& bookPath) {
-  std::string thumbPath = LibraryCache::thumbPathFor(bookPath, coverWidth_, coverHeight_);
-  LOG_DBG("LIB", "DelCovers: single path=%s thumb=%s exists=%d", bookPath.c_str(), thumbPath.c_str(),
-          !thumbPath.empty() && Storage.exists(thumbPath.c_str()));
-  if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-    Storage.remove(thumbPath.c_str());
-    LOG_DBG("LIB", "DelCovers: removed %s", thumbPath.c_str());
-  }
-}
-
-void LibraryActivity::deletePageCovers() {
-  int slotCount = gridsPerPage_;
-  LOG_DBG("LIB", "DelCovers: page range [0..%d) total=%d sel=%d grids=%d", slotCount, totalBooks_, selectorIndex_, gridsPerPage_);
-  for (int i = 0; i < slotCount && pageCache_[i].id != 0; ++i) {
-    std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
-    if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-      Storage.remove(thumbPath.c_str());
-      LOG_DBG("LIB", "DelCovers: removed [%d] %s -> %s", i, pageCache_[i].path, thumbPath.c_str());
-    }
-  }
-}
-
-void LibraryActivity::deleteAllLibraryCovers() {
-  LOG_DBG("LIB", "DelCovers: ALL total=%d", totalBooks_);
-  // Walk all pages and delete thumbs (slow but thorough)
-  int pg = 0;
-  LibraryIndex::BookRef buf[kMaxPageSlots];
-  while (true) {
-    int n = LibraryIndex::queryPage(buf, pg, kMaxPageSlots, static_cast<LibraryIndex::SortMode>(currentSort_));
-    if (n == 0) break;
-    for (int i = 0; i < n; ++i) {
-      std::string thumbPath = LibraryIndex::thumbPathFor(std::string(buf[i].path), coverWidth_, coverHeight_);
-      if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-        Storage.remove(thumbPath.c_str());
-      }
-    }
-    ++pg;
-  }
-}
-
-// Persistent text title-card cover (1-bit BMP) used when a book has no
-// extractable cover image (EPUB without a cover, TXT/Markdown). The title is
-// rasterized into an isolated strip scratch (never touches the screen) with the
-// normal UI fonts, then saved as a 1-bit top-down BMP whose bit layout matches
-// the JPG/PNG thumbnail pipeline (bit 0 = black, bit 1 = white, MSB-first).
-bool LibraryActivity::writeTextFallbackCover(const std::string& path) {
-  if (path.empty() || coverWidth_ <= 0 || coverHeight_ <= 0) return false;
-  if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) {
-    LOG_DBG("LIB", "CovGen: text cover SKIP low heap free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return false;
-  }
-
-  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (thumbPath.empty()) return false;
-  const size_t slash = thumbPath.find_last_of('/');
-  if (slash != std::string::npos && !Storage.exists(thumbPath.substr(0, slash).c_str())) {
-    Storage.mkdir(thumbPath.substr(0, slash).c_str());
-  }
-  // Keep a stable title for the fallback across grid sizes: derive from the
-  // file name (same source the placeholders use when a cover is missing).
-  std::string title = book_filter::filenameWithoutExtension(path);
-
-  const int w = coverWidth_;
-  const int h = coverHeight_;
-  const int rowBytesFb = renderer.getDisplayWidthBytes();  // full panel row bytes
-  const size_t scratchBytes = static_cast<size_t>(rowBytesFb) * static_cast<size_t>(h);
-  std::vector<uint8_t> scratch(scratchBytes);
-  if (scratch.size() < scratchBytes) return false;
-
-  {
-    GfxStripTargetScope stripScope(renderer, scratch.data(), 0, h);
-    // Dark "card" background (cleared bit = black), thin white frame.
-    renderer.fillRect(0, 0, w, h, true);
-    renderer.drawRect(1, 1, w - 2, h - 2, false);
-
-    // Centered wrapped title in white (state=false = white).
-    constexpr int kPad = 6;
-    constexpr int kMaxLines = 4;
-    std::string t = title;
-    const int maxLineW = w - 2 * kPad;
-
-    // Pick a font that can render the title. Titles with non-Latin (CJK)
-    // codepoints load the best installed SD CJK family on demand; the built-in
-    // SMALL_FONT lacks CJK glyphs.
-    int titleFont = SMALL_FONT_ID;
-    bool hasNonLatin = false;
-    for (unsigned char ch : title) {
-      if (ch >= 0x80) { hasNonLatin = true; break; }
-    }
-    if (hasNonLatin) {
-      const int cjkId = sdFontSystem.ensureCjkFontLoaded(renderer, title.c_str());
-      if (cjkId > 0) titleFont = cjkId;
-      // Only rasterize when the chosen font really covers every non-Latin
-      // codepoint; a partial/Traditional-only CJK family would otherwise render
-      // U+FFFD boxes (black card). Fall back to the placeholder when missing.
-      const auto& fontMap = renderer.getFontMap();
-      auto it = fontMap.find(titleFont);
-      if (it == fontMap.end()) {
-        LOG_DBG("LIB", "CovGen: text cover skipped - font %d not found for %s", titleFont, path.c_str());
-        return false;
-      }
-      const uint8_t* p = reinterpret_cast<const uint8_t*>(title.c_str());
-      bool missing = false;
-      while (*p && !missing) {
-        uint32_t cp = 0;
-        if (*p < 0x80) { cp = *p++; }
-        else if ((*p & 0xE0) == 0xC0) { cp = (*p++ & 0x1F) << 6; cp |= (*p++ & 0x3F); }
-        else if ((*p & 0xF0) == 0xE0) { cp = (*p++ & 0x0F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
-        else if ((*p & 0xF8) == 0xF0) { cp = (*p++ & 0x07) << 18; cp |= (*p++ & 0x3F) << 12; cp |= (*p++ & 0x3F) << 6; cp |= (*p++ & 0x3F); }
-        else { ++p; continue; }
-        if (cp >= 0x80 &&
-            !it->second.hasCodepoint(cp, EpdFontFamily::BOLD) &&
-            !it->second.hasCodepoint(cp, EpdFontFamily::REGULAR)) {
-          missing = true;
-        }
-      }
-      if (missing) {
-        LOG_DBG("LIB", "CovGen: text cover skipped - font id %d lacks glyphs for %s", titleFont, path.c_str());
-        return false;
-      }
-    }
-
-    const int lh = renderer.getLineHeight(titleFont);
-    const auto lines = renderer.wrappedText(titleFont, t.c_str(), maxLineW, kMaxLines, EpdFontFamily::BOLD);
-    const int blockH = static_cast<int>(lines.size()) * lh;
-    int ty = (h - blockH) / 2;
-    if (ty < 4) ty = 4;
-    for (const auto& ln : lines) {
-      const int tw = renderer.getTextWidth(titleFont, ln.c_str(), EpdFontFamily::BOLD);
-      renderer.drawText(titleFont, (w - tw) / 2, ty, ln.c_str(), false, EpdFontFamily::BOLD);
-      ty += lh;
-    }
-  }  // strip scope ends -> renderer target restored to the screen buffer
-
-  // Encode 1-bit BMP: row bytes = ceil(w/8), padded to a 4-byte boundary.
-  const int bmpRow = (w + 7) / 8;
-  const int padRow = (bmpRow + 3) & ~3;
-  const int imageSize = padRow * h;
-  const uint32_t fileSize = 62u + static_cast<uint32_t>(imageSize);
-
-  FsFile out;
-  if (!Storage.openFileForWrite("LIB", thumbPath, out)) return false;
-
-  auto write32 = [&out](uint32_t v) {
-    out.write(static_cast<uint8_t>(v & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 16) & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 24) & 0xFF));
-  };
-  auto write16 = [&out](uint16_t v) {
-    out.write(static_cast<uint8_t>(v & 0xFF));
-    out.write(static_cast<uint8_t>((v >> 8) & 0xFF));
-  };
-
-  out.write('B'); out.write('M');
-  write32(fileSize);
-  write32(0);
-  write32(62);
-  write32(40);
-  write32(static_cast<uint32_t>(w));
-  write32(static_cast<uint32_t>(0xFFFFFFFFu - h + 1));  // negative height = top-down
-  write16(1);
-  write16(1);
-  write32(0);
-  write32(static_cast<uint32_t>(imageSize));
-  write32(2835);
-  write32(2835);
-  write32(2);
-  write32(2);
-  const uint8_t palette[8] = {0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00};
-  for (uint8_t p : palette) out.write(p);
-
-  std::vector<uint8_t> rowBuf(padRow, 0);
-  for (int y = 0; y < h; ++y) {
-    const uint8_t* src = scratch.data() + static_cast<size_t>(y) * rowBytesFb;
-    std::fill(rowBuf.begin(), rowBuf.end(), 0);
-    std::memcpy(rowBuf.data(), src, bmpRow);
-    out.write(rowBuf.data(), padRow);
-  }
-  out.close();
-
-  if (!Storage.exists(thumbPath.c_str()) || !isBookCoverReady(path)) {
-    Storage.remove(thumbPath.c_str());
-    return false;
-  }
-  LOG_DBG("LIB", "CovGen: text cover OK %s (%dx%d)", path.c_str(), w, h);
-  return true;
-}
-
-bool LibraryActivity::generatePageCover(const std::string& path) {
-
-  const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
-  if (thumbPath.empty()) return false;
-
-  // Ensure the cache directory exists (hash must match the Epub/Xtc cache path)
-  char cacheDir[64] = {};
-  if (FsHelpers::hasEpubExtension(path)) {
-    const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
-  } else if (FsHelpers::hasXtcExtension(path)) {
-    const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
-  } else if (!FsHelpers::hasTxtExtension(path) && !FsHelpers::hasMarkdownExtension(path)) {
-    LOG_DBG("LIB", "CovGen: unsupported extension, cover skipped: %s", path.c_str());
-    return false;  // unsupported format
-  }
-  if (cacheDir[0] && !Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
-
-  if (FsHelpers::hasEpubExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    Epub epub(path, "/.crosspoint");
-    if (!epub.load(true, true)) {
-      LOG_DBG("LIB", "CovGen: EPUB load FAIL %s", path.c_str());
-      return false;
-    }
-    if (ESP.getMaxAllocHeap() < 28 * 1024) {
-      LOG_DBG("LIB", "CovGen: EPUB SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
-      return false;
-    }
-    // Adaptive contain: the resulting BMP is never larger than the tile box, so
-    // the runtime drawBitmap() never needs to crop a "fill" (oversized) image,
-    // which produced out-of-range pixels on non-3:5 cover ratios.
-    const bool ok = epub.generateAdaptiveThumbBmp(coverWidth_, coverHeight_);
-    if (ok) {
-      LOG_DBG("LIB", "CovGen: EPUB thumb gen=1 path=%s heap=%u maxA=%u",
-              path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-      return true;
-    }
-    // EPUB without an embedded cover image: render a persistent text title card.
-    LOG_DBG("LIB", "CovGen: EPUB no cover -> text fallback path=%s heap=%u maxA=%u",
-            path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return writeTextFallbackCover(path);
-  }
-
-  if (FsHelpers::hasXtcExtension(path)) {
-    if (ESP.getFreeHeap() < 20000) return false;
-    Xtc xtc(path, "/.crosspoint");
-    if (!xtc.load()) return false;
-    const bool ok = xtc.generateThumbBmp(coverWidth_, coverHeight_);
-    LOG_DBG("LIB", "CovGen: XTC thumb gen=%d path=%s heap=%u maxA=%u",
-            ok ? 1 : 0, path.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    return ok;
-  }
-
-  if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    // TXT/Markdown have no embedded cover; render a persistent text title card.
-    if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
-    const bool fb = writeTextFallbackCover(path);
-    LOG_DBG("LIB", "CovGen: TXT text cover gen=%d path=%s", fb ? 1 : 0, path.c_str());
-    return fb;
-  }
-
-  return false;
 }
