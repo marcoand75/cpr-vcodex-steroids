@@ -151,6 +151,8 @@ void LibraryActivity::onEnter() {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
     }
     lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
     pendingCollectionsRebuild_ = false;
@@ -166,6 +168,10 @@ void LibraryActivity::onEnter() {
 
   // Drop any page frames cached by a previous session (index/state may differ).
   clearPageFrameCache();
+  bumpLibEpoch();
+  lastRenderedPage_ = -1;
+  lastRenderedSelectorIndex_ = -1;
+  lastFrameHitPage_ = -1;
   LibraryPerf::logElapsed("onEnter_afterClearFrameCache", totalTimer.start);
 
   applyLayoutFromSettings();
@@ -338,10 +344,15 @@ void LibraryActivity::scanSd() {
       LibraryPerf::ScopedTimer buildTimer("scanSd_cold_build");
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildIndices();
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
     }
     LibraryPerf::logElapsed("scanSd_cold_afterBuild", totalTimer.start);
     clearPageFrameCache();  // library contents changed -> all frames stale
     bumpLibEpoch();
+    lastRenderedPage_ = -1;
+    lastRenderedSelectorIndex_ = -1;
+    lastFrameHitPage_ = -1;
     refreshTotalCountsFromCurrentMode();
     LibraryPerf::logElapsed("scanSd_cold_afterCounts", totalTimer.start);
     {
@@ -376,10 +387,15 @@ void LibraryActivity::scanSd() {
         LibraryPerf::ScopedTimer buildTimer("scanSd_fast_build");
         LibraryIndex::buildCollectionsIndex();
         LibraryIndex::buildIndices();
+        IndexCacheManager::invalidateMixed();
+        IndexCacheManager::invalidateCollections();
       }
       LibraryPerf::logElapsed("scanSd_fast_afterBuild", totalTimer.start);
       clearPageFrameCache();  // library contents changed -> all frames stale
       bumpLibEpoch();
+      lastRenderedPage_ = -1;
+      lastRenderedSelectorIndex_ = -1;
+      lastFrameHitPage_ = -1;
     }
   }
 
@@ -768,9 +784,14 @@ void LibraryActivity::loop() {
       PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
       LibraryIndex::buildCollectionsIndex();
       LibraryIndex::buildMixedIndex(static_cast<LibraryIndex::SortMode>(currentSort_));
+      IndexCacheManager::invalidateMixed();
+      IndexCacheManager::invalidateCollections();
       lastUserCollectionsGeneration_ = USER_COLLECTIONS.generation();
       clearPageFrameCache();
       bumpLibEpoch();
+      lastRenderedPage_ = -1;
+      lastRenderedSelectorIndex_ = -1;
+      lastFrameHitPage_ = -1;
       collectionsRebuilt = true;
     }
     pendingCollectionsRebuild_ = false;
