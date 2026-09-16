@@ -811,16 +811,8 @@ void LibraryActivity::loop() {
           ++coverGen_.total;
         } else {
           unsigned long t_ready = LibraryPerf::nowMs();
-          if (!isBookCoverReady(pageCache_[i].path)) {
-            unsigned long t_ready_ms = LibraryPerf::nowMs() - t_ready;
-            LOG_DBG("LIB-PERF", "CovGen-count: corrupt path=%s thumbPath=%dus ready=%lums",
-                     pageCache_[i].path, (unsigned)t_thumb, (unsigned long)t_ready_ms);
-            Storage.remove(thumbPath.c_str());
-            ++coverGen_.total;
-          } else {
-            LOG_DBG("LIB-PERF", "CovGen-count: ok path=%s thumbPath=%dus ready=%lums",
-                     pageCache_[i].path, (unsigned)t_thumb, (unsigned long)(LibraryPerf::nowMs() - t_ready));
-          }
+          LOG_DBG("LIB-PERF", "CovGen-count: exists path=%s thumbPath=%dus ready=%lums",
+                   pageCache_[i].path, (unsigned)t_thumb, (unsigned long)(LibraryPerf::nowMs() - t_ready));
         }
       }
       LOG_DBG("LIB-PERF", "CovGen-count: total=%d items=%d countMs=%lu",
@@ -846,8 +838,31 @@ void LibraryActivity::loop() {
       unsigned long t_slot = LibraryPerf::nowMs();
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
       unsigned long t_thumb = LibraryPerf::nowMs() - t_slot;
-      if (!Storage.exists(thumbPath.c_str())) {
-        unsigned long t_exists = LibraryPerf::nowMs() - t_slot;
+      bool needsGenerate = !Storage.exists(thumbPath.c_str());
+      unsigned long t_exists = LibraryPerf::nowMs() - t_slot;
+      if (!needsGenerate) {
+        unsigned long t_ready = LibraryPerf::nowMs();
+        if (isBookCoverReady(pageCache_[slot].path)) {
+          ++coverGen_.slot;
+          if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
+            LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+            coverGen_.active = false;
+            coverGen_.slot = 0;
+            coverGen_.done = 0;
+            coverGen_.total = 0;
+            LibraryPerf::logElapsed("loop_coverGeneration_done", coverTimer.start);
+            forceRender_ = true;
+            requestUpdate();
+          }
+          return;
+        }
+        unsigned long t_ready_ms = LibraryPerf::nowMs() - t_ready;
+        LOG_DBG("LIB-PERF", "CovGen-slot: corrupt path=%s thumbPath=%dus ready=%lums",
+                 pageCache_[slot].path, (unsigned)t_thumb, (unsigned long)t_ready_ms);
+        Storage.remove(thumbPath.c_str());
+        needsGenerate = true;
+      }
+      if (needsGenerate) {
         yield(); esp_task_wdt_reset();
         LOG_DBG("LIB", "CovGen: %d/%d %s heap=%u maxA=%u",
                 coverGen_.done + 1, coverGen_.total, pageCache_[slot].path,
