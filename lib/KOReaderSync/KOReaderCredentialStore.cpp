@@ -118,6 +118,13 @@ bool KOReaderCredentialStore::loadFromFile() {
   return false;
 }
 
+void KOReaderCredentialStore::ensureLoaded() const {
+  if (!loaded_) {
+    const_cast<KOReaderCredentialStore*>(this)->loadFromFile();
+    loaded_ = true;
+  }
+}
+
 bool KOReaderCredentialStore::loadFromBinaryFile() {
   FsFile file;
   if (!Storage.openFileForRead("KRS", KOREADER_FILE_BIN, file)) {
@@ -177,10 +184,12 @@ void KOReaderCredentialStore::setCredentials(const std::string& user, const std:
 }
 
 const std::string& KOReaderCredentialStore::getUsername() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].username : kEmptyString;
 }
 
 const std::string& KOReaderCredentialStore::getPassword() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].password : kEmptyString;
 }
 
@@ -234,6 +243,7 @@ void KOReaderCredentialStore::setServerUrl(const std::string& url) {
 }
 
 const std::string& KOReaderCredentialStore::getServerUrl() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].serverUrl : kEmptyString;
 }
 
@@ -272,6 +282,7 @@ void KOReaderCredentialStore::setMatchMethod(DocumentMatchMethod method) {
 }
 
 DocumentMatchMethod KOReaderCredentialStore::getMatchMethod() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].matchMethod : DocumentMatchMethod::FILENAME;
 }
 
@@ -281,6 +292,7 @@ void KOReaderCredentialStore::setSendMetadata(const bool enabled) {
 }
 
 bool KOReaderCredentialStore::getSendMetadata() const {
+  ensureLoaded();
   return activeIndex >= 0 && profiles[static_cast<size_t>(activeIndex)].sendMetadata;
 }
 
@@ -293,6 +305,7 @@ void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {
 }
 
 KOReaderSyncBehavior KOReaderCredentialStore::getSyncBehavior() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].syncBehavior
                           : KOReaderSyncBehavior::ASK_EVERY_TIME;
 }
@@ -367,6 +380,7 @@ bool KOReaderCredentialStore::removeProfile(size_t index) {
 }
 
 const KOReaderProfile* KOReaderCredentialStore::getProfile(size_t index) const {
+  ensureLoaded();
   if (index >= profiles.size()) {
     return nullptr;
   }

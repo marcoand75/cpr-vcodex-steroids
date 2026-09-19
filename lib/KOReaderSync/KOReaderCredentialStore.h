@@ -41,10 +41,11 @@ bool loadKOReader(KOReaderCredentialStore& store, const char* json, bool* needsR
  * but prevents casual reading and ties credentials to the specific device).
  */
 class KOReaderCredentialStore {
- private:
+  private:
   static KOReaderCredentialStore instance;
   std::vector<KOReaderProfile> profiles;
   int activeIndex = -1;  // -1 = no profile saved yet
+  mutable bool loaded_ = false;
 
   static constexpr size_t MAX_PROFILES = 8;
 
@@ -55,6 +56,9 @@ class KOReaderCredentialStore {
 
   friend bool JsonSettingsIO::saveKOReader(const KOReaderCredentialStore&, const char*);
   friend bool JsonSettingsIO::loadKOReader(KOReaderCredentialStore&, const char*, bool*);
+
+  // Ensure profiles are loaded from disk (lazy initialization)
+  void ensureLoaded() const;
 
  public:
   // Delete copy constructor and assignment
@@ -109,14 +113,14 @@ class KOReaderCredentialStore {
   bool updateProfile(size_t index, const KOReaderProfile& profile);
   bool removeProfile(size_t index);
 
-  const std::vector<KOReaderProfile>& getProfiles() const { return profiles; }
+  const std::vector<KOReaderProfile>& getProfiles() const { ensureLoaded(); return profiles; }
   const KOReaderProfile* getProfile(size_t index) const;
-  size_t getCount() const { return profiles.size(); }
-  bool hasProfiles() const { return !profiles.empty(); }
-  bool canAddProfile() const { return profiles.size() < MAX_PROFILES; }
+  size_t getCount() const { ensureLoaded(); return profiles.size(); }
+  bool hasProfiles() const { ensureLoaded(); return !profiles.empty(); }
+  bool canAddProfile() const { ensureLoaded(); return profiles.size() < MAX_PROFILES; }
 
   // Index of the currently active profile, or -1 if none saved yet.
-  int getActiveIndex() const { return activeIndex; }
+  int getActiveIndex() const { ensureLoaded(); return activeIndex; }
   // Sets the active profile and persists the choice as the new default.
   bool setActiveIndex(size_t index);
 };
