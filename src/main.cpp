@@ -778,9 +778,9 @@ void setup() {
                              [] { I18N.loadSettings(); });
   LOG_PHASE_TIME("Language load");
 
-  BootRecovery::runBootStage(BootRecovery::BootStage::KOReader, BootRecovery::shouldSkipKOReader(), "koreader",
+  BootRecovery::runBootStage(BootRecovery::BootStage::KOReader, true, "koreader",
                              [] { KOREADER_STORE.loadFromFile(); });
-  LOG_PHASE_TIME("KOReader load");
+  LOG_PHASE_TIME("KOReader load (deferred)");
 
   BootRecovery::runBootStage(BootRecovery::BootStage::OPDS, BootRecovery::shouldSkipOPDS(), "opds",
                              [] { OPDS_STORE.loadFromFile(); });

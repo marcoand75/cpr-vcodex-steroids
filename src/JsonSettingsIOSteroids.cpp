@@ -22,8 +22,10 @@ using S = CrossPointSettings;
 
 namespace {
 
+constexpr uint8_t STEROIDS_FORMAT_VERSION = 1;
+
 void writeSteroidsSettingsDoc(JsonDocument& doc, const CrossPointSettings& s) {
-  doc["formatVersion"] = 1;
+  doc["formatVersion"] = STEROIDS_FORMAT_VERSION;
 
   doc["cycleScreensaverOnTap"] = s.cycleScreensaverOnTap;
 
@@ -313,14 +315,9 @@ for (size_t i = 0; i < count; i++) {
     }
 }
 }
-}  // namespace
+}
 
 namespace JsonSettingsIO {
-bool saveSettingsSteroids(const CrossPointSettings& s, const char* path) {
-  JsonDocument doc;
-  writeSteroidsSettingsDoc(doc, s);
-  return saveJsonDocumentToFile("STZ", path, doc);
-}
 
 bool loadSettingsSteroids(CrossPointSettings& s, const char* json, bool* needsResave) {
   if (needsResave) *needsResave = false;
@@ -330,8 +327,22 @@ bool loadSettingsSteroids(CrossPointSettings& s, const char* json, bool* needsRe
     LOG_ERR("STZ", "Steroids settings JSON parse error: %s", error.c_str());
     return false;
   }
+  // Check format version to avoid unnecessary resaves
+  const uint8_t fileVersion = doc["formatVersion"] | 0;
+  if (fileVersion != STEROIDS_FORMAT_VERSION) {
+    LOG_DBG("STZ", "Steroids format version %u != current %u, migration needed",
+            fileVersion, STEROIDS_FORMAT_VERSION);
+    if (needsResave) *needsResave = true;
+  }
   readSteroidsSettingsDoc(doc, s, needsResave);
-  LOG_DBG("STZ", "Steroids settings loaded from file");
+  LOG_DBG("STZ", "Steroids settings loaded from file (version=%u)", fileVersion);
   return true;
 }
+
+bool saveSettingsSteroids(const CrossPointSettings& s, const char* path) {
+  JsonDocument doc;
+  writeSteroidsSettingsDoc(doc, s);
+  return saveJsonDocumentToFile("STZ", path, doc);
+}
+
 }  // namespace JsonSettingsIO
