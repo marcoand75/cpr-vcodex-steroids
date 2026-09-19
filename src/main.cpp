@@ -905,11 +905,9 @@ void setup() {
   // Hidden books are loaded on demand by LibraryActivity to save boot heap.
   LOG_DBG("BOOT", "Hidden books deferred (loaded on demand)");
 
-  // Flashcards are skipped on silent reboot because the on-disk state
-  // hasn't changed; on a clean boot the deck metadata is loaded on demand
-  // by FlashcardsAppActivity/QuickCardsActivity.
-  const bool skipFlashcardsEffective = skipFlashcardsLoad || isSilentReboot;
-  if (BootRecovery::runBootStage(BootRecovery::BootStage::Flashcards, skipFlashcardsEffective, "flashcards", nullptr)) {
+  // Flashcards are always deferred (loaded on demand by FlashcardsAppActivity/QuickCardsActivity).
+  // Force skip at boot like KOReader to save ~66ms.
+  if (BootRecovery::runBootStage(BootRecovery::BootStage::Flashcards, true, "flashcards", nullptr)) {
     LOG_DBG("BOOT", "Flashcards deferred (loaded on demand)");
   }
   LOG_PHASE_TIME("Flashcards init (deferred)");

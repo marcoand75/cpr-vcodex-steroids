@@ -308,12 +308,20 @@ s.readerMenuVisibilityMask = doc["readerMenuVisibilityMask"] | s.readerMenuVisib
         for (size_t i = 0; i < 19; i++) {
           defaults[i] = s.readerMenuOrderMask[i];
         }
-for (size_t i = 0; i < count; i++) {
-            s.readerMenuOrderMask[i] = arr[i] | defaults[i];
+        bool orderChanged = false;
+        for (size_t i = 0; i < count; i++) {
+          const uint8_t loadedVal = arr[i] | defaults[i];
+          if (loadedVal != s.readerMenuOrderMask[i]) {
+            orderChanged = true;
+          }
+          s.readerMenuOrderMask[i] = loadedVal;
         }
-        if (needsResave) *needsResave = true;
+        // Only mark for resave if the order actually changed
+        if (orderChanged && needsResave) {
+          *needsResave = true;
+        }
+      }
     }
-}
 }
 }
 
