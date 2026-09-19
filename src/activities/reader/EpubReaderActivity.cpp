@@ -28,6 +28,9 @@
 #include "EpubReaderPercentSelectionActivity.h"
 #include "util/PopupUtils.h"
 #include "util/StringUtils.h"
+
+// External declarations for functions defined in main.cpp
+extern void freeFontMemory();
 #include "DictionaryHistoryActivity.h"
 #include "DictionaryWordSelectActivity.h"
 #include "KOReaderCredentialStore.h"
@@ -423,13 +426,36 @@ void EpubReaderActivity::onExit() {
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
+
+  // Capture session snapshot for achievements BEFORE we potentially release stats
   const auto snapshot = READING_STATS.getLastSessionSnapshot();
-  READING_STATS.releaseMemoryForNetwork();
+
+  // Save reading stats on exit with maximum heap available.
+  // We free all reader-specific memory (section cache, EPUB cache, font caches,
+  // renderer temp buffers) BEFORE loading the full stats store, so the JSON
+  // serialization has the largest possible contiguous heap block.
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // 1. Free renderer temporary render buffers
+    renderer.freeUnusedRenderMemory();
+    // 2. Free font caches (decompressor page buffers + font glyph caches)
+    freeFontMemory();
+    // 3. Clear EPUB section cache (parsed HTML, layout data)
+    if (section) {
+      section->clearCache();
+    }
+    // 4. Clear EPUB archive cache (extracted images, OPF/TOC)
+    if (epub) {
+      epub->clearCache();
+    }
+    // 5. Reset section and epub (releases their internal buffers)
+    section.reset();
+    epub.reset();
+    // 6. Invalidate overlay page cache
+    invalidateCurrentOverlayPageCache();
+  });
+
   ACHIEVEMENTS.recordSessionEnded(snapshot);
   bookmarkStore.save();
-  invalidateCurrentOverlayPageCache();
-  section.reset();
-  epub.reset();
 }
 
 bool EpubReaderActivity::extractInlineImage(void* context, const char* sourcePath,
@@ -2329,7 +2355,36 @@ std::string EpubReaderActivity::moveCompletedBookIfEnabled() {
 
 void EpubReaderActivity::exitReaderAfterOptionalCompletedMove() {
   const std::string exitPath = moveCompletedBookIfEnabled();
-  exitReaderToHomeOrStats(renderer, mappedInput, exitPath);
+
+  // Capture session snapshot for achievements BEFORE saving
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (section) section->clearCache();
+    if (epub) epub->clearCache();
+    section.reset();
+    epub.reset();
+    invalidateCurrentOverlayPageCache();
+  });
+
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
+  showPendingAchievementPopups(renderer);
+
+  const bool countedSession = snapshot.valid && snapshot.counted && snapshot.path == exitPath;
+
+  if (SETTINGS.showStatsAfterReading && countedSession && !exitPath.empty()) {
+    activityManager.replaceActivity(
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, exitPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                               /*fromReaderExit=*/true}));
+  } else {
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
+  }
 }
 
 void EpubReaderActivity::markCurrentBookAsFinished() {

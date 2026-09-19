@@ -28,6 +28,9 @@
 #include "util/AchievementPopupUtils.h"
 #include "util/BookIdentity.h"
 #include "util/CompletedBookMover.h"
+
+// External declarations for functions defined in main.cpp
+extern void freeFontMemory();
 #include "util/PopupUtils.h"
 
 namespace {
@@ -141,10 +144,20 @@ void XtcReaderActivity::onExit() {
   ReaderUtils::requestReaderUiTransitionRefresh(renderer);
 
   APP_STATE.readerActivityLoadCount = 0;
+
+  // Capture session snapshot for achievements BEFORE saving
   const auto snapshot = READING_STATS.getLastSessionSnapshot();
-  READING_STATS.releaseMemoryForNetwork();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (xtc) xtc->clearCache();
+    xtc.reset();
+  });
+
   ACHIEVEMENTS.recordSessionEnded(snapshot);
-  xtc.reset();
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
@@ -345,7 +358,32 @@ std::string XtcReaderActivity::moveCompletedBookIfEnabled() {
 
 void XtcReaderActivity::exitReaderAfterOptionalCompletedMove() {
   const std::string exitPath = moveCompletedBookIfEnabled();
-  exitReaderToHomeOrStats(renderer, mappedInput, exitPath);
+
+  // Capture session snapshot for achievements BEFORE saving
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (xtc) xtc->clearCache();
+  });
+
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
+  showPendingAchievementPopups(renderer);
+
+  const bool countedSession = snapshot.valid && snapshot.counted && snapshot.path == exitPath;
+
+  if (SETTINGS.showStatsAfterReading && countedSession && !exitPath.empty()) {
+    activityManager.replaceActivity(
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, exitPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                               /*fromReaderExit=*/true}));
+  } else {
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
+  }
 }
 
 void XtcReaderActivity::render(RenderLock&&) {

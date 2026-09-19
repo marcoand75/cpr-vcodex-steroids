@@ -36,6 +36,7 @@
 #include "util/LongPress.h"
 #include "WikipediaActivity.h"
 #include "QuickCardsActivity.h"
+#include "SilentRestart.h"
 
 namespace {
 std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItems, const int itemsPerPage) {
@@ -74,7 +75,13 @@ void AppsActivity::onEnter() {
 
   listInputMapper.setBackHandler([](void* ctx) {
     auto* self = static_cast<AppsActivity*>(ctx);
-    self->onGoHome();
+    // WikipediaActivity does a seamless silent restart on Back at root to clear heap fragmentation
+    // from WiFi/HTTP usage. AppsActivity also loads heavy stores (stats, recent books, favorites, achievements)
+    // which fragment the heap. Do a seamless silent restart to Home to reclaim heap.
+    LOG_DBG("APPS", "Back at root: requesting seamless silent restart to Home (free=%d maxA=%d)",
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    silentRestartToHome();
+    // Unreachable: ESP.restart() above resets the CPU.
   }, this, false);
 
   listInputMapper.setConfirmHandler([](void* ctx) {

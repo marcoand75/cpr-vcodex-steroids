@@ -292,7 +292,7 @@ void requestSilentRestart(SilentRebootTarget target, bool seamless,
     LOG_DBG("MAIN", "Silent restart (target=%u, seamless=%d)", static_cast<uint32_t>(target), seamless ? 1 : 0);
   }
 
-  delay(seamless ? 20 : 50);
+  delay(seamless ? 200 : 500);
   ESP.restart();
 }
 }  // namespace
@@ -660,6 +660,12 @@ void setupDisplayAndFonts(bool seamless = false) {
 
 void setup() {
   const unsigned long setupStartMs = millis();
+  auto phaseStart = millis();
+  #define LOG_PHASE_TIME(name) \
+    LOG_DBG("BOOT-TIME", "%s took %lu ms (total %lu ms, free=%u maxA=%u)", \
+            name, millis() - phaseStart, millis() - setupStartMs, \
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap()); \
+    phaseStart = millis()
 
   // ===========================================================================
   // PHASE 1 — Hardware init
@@ -725,6 +731,7 @@ void setup() {
 #endif
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
+  LOG_PHASE_TIME("Hardware init");
 
   // ===========================================================================
   // PHASE 2 — Storage + recovery
@@ -749,6 +756,7 @@ void setup() {
   // the other boot diagnostics so the cpr-vcodex-logs recovery file picks
   // up the skip events for post-mortem analysis.
   BootRecovery::setSkipLogFn([](const char* message) { CPR_VCODEX_LOG_EVENT("BOOT", message); });
+  LOG_PHASE_TIME("Storage + recovery init");
 
   // ===========================================================================
   // PHASE 3 — Core settings + UI theme
@@ -764,19 +772,24 @@ void setup() {
     imageRenderConfigApplySettings();  // Apply image-rendering params from loaded settings
     LOG_DBG("BOOT", "After settings: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
+  LOG_PHASE_TIME("Settings load");
 
   BootRecovery::runBootStage(BootRecovery::BootStage::Language, BootRecovery::shouldSkipLanguage(), "language",
                              [] { I18N.loadSettings(); });
+  LOG_PHASE_TIME("Language load");
 
   BootRecovery::runBootStage(BootRecovery::BootStage::KOReader, BootRecovery::shouldSkipKOReader(), "koreader",
                              [] { KOREADER_STORE.loadFromFile(); });
+  LOG_PHASE_TIME("KOReader load");
 
   BootRecovery::runBootStage(BootRecovery::BootStage::OPDS, BootRecovery::shouldSkipOPDS(), "opds",
                              [] { OPDS_STORE.loadFromFile(); });
+  LOG_PHASE_TIME("OPDS load");
 
   BootRecovery::enterStage(BootRecovery::BootStage::UiTheme);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
+  LOG_PHASE_TIME("UI Theme reload");
 
   // ===========================================================================
   // PHASE 4 — Wakeup handling
@@ -823,6 +836,7 @@ void setup() {
     default:
       break;
   }
+  LOG_PHASE_TIME("Wakeup handling");
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version %s", CROSSPOINT_VERSION);
@@ -841,10 +855,12 @@ void setup() {
   BootRecovery::enterStage(BootRecovery::BootStage::DisplayAndFonts);
   setupDisplayAndFonts(isSilentReboot);
   LOG_DBG("BOOT", "After display/fonts: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LOG_PHASE_TIME("Display + fonts");
 
   if (!isSilentReboot) {
     activityManager.goToBoot();
   }
+  LOG_PHASE_TIME("Boot activity init");
 
   // ===========================================================================
   // PHASE 6 — Data stores that don't block boot
@@ -865,22 +881,26 @@ void setup() {
                                  [] { APP_STATE.loadFromFile(); })) {
     LOG_DBG("BOOT", "After app state: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
+  LOG_PHASE_TIME("App state load");
 
   if (BootRecovery::runBootStage(BootRecovery::BootStage::ReadingStats, skipReadingStatsLoad, "reading stats",
                                  [] { READING_STATS.markLoadSkippedForRecovery(); })) {
     // Reading stats are loaded on demand by the first activity that needs them.
     LOG_DBG("BOOT", "Reading stats deferred (loaded on demand)");
   }
+  LOG_PHASE_TIME("Reading stats init (deferred)");
 
   if (BootRecovery::runBootStage(BootRecovery::BootStage::RecentBooks, skipRecentBooksLoad, "recent books",
                                  [] { RECENT_BOOKS.loadFromFile(); })) {
     LOG_DBG("BOOT", "After recent books: free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
+  LOG_PHASE_TIME("Recent books load");
 
   if (BootRecovery::runBootStage(BootRecovery::BootStage::Favorites, skipFavoritesLoad, "favorites", nullptr)) {
     // Favorites are loaded on demand by HomeActivity/LibraryActivity to save boot heap.
     LOG_DBG("BOOT", "Favorites deferred (loaded on demand)");
   }
+  LOG_PHASE_TIME("Favorites init (deferred)");
 
   // Hidden books are loaded on demand by LibraryActivity to save boot heap.
   LOG_DBG("BOOT", "Hidden books deferred (loaded on demand)");
@@ -892,11 +912,13 @@ void setup() {
   if (BootRecovery::runBootStage(BootRecovery::BootStage::Flashcards, skipFlashcardsEffective, "flashcards", nullptr)) {
     LOG_DBG("BOOT", "Flashcards deferred (loaded on demand)");
   }
+  LOG_PHASE_TIME("Flashcards init (deferred)");
 
   if (BootRecovery::runBootStage(BootRecovery::BootStage::Achievements, skipAchievementsLoad, "achievements", nullptr)) {
     // Achievements are loaded on demand by AchievementsActivity/SleepActivity.
     LOG_DBG("BOOT", "Achievements deferred (loaded on demand)");
   }
+  LOG_PHASE_TIME("Achievements init (deferred)");
 
   // ===========================================================================
   // PHASE 7 — Route decision + boot completion
@@ -912,6 +934,7 @@ void setup() {
                                 wakeupReason != HalGPIO::WakeupReason::AfterFlash;
   const uint8_t syncDayReminderThreshold = SETTINGS.getSyncDayReminderStartThreshold();
   BootRecovery::enterStage(BootRecovery::BootStage::RouteDecision);
+  LOG_PHASE_TIME("Route decision");
 
   if (HalSystem::isRebootFromPanic() && !forceHomeBoot) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
@@ -947,6 +970,7 @@ void setup() {
       activityManager.goToReader(path);
     }
   }
+  LOG_PHASE_TIME("Activity routing");
 
   BootRecovery::markBootCompleted();
 

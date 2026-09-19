@@ -29,6 +29,9 @@
 #include "util/CompletedBookMover.h"
 #include "util/PopupUtils.h"
 
+// External declarations for functions defined in main.cpp
+extern void freeFontMemory();
+
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
 // Cache file magic and version
@@ -334,10 +337,20 @@ void TxtReaderActivity::onExit() {
   decltype(pageOffsets)().swap(pageOffsets);
   decltype(currentPageLines)().swap(currentPageLines);
   APP_STATE.readerActivityLoadCount = 0;
+
+  // Capture session snapshot for achievements BEFORE saving
   const auto snapshot = READING_STATS.getLastSessionSnapshot();
-  READING_STATS.releaseMemoryForNetwork();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (txt) txt->clearCache();
+    txt.reset();
+  });
+
   ACHIEVEMENTS.recordSessionEnded(snapshot);
-  txt.reset();
   APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
@@ -521,7 +534,32 @@ std::string TxtReaderActivity::moveCompletedBookIfEnabled() {
 
 void TxtReaderActivity::exitReaderAfterOptionalCompletedMove() {
   const std::string exitPath = moveCompletedBookIfEnabled();
-  exitReaderToHomeOrStats(renderer, mappedInput, exitPath);
+
+  // Capture session snapshot for achievements BEFORE saving
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (txt) txt->clearCache();
+  });
+
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
+  showPendingAchievementPopups(renderer);
+
+  const bool countedSession = snapshot.valid && snapshot.counted && snapshot.path == exitPath;
+
+  if (SETTINGS.showStatsAfterReading && countedSession && !exitPath.empty()) {
+    activityManager.replaceActivity(
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, exitPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                               /*fromReaderExit=*/true}));
+  } else {
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
+  }
 }
 
 void TxtReaderActivity::initializeReader() {

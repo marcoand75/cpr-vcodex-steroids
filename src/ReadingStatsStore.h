@@ -6,6 +6,13 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "Logging.h"
+#include "util/ReadingStatsBackupManager.h"
+#include "util/TimeUtils.h"
+
+using namespace ReadingStatsBackup;
+
+constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 
 inline uint64_t getDailyReadingGoalMs() { return SETTINGS.getDailyGoalMs(); }
 
@@ -309,6 +316,84 @@ class ReadingStatsStore {
   // (today / streak / recent 7-30 windows). Loads the store if needed, then
   // releases it again to keep the boot/Home fast path memory-light.
   void regenerateSummaryAfterClockChange();
+
+  // Save stats on reader exit with maximum memory freed first.
+  // The callback is invoked BEFORE loading the full store (only if not already loaded),
+  // allowing the caller to free renderer buffers, font caches, EPUB section cache, etc.
+  // After saving, the full store is released (loaded_ = false).
+  // Returns true if save succeeded.
+  template <typename FreeMemFn>
+  bool saveAndReleaseForExit(FreeMemFn&& freeMemoryBeforeLoad) {
+    if (!dirty && !activeSession.active) {
+      return true; // Nothing to save
+    }
+
+    // If stats are already loaded in RAM (normal case during reading), don't reload from disk.
+    // Only load from disk if we somehow lost the in-RAM copy.
+    if (!loaded_) {
+      // 1. Free as much memory as possible before loading the full store
+      freeMemoryBeforeLoad();
+
+      // 2. Load full store from disk
+      if (!loadFromFile()) {
+        LOG_ERR("RST", "Failed to load stats for exit save");
+        return false;
+      }
+    }
+
+    // 3. Merge active session data (endSession logic without the final save)
+    if (activeSession.active && activeSession.bookIndex < books.size()) {
+      noteActivity(); // flush pending time
+
+      auto& book = books[activeSession.bookIndex];
+      const bool countedSession = activeSession.accumulatedMs >= MIN_SESSION_READING_MS;
+      const uint32_t sessionMs = (activeSession.accumulatedMs > static_cast<uint64_t>(UINT32_MAX))
+                                     ? UINT32_MAX
+                                     : static_cast<uint32_t>(activeSession.accumulatedMs);
+
+      if (countedSession) {
+        book.sessions++;
+        book.lastSessionMs = sessionMs;
+        const uint32_t sessionTimestamp = getReferenceTimestamp(TimeUtils::getAuthoritativeTimestamp(), book.lastReadAt);
+        if (isClockValid(sessionTimestamp)) {
+          appendSessionLogEntry(TimeUtils::getLocalDayOrdinal(sessionTimestamp), sessionMs, book);
+        }
+        markDirty();
+      }
+
+      lastSessionSnapshot.valid = true;
+      lastSessionSnapshot.serial = ++sessionSerialCounter;
+      lastSessionSnapshot.bookId = book.bookId;
+      lastSessionSnapshot.path = book.path;
+      lastSessionSnapshot.sessionMs = sessionMs;
+      lastSessionSnapshot.counted = countedSession;
+      lastSessionSnapshot.completedThisSession = !activeSession.startCompleted && book.completed;
+      lastSessionSnapshot.startProgressPercent = activeSession.startProgressPercent;
+      lastSessionSnapshot.endProgressPercent = book.lastProgressPercent;
+
+      activeSession = {};
+    }
+
+    // 4. Save to disk (persist full store + summary.json)
+    const bool saved = persistToFile(ReadingStatsBackup::READING_STATS_FILE_JSON);
+    if (saved) {
+      saveSummaryJSON();
+    }
+
+    // 5. Release full store from RAM (clear ALL vectors like upstream)
+    books.clear(); books.shrink_to_fit();
+    legacyReadingDays.clear(); legacyReadingDays.shrink_to_fit();
+    readingDays.clear(); readingDays.shrink_to_fit();
+    sessionLog.clear(); sessionLog.shrink_to_fit();
+    loaded_ = false;
+    dirty = false;
+    lastSaveMs = millis();
+    bumpGeneration();
+
+    LOG_DBG("RST", "Exit save done: free=%u largest=%u", ESP.getFreeHeap(),
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
+    return saved;
+  }
 
  private:
   mutable bool homeInvalidationRequested = false;
