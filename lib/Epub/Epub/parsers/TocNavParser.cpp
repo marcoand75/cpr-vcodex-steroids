@@ -73,7 +73,6 @@ void XMLCALL TocNavParser::startElement(void* userData, const XML_Char* name, co
     for (int i = 0; atts[i]; i += 2) {
       if ((strcmp(atts[i], "epub:type") == 0 || strcmp(atts[i], "type") == 0) && strcmp(atts[i + 1], "toc") == 0) {
         self->state = IN_NAV_TOC;
-        LOG_DBG("NAV", "Found nav toc element");
         return;
       }
     }
@@ -165,7 +164,6 @@ void XMLCALL TocNavParser::endElement(void* userData, const XML_Char* name) {
 
   if (strcmp(name, "nav") == 0 && self->state >= IN_NAV_TOC) {
     self->state = IN_BODY;
-    LOG_DBG("NAV", "Finished parsing nav toc");
     return;
   }
 }

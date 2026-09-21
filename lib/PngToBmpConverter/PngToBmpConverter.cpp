@@ -2,23 +2,22 @@
 
 #include <HalDisplay.h>
 #include <HalStorage.h>
-#include <InflateStream.h>
+#include <InflateReader.h>
 #include <Logging.h>
-#include <Memory.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 #include "BitmapHelpers.h"
+#include "DitheringConfig.h"
 
 // ============================================================================
 // IMAGE PROCESSING OPTIONS - Same as JpegToBmpConverter for consistency
+// Dithering method selection uses DitheringConfig.h (USE_ATKINSON /
+// USE_FLOYD_STEINBERG).
 // ============================================================================
 constexpr bool USE_8BIT_OUTPUT = false;
-constexpr bool USE_ATKINSON = true;
-constexpr bool USE_FLOYD_STEINBERG = false;
 constexpr bool USE_PRESCALE = true;
 // ============================================================================
 
@@ -75,14 +74,8 @@ enum PngFilter : uint8_t {
   PNG_FILTER_PAETH = 4,
 };
 
-void yieldDuringDecode(uint8_t& rowsSinceYield) {
-  if (++rowsSinceYield < 8) return;
-  rowsSinceYield = 0;
-  vTaskDelay(1);
-}
-
 // Read a big-endian 32-bit value from file
-bool readBE32(HalFile& file, uint32_t& value) {
+bool readBE32(FsFile& file, uint32_t& value) {
   uint8_t buf[4];
   if (file.read(buf, 4) != 4) return false;
   value = (static_cast<uint32_t>(buf[0]) << 24) | (static_cast<uint32_t>(buf[1]) << 16) |
@@ -183,9 +176,10 @@ void writeBmpHeader2bit(Print& bmpOut, const int width, const int height) {
 }  // namespace
 
 // Context for streaming PNG decompression
+// IMPORTANT: reader must be the first field - the uzlib callback casts uzlib_uncomp* to PngDecodeContext*
 struct PngDecodeContext {
-  InflateStream reader;
-  HalFile* file;
+  InflateReader reader;  // Must be first — callback casts uzlib_uncomp* to PngDecodeContext*
+  FsFile* file;
 
   // PNG image properties
   uint32_t width;
@@ -203,7 +197,7 @@ struct PngDecodeContext {
   uint32_t chunkBytesRemaining;  // bytes left in current IDAT chunk
   bool idatFinished;             // no more IDAT chunks
 
-  // File read buffer for feeding the inflate stream
+  // File read buffer for feeding uzlib
   uint8_t readBuf[2048];
 
   // Palette for indexed color (type 3)
@@ -237,21 +231,21 @@ static bool findNextIdatChunk(PngDecodeContext& ctx) {
   }
 }
 
-// Fill callback: reads the next batch of IDAT data from the file
-static size_t pngIdatFillCallback(void* vctx, const uint8_t** data) {
-  auto* ctx = static_cast<PngDecodeContext*>(vctx);
+// uzlib callback: reads the next batch of IDAT data from the file
+static int pngIdatReadCallback(uzlib_uncomp* uncomp) {
+  auto* ctx = reinterpret_cast<PngDecodeContext*>(uncomp);
 
-  if (ctx->idatFinished) return 0;
+  if (ctx->idatFinished) return -1;
 
   // Skip 4-byte CRC and find next IDAT chunk when current chunk is exhausted
   while (ctx->chunkBytesRemaining == 0) {
     if (!ctx->file->seekCur(4)) {  // skip 4-byte CRC of previous IDAT
       ctx->idatFinished = true;
-      return 0;
+      return -1;
     }
     if (!findNextIdatChunk(*ctx)) {
       ctx->idatFinished = true;
-      return 0;
+      return -1;
     }
   }
 
@@ -259,15 +253,18 @@ static size_t pngIdatFillCallback(void* vctx, const uint8_t** data) {
   size_t toRead = sizeof(ctx->readBuf);
   if (toRead > ctx->chunkBytesRemaining) toRead = ctx->chunkBytesRemaining;
 
-  const int bytesRead = ctx->file->read(ctx->readBuf, toRead);
+  int bytesRead = ctx->file->read(ctx->readBuf, toRead);
   if (bytesRead <= 0) {
     ctx->idatFinished = true;
-    return 0;
+    return -1;
   }
 
   ctx->chunkBytesRemaining -= bytesRead;
-  *data = ctx->readBuf;
-  return static_cast<size_t>(bytesRead);
+
+  // Give uzlib the buffer (skip first byte since we return it directly)
+  uncomp->source = ctx->readBuf + 1;
+  uncomp->source_limit = ctx->readBuf + bytesRead;
+  return ctx->readBuf[0];
 }
 
 // Decode one scanline: decompress filter byte + raw bytes, then unfilter
@@ -400,9 +397,18 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
   }
 }
 
-bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
+bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
                                                    bool oneBit, bool crop) {
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
+
+  // PNG decoding needs a 32 KB inflate window plus scanline and output buffers.
+  // Bail out early if the heap cannot satisfy the largest allocation, so the
+  // caller can retry later instead of writing a permanent sentinel.
+  if (ESP.getMaxAllocHeap() < 42 * 1024) {
+    LOG_DBG("PNG", "Insufficient contiguous heap for PNG decode (maxAlloc=%u < 42KB), skipping",
+            ESP.getMaxAllocHeap());
+    return false;
+  }
 
   // Verify PNG signature
   uint8_t sig[8];
@@ -560,16 +566,16 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
-  // Initialize streaming decompressor with 32KB window for back-reference history
+  // Initialize streaming decompressor with 32KB ring buffer for back-reference history
   if (!ctx.reader.init(true)) {
-    LOG_ERR("PNG", "Failed to init inflate stream");
+    LOG_ERR("PNG", "Failed to init inflate reader");
     free(ctx.currentRow);
     free(ctx.previousRow);
     return false;
   }
-  ctx.reader.setFill(pngIdatFillCallback, &ctx);
-  // PNG IDAT data is zlib-wrapped (2-byte header + trailing adler32)
-  ctx.reader.setZlibWrapped();
+  ctx.reader.setReadCallback(pngIdatReadCallback);
+  // PNG IDAT data is zlib-wrapped: consume the 2-byte zlib header (CMF + FLG)
+  ctx.reader.skipZlibHeader();
 
   // Calculate output dimensions (same logic as JpegToBmpConverter)
   int outWidth = width;
@@ -624,56 +630,54 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
-  // Create ditherers (same as JpegToBmpConverter)
-  std::unique_ptr<AtkinsonDitherer> atkinsonDitherer;
-  std::unique_ptr<FloydSteinbergDitherer> fsDitherer;
-  std::unique_ptr<Atkinson1BitDitherer> atkinson1BitDitherer;
+  // Create ditherers (same as JpegToBmpConverter). Nothrow-safe: on OOM we fall
+  // back to simple quantization for this image rather than aborting the device.
+  AtkinsonDitherer* atkinsonDitherer = nullptr;
+  FloydSteinbergDitherer* fsDitherer = nullptr;
+  Atkinson1BitDitherer* atkinson1BitDitherer = nullptr;
 
   if (oneBit) {
-    atkinson1BitDitherer = makeUniqueNoThrow<Atkinson1BitDitherer>(outWidth);
-    if (!atkinson1BitDitherer || !atkinson1BitDitherer->isValid()) {
-      LOG_ERR("PNG", "Failed to allocate dithering buffers");
-      free(rowBuffer);
-      free(ctx.currentRow);
-      free(ctx.previousRow);
-      return false;
+    if (g_imageRenderDitheringEnabled) {
+      atkinson1BitDitherer = new (std::nothrow) Atkinson1BitDitherer(outWidth);
+      if (atkinson1BitDitherer && !atkinson1BitDitherer->valid()) {
+        delete atkinson1BitDitherer;
+        atkinson1BitDitherer = nullptr;
+      }
     }
   } else if (!USE_8BIT_OUTPUT) {
-    if (USE_ATKINSON) {
-      atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
-      if (!atkinsonDitherer || !atkinsonDitherer->isValid()) {
-        LOG_ERR("PNG", "Failed to allocate dithering buffers");
-        free(rowBuffer);
-        free(ctx.currentRow);
-        free(ctx.previousRow);
-        return false;
+    if (g_imageRenderDitheringEnabled) {
+      if (g_imageRenderUseAtkinson) {
+      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(outWidth);
+      if (atkinsonDitherer && !atkinsonDitherer->valid()) {
+        delete atkinsonDitherer;
+        atkinsonDitherer = nullptr;
       }
-    } else if (USE_FLOYD_STEINBERG) {
-      fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
-      if (!fsDitherer || !fsDitherer->isValid()) {
-        LOG_ERR("PNG", "Failed to allocate dithering buffers");
-        free(rowBuffer);
-        free(ctx.currentRow);
-        free(ctx.previousRow);
-        return false;
+    } else {
+      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(outWidth);
+      if (fsDitherer && !fsDitherer->valid()) {
+        delete fsDitherer;
+        fsDitherer = nullptr;
       }
     }
+    }  // g_imageRenderDitheringEnabled
   }
 
   // Scaling accumulators
-  std::unique_ptr<uint32_t[]> rowAccum;
-  std::unique_ptr<uint16_t[]> rowCount;
+  uint32_t* rowAccum = nullptr;
+  uint16_t* rowCount = nullptr;
   int currentOutY = 0;
   uint32_t nextOutY_srcStart = 0;
 
   if (needsScaling) {
-    rowAccum = makeUniqueNoThrow<uint32_t[]>(outWidth);
-    rowCount = makeUniqueNoThrow<uint16_t[]>(outWidth);
+    rowAccum = new (std::nothrow) uint32_t[outWidth]();
+    rowCount = new (std::nothrow) uint16_t[outWidth]();
     if (!rowAccum || !rowCount) {
-      LOG_ERR("PNG", "Failed to allocate scaling buffers");
-      free(rowBuffer);
-      free(ctx.currentRow);
-      free(ctx.previousRow);
+      LOG_ERR("PNG", "OOM: scaling buffers — skipping cover");
+      delete[] rowAccum;
+      delete[] rowCount;
+      delete atkinson1BitDitherer;
+      delete atkinsonDitherer;
+      delete fsDitherer;
       return false;
     }
     nextOutY_srcStart = scaleY_fp;
@@ -684,6 +688,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
   auto* grayRow = static_cast<uint8_t*>(malloc(width));
   if (!grayRow) {
     LOG_ERR("PNG", "Failed to allocate grayscale row buffer");
+    delete[] rowAccum;
+    delete[] rowCount;
+    delete atkinsonDitherer;
+    delete fsDitherer;
+    delete atkinson1BitDitherer;
     free(rowBuffer);
     free(ctx.currentRow);
     free(ctx.previousRow);
@@ -691,7 +700,6 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
   }
 
   bool success = true;
-  uint8_t rowsSinceYield = 0;
 
   // Process each scanline
   for (uint32_t y = 0; y < height; y++) {
@@ -743,7 +751,6 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
           fsDitherer->nextRow();
       }
       bmpOut.write(rowBuffer, bytesPerRow);
-      yieldDuringDecode(rowsSinceYield);
     } else {
       // Area-averaging scaling (same as JpegToBmpConverter)
       for (int outX = 0; outX < outWidth; outX++) {
@@ -812,7 +819,6 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
         bmpOut.write(rowBuffer, bytesPerRow);
         currentOutY++;
-        yieldDuringDecode(rowsSinceYield);
 
         nextOutY_srcStart = static_cast<uint32_t>(currentOutY + 1) * scaleY_fp;
 
@@ -823,8 +829,8 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
           continue;
         }
         // Moving to next source row - reset accumulators
-        memset(rowAccum.get(), 0, outWidth * sizeof(uint32_t));
-        memset(rowCount.get(), 0, outWidth * sizeof(uint16_t));
+        memset(rowAccum, 0, outWidth * sizeof(uint32_t));
+        memset(rowCount, 0, outWidth * sizeof(uint16_t));
       }
     }
 
@@ -836,6 +842,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
   // Clean up
   free(grayRow);
+  delete[] rowAccum;
+  delete[] rowCount;
+  delete atkinsonDitherer;
+  delete fsDitherer;
+  delete atkinson1BitDitherer;
   free(rowBuffer);
   free(ctx.currentRow);
   free(ctx.previousRow);
@@ -846,19 +857,19 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
   return success;
 }
 
-bool PngToBmpConverter::pngFileToBmpStream(HalFile& pngFile, Print& bmpOut, bool crop) {
+bool PngToBmpConverter::pngFileToBmpStream(FsFile& pngFile, Print& bmpOut, bool crop) {
   // Use runtime display dimensions (swapped for portrait cover sizing)
   const int targetWidth = display.getDisplayHeight();
   const int targetHeight = display.getDisplayWidth();
   return pngFileToBmpStreamInternal(pngFile, bmpOut, targetWidth, targetHeight, false, crop);
 }
 
-bool PngToBmpConverter::pngFileToBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth,
+bool PngToBmpConverter::pngFileToBmpStreamWithSize(FsFile& pngFile, Print& bmpOut, int targetMaxWidth,
                                                    int targetMaxHeight) {
   return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, false);
 }
 
-bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth,
-                                                       int targetMaxHeight) {
-  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
+bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(FsFile& pngFile, Print& bmpOut, int targetMaxWidth,
+                                                       int targetMaxHeight, bool adaptiveContain) {
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, !adaptiveContain);
 }

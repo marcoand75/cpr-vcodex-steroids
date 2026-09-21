@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide helps you build and run CPR-vCodex locally.
+This guide helps you build and run CPR-vCodex Steroids locally.
 
 ## Prerequisites
 
@@ -43,8 +43,8 @@ The reported major version must be 21 or newer.
 ## Clone and initialize
 
 ```sh
-git clone --recursive https://github.com/franssjz/cpr-vcodex
-cd cpr-vcodex
+git clone --recursive https://github.com/marcoand75/CPR-vCodex Steroids-steroids
+cd CPR-vCodex Steroids
 ```
 
 If you already cloned without submodules:

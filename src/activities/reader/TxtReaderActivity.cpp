@@ -1,33 +1,36 @@
 #include "TxtReaderActivity.h"
 
-#include <BidiUtils.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
-#include <Memory.h>
 #include <Serialization.h>
 #include <Utf8.h>
 
 #include <algorithm>
 #include <cctype>
 
-#include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "AchievementsStore.h"
 #include "MappedInputManager.h"
 #include "ProgressFile.h"
-#include "ReaderUtils.h"
 #include "ReadingStatsStore.h"
+#include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontGlobals.h"
+#include "SilentRestart.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/AchievementPopupUtils.h"
 #include "util/BookIdentity.h"
 #include "util/CompletedBookMover.h"
+#include "util/PopupUtils.h"
+
+// External declarations for functions defined in main.cpp
+extern void freeFontMemory();
 
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
@@ -47,15 +50,18 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
   READING_STATS.endSession();
   ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
   showPendingAchievementPopups(renderer);
-  const bool countedSession = READING_STATS.getLastSessionSnapshot().valid &&
-                              READING_STATS.getLastSessionSnapshot().counted &&
-                              READING_STATS.getLastSessionSnapshot().path == bookPath;
+  const bool countedSession =
+      READING_STATS.getLastSessionSnapshot().valid && READING_STATS.getLastSessionSnapshot().counted &&
+      READING_STATS.getLastSessionSnapshot().path == bookPath;
 
   if (SETTINGS.showStatsAfterReading && countedSession && !bookPath.empty()) {
     activityManager.replaceActivity(
-        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                              /*fromReaderExit=*/true}));
   } else {
-    activityManager.goHome();
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
   }
 }
 
@@ -290,16 +296,6 @@ TxtReaderActivity::TextLine sliceTextLine(const TxtReaderActivity::TextLine& sou
 }
 }  // namespace
 
-TxtReaderActivity::TxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Txt> txt,
-                                     const bool allowFastInitialRefresh)
-    : Activity("TxtReader", renderer, mappedInput), txt(std::move(txt)) {
-  if (allowFastInitialRefresh) {
-    // Upstream: boot -> last book handoff may skip the first clean refresh.
-    const int refreshFrequency = SETTINGS.getRefreshFrequency();
-    pagesUntilFullRefresh = refreshFrequency > 1 ? refreshFrequency : 2;
-  }
-}
-
 void TxtReaderActivity::onEnter() {
   Activity::onEnter();
 
@@ -307,7 +303,7 @@ void TxtReaderActivity::onEnter() {
     return;
   }
 
-  ensureSdFontLoaded();
+  onReaderResume();
 
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
@@ -320,10 +316,14 @@ void TxtReaderActivity::onEnter() {
   APP_STATE.openEpubPath = filePath;
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(filePath, fileName, "", "", stableBookId);
-  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
 
-  // Trigger first update
+  // Trigger first update BEFORE loading reading stats so the reader screen
+  // appears promptly. Reading stats are loaded lazily afterwards.
   requestUpdate();
+
+  // Load reading stats and start session AFTER the reader is visible.
+  READING_STATS.ensureLoaded();
+  READING_STATS.beginSession(filePath, txt->getTitle(), "", txt->getCoverBmpPath(), 0, "", 0);
 }
 
 void TxtReaderActivity::onExit() {
@@ -334,102 +334,42 @@ void TxtReaderActivity::onExit() {
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
-  APP_STATE.readerActivityLoadCount = 0;
-  READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
-  txt.reset();
   decltype(pageOffsets)().swap(pageOffsets);
   decltype(currentPageLines)().swap(currentPageLines);
-  endOfBookOptions.reset();
-  endOfBookOptionsReady.store(false, std::memory_order_release);
-  APP_STATE.saveToFile();
-}
+  APP_STATE.readerActivityLoadCount = 0;
 
-bool TxtReaderActivity::endOfBookMenuActive() const {
-  return isAtEndOfBook() && endOfBookOptionsReady.load(std::memory_order_acquire) && endOfBookOptions &&
-         endOfBookOptions->menuActive();
-}
+  // Capture session snapshot for achievements BEFORE saving
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
 
-void TxtReaderActivity::clearEndOfBookOptionsIfNeeded() {
-  if (isAtEndOfBook() || !endOfBookOptionsReady.load(std::memory_order_acquire)) return;
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (txt) txt->clearCache();
+    txt.reset();
+  });
 
-  RenderLock lock(*this);
-  endOfBookOptionsReady.store(false, std::memory_order_release);
-  endOfBookOptions.reset();
-}
-
-void TxtReaderActivity::finishBookAndExit() {
-  READING_STATS.noteActivity();
-  READING_STATS.updateProgress(100, true, "", 100);
-  exitReaderAfterOptionalCompletedMove();
-}
-
-bool TxtReaderActivity::handleEndOfBookMenu() {
-  if (!endOfBookMenuActive()) {
-    return false;
-  }
-
-  std::string openPath;
-  switch (endOfBookOptions->handleMenuInput(mappedInput, &openPath)) {
-    case EndOfBookOptions::Action::OpenBook:
-      READING_STATS.updateProgress(100, true, "", 100);
-      moveCompletedBookIfEnabled();
-      activityManager.goToReader(openPath);
-      return true;
-    case EndOfBookOptions::Action::GoHome:
-      finishBookAndExit();
-      return true;
-    case EndOfBookOptions::Action::LastPage:
-      returnFromEndOfBook();
-      requestUpdate();
-      return true;
-    case EndOfBookOptions::Action::Redraw:
-      requestUpdate();
-      return true;
-    case EndOfBookOptions::Action::None:
-      return false;
-  }
-  return false;
-}
-
-void TxtReaderActivity::returnFromEndOfBook() { currentPage = totalPages > 0 ? totalPages - 1 : 0; }
-
-bool TxtReaderActivity::handleBackNavigation() {
-  // No left-edge swipe-to-exit on the reading surface: in swipe page-turn
-  // mode a right swipe must page back instead (see ReaderUtils::handleBackNavigation).
-  if (mappedInput.wasBackGesture()) {
-    return false;
-  }
-
-  const bool backTriggered =
-      mappedInput.wasLongPressed(MappedInputManager::Button::Back, ReaderUtils::GO_BACK_OR_HOME_MS) ||
-      mappedInput.wasReleased(MappedInputManager::Button::Back);
-  if (!backTriggered) return false;
-
-  const bool longPress = mappedInput.getHeldTime() >= ReaderUtils::GO_BACK_OR_HOME_MS;
-  if (longPress != static_cast<bool>(SETTINGS.backShortToFileBrowser)) {
-    // File browser, starting in the book's folder (after an optional completed-book move).
-    const std::string fileBrowserPath = moveCompletedBookIfEnabled();
-    READING_STATS.endSession();
-    ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
-    showPendingAchievementPopups(renderer);
-    activityManager.goToFileBrowser(fileBrowserPath);
-  } else {
-    exitReaderAfterOptionalCompletedMove();
-  }
-  return true;
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
+  APP_STATE.saveToFile();  // deferred: release caches before serializing state
 }
 
 void TxtReaderActivity::loop() {
   READING_STATS.tickActiveSession();
   const unsigned long nowMs = millis();
 
-  clearEndOfBookOptionsIfNeeded();
-  if (handleEndOfBookMenu()) return;
-
   if (waitingForConfirmSecondClick && ReaderUtils::hasNonConfirmNavigationInput(mappedInput)) {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
+  }
+
+  // Long press Select (700ms+) — bookmark/timer toggle or off
+  constexpr unsigned long selectLongPressMs = 700;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= selectLongPressMs) {
+    waitingForConfirmSecondClick = false;
+    firstConfirmClickMs = 0UL;
+    handleSelectLongPress();
+    return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) &&
@@ -443,62 +383,113 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  if (handleBackNavigation()) return;
+  // Short power button with expanded reader actions (beyond IGNORE/SLEEP/etc.)
+  if (ReaderUtils::wasPowerButtonReaderActionPressed(mappedInput)) {
+    const auto action = ReaderUtils::shortPwrBtnToReaderAction(
+        static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn));
+    if (action != CrossPointSettings::BTN_ACTION_OFF) {
+      // Power button is a single button — use nextTriggered=true for directional actions.
+      handleButtonAction(action, false, true, ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL);
+      return;
+    }
+  }
 
-  const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
-  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
-  prevTriggered = prevTriggered || touch.prev;
-  nextTriggered = nextTriggered || touch.next;
+  // Long press BACK (1s+) goes to file selection
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
+    const std::string fileBrowserPath = moveCompletedBookIfEnabled();
+    READING_STATS.endSession();
+    ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
+    showPendingAchievementPopups(renderer);
+    activityManager.goToFileBrowser(fileBrowserPath);
+    return;
+  }
+
+  // Short press BACK goes directly to home
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
+    exitReaderAfterOptionalCompletedMove();
+    return;
+  }
+
+  auto [prevTriggered, nextTriggered, fromTilt, fromFrontButton,
+        upBtn, downBtn, leftBtn, rightBtn] = ReaderUtils::detectPageTurn(mappedInput);
+
   if (!prevTriggered && !nextTriggered) {
     return;
   }
+
+  const bool longPress = !fromTilt && mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+  const bool frontLongPress = !fromTilt && fromFrontButton && longPress;
+
+  // Front button long-press: dispatch per-directional
+  if (frontLongPress) {
+    CrossPointSettings::BUTTON_ACTION act = CrossPointSettings::BTN_ACTION_OFF;
+    ReaderUtils::ButtonDirection dir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+    if (leftBtn) {
+      act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressLeftBehavior);
+      dir = ReaderUtils::ButtonDirection::BTN_DIR_LEFT;
+    } else if (rightBtn) {
+      act = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.frontLongPressRightBehavior);
+      dir = ReaderUtils::ButtonDirection::BTN_DIR_RIGHT;
+    }
+    // Fall back to legacy frontLongPressBehavior
+    if (act == CrossPointSettings::BTN_ACTION_OFF) {
+      act = ReaderUtils::legacyFrontLongPressToButtonAction(SETTINGS.frontLongPressBehavior);
+    }
+    if (longPress && handleButtonAction(act, prevTriggered, nextTriggered, dir)) {
+      return;
+    }
+  }
+
   if (fromTilt) {
     waitingForConfirmSecondClick = false;
     firstConfirmClickMs = 0UL;
   }
 
-  if (isAtEndOfBook()) {
-    // The suggestion menu (when shown) already consumed its input above.
-    if (endOfBookMenuActive()) return;
-    if (nextTriggered) {
-      finishBookAndExit();
-    } else {
-      returnFromEndOfBook();
-      requestUpdate();
+  // Side button long-press: dispatch per-directional
+  const bool sideLongPress = !fromFrontButton && longPress;
+
+  CrossPointSettings::BUTTON_ACTION sideAct = CrossPointSettings::BTN_ACTION_OFF;
+  ReaderUtils::ButtonDirection sideDir = ReaderUtils::ButtonDirection::BTN_DIR_NEUTRAL;
+  if (sideLongPress) {
+    if (upBtn) {
+      sideAct = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressUpBehavior);
+      sideDir = ReaderUtils::ButtonDirection::BTN_DIR_UP;
+    } else if (downBtn) {
+      sideAct = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.longPressDownBehavior);
+      sideDir = ReaderUtils::ButtonDirection::BTN_DIR_DOWN;
     }
-    return;
+    // Fall back to legacy longPressButtonBehavior
+    if (sideAct == CrossPointSettings::BTN_ACTION_OFF) {
+      sideAct = ReaderUtils::legacyLongPressToButtonAction(SETTINGS.longPressButtonBehavior);
+    }
+    if (sideLongPress && handleButtonAction(sideAct, prevTriggered, nextTriggered, sideDir)) {
+      return;
+    }
   }
 
-  const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
-  const bool skip = !fromTilt && SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP &&
-                    heldMs >= ReaderUtils::SKIP_HOLD_MS;
-  const int amount = skip ? 10 : 1;
+  // Default: calculate skip amount for normal page turn
+  const bool skipPages = sideLongPress &&
+                         sideAct == CrossPointSettings::BTN_ACTION_CHAPTER_SKIP &&
+                         (SETTINGS.longPressUpBehavior == CrossPointSettings::BTN_ACTION_CHAPTER_SKIP ||
+                          SETTINGS.longPressDownBehavior == CrossPointSettings::BTN_ACTION_CHAPTER_SKIP ||
+                          SETTINGS.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP);
 
-  if (prevTriggered) {
-    if (skipPages(-amount)) {
-      READING_STATS.noteActivity();
-      requestUpdate();
-    }
+  if (prevTriggered && currentPage > 0) {
+    READING_STATS.noteActivity();
+    currentPage -= (skipPages && currentPage > 10) ? 10 : 1;
+    requestUpdate();
   } else if (nextTriggered) {
-    if (skipPages(amount)) {
+    if (currentPage < totalPages - 1) {
       READING_STATS.noteActivity();
+      const int pagesToMove = (skipPages && totalPages - currentPage > 10) ? 10 : 1;
+      currentPage += pagesToMove;
       requestUpdate();
+    } else {
+      READING_STATS.updateProgress(100, true, "", 100);
+      exitReaderAfterOptionalCompletedMove();
     }
   }
-}
-
-bool TxtReaderActivity::skipPages(const int amount) {
-  if (!initialized) return false;
-
-  int newPage = currentPage + amount;
-  if (newPage < 0) newPage = 0;
-  // totalPages is an intentional end-of-book sentinel. Keep it reachable so
-  // multi-page skips and ordinary forward turns share the same completion path.
-  if (newPage > totalPages) newPage = totalPages;
-  if (newPage == currentPage) return false;
-
-  currentPage = newPage;
-  return true;
 }
 
 void TxtReaderActivity::requestCurrentPageFullRefresh() {
@@ -543,7 +534,32 @@ std::string TxtReaderActivity::moveCompletedBookIfEnabled() {
 
 void TxtReaderActivity::exitReaderAfterOptionalCompletedMove() {
   const std::string exitPath = moveCompletedBookIfEnabled();
-  exitReaderToHomeOrStats(renderer, mappedInput, exitPath);
+
+  // Capture session snapshot for achievements BEFORE saving
+  const auto snapshot = READING_STATS.getLastSessionSnapshot();
+
+  // Save reading stats with maximum heap freed first
+  READING_STATS.saveAndReleaseForExit([this]() {
+    // Free reader-specific memory before loading full stats store
+    renderer.freeUnusedRenderMemory();
+    freeFontMemory();
+    if (txt) txt->clearCache();
+  });
+
+  ACHIEVEMENTS.recordSessionEnded(snapshot);
+  showPendingAchievementPopups(renderer);
+
+  const bool countedSession = snapshot.valid && snapshot.counted && snapshot.path == exitPath;
+
+  if (SETTINGS.showStatsAfterReading && countedSession && !exitPath.empty()) {
+    activityManager.replaceActivity(
+        std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, exitPath,
+                                                     ReadingStatsDetailContext{/*showSessionSummary=*/true,
+                                                                               /*fromReaderExit=*/true}));
+  } else {
+    // Silent restart to Home: reclaim fragmented heap without the "Loading..." popup.
+    silentRestartToHome();
+  }
 }
 
 void TxtReaderActivity::initializeReader() {
@@ -598,8 +614,6 @@ void TxtReaderActivity::buildPageIndex() {
   LOG_DBG("TRS", "Building page index for %zu bytes...", fileSize);
 
   GUI.drawPopup(renderer, tr(STR_INDEXING));
-  // The popup is a full render of its own; do not fast-refresh over it.
-  pagesUntilFullRefresh = 1;
 
   while (offset < fileSize) {
     std::vector<TextLine> tempLines;
@@ -684,8 +698,9 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine>& o
 
     // Extract line content for display (without CR/LF)
     const std::string sourceLine(reinterpret_cast<char*>(buffer + pos), displayLen);
-    TextLine lineInfo = txt->isMarkdown() ? parseMarkdownLine(sourceLine, cachedParagraphAlignment)
-                                          : makePlainTextLine(sourceLine, cachedParagraphAlignment);
+    TextLine lineInfo =
+        txt->isMarkdown() ? parseMarkdownLine(sourceLine, cachedParagraphAlignment)
+                          : makePlainTextLine(sourceLine, cachedParagraphAlignment);
     if (lineInfo.text.empty() && txt->isMarkdown() && trimMarkdownWhitespace(sourceLine).empty() &&
         static_cast<int>(outLines.size()) < linesPerPage) {
       outLines.push_back(std::move(lineInfo));
@@ -703,8 +718,7 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine>& o
       const auto lineStyle = static_cast<EpdFontFamily::Style>(lineInfo.style);
       const int indentPx = lineInfo.indent * renderer.getSpaceWidth(cachedFontId, lineStyle) * 2;
       const int lineViewportWidth = std::max(1, viewportWidth - indentPx);
-      int lineWidth =
-          getTextLineWidth(renderer, cachedFontId, sliceTextLine(lineInfo, wrappedLineStart, line.length()));
+      int lineWidth = getTextLineWidth(renderer, cachedFontId, sliceTextLine(lineInfo, wrappedLineStart, line.length()));
 
       if (lineWidth <= lineViewportWidth) {
         TextLine displayLine = sliceTextLine(lineInfo, wrappedLineStart, line.length());
@@ -779,25 +793,6 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TextLine>& o
   return !outLines.empty();
 }
 
-void TxtReaderActivity::renderEndOfBook() {
-  if (!endOfBookOptions) {
-    endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
-    if (!endOfBookOptions) LOG_ERR("TRS", "OOM: EndOfBookOptions");
-  }
-  renderer.clearScreen();
-  if (endOfBookOptions) {
-    endOfBookOptions->loadOnce(txt->getPath());
-    // Release-publish AFTER loadOnce() so the main task's acquire load can't
-    // observe an object whose names/selector are still being populated.
-    endOfBookOptionsReady.store(true, std::memory_order_release);
-    endOfBookOptions->render(renderer, mappedInput);
-  } else {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() * 3 / 8, tr(STR_END_OF_BOOK), true,
-                              EpdFontFamily::BOLD);
-  }
-  renderer.displayBuffer();
-}
-
 void TxtReaderActivity::render(RenderLock&&) {
   if (!txt) {
     return;
@@ -810,21 +805,14 @@ void TxtReaderActivity::render(RenderLock&&) {
 
   if (pageOffsets.empty()) {
     renderer.clearScreen();
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() * 3 / 8, tr(STR_EMPTY_FILE), true,
-                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_FILE), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();
     return;
   }
 
   // Bounds check
   if (currentPage < 0) currentPage = 0;
-  if (currentPage > totalPages) currentPage = totalPages;
-
-  if (isAtEndOfBook()) {
-    READING_STATS.updateProgress(100, true, "", 100);
-    renderEndOfBook();
-    return;
-  }
+  if (currentPage >= totalPages) currentPage = totalPages - 1;
 
   // Load current page content
   size_t offset = pageOffsets[currentPage];
@@ -852,17 +840,8 @@ void TxtReaderActivity::renderPage() {
         const int indentPx = line.indent * renderer.getSpaceWidth(cachedFontId, lineStyle) * 2;
         int x = cachedOrientedMarginLeft;
 
-        // Upstream: a line that opens with a strong RTL run is laid out right-to-left,
-        // so left/justified alignment becomes right alignment for it.
-        const bool lineIsRtl = BidiUtils::startsWithRtl(line.text.c_str(), BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH);
-        uint8_t effectiveAlignment = line.alignment;
-        if (lineIsRtl && (effectiveAlignment == CrossPointSettings::LEFT_ALIGN ||
-                          effectiveAlignment == CrossPointSettings::JUSTIFIED)) {
-          effectiveAlignment = CrossPointSettings::RIGHT_ALIGN;
-        }
-
         // Apply text alignment
-        switch (effectiveAlignment) {
+        switch (line.alignment) {
           case CrossPointSettings::LEFT_ALIGN:
           default:
             // x already set to left margin
@@ -882,11 +861,8 @@ void TxtReaderActivity::renderPage() {
             // (true justification would require word spacing adjustments)
             break;
         }
-        if (effectiveAlignment == CrossPointSettings::LEFT_ALIGN ||
-            effectiveAlignment == CrossPointSettings::JUSTIFIED) {
+        if (line.alignment == CrossPointSettings::LEFT_ALIGN || line.alignment == CrossPointSettings::JUSTIFIED) {
           x += indentPx;
-        } else if (effectiveAlignment == CrossPointSettings::RIGHT_ALIGN && lineIsRtl) {
-          x -= indentPx;
         }
 
         if (line.spans.empty()) {
@@ -907,8 +883,7 @@ void TxtReaderActivity::renderPage() {
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  renderLines();      // scan pass — text accumulated, no drawing
-  renderStatusBar();  // scan: a CJK title joins the batch prewarm
+  renderLines();  // scan pass — text accumulated, no drawing
   scope.endScanAndPrewarm();
 
   // BW rendering
@@ -917,14 +892,10 @@ void TxtReaderActivity::renderPage() {
 
   const bool forceFullRefresh = pendingForceFullRefresh;
   pendingForceFullRefresh = false;
+  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, forceFullRefresh);
 
-  if (SETTINGS.textAntiAliasing && !renderer.isDarkMode()) {
-    // Panels that combine the B/W base with the gray planes (Paper Mono) defer
-    // the base activation; everyone else displays normally here.
-    ReaderUtils::displayBaseWithRefreshCycle(renderer, pagesUntilFullRefresh, forceFullRefresh);
+  if (SETTINGS.textAntiAliasing) {
     ReaderUtils::renderAntiAliased(renderer, [&renderLines]() { renderLines(); });
-  } else {
-    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, forceFullRefresh);
   }
   // scope destructor clears font cache via FontCacheManager
 }
@@ -936,7 +907,7 @@ void TxtReaderActivity::renderStatusBar() const {
 
   const float progress = totalPages > 0 ? (currentPage + 1) * 100.0f / totalPages : 0;
   std::string title;
-  if (SETTINGS.statusBarSpec().showsTitle()) {
+  if (SETTINGS.statusBarTitle != CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE) {
     title = txt->getTitle();
   }
   GUI.drawStatusBar(renderer, progress, currentPage + 1, totalPages, title);
@@ -958,19 +929,16 @@ void TxtReaderActivity::saveProgress() const {
   data[1] = (currentPage >> 8) & 0xFF;
   data[2] = 0;
   data[3] = 0;
-  if (!ProgressFile::writeAtomicPath("TRS", progressPath, data, sizeof(data))) {
-    LOG_ERR("TRS", "Failed to save progress: page %d", currentPage);
-  }
+  ProgressFile::writeAtomicPath("TRS", progressPath, data, sizeof(data));
 }
 
 void TxtReaderActivity::loadProgress() {
-  HalFile f;
+  FsFile f;
   bool loadedFromLegacy = false;
   const std::string stableProgressPath = getStableProgressPath(stableBookId);
   const std::string legacyProgressPath = getLegacyProgressPath(*txt);
-  const std::string progressPath = (!stableProgressPath.empty() && Storage.exists(stableProgressPath.c_str()))
-                                       ? stableProgressPath
-                                       : legacyProgressPath;
+  const std::string progressPath =
+      (!stableProgressPath.empty() && Storage.exists(stableProgressPath.c_str())) ? stableProgressPath : legacyProgressPath;
   if (progressPath == legacyProgressPath) {
     loadedFromLegacy = !stableProgressPath.empty() && Storage.exists(legacyProgressPath.c_str());
   }
@@ -1007,7 +975,7 @@ bool TxtReaderActivity::loadPageIndexCache() {
   // - N * uint32_t: page offsets
 
   std::string cachePath = txt->getCachePath() + "/index.bin";
-  HalFile f;
+  FsFile f;
   if (!Storage.openFileForRead("TRS", cachePath, f)) {
     LOG_DBG("TRS", "No page index cache found");
     return false;
@@ -1090,7 +1058,7 @@ bool TxtReaderActivity::loadPageIndexCache() {
 
 void TxtReaderActivity::savePageIndexCache() const {
   std::string cachePath = txt->getCachePath() + "/index.bin";
-  HalFile f;
+  FsFile f;
   if (!Storage.openFileForWrite("TRS", cachePath, f)) {
     LOG_ERR("TRS", "Failed to save page index cache");
     return;
@@ -1122,10 +1090,122 @@ ScreenshotInfo TxtReaderActivity::getScreenshotInfo() const {
     const std::string t = txt->getTitle();
     snprintf(info.title, sizeof(info.title), "%s", t.c_str());
   }
-  const int clampedPage = std::min(currentPage, std::max(0, totalPages - 1));
-  info.currentPage = clampedPage + 1;
+  info.currentPage = currentPage + 1;
   info.totalPages = totalPages;
-  info.progressPercent = totalPages > 0 ? static_cast<int>((clampedPage + 1) * 100.0f / totalPages + 0.5f) : 0;
+  info.progressPercent = totalPages > 0 ? static_cast<int>((currentPage + 1) * 100.0f / totalPages + 0.5f) : 0;
   if (info.progressPercent > 100) info.progressPercent = 100;
   return info;
+}
+
+void TxtReaderActivity::handleSelectLongPress() {
+  // Migrate legacy selectLongPress enum to BUTTON_ACTION
+  CrossPointSettings::BUTTON_ACTION action;
+  const uint8_t legacy = SETTINGS.selectLongPress;
+  if (legacy != CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK) {
+    switch (legacy) {
+      case CrossPointSettings::SELECT_LONG_PRESS_BOOKMARK:     action = CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_READING_TIME: action = CrossPointSettings::BTN_ACTION_READING_TIME; break;
+      case CrossPointSettings::SELECT_LONG_PRESS_OFF:          action = CrossPointSettings::BTN_ACTION_OFF; break;
+      default: action = CrossPointSettings::BTN_ACTION_OFF;
+    }
+  } else {
+    action = static_cast<CrossPointSettings::BUTTON_ACTION>(SETTINGS.selectLongPressBehavior);
+  }
+  // TXT only supports READING_TIME and OFF; all others are no-ops.
+  if (action == CrossPointSettings::BTN_ACTION_READING_TIME) {
+    const bool nowPaused = !READING_STATS.isReadingPaused();
+    READING_STATS.setReadingPaused(nowPaused);
+    PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
+    requestUpdate();
+  }
+}
+
+bool TxtReaderActivity::handleButtonAction(CrossPointSettings::BUTTON_ACTION action,
+                                           bool prevTriggered, bool nextTriggered,
+                                           ReaderUtils::ButtonDirection dir) {
+  READING_STATS.noteActivity();
+
+  switch (action) {
+    case CrossPointSettings::BTN_ACTION_CHAPTER_SKIP: {
+      const int skipAmount = 10;
+      if (prevTriggered && currentPage > 0) {
+        currentPage -= (currentPage > skipAmount) ? skipAmount : 1;
+        requestUpdate();
+        return true;
+      }
+      if (nextTriggered) {
+        if (currentPage < totalPages - 1) {
+          currentPage += (totalPages - currentPage > skipAmount) ? skipAmount : 1;
+          requestUpdate();
+          return true;
+        }
+        READING_STATS.updateProgress(100, true, "", 100);
+        exitReaderAfterOptionalCompletedMove();
+        return true;
+      }
+      return false;
+    }
+
+    case CrossPointSettings::BTN_ACTION_ORIENTATION: {
+      const uint8_t newOrientation = nextTriggered ? (SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
+                                                        CrossPointSettings::ORIENTATION_COUNT
+                                                   : (SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT;
+      SETTINGS.orientation = newOrientation;
+      SETTINGS.saveToFile();
+      ReaderUtils::applyOrientation(renderer, newOrientation);
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_FONTSIZE: {
+      const bool increase = ReaderUtils::isIncreaseDirection(dir);
+      if (increase && SETTINGS.fontSize < CrossPointSettings::EXTRA_LARGE) {
+        SETTINGS.fontSize++;
+      } else if (!increase && SETTINGS.fontSize > CrossPointSettings::X_SMALL) {
+        SETTINGS.fontSize--;
+      }
+      SETTINGS.saveToFile();
+      initialized = false;
+      requestUpdate();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_DARK_MODE:
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      SETTINGS.saveToFile();
+      initialized = false;
+      requestUpdate();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_FULL_REFRESH:
+      requestCurrentPageFullRefresh();
+      return true;
+
+    case CrossPointSettings::BTN_ACTION_READER_SETTINGS: {
+      // TXT has limited reader settings — launch the reader menu
+      // via the reader menu activity or show a popup.
+      // For now, toggle status bar as a proxy for "reader settings".
+      toggleTemporaryStatusBar();
+      return true;
+    }
+
+    case CrossPointSettings::BTN_ACTION_READING_TIME: {
+      const bool nowPaused = !READING_STATS.isReadingPaused();
+      READING_STATS.setReadingPaused(nowPaused);
+      PopupUtils::showTimerPauseFeedback(renderer, nowPaused);
+      requestUpdate();
+      return true;
+    }
+
+    // TXT does not support these actions
+    case CrossPointSettings::BTN_ACTION_ADD_CLIPPING:
+    case CrossPointSettings::BTN_ACTION_VIEW_CLIPPINGS:
+    case CrossPointSettings::BTN_ACTION_TOGGLE_BOOKMARK:
+    case CrossPointSettings::BTN_ACTION_VIEW_BOOKMARKS:
+    case CrossPointSettings::BTN_ACTION_LOOKUP_WORD:
+    case CrossPointSettings::BTN_ACTION_DICTIONARY:
+    case CrossPointSettings::BTN_ACTION_OFF:
+    default:
+      return false;
+  }
 }

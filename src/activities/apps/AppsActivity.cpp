@@ -6,26 +6,37 @@
 #include <algorithm>
 
 #include "AchievementsActivity.h"
+#include "AchievementsStore.h"
 #include "BookmarksAppActivity.h"
-#include "CrossPointSettings.h"
+#include "FavoritesStore.h"
+#include "ReadingStatsStore.h"
+#include "RecentBooksStore.h"
 #include "DictionaryActivity.h"
 #include "FavoritesAppActivity.h"
 #include "FlashcardsAppActivity.h"
 #include "IfFoundActivity.h"
-#include "OpdsServerStore.h"
+#include "LibraryContextMenuActivity.h"
 #include "ReadingHeatmapActivity.h"
 #include "ReadingProfileActivity.h"
 #include "ReadingStatsActivity.h"
 #include "ScreenCleanActivity.h"
+#include "ScreenSaverActivity.h"
+#include "ClippingsAppActivity.h"
+#include "CollectionManageActivity.h"
 #include "SleepAppActivity.h"
 #include "SyncDayActivity.h"
-#include "activities/settings/ClockSyncActivity.h"
+#include "../home/FileBrowserActivity.h"
+#include "../home/RecentBooksActivity.h"
 #include "components/UITheme.h"
-#include "components/UiAppHelpers.h"
+#include "fontIds.h"
+#include "OpdsServerStore.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutUiMetadata.h"
-
-namespace fui = freeink::ui;
+#include "util/LongPress.h"
+#include "WikipediaActivity.h"
+#include "QuickCardsActivity.h"
+#include "SilentRestart.h"
 
 namespace {
 std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItems, const int itemsPerPage) {
@@ -38,9 +49,14 @@ std::string buildAppsHeaderSubtitle(const int selectedIndex, const int totalItem
   const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
   return std::to_string(currentPage) + "/" + std::to_string(totalPages) + " | " + std::to_string(totalItems);
 }
+
+// Long-press threshold for the library context-menu. Match HomeActivity's
+// RECENT_BOOK_LONG_PRESS_MS (1500ms) for consistent cross-screen behavior.
+constexpr unsigned long LIBRARY_LONG_PRESS_MS = 1500;
 }  // namespace
 
-void AppsActivity::loadShortcuts() {
+void AppsActivity::onEnter() {
+  Activity::onEnter();
   appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
   if (!OPDS_STORE.hasServers()) {
     appShortcuts.erase(std::remove_if(appShortcuts.begin(), appShortcuts.end(),
@@ -49,112 +65,148 @@ void AppsActivity::loadShortcuts() {
                                       }),
                        appShortcuts.end());
   }
-  rebuildRows();
+  selectedIndex = 0;
+  READING_STATS.ensureLoaded();
+  RECENT_BOOKS.ensureLoaded();
+  FAVORITES.ensureLoaded();
+  ACHIEVEMENTS.ensureLoaded();
+  rebuildShortcutSubtitles();
+  requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    // WikipediaActivity does a seamless silent restart on Back at root to clear heap fragmentation
+    // from WiFi/HTTP usage. AppsActivity also loads heavy stores (stats, recent books, favorites, achievements)
+    // which fragment the heap. Do a seamless silent restart to Home to reclaim heap.
+    LOG_DBG("APPS", "Back at root: requesting seamless silent restart to Home (free=%d maxA=%d)",
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    silentRestartToHome();
+    // Unreachable: ESP.restart() above resets the CPU.
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    self->openSelectedApp();
+  }, this, false);
+
+  auto onNavPress = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    } else {
+      self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()));
+    }
+    self->requestUpdate();
+  };
+
+  auto onNavContinuous = [](void* ctx, int delta) {
+    auto* self = static_cast<AppsActivity*>(ctx);
+    if (self->appShortcuts.empty()) return;
+    const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+    if (delta > 0) {
+      self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    } else {
+      self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, static_cast<int>(self->appShortcuts.size()), pageItems);
+    }
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavPressAndContinuous(onNavPress, onNavContinuous, this);
 }
 
-// Derives the row cache from appShortcuts. Called whenever the shortcut list
-// is (re)loaded, never from buildScreen(), which reuses the rows on repaint.
-void AppsActivity::rebuildRows() {
-  shortcutNames.clear();
+void AppsActivity::loop() {
+  listInputMapper.loop(mappedInput);
+
+  // Long-press detect: if the user is currently holding Confirm on the
+  // library shortcut for >= LIBRARY_LONG_PRESS_MS, open the library context
+  // menu. We can't do this from the setConfirmHandler (which fires on the
+  // press edge where getHeldTime is 0), so we poll isPressed+getHeldTime
+  // each frame. LongPress::Button makes sure we fire the menu exactly
+  // once per hold, even if the held duration is checked many times.
+  static long_press::Button confirmPress_;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    confirmPress_.reset();
+  } else if (confirmPress_.fired(mappedInput.getHeldTime(), LIBRARY_LONG_PRESS_MS)) {
+    if (appShortcuts.size() > selectedIndex &&
+        appShortcuts[selectedIndex] && appShortcuts[selectedIndex]->id == ShortcutId::Library) {
+      startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                               rebuildShortcutSubtitles();
+                               selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
+                               requestUpdate();
+                             });
+    }
+  }
+}
+
+void AppsActivity::render(RenderLock&&) {
+  renderer.clearScreen();
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
+  const std::string headerSubtitle =
+      buildAppsHeaderSubtitle(selectedIndex, static_cast<int>(appShortcuts.size()), pageItems);
+
+  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_APPS), headerSubtitle.empty() ? nullptr : headerSubtitle.c_str());
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
+
+  if (appShortcuts.empty()) {
+    ListRenderHelper::drawEmptyCentered(renderer, contentTop, tr(STR_NO_ENTRIES));
+  } else {
+    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(appShortcuts.size()),
+                 selectedIndex,
+                 [this](const int index) { return std::string(I18N.get(appShortcuts[index]->nameId)); },
+                 [this](const int index) {
+                   return (index >= 0 && index < static_cast<int>(shortcutSubtitles.size())) ? shortcutSubtitles[index]
+                                                                                              : std::string{};
+                 },
+                 [this](const int index) { return appShortcuts[index]->icon; });
+  }
+
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+
+  renderer.displayBuffer();
+}
+
+void AppsActivity::rebuildShortcutSubtitles() {
   shortcutSubtitles.clear();
-  rowItems.clear();
-  shortcutNames.reserve(appShortcuts.size());
   shortcutSubtitles.reserve(appShortcuts.size());
-  rowItems.reserve(appShortcuts.size());
 
   for (const ShortcutDefinition* definition : appShortcuts) {
     if (definition == nullptr) {
-      shortcutNames.emplace_back();
       shortcutSubtitles.emplace_back();
-    } else {
-      shortcutNames.push_back(ShortcutUiMetadata::getName(*definition));
-      shortcutSubtitles.push_back(ShortcutUiMetadata::getSubtitle(*definition));
+      continue;
     }
-  }
-
-  for (size_t i = 0; i < appShortcuts.size(); ++i) {
-    fui::ListItem item;
-    item.label = shortcutNames[i].c_str();
-    if (!shortcutSubtitles[i].empty()) item.subtitle = shortcutSubtitles[i].c_str();
-    if (appShortcuts[i] != nullptr) item.icon = listIconFor(appShortcuts[i]->icon, 32);
-    item.actionValue = static_cast<int16_t>(i);
-    rowItems.push_back(item);
+    shortcutSubtitles.push_back(ShortcutUiMetadata::getSubtitle(*definition));
   }
 }
 
-void AppsActivity::onEnter() {
-  UiListActivity::onEnter();
-  loadShortcuts();
-}
-
-void AppsActivity::onExit() {
-  Activity::onExit();
-  // rowItems alias the name/subtitle strings; drop them together.
-  rowItems.clear();
-  shortcutNames.clear();
-  shortcutSubtitles.clear();
-  appShortcuts.clear();
-}
-
-void AppsActivity::drawChrome() {
-  const std::string headerSubtitle = buildAppsHeaderSubtitle(nav.selected, listCount(), nav.pageRowsFor(listCount()));
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_APPS),
-                                      headerSubtitle.empty() ? nullptr : headerSubtitle.c_str());
-}
-
-void AppsActivity::drawFooter() {
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-}
-
-void AppsActivity::buildScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // Content below the header band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
-
-  if (appShortcuts.empty()) {
-    screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
+void AppsActivity::openSelectedApp() {
+  if (selectedIndex < 0 || selectedIndex >= static_cast<int>(appShortcuts.size())) {
     return;
   }
 
-  fui::ListProps props;
-  props.items = rowItems.data();
-  props.count = static_cast<uint16_t>(rowItems.size());
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  fui::TextStyle label = screen.theme().smallText;
-  label.bold = true;  // title/description hierarchy; also the caller-owned marker
-  props.labelText = label;
-  syncListViewport(screen, props, /*hasSubtitle=*/true);
-  screen.list(props);
-}
-
-void AppsActivity::activateIndex(const int index) {
-  if (index < 0 || index >= listCount()) return;
-  // Opening an app leaves this screen; a lingering flash would gray an
-  // unrelated row when the hub reappears.
-  app.clearTapFlash();
-  nav.selected = index;
-  openApp(index);
-}
-
-void AppsActivity::openApp(const int index) {
   std::unique_ptr<Activity> activity;
-  switch (appShortcuts[index]->id) {
-    case ShortcutId::BrowseFiles:
-      activityManager.goToFileBrowser();
-      return;
-    case ShortcutId::ReadingStats:
+  switch (appShortcuts[selectedIndex]->id) {
+   case ShortcutId::BrowseFiles:
+     startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                requestUpdate();
+                              });
+     return;
+   case ShortcutId::ReadingStats:
       activity = std::make_unique<ReadingStatsActivity>(renderer, mappedInput);
       break;
     case ShortcutId::SyncDay:
-      if (SETTINGS.isHardwareRtcAutoDayClockActive()) {
-        activity = std::make_unique<ClockSyncActivity>(renderer, mappedInput);
-      } else {
-        activity = std::make_unique<SyncDayActivity>(renderer, mappedInput);
-      }
+      activity = std::make_unique<SyncDayActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Settings:
       activityManager.goToSettings();
@@ -171,10 +223,15 @@ void AppsActivity::openApp(const int index) {
     case ShortcutId::IfFound:
       activity = std::make_unique<IfFoundActivity>(renderer, mappedInput);
       break;
-    case ShortcutId::RecentBooks:
-      activityManager.goToRecentBooks();
-      return;
-    case ShortcutId::Bookmarks:
+     case ShortcutId::RecentBooks:
+       startActivityForResult(std::make_unique<RecentBooksActivity>(renderer, mappedInput),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                requestUpdate();
+                              });
+       return;
+     case ShortcutId::Bookmarks:
       activity = std::make_unique<BookmarksAppActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Favorites:
@@ -189,31 +246,53 @@ void AppsActivity::openApp(const int index) {
     case ShortcutId::FileTransfer:
       activityManager.goToFileTransfer();
       return;
+    case ShortcutId::Library:
+      // Direct launch of the library. The library context menu is reached via
+      // long-press on the confirm button — see AppsActivity::loop() which
+      // polls isPressed+getHeldTime each frame. We must NOT branch on
+      // getHeldTime() here: openSelectedApp() is called from a press-edge
+      // setConfirmHandler (useRelease=false), where getHeldTime() is always 0.
+      activityManager.goToLibrary(true);
+      return;
+    case ShortcutId::Collections:
+      activity = std::make_unique<CollectionManageActivity>(renderer, mappedInput);
+      break;
     case ShortcutId::ScreenClean:
       activity = std::make_unique<ScreenCleanActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Sleep:
       activity = std::make_unique<SleepAppActivity>(renderer, mappedInput);
       break;
+    case ShortcutId::ScreenSaver:
+      activity = std::make_unique<ScreenSaverActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Clippings:
+      activity = std::make_unique<ClippingsAppActivity>(renderer, mappedInput);
+      break;
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();
       return;
-  }
+     case ShortcutId::Wikipedia:
+       startActivityForResult(std::make_unique<WikipediaActivity>(renderer, mappedInput, true),
+                              [this](const ActivityResult&) {
+                                appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+                                rebuildShortcutSubtitles();
+                                selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
+                                requestUpdate();
+                              });
+       return;
+    case ShortcutId::QuickCards:
+      activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Plugins:
+      activityManager.goToPluginBrowser();
+      return;
+   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
-    // The shortcut set can change underneath (Settings > Shortcuts); the
-    // interaction table still indexes the old rows until the next render.
-    closeRouting();
-    {
-      RenderLock lock(*this);
-      loadShortcuts();
-      if (appShortcuts.empty()) {
-        nav.selected = 0;
-      } else {
-        nav.selected = std::min(nav.selected, listCount() - 1);
-      }
-      nav.follow(listCount());
-    }
+    appShortcuts = getConfiguredShortcuts(CrossPointSettings::SHORTCUT_APPS);
+    rebuildShortcutSubtitles();
+    selectedIndex = ButtonNavigator::clampIndex(selectedIndex, static_cast<int>(appShortcuts.size()));
     requestUpdate();
   });
 }

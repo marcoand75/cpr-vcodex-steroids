@@ -6,7 +6,6 @@
 
 namespace ShortcutUiMetadata {
 
-std::string getName(const ShortcutDefinition& definition);
 std::string getSubtitle(const ShortcutDefinition& definition);
 bool showAccessory(const ShortcutDefinition& definition);
 

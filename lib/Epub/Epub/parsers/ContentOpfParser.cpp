@@ -14,6 +14,7 @@ constexpr char MEDIA_TYPE_NCX[] = "application/x-dtbncx+xml";
 constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char MEDIA_TYPE_IMAGE_PREFIX[] = "image/";
 constexpr char itemCacheFile[] = "/.items.bin";
+constexpr size_t ITEM_INDEX_ARENA_SLAB_BYTES = 4096;
 
 bool startsWithImageMediaType(const std::string& mediaType) {
   constexpr size_t prefixLen = sizeof(MEDIA_TYPE_IMAGE_PREFIX) - 1;
@@ -33,9 +34,17 @@ bool startsWithImageMediaType(const std::string& mediaType) {
 }  // namespace
 
 bool ContentOpfParser::setup() {
+  if (!itemIndexArena.init(ITEM_INDEX_ARENA_SLAB_BYTES)) {
+    LOG_ERR("COF", "Failed to allocate manifest index arena (%u bytes)",
+            static_cast<unsigned>(ITEM_INDEX_ARENA_SLAB_BYTES));
+    lowMemoryFailure = true;
+    return false;
+  }
+
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
     LOG_DBG("COF", "Couldn't allocate memory for parser");
+    lowMemoryFailure = true;
     return false;
   }
 
@@ -59,7 +68,7 @@ ContentOpfParser::~ContentOpfParser() {
 size_t ContentOpfParser::write(const uint8_t data) { return write(&data, 1); }
 
 size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
-  if (!parser) return 0;
+  if (!parser || parseFailed) return 0;
 
   const uint8_t* currentBufferPos = buffer;
   auto remainingInBuffer = size;
@@ -69,6 +78,7 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 
     if (!buf) {
       LOG_ERR("COF", "Couldn't allocate memory for buffer");
+      lowMemoryFailure = true;
       destroyXmlParser(parser);
       return 0;
     }
@@ -76,9 +86,12 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
     const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
     memcpy(buf, currentBufferPos, toRead);
 
-    if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
-      LOG_DBG("COF", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
-              XML_ErrorString(XML_GetErrorCode(parser)));
+    const XML_Status parseStatus = XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead);
+    if (parseStatus != XML_STATUS_OK) {
+      if (!parseFailed) {
+        LOG_DBG("COF", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
+                XML_ErrorString(XML_GetErrorCode(parser)));
+      }
       destroyXmlParser(parser);
       return 0;
     }
@@ -95,35 +108,68 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   auto* self = static_cast<ContentOpfParser*>(userData);
   (void)atts;
 
-  if (self->state == START && xmlLocalNameEquals(name, "package")) {
+  if (self->state == START && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
     self->state = IN_PACKAGE;
     return;
   }
 
-  if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "metadata")) {
+  if (self->state == IN_PACKAGE && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "title")) {
-    // Only capture the first title element; subsequent ones are subtitles
+  if (self->state == IN_METADATA && strcmp(name, "dc:title") == 0) {
+    // Only capture the first dc:title element; subsequent ones are subtitles
     if (self->title.empty()) {
       self->state = IN_BOOK_TITLE;
     }
     return;
   }
 
-  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "creator")) {
+  if (self->state == IN_METADATA && strcmp(name, "dc:creator") == 0) {
     self->state = IN_BOOK_AUTHOR;
     return;
   }
 
-  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "language")) {
+  if (self->state == IN_METADATA && strcmp(name, "dc:language") == 0) {
     self->state = IN_BOOK_LANGUAGE;
     return;
   }
 
-  if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "manifest")) {
+  if (self->state == IN_METADATA && strcmp(name, "dc:publisher") == 0) {
+    self->state = IN_BOOK_PUBLISHER;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:description") == 0) {
+    self->state = IN_BOOK_DESCRIPTION;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:date") == 0) {
+    self->state = IN_BOOK_PUBLICATION_DATE;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:identifier") == 0) {
+    // Only capture the first dc:identifier
+    if (self->identifier.empty()) {
+      self->state = IN_BOOK_IDENTIFIER;
+    }
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:subject") == 0) {
+    self->state = IN_BOOK_SUBJECT;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:rights") == 0) {
+    self->state = IN_BOOK_RIGHTS;
+    return;
+  }
+
+  if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_MANIFEST;
     if (!Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for writing. This is probably going to be a fatal error.");
@@ -131,36 +177,33 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "spine")) {
+  if (self->state == IN_PACKAGE && (strcmp(name, "spine") == 0 || strcmp(name, "opf:spine") == 0)) {
     self->state = IN_SPINE;
     if (!Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for reading. This is probably going to be a fatal error.");
     }
 
-    // Sort the (unconditionally-built) item index so every idref lookup uses binary
-    // search. Without this, small/medium manifests fell back to an O(spine × manifest)
-    // linear rescan of .items.bin per itemref (up to ~200ms/item at large scale).
-    if (!self->itemIndex.empty()) {
-      std::sort(self->itemIndex.begin(), self->itemIndex.end(), [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
-        return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
-      });
-      self->useItemIndex = true;
-      LOG_DBG("COF", "Using fast index for %zu manifest items", self->itemIndex.size());
-    }
+    // Sort the compact item index so every idref lookup uses binary search.
+    // The temp file stores hash/length plus href, avoiding a second full copy
+    // of every manifest ID.
+    std::sort(self->itemIndex.begin(), self->itemIndex.end(), [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
+      return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
+    });
+    LOG_DBG("COF", "Using compact manifest index for %zu items (arena=%u bytes)", self->itemIndex.size(),
+            static_cast<unsigned>(self->itemIndexArena.used()));
     return;
   }
 
-  if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "guide")) {
+  if (self->state == IN_PACKAGE && (strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
     self->state = IN_GUIDE;
     // TODO Remove print
-    LOG_DBG("COF", "Entering guide state.");
     if (!Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for reading. This is probably going to be a fatal error.");
     }
     return;
   }
 
-  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "meta")) {
+  if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
     bool isCover = false;
     std::string coverItemId;
 
@@ -178,7 +221,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
-  if (self->state == IN_MANIFEST && xmlLocalNameEquals(name, "item")) {
+  if (self->state == IN_MANIFEST && (strcmp(name, "item") == 0 || strcmp(name, "opf:item") == 0)) {
     std::string itemId;
     std::string href;
     std::string mediaType;
@@ -202,11 +245,21 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       entry.idHash = fnvHash(itemId);
       entry.idLen = static_cast<uint16_t>(itemId.size());
       entry.fileOffset = static_cast<uint32_t>(self->tempItemStore.position());
-      self->itemIndex.push_back(entry);
+      if (!self->itemIndex.push_back(entry)) {
+        LOG_ERR("COF", "Manifest index arena OOM at %zu items", self->itemIndex.size());
+        self->parseFailed = true;
+        self->lowMemoryFailure = true;
+        if (self->parser) {
+          XML_StopParser(self->parser, XML_FALSE);
+        }
+        return;
+      }
     }
 
-    // Write items down to SD card
-    serialization::writeString(self->tempItemStore, itemId);
+    // Write compact manifest rows down to SD card. idref matching uses the
+    // in-memory hash/length index, so the temp file only needs to keep hrefs.
+    serialization::writePod(self->tempItemStore, fnvHash(itemId));
+    serialization::writePod(self->tempItemStore, static_cast<uint16_t>(itemId.size()));
     serialization::writeString(self->tempItemStore, href);
 
     if (itemId == self->coverItemId) {
@@ -229,7 +282,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     }
 
     // Collect CSS files
-    if (mediaType == MEDIA_TYPE_CSS) {
+    if (self->collectCssFiles && mediaType == MEDIA_TYPE_CSS) {
       self->cssFiles.push_back(href);
     }
 
@@ -238,7 +291,6 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       // Properties is space-separated, check if "nav" is present as a word
       if (properties == "nav" || properties.find("nav ") == 0 || properties.find(" nav") != std::string::npos) {
         self->tocNavPath = href;
-        LOG_DBG("COF", "Found EPUB 3 nav document: %s", href.c_str());
       }
     }
 
@@ -255,49 +307,34 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   // NOTE: This relies on spine appearing after item manifest (which is pretty safe as it's part of the EPUB spec)
   // Only run the spine parsing if there's a cache to add it to
   if (self->cache) {
-    if (self->state == IN_SPINE && xmlLocalNameEquals(name, "itemref")) {
+    if (self->state == IN_SPINE && (strcmp(name, "itemref") == 0 || strcmp(name, "opf:itemref") == 0)) {
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "idref") == 0) {
           const std::string idref = atts[i + 1];
           std::string href;
           bool found = false;
 
-          if (self->useItemIndex) {
-            // Fast path: binary search
-            uint32_t targetHash = fnvHash(idref);
-            uint16_t targetLen = static_cast<uint16_t>(idref.size());
+          const uint64_t targetHash = fnvHash(idref);
+          const uint16_t targetLen = static_cast<uint16_t>(idref.size());
 
-            auto it = std::lower_bound(self->itemIndex.begin(), self->itemIndex.end(),
-                                       ItemIndexEntry{targetHash, targetLen, 0},
-                                       [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
-                                         return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
-                                       });
+          auto it =
+              std::lower_bound(self->itemIndex.begin(), self->itemIndex.end(), ItemIndexEntry{targetHash, targetLen, 0},
+                               [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
+                                 return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
+                               });
 
-            // Check for match (may need to check a few due to hash collisions)
-            while (it != self->itemIndex.end() && it->idHash == targetHash) {
-              self->tempItemStore.seek(it->fileOffset);
-              std::string itemId;
-              serialization::readString(self->tempItemStore, itemId);
-              if (itemId == idref) {
-                serialization::readString(self->tempItemStore, href);
-                found = true;
-                break;
-              }
-              ++it;
-            }
-          } else {
-            // Fallback linear scan, only reached when the index is empty (no manifest
-            // items). The fast binary-search path above is used for all real manifests.
-            self->tempItemStore.seek(0);
-            std::string itemId;
-            while (self->tempItemStore.available()) {
-              serialization::readString(self->tempItemStore, itemId);
+          while (it != self->itemIndex.end() && it->idHash == targetHash && it->idLen == targetLen) {
+            self->tempItemStore.seek(it->fileOffset);
+            uint64_t rowHash = 0;
+            uint16_t rowLen = 0;
+            serialization::readPod(self->tempItemStore, rowHash);
+            serialization::readPod(self->tempItemStore, rowLen);
+            if (rowHash == targetHash && rowLen == targetLen) {
               serialization::readString(self->tempItemStore, href);
-              if (itemId == idref) {
-                found = true;
-                break;
-              }
+              found = true;
+              break;
             }
+            ++it;
           }
 
           if (found && self->cache) {
@@ -309,7 +346,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     }
   }
   // parse the guide
-  if (self->state == IN_GUIDE && xmlLocalNameEquals(name, "reference")) {
+  if (self->state == IN_GUIDE && (strcmp(name, "reference") == 0 || strcmp(name, "opf:reference") == 0)) {
     std::string type;
     std::string guideHref;
     for (int i = 0; atts[i]; i += 2) {
@@ -326,9 +363,8 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       if (type == "start" && !self->hasExplicitStartReference) {
         LOG_DBG("COF", "Found %s reference in guide: %s", type.c_str(), guideHref.c_str());
         self->textReferenceHref = guideHref;
-        self->hasExplicitStartReference = type == "start";
+        self->hasExplicitStartReference = true;
       } else if ((type == "cover" || type == "cover-page") && self->guideCoverPageHref.empty()) {
-        LOG_DBG("COF", "Found cover reference in guide: %s", guideHref.c_str());
         self->guideCoverPageHref = guideHref;
       }
     }
@@ -356,51 +392,111 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  if (self->state == IN_BOOK_PUBLISHER) {
+    self->publisher.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_BOOK_DESCRIPTION) {
+    self->description.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_BOOK_PUBLICATION_DATE) {
+    self->publicationDate.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_BOOK_IDENTIFIER) {
+    self->identifier.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_BOOK_SUBJECT) {
+    self->subject.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_BOOK_RIGHTS) {
+    self->rights.append(s, len);
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ContentOpfParser*>(userData);
   (void)name;
 
-  if (self->state == IN_SPINE && xmlLocalNameEquals(name, "spine")) {
+  if (self->state == IN_SPINE && (strcmp(name, "spine") == 0 || strcmp(name, "opf:spine") == 0)) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_GUIDE && xmlLocalNameEquals(name, "guide")) {
+  if (self->state == IN_GUIDE && (strcmp(name, "guide") == 0 || strcmp(name, "opf:guide") == 0)) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_MANIFEST && xmlLocalNameEquals(name, "manifest")) {
+  if (self->state == IN_MANIFEST && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_PACKAGE;
     self->tempItemStore.close();
     return;
   }
 
-  if (self->state == IN_BOOK_TITLE && xmlLocalNameEquals(name, "title")) {
+  if (self->state == IN_BOOK_TITLE && strcmp(name, "dc:title") == 0) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_BOOK_AUTHOR && xmlLocalNameEquals(name, "creator")) {
+  if (self->state == IN_BOOK_AUTHOR && strcmp(name, "dc:creator") == 0) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_BOOK_LANGUAGE && xmlLocalNameEquals(name, "language")) {
+  if (self->state == IN_BOOK_LANGUAGE && strcmp(name, "dc:language") == 0) {
     self->state = IN_METADATA;
     return;
   }
 
-  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "metadata")) {
+  if (self->state == IN_BOOK_PUBLISHER && strcmp(name, "dc:publisher") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_DESCRIPTION && strcmp(name, "dc:description") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_PUBLICATION_DATE && strcmp(name, "dc:date") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_IDENTIFIER && strcmp(name, "dc:identifier") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_SUBJECT && strcmp(name, "dc:subject") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_RIGHTS && strcmp(name, "dc:rights") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_METADATA && (strcmp(name, "metadata") == 0 || strcmp(name, "opf:metadata") == 0)) {
     self->state = IN_PACKAGE;
     return;
   }
 
-  if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "package")) {
+  if (self->state == IN_PACKAGE && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
     self->state = START;
     return;
   }

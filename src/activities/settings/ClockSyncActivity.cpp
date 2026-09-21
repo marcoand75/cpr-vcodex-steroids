@@ -10,25 +10,17 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "ReadingStatsStore.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/TimeUtils.h"
-
-namespace {
-void wifiOff() {
-  TimeUtils::stopNtp();
-  WiFi.disconnect(false);
-  delay(100);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
-}
-}  // namespace
+#include "util/WiFiUtils.h"
 
 void ClockSyncActivity::onEnter() {
   Activity::onEnter();
   TimeUtils::configureTimezone();
-  state = SYNCING;
   syncedTime[0] = '\0';
   wifiConnectedOnEnter = WiFi.status() == WL_CONNECTED;
   connectedInActivity = false;
@@ -38,29 +30,25 @@ void ClockSyncActivity::onEnter() {
     return;
   }
 
-  LOG_INF("CLK", "Manual sync requested without WiFi, launching WiFi selection");
-  WiFi.mode(WIFI_STA);
+  WiFiUtils::enterStationMode();
   openWifiSelection();
 }
 
 void ClockSyncActivity::onExit() {
   Activity::onExit();
 
-  // Only tear WiFi down if this activity brought it up; a connection that was
-  // already live on entry belongs to whoever opened it.
   if (!wifiConnectedOnEnter && connectedInActivity) {
-    wifiOff();
+    WiFiUtils::wifiOff();
   }
 }
 
 void ClockSyncActivity::openWifiSelection() {
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, true, false),
+  startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput, /*syncRtcOnConnect=*/false),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
 void ClockSyncActivity::onWifiSelectionComplete(const bool connected) {
   if (!connected || WiFi.status() != WL_CONNECTED) {
-    LOG_INF("CLK", "WiFi selection cancelled or not connected before manual clock sync");
     state = NO_WIFI;
     requestUpdate();
     return;
@@ -78,13 +66,6 @@ void ClockSyncActivity::beginSync() {
 }
 
 void ClockSyncActivity::runSync() {
-  if (WiFi.status() != WL_CONNECTED) {
-    LOG_INF("CLK", "Manual sync requested but WiFi is not connected");
-    state = NO_WIFI;
-    requestUpdate();
-    return;
-  }
-
   const bool ok = halClock.syncFromNTP();
   if (!ok) {
     state = FAILED;
@@ -96,9 +77,12 @@ void ClockSyncActivity::runSync() {
   SETTINGS.clockHasBeenSynced = 1;
   SETTINGS.saveToFile();
 
-  // Push the freshly written RTC value into the system clock so the status bar
-  // and reading stats pick it up immediately.
   TimeUtils::applySystemClockFromRtc(true);
+
+  // The system date just changed, so the derived summary.json snapshot is stale
+  // (its referenceDayOrdinal predates the new day). Regenerate it so the Home
+  // stats panel shows the correct today/streak/recent-window numbers.
+  READING_STATS.regenerateSummaryAfterClockChange();
 
   // Read the freshly synced time back for the user-facing confirmation.
   char buf[9];
@@ -118,10 +102,8 @@ void ClockSyncActivity::loop() {
     return;
   }
 
-  int x = 0;
-  int y = 0;
   if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-      mappedInput.wasPressed(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
+      mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     finish();
   }
 }
@@ -144,10 +126,7 @@ void ClockSyncActivity::render(RenderLock&&) {
     case SUCCESS: {
       renderer.drawCenteredText(UI_12_FONT_ID, midY - 20, tr(STR_CLOCK_SYNC_OK), true, EpdFontFamily::BOLD);
       if (syncedTime[0] != '\0') {
-        // Sized for the label in any language: STR_CURRENT_TIME is 26 bytes in
-        // Russian (UTF-8 Cyrillic is 2 bytes per letter) versus 13 in English,
-        // plus a separator and up to "08:56 PM".
-        char line[64];
+        char line[32];
         snprintf(line, sizeof(line), "%s %s", tr(STR_CURRENT_TIME), syncedTime);
         renderer.drawCenteredText(UI_10_FONT_ID, midY + 10, line);
       }
@@ -164,8 +143,7 @@ void ClockSyncActivity::render(RenderLock&&) {
   }
 
   if (state != SYNCING) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_OK_BUTTON), "", "");
   }
 
   renderer.displayBuffer();

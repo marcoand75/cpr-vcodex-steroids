@@ -1,0 +1,23 @@
+fix(memory): replace raw malloc in DictionaryWordSelectActivity selection cache with std::vector
+
+SelectionRegionCache now stores its buffer as std::vector<uint8_t> instead
+of a raw uint8_t* plus manual malloc/free. This removes a small but real
+source of heap fragmentation in the dictionary word-selection path and
+makes the cache cleanup exception-safe.
+
+### Changes
+- SelectionRegionCache.buffer: raw pointer -> std::vector<uint8_t>
+- storeSelectionBaseRegions(): replaces malloc/realloc/free with vector::resize()
+- restoreSelectionBaseRegions(): uses buffer.data() and buffer.empty()
+- invalidateSelectionRegionCache(): calls buffer.clear() per region
+- freeSelectionRegionCache(): calls buffer.clear() + shrink_to_fit()
+
+### Safety
+- No more manual free on reallocation failure paths
+- vector destructor handles cleanup automatically if the activity is
+  destroyed without an explicit onExit()
+- Keeps MAX_SELECTION_REGIONS=2 limit; peak cache size is bounded
+
+Build: python -X utf8 -m platformio run -e default -j 16
+RAM: 101,692 bytes (31.0%)
+Flash: 6,278,493 bytes (95.8%)

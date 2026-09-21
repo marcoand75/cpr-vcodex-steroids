@@ -489,7 +489,7 @@
         <a href="./" data-site-i18n="navHome">Home</a>
         <a href="./flash.html" aria-current="page" data-site-i18n="navFlash">Auto Flash</a>
         <a href="./tools.html" data-site-i18n="navTools">Tools</a>
-        <a href="https://github.com/franssjz/cpr-vcodex" data-site-i18n="navGithub">GitHub</a>
+        <a href="https://github.com/marcoand75/cpr-vcodex-steroids" data-site-i18n="navGithub">GitHub</a>
         <a href="https://ko-fi.com/franssjz" data-site-i18n="navSupport">Support</a>
       </nav>
       <div class="site-actions">
@@ -603,7 +603,7 @@
         <p class="status" id="status" data-site-i18n="readyStatus">Ready. Clicking Flash will open the browser serial device chooser.</p>
 
         <div class="actions">
-          <a class="button" id="download-link" href="https://github.com/franssjz/cpr-vcodex/releases/download/1.6.0.38-cpr-vcodex/1.6.0.38-cpr-vcodex.bin" data-site-i18n="downloadBin">Download .bin</a>
+          <a class="button" id="download-link" href="https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.38-cpr-vcodex-steroids/1.6.0.38-cpr-vcodex-steroids.bin" data-site-i18n="downloadBin">Download .bin</a>
           <a class="button" href="https://xteink.dve.al/" rel="noopener" data-site-i18n="communityFlasher">Community flasher</a>
         </div>
 
@@ -614,8 +614,8 @@
     <section class="card manual">
       <h2 data-site-i18n="manualTitle">Manual PlatformIO flash</h2>
       <p data-site-i18n="manualText">For development builds, clone the repo, set the upload port, then use PlatformIO.</p>
-      <pre><code>git clone https://github.com/franssjz/cpr-vcodex.git
-cd cpr-vcodex
+      <pre><code>git clone https://github.com/marcoand75/cpr-vcodex-steroids.git
+cd cpr-vcodex-steroids
 
 # Xteink X4 / X3 (ESP32-C3)
 pio run -e gh_release -t upload</code></pre>
@@ -633,7 +633,7 @@ pio run -e gh_release -t upload</code></pre>
     const OTADATA_OFFSET = 0xe000;
     const OTADATA_SIZE = 0x2000;
     const APP_MIN_SIZE = 0xf0000;
-    const RELEASE_REPO = "franssjz/cpr-vcodex";
+    const RELEASE_REPO = "marcoand75/cpr-vcodex-steroids";
     // `chip` must equal esptool-js (0.5.7) `loader.chip.CHIP_NAME` for the
     // connected part; the flasher aborts before any write if they differ.
     // `firmwareKey` selects the image entry in firmware/manifest.json `devices`.
@@ -725,29 +725,29 @@ pio run -e gh_release -t upload</code></pre>
     const FALLBACK_RELEASE = {
       version: "1.6.0.38-cpr-vcodex",
       firmwareUrl: "firmware/firmware.bin",
-      downloadUrl: "https://franssjz.github.io/cpr-vcodex/firmware/firmware.bin",
+      downloadUrl: "https://marcoand75.github.io/cpr-vcodex-steroids/firmware/firmware.bin",
       size: 6103600,
       sha256: "9c539a72cfde90c743714feeab8b776ebb9c1f3958d57fc766f010b5ac1be4f6",
       source: {
         type: "github-release",
-        repo: "franssjz/cpr-vcodex",
-        tag: "1.6.0.38-cpr-vcodex",
-        asset: "1.6.0.38-cpr-vcodex.bin"
+        repo: "marcoand75/cpr-vcodex-steroids",
+        tag: "1.6.0.38-cpr-vcodex-steroids",
+        asset: "1.6.0.38-cpr-vcodex-steroids.bin"
       },
       devices: {
         x4: {
           chipFamily: "ESP32-C3",
           path: "firmware/firmware.bin",
-          asset: "1.6.0.38-cpr-vcodex.bin",
-          downloadUrl: "https://github.com/franssjz/cpr-vcodex/releases/download/1.6.0.38-cpr-vcodex/1.6.0.38-cpr-vcodex.bin",
+          asset: "1.6.0.38-cpr-vcodex-steroids.bin",
+          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.38-cpr-vcodex-steroids/1.6.0.38-cpr-vcodex-steroids.bin",
           size: 6103600,
           sha256: "9c539a72cfde90c743714feeab8b776ebb9c1f3958d57fc766f010b5ac1be4f6"
         },
         x3: {
           chipFamily: "ESP32-C3",
           path: "firmware/firmware.bin",
-          asset: "1.6.0.38-cpr-vcodex.bin",
-          downloadUrl: "https://github.com/franssjz/cpr-vcodex/releases/download/1.6.0.38-cpr-vcodex/1.6.0.38-cpr-vcodex.bin",
+          asset: "1.6.0.38-cpr-vcodex-steroids.bin",
+          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.38-cpr-vcodex-steroids/1.6.0.38-cpr-vcodex-steroids.bin",
           size: 6103600,
           sha256: "9c539a72cfde90c743714feeab8b776ebb9c1f3958d57fc766f010b5ac1be4f6"
         }

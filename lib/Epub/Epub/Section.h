@@ -3,9 +3,9 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "Epub.h"
+#include "EpubRenderMode.h"
 #include "ReaderRenderSpec.h"
 
 class Page;
@@ -13,37 +13,47 @@ class GfxRenderer;
 class ChapterHtmlSlimParser;
 class CssParser;
 
+struct SectionBuildOptions {
+  const char* previewAnchor = nullptr;
+  uint16_t previewMaxPages = 0;
+  // Full-section callers can stop between parser chunks without creating a
+  // readable partial cache. The callback must remain valid for the build.
+  bool (*shouldCancel)(void* context) = nullptr;
+  void* cancelContext = nullptr;
+  bool* cancellationObserved = nullptr;
+
+  bool isPreview() const { return previewAnchor && previewAnchor[0] != '\0' && previewMaxPages > 0; }
+  bool isCancellationRequested() const { return shouldCancel && shouldCancel(cancelContext); }
+};
+
 class Section {
-  std::shared_ptr<Epub> epub;
+  std::shared_ptr<Epub> epubOwner;
+  Epub* epub;
   const int spineIndex;
   GfxRenderer& renderer;
   std::string filePath;
   HalFile file;
 
-  void writeSectionFileHeader(const ReaderRenderSpec& spec);
-  uint32_t onPageComplete(std::unique_ptr<Page> page);
-
-  // Page-offset table entry, kept in RAM while an incremental build is running so
-  // already-built pages can be located in the partially-written .bin.
   struct PageLutEntry {
     uint32_t fileOffset;
-    uint32_t xhtmlByteOffset;
     uint16_t paragraphIndex;
     uint16_t listItemIndex;
     uint32_t visibleTextOffset;
   };
-  // Held only while an incremental build is in progress (see startBuild). Carries the
-  // live parser plus the strings it references (the parser stores them by reference)
-  // and the in-RAM page-offset table.
+
   struct BuildContext {
     std::unique_ptr<ChapterHtmlSlimParser> parser;
-    std::vector<PageLutEntry> lut;
+    std::unique_ptr<PageLutEntry[]> lut;
+    uint16_t lutCapacity = 0;
+    uint16_t lutCount = 0;
     std::string parsePath;
     std::string contentBase;
     std::string imageBasePath;
     std::string htmlPath;
     std::string tmpHtmlPath;
+    std::string tmpSectionPath;
     bool reusedHtml = false;
+    bool pageCompletionFailed = false;
     CssParser* cssParser = nullptr;
     // HTML byte progress, for estimating the section's total page count while it's still building.
     uint32_t bytesConsumed = 0;
@@ -53,19 +63,25 @@ class Section {
     // the EMA is stepped once per build advance (not per redraw) to damp that wobble.
     float smoothedEstimate = 0;
     uint32_t smoothedAtConsumed = 0;
+    // The render mode used for this build, for cache verification.
+    EpubRenderMode renderMode = EpubRenderMode::CrossInkDefault;
   };
   std::unique_ptr<BuildContext> build_;
   bool buildComplete_ = false;
-  // Pages laid out by the active build (== build_->lut.size()). Distinct from pageCount,
-  // which is the pages *available to read* and also counts a loaded partial file's pages.
+  bool lastImagesWereSuppressed_ = false;
+  bool lastLayoutAbortedForLowMemory_ = false;
+  // Pages laid out by the active build. Distinct from pageCount, which is the pages
+  // available to read and may include a loaded partial file's pages.
   uint16_t builtPageCount_ = 0;
-  // A partial section file (suspended build from a previous session) is loaded at filePath.
-  // Its pages 0..partialPageCount_-1 are readable while a rebuild extends past them.
   bool partial_ = false;
   uint16_t partialPageCount_ = 0;
-  // Parse watermark from the partial's trailer, for estimating the total page count.
   uint32_t partialBytesConsumed_ = 0;
   uint32_t partialTotalBytes_ = 0;
+  std::string activeBuildTmpSectionPath_;
+
+  bool writeSectionFileHeader(const ReaderRenderSpec& spec);
+  uint32_t onPageComplete(std::unique_ptr<Page> page);
+  bool ensureBuildFileOpen();
   bool finalizeBuild();
   // Write the LUTs/anchor map (and, for a partial, the watermark trailer), patch the
   // header, stamp the version byte, and swap the tmp .bin over filePath.
@@ -82,25 +98,31 @@ class Section {
   uint16_t pageCount = 0;
   int currentPage = 0;
 
-  // Constructor and destructor are out-of-line: BuildContext holds a unique_ptr to the
-  // forward-declared ChapterHtmlSlimParser, whose full definition is only visible in the .cpp.
-  explicit Section(const std::shared_ptr<Epub>& epub, int spineIndex, GfxRenderer& renderer);
+  explicit Section(const std::shared_ptr<Epub>& epub, int spineIndex, GfxRenderer& renderer,
+                   const char* cacheSuffix = "");
+  explicit Section(Epub& epub, int spineIndex, GfxRenderer& renderer, const char* cacheSuffix = "");
   ~Section();
   bool loadSectionFile(const ReaderRenderSpec& spec);
   bool clearCache() const;
-  bool createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr,
+                         bool* imagesWereSuppressed = nullptr, bool* layoutAbortedForLowMemory = nullptr,
+                         SectionBuildOptions buildOptions = {},
+                         // When true (on-demand navigation) the framebuffer is lent as build scratch for the
+                         // streaming-inflate window. That is safe because the freshly-built page overwrites the
+                         // framebuffer right after the build. When building in the background while a page is
+                         // already on screen, leave this false: lending would corrupt the displayed framebuffer
+                         // and the next idle refresh would flash garbage below the text.
+                         bool lendFramebufferScratch = true);
 
-  // Incremental build: lay out the section a few pages at a time so a large chapter
-  // can show its first page immediately and keep the UI responsive while the rest
-  // builds. createSectionFile() above is the one-shot wrapper over these.
-  //   if (!startBuild(...)) fail;
-  //   each tick: buildSomeMore(N); render up to pageCount; when isBuildComplete() stop.
-  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
-  // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
-  // false on error (the build is abandoned). Sets isBuildComplete() when finished.
+  bool startBuild(const ReaderRenderSpec& spec, SectionBuildOptions buildOptions = {},
+                  const std::function<void()>& popupFn = nullptr);
   bool buildSomeMore(int maxPages);
+  void releaseBuildFile();
+  bool lastBuildImagesWereSuppressed() const { return lastImagesWereSuppressed_; }
+  bool lastBuildLayoutAbortedForLowMemory() const { return lastLayoutAbortedForLowMemory_; }
   bool isBuilding() const { return static_cast<bool>(build_); }
   bool isBuildComplete() const { return buildComplete_; }
+  bool activeBuildHasCaughtReadablePages() const { return !build_ || builtPageCount_ >= pageCount; }
   // Best-known total page count: the exact pageCount once finalized, or a smoothed byte-based
   // estimate (pages so far scaled by totalBytes/bytesConsumed, damped by an EMA) while a giant spine
   // is still building, so "page X of Y" / progress don't read off the small build watermark.
@@ -118,8 +140,8 @@ class Section {
   // Unified page read: from the active build if it has reached the page, otherwise from
   // the on-disk file (finalized section, or a partial the rebuild hasn't caught up to).
   std::unique_ptr<Page> loadPage(int page);
-  std::unique_ptr<Page> loadPageFromSectionFile();
 
+  std::unique_ptr<Page> loadPageFromSectionFile();
   std::string getTextFromSectionFile();
 
   // Resolve an anchor from the in-progress build first, then the on-disk anchor map
@@ -142,7 +164,11 @@ class Section {
   std::optional<uint16_t> getCachedPageCount() const;
 
   // Look up the page number for a synthetic paragraph index from XPath p[N].
+  // Checks the active incremental build before falling back to the committed cache.
   std::optional<uint16_t> getPageForParagraphIndex(uint16_t pIndex) const;
+
+  // Look up a synthetic paragraph among pages produced by the active build only.
+  std::optional<uint16_t> findParagraphDuringBuild(uint16_t pIndex) const;
 
   // Look up the page number for a running list-item index from the li LUT.
   std::optional<uint16_t> getPageForListItemIndex(uint16_t liIndex) const;
@@ -150,11 +176,40 @@ class Section {
   // Look up the synthetic paragraph index for the given rendered page.
   std::optional<uint16_t> getParagraphIndexForPage(uint16_t page) const;
 
-  // XHTML byte boundary retained for KOReader's position mapper.
-  std::optional<uint32_t> getXhtmlByteOffsetForPage(uint16_t page) const;
+  // Look up the running list-item index for the given rendered page.
+  std::optional<uint16_t> getListItemIndexForPage(uint16_t page) const;
 
-  // Stable source position used by bookmarks so repagination does not move them.
+  // Content coordinate recorded at the start of each rendered page. Available
+  // for finalized sections and the readable prefix of incremental sections.
   std::optional<uint32_t> getVisibleTextOffsetForPage(uint16_t page) const;
   std::optional<uint16_t> getPageForVisibleTextOffset(uint32_t offset, bool preferFirstAtOffset = false) const;
-  bool buildReachedVisibleTextOffset(uint32_t offset) const;
+
+  // --- Steroids compatibility: cumulative word anchoring (bookmarks/clippings) ---
+  // Steroids bookmarks and clippings are anchored by absolute word index —
+  // cumulativeWordCounts[p] = total word count on pages 0..p-1. Built lazily
+  // once after section load; size = pageCount + 1. Loading every page has an
+  // I/O cost, but it runs only when a bookmark/clipping needs an anchor.
+  //
+  // NOTE: kept public for source-compatibility with the steroids reader
+  // activity, which reads this member directly during bookmark/clipping
+  // resolution and restore.
+  std::vector<uint32_t> cumulativeWordCounts;
+
+  void buildCumulativeWordCounts();
+  uint32_t getCumulativeWordOffset(uint16_t page) const;
+
+  // --- Steroids compatibility: legacy per-parameter load/save entry points ---
+  // The steroids reader activity predates ReaderRenderSpec and passes each
+  // render parameter individually. These overloads build a ReaderRenderSpec
+  // internally then delegate to the spec-based methods, so the reader activity
+  // continues to compile unchanged against the new engine.
+  bool loadSectionFile(int fontId, float lineCompression, bool extraParagraphSpacing, bool forceParagraphIndents,
+                       uint8_t paragraphAlignment, uint16_t viewportWidth, uint16_t viewportHeight,
+                       bool hyphenationEnabled, bool focusReadingEnabled, bool embeddedStyle, uint8_t imageRendering,
+                       bool bionicReadingEnabled = false, uint8_t guideDotMinGap = 0, uint8_t renderMode = 0);
+  bool createSectionFile(int fontId, float lineCompression, bool extraParagraphSpacing, bool forceParagraphIndents,
+                         uint8_t paragraphAlignment, uint16_t viewportWidth, uint16_t viewportHeight,
+                         bool hyphenationEnabled, bool focusReadingEnabled, bool embeddedStyle, uint8_t imageRendering,
+                         const std::function<void()>& popupFn = nullptr, bool bionicReadingEnabled = false,
+                         uint8_t guideDotMinGap = 0, uint8_t renderMode = 0, bool lendFramebufferScratch = true);
 };

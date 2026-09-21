@@ -1,10 +1,6 @@
 #pragma once
 
-#include <Arduino.h>
 #include <HardwareSerial.h>
-#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
-#include <HWCDC.h>
-#endif
 
 #include <string>
 
@@ -31,15 +27,12 @@ won't trigger deprecation warnings.
 #define LOG_LEVEL 0
 #endif
 
-#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
 static HWCDC& logSerial = Serial;
-#define LOG_SERIAL_HAS_TX_TIMEOUT 1
-#else
-static HardwareSerial& logSerial = Serial;
-#define LOG_SERIAL_HAS_TX_TIMEOUT 0
-#endif
 
 void logPrintf(const char* level, const char* origin, const char* format, ...);
+// Ring-buffer-only variant: always writes to the RTC ring buffer so that
+// crash_report.txt contains "Last logs" even when serial output is disabled.
+void logRtcPrintf(const char* level, const char* origin, const char* format, ...);
 
 #ifdef ENABLE_SERIAL_LOG
 #if LOG_LEVEL >= 0
@@ -60,9 +53,9 @@ void logPrintf(const char* level, const char* origin, const char* format, ...);
 #define LOG_DBG(origin, format, ...)
 #endif
 #else
-#define LOG_DBG(origin, format, ...)
-#define LOG_ERR(origin, format, ...)
+#define LOG_ERR(origin, format, ...) logRtcPrintf("ERR", origin, format "\n", ##__VA_ARGS__)
 #define LOG_INF(origin, format, ...)
+#define LOG_DBG(origin, format, ...)
 #endif
 
 std::string getLastLogs();

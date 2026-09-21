@@ -8,12 +8,13 @@
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncClient.h"
 #include "MappedInputManager.h"
-#include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/NetworkMemory.h"
 #include "util/TimeUtils.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 void prepareMemoryBeforeAuthNetwork(GfxRenderer& renderer, const char* stage) {
@@ -35,9 +36,6 @@ void KOReaderAuthActivity::onWifiSelectionComplete(const bool success) {
     requestUpdate();
     return;
   }
-
-  WiFi.setSleep(false);
-  LOG_DBG("KOAuth", "WiFi sleep disabled for authentication");
 
   {
     RenderLock lock(*this);
@@ -61,11 +59,17 @@ void KOReaderAuthActivity::onWifiSelectionComplete(const bool success) {
 
 void KOReaderAuthActivity::performAuthentication() {
   prepareMemoryBeforeAuthNetwork(renderer, "before_authenticate");
-  const auto result =
-      mode == Mode::SIGN_UP
-          ? KOReaderSyncClient::registerUser(profile.username, KOReaderCredentialStore::hashPassword(profile.password),
-                                             KOReaderCredentialStore::resolveBaseUrl(profile.serverUrl))
-          : KOReaderSyncClient::authenticate();
+  const auto result = mode == Mode::SIGN_UP
+                          ? KOReaderSyncClient::registerUser(
+                                profile.username, KOReaderCredentialStore::hashPassword(profile.password),
+                                KOReaderCredentialStore::resolveBaseUrl(profile.serverUrl))
+                          : KOReaderSyncClient::authenticate();
+
+  // Release the WiFi stack (LwIP/TLS buffers) BEFORE restoring memory: the
+  // reading-stats reload re-parses summary.json and needs the largest possible
+  // contiguous heap. Reloading while the stack is still connected can OOM and
+  // crash the device (free heap drops to near zero mid-parse).
+  WiFiUtils::wifiOff();
   restoreMemoryAfterAuthNetwork(renderer, "after_authenticate_restore");
 
   {
@@ -81,8 +85,8 @@ void KOReaderAuthActivity::performAuthentication() {
       statusMessage = mode == Mode::SIGN_UP ? tr(STR_ACCOUNT_CREATED) : tr(STR_AUTH_SUCCESS);
     } else {
       state = FAILED;
-      errorMessage =
-          result == KOReaderSyncClient::USER_EXISTS ? tr(STR_USERNAME_TAKEN) : KOReaderSyncClient::errorString(result);
+      errorMessage = result == KOReaderSyncClient::USER_EXISTS ? tr(STR_USERNAME_TAKEN)
+                                                               : KOReaderSyncClient::errorString(result);
       const char* detail = KOReaderSyncClient::lastFailureDetail();
       if (detail && detail[0]) {
         errorMessage += " - ";
@@ -103,18 +107,19 @@ void KOReaderAuthActivity::onEnter() {
   }
 
   // Launch WiFi selection
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+  startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
 void KOReaderAuthActivity::onExit() {
   Activity::onExit();
 
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
-  }
+  // Cleanly shut down WiFi instead of a silent reboot. A silent restart here
+  // drops the user at the Home screen (breaking back-navigation to the KOReader
+  // settings menu) and, because RAM does not survive the reboot while the
+  // boot-time credential load is skipped on silent restarts, would also leave
+  // the KOReader settings blank on the next boot.
+  WiFiUtils::wifiOff();
 }
 
 void KOReaderAuthActivity::render(RenderLock&&) {
@@ -145,17 +150,14 @@ void KOReaderAuthActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
   renderer.displayBuffer();
 }
 
 void KOReaderAuthActivity::loop() {
   if (state == SUCCESS || state == FAILED) {
-    int x = 0;
-    int y = 0;
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-        mappedInput.wasPressed(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
+        mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       finish();
     }
   }

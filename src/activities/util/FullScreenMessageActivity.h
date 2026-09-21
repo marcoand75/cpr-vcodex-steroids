@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include "activities/Activity.h"
+#include "../Activity.h"
 
 class FullScreenMessageActivity final : public Activity {
   std::string text;

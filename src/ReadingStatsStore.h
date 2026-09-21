@@ -1,13 +1,18 @@
 #pragma once
 
 #include <ArduinoJson.h>
-
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "ReadingSessionLog.h"
+#include "Logging.h"
+#include "util/ReadingStatsBackupManager.h"
+#include "util/TimeUtils.h"
+
+using namespace ReadingStatsBackup;
+
+constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 
 inline uint64_t getDailyReadingGoalMs() { return SETTINGS.getDailyGoalMs(); }
 
@@ -34,6 +39,10 @@ struct ReadingBookStats {
   uint8_t lastProgressPercent = 0;
   uint8_t chapterProgressPercent = 0;
   bool completed = false;
+
+  // Per-book reading pace for time-left estimates
+  uint16_t avgSecondsPerForwardPage = 0;
+  uint16_t paceSampleCount = 0;
 };
 
 struct ReadingSessionSnapshot {
@@ -48,16 +57,59 @@ struct ReadingSessionSnapshot {
   uint8_t endProgressPercent = 0;
 };
 
+struct ReadingSessionLogEntry {
+  uint32_t dayOrdinal = 0;
+  uint32_t sessionMs = 0;
+  std::string bookId;
+  std::string path;
+};
+
 class ReadingStatsStore;
 namespace JsonSettingsIO {
 bool saveReadingStats(const ReadingStatsStore& store, const char* path);
 bool loadReadingStats(ReadingStatsStore& store, const char* json);
-bool loadReadingStatsFromFile(ReadingStatsStore& store, const char* path);
 bool loadReadingStatsDocument(ReadingStatsStore& store, const JsonDocument& doc);
+bool loadReadingStatsFromFile(ReadingStatsStore& store, const char* path);
 }  // namespace JsonSettingsIO
 
+// Lightweight global + per-book snapshot written to summary.json so the Home
+// screen can render the stats panel and carousel progress badges without
+// loading the full reading stats store (~41 KB) into RAM.
+struct SummaryJSON {
+  struct Global {
+    uint64_t totalReadingMs = 0;
+    uint64_t todayReadingMs = 0;
+    uint64_t recent7ReadingMs = 0;
+    uint64_t recent30ReadingMs = 0;
+    uint32_t currentStreakDays = 0;
+    uint32_t maxStreakDays = 0;
+    uint32_t booksFinishedCount = 0;
+    uint64_t goalReadingMs = 0;
+    uint64_t dailyAverageMs = 0;
+    // Day ordinal the snapshot was computed for. Lets getTodayReadingMs()
+    // return 0 after a day rollover instead of a stale "yesterday" value.
+    uint32_t referenceDayOrdinal = 0;
+  } global;
+
+  // Per-book home badge. Carries the fields the Home data panel needs so that
+  // the panel works even when the full store is not loaded.
+  struct BookBadge {
+    std::string bookId;
+    std::string path;
+    uint8_t progressPercent = 0;
+    uint64_t totalReadingMs = 0;
+    uint32_t sessions = 0;
+    uint32_t readingDaysCount = 0;
+    bool completed = false;
+  };
+
+  std::vector<BookBadge> bookBadges;
+};
+
 class ReadingStatsStore {
-  static ReadingStatsStore instance;
+  // RIMOSSO: static ReadingStatsStore instance;
+  // Non c'è più alcun membro statico a livello di classe che richieda 
+  // allocazione esplicita nel file .cpp.
 
   struct SummaryCache {
     bool valid = false;
@@ -70,6 +122,7 @@ class ReadingStatsStore {
     uint32_t currentStreakDays = 0;
     uint32_t maxStreakDays = 0;
     uint64_t goalReadingMs = 0;
+    uint64_t dailyAverageMs = 0;
   };
 
   struct SessionState {
@@ -94,11 +147,20 @@ class ReadingStatsStore {
   mutable bool persistenceSuspended = false;
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
+  mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
+  bool _readingPaused = false;
+
+  // Cached copy of summary.json contents (for the "not fully loaded" fast path).
+  // `summaryJsonValid_` is true once summaryJson has been populated either from
+  // disk or from a freshly built summary.
+  mutable SummaryJSON summaryJson;
+  mutable bool summaryJsonValid_ = false;
 
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
-  friend bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore&, const JsonDocument&);
+  friend bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore&, const char*);
 
   size_t findBookIndexByPath(const std::string& path) const;
   size_t findBookIndexByBookId(const std::string& bookId) const;
@@ -133,12 +195,23 @@ class ReadingStatsStore {
   bool restoreInternalBackupToMain(const char* reason) const;
   bool maybeCreateAutoBackup(bool force) const;
   bool persistToFile(const char* path) const;
+  bool saveSummaryJSON() const;
+  bool loadSummaryJSON(SummaryJSON& out) const;
+  const SummaryJSON& getSummaryJSON() const;
   static bool isClockValid(uint32_t epochSeconds);
 
  public:
   ~ReadingStatsStore() = default;
 
-  static ReadingStatsStore& getInstance() { return instance; }
+  // Meyers' Singleton
+  static ReadingStatsStore& getInstance() {
+    static ReadingStatsStore instance;
+    return instance;
+  }
+
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   void beginSession(const std::string& path, const std::string& title, const std::string& author,
                     const std::string& coverBmpPath, uint8_t progressPercent = 0, const std::string& chapterTitle = "",
@@ -146,6 +219,13 @@ class ReadingStatsStore {
   void noteActivity();
   void tickActiveSession();
   void resumeSession();
+
+  // Reading timer pause — freezes duration accumulation until resumed.
+  // When paused, noteActivity() and tickActiveSession() are no-ops.
+  // lastInteractionMs is reset on resume so paused time is not counted.
+  bool isReadingPaused() const { return _readingPaused; }
+  void setReadingPaused(bool paused);
+
   void updateProgress(uint8_t progressPercent, bool completed = false, const std::string& chapterTitle = "",
                       uint8_t chapterProgressPercent = 0);
   void endSession();
@@ -171,16 +251,31 @@ class ReadingStatsStore {
   uint32_t getBooksFinishedCount() const;
   uint64_t getTotalReadingMs() const;
   uint64_t getTodayReadingMs() const;
+  uint64_t getSessionReadingMs() const;
   uint64_t getRecentReadingMs(uint32_t days) const;
   uint32_t getCurrentStreakDays() const;
   uint32_t getMaxStreakDays() const;
   uint32_t getDisplayTimestamp(bool* usedFallback = nullptr) const;
   bool hasReadingDays() const { return !readingDays.empty(); }
 
+  void recordForwardPageRead(const std::string& bookId, uint32_t seconds);
   void reset();
   bool exportToFile(const std::string& path) const;
   bool importFromFile(const std::string& path);
   bool saveToFile() const;
+
+  /**
+   * Creates a one-off reading-stats export backup named after the given
+   * (newly synced) date: /exports/stats_syncdate_YYYY-MM-DD (no extension,
+   * JSON content — same convention as the stats_backup_* auto-backups so the
+   * Settings import screen can list it). Called by the SyncDay flow when the
+   * calendar day changes after a date update. It is a NEW, separate
+   * convenience backup — it does NOT touch the interval-based auto-backup
+   * (stats_backup_*, createDueAutoBackup). If the file already exists it is
+   * overwritten. Returns true on success.
+   */
+  bool createSyncDateBackup(uint32_t epochSeconds) const;
+
   bool isAutoBackupDue() const;
   bool createDueAutoBackup() const;
   bool hasAutoBackups() const;
@@ -188,8 +283,120 @@ class ReadingStatsStore {
   int clearAutoBackups() const;
   bool loadFromFile();
   void markLoadSkippedForRecovery();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; }
   bool releaseMemoryForNetwork();
   bool reloadAfterNetwork();
+  void requestHomeInvalidation() const { homeInvalidationRequested = true; }
+  bool isHomeInvalidationRequested() const { return homeInvalidationRequested; }
+  void clearHomeInvalidationRequest() { homeInvalidationRequested = false; }
+
+  // Global summary read from summary.json (avoids full store load).
+  SummaryJSON::Global getGlobalSummary() const;
+  // Book progress for the home carousel - reads from summary.json if the store
+  // is not fully loaded, falls back to the in-RAM store otherwise.
+  uint8_t getBookProgressForHome(const std::string& bookId, const std::string& path) const;
+  // Full per-book home badge (progress, total ms, sessions, days, completed)
+  // used by the Home data panel. Returns false if the book has no stats.
+  bool getBookHomeStats(const std::string& bookId, const std::string& path, SummaryJSON::BookBadge& out) const;
+  // Returns a pointer to a synthesized ReadingBookStats for Home rendering
+  // (data panel / progress badge / read ribbon). When the full store is loaded
+  // it returns the real in-RAM entry; otherwise it synthesizes one from
+  // summary.json. The returned pointer stays valid until the next call, so
+  // callers must consume it before calling again.
+  const ReadingBookStats* getHomeBookStatsForRender(const std::string& bookId, const std::string& path) const;
+  // Preloads the summary.json cache (called at boot so the first Home render
+  // has the global panel + badges without blocking on file I/O). If summary.json
+  // is missing (e.g. upgrade from a version without it), loads the full store
+  // once, generates the summary, then releases the store back.
+  void preloadHomeSummary();
+  // Regenerate summary.json after the system clock changed (NTP sync / manual
+  // clock adjustment) so the Home stats panel reflects the new reference day
+  // (today / streak / recent 7-30 windows). Loads the store if needed, then
+  // releases it again to keep the boot/Home fast path memory-light.
+  void regenerateSummaryAfterClockChange();
+
+  // Save stats on reader exit with maximum memory freed first.
+  // The callback is invoked BEFORE loading the full store (only if not already loaded),
+  // allowing the caller to free renderer buffers, font caches, EPUB section cache, etc.
+  // After saving, the full store is released (loaded_ = false).
+  // Returns true if save succeeded.
+  template <typename FreeMemFn>
+  bool saveAndReleaseForExit(FreeMemFn&& freeMemoryBeforeLoad) {
+    if (!dirty && !activeSession.active) {
+      return true; // Nothing to save
+    }
+
+    // If stats are already loaded in RAM (normal case during reading), don't reload from disk.
+    // Only load from disk if we somehow lost the in-RAM copy.
+    if (!loaded_) {
+      // 1. Free as much memory as possible before loading the full store
+      freeMemoryBeforeLoad();
+
+      // 2. Load full store from disk
+      if (!loadFromFile()) {
+        LOG_ERR("RST", "Failed to load stats for exit save");
+        return false;
+      }
+    }
+
+    // 3. Merge active session data (endSession logic without the final save)
+    if (activeSession.active && activeSession.bookIndex < books.size()) {
+      noteActivity(); // flush pending time
+
+      auto& book = books[activeSession.bookIndex];
+      const bool countedSession = activeSession.accumulatedMs >= MIN_SESSION_READING_MS;
+      const uint32_t sessionMs = (activeSession.accumulatedMs > static_cast<uint64_t>(UINT32_MAX))
+                                     ? UINT32_MAX
+                                     : static_cast<uint32_t>(activeSession.accumulatedMs);
+
+      if (countedSession) {
+        book.sessions++;
+        book.lastSessionMs = sessionMs;
+        const uint32_t sessionTimestamp = getReferenceTimestamp(TimeUtils::getAuthoritativeTimestamp(), book.lastReadAt);
+        if (isClockValid(sessionTimestamp)) {
+          appendSessionLogEntry(TimeUtils::getLocalDayOrdinal(sessionTimestamp), sessionMs, book);
+        }
+        markDirty();
+      }
+
+      lastSessionSnapshot.valid = true;
+      lastSessionSnapshot.serial = ++sessionSerialCounter;
+      lastSessionSnapshot.bookId = book.bookId;
+      lastSessionSnapshot.path = book.path;
+      lastSessionSnapshot.sessionMs = sessionMs;
+      lastSessionSnapshot.counted = countedSession;
+      lastSessionSnapshot.completedThisSession = !activeSession.startCompleted && book.completed;
+      lastSessionSnapshot.startProgressPercent = activeSession.startProgressPercent;
+      lastSessionSnapshot.endProgressPercent = book.lastProgressPercent;
+
+      activeSession = {};
+    }
+
+    // 4. Save to disk (persist full store + summary.json)
+    const bool saved = persistToFile(ReadingStatsBackup::READING_STATS_FILE_JSON);
+    if (saved) {
+      saveSummaryJSON();
+    }
+
+    // 5. Release full store from RAM (clear ALL vectors like upstream)
+    books.clear(); books.shrink_to_fit();
+    legacyReadingDays.clear(); legacyReadingDays.shrink_to_fit();
+    readingDays.clear(); readingDays.shrink_to_fit();
+    sessionLog.clear(); sessionLog.shrink_to_fit();
+    loaded_ = false;
+    dirty = false;
+    lastSaveMs = millis();
+    bumpGeneration();
+
+    LOG_DBG("RST", "Exit save done: free=%u largest=%u", ESP.getFreeHeap(),
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
+    return saved;
+  }
+
+ private:
+  mutable bool homeInvalidationRequested = false;
 };
 
 #define READING_STATS ReadingStatsStore::getInstance()

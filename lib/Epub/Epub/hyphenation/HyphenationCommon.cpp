@@ -52,16 +52,6 @@ uint32_t toLowerCyrillicImpl(const uint32_t cp) {
 
 uint32_t toLowerLatin(const uint32_t cp) { return toLowerLatinImpl(cp); }
 
-uint32_t toLowerTurkish(const uint32_t cp) {
-  if (cp == 'I') {
-    return 0x0131;  // latin small dotless i
-  }
-  if (cp == 0x0130) {
-    return 'i';  // latin capital I with dot above
-  }
-  return toLowerLatinImpl(cp);
-}
-
 uint32_t toLowerCyrillic(const uint32_t cp) { return toLowerCyrillicImpl(cp); }
 
 bool isLatinLetter(const uint32_t cp) {
@@ -422,29 +412,14 @@ std::vector<CodepointInfo> collectCodepoints(const std::string& word) {
               break;
           }
           break;
-        case 0x0307:  // dot above
+        case 0x0307:  // dot above (Polish Ż)
           switch (prev) {
-            case 0x0049:
-              composed = 0x0130;
-              break;
             case 0x005A:
               composed = 0x017B;
-              break;
+              break;  // Z -> Ż
             case 0x007A:
               composed = 0x017C;
-              break;
-            default:
-              break;
-          }
-          break;
-        case 0x0306:  // breve
-          switch (prev) {
-            case 0x0047:
-              composed = 0x011E;
-              break;
-            case 0x0067:
-              composed = 0x011F;
-              break;
+              break;  // z -> ż
             default:
               break;
           }
@@ -457,30 +432,24 @@ std::vector<CodepointInfo> collectCodepoints(const std::string& word) {
             case 0x0063:
               composed = 0x00E7;
               break;  // c -> ç
-            case 0x0053:
-              composed = 0x015E;
-              break;
-            case 0x0073:
-              composed = 0x015F;
-              break;
             default:
               break;
           }
           break;
-        case 0x0328:  // ogonek
+        case 0x0328:  // ogonek (Polish Ą, Ę)
           switch (prev) {
             case 0x0041:
               composed = 0x0104;
-              break;
+              break;  // A -> Ą
             case 0x0061:
               composed = 0x0105;
-              break;
+              break;  // a -> ą
             case 0x0045:
               composed = 0x0118;
-              break;
+              break;  // E -> Ę
             case 0x0065:
               composed = 0x0119;
-              break;
+              break;  // e -> ę
             default:
               break;
           }

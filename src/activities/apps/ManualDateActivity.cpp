@@ -9,19 +9,15 @@
 #include <string>
 
 #include "CrossPointState.h"
-#include "StepperFieldsUi.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/TimeUtils.h"
 
-namespace fui = freeink::ui;
-
 namespace {
 constexpr int FIELD_COUNT = 3;
-constexpr int FIELD_DAY = 0;
-constexpr int FIELD_MONTH = 1;
-constexpr int FIELD_YEAR = 2;
 constexpr int MIN_DAY = 1;
 constexpr int MAX_DAY = 31;
 constexpr int MIN_MONTH = 1;
@@ -29,11 +25,11 @@ constexpr int MAX_MONTH = 12;
 constexpr int MIN_YEAR = 2024;
 constexpr int MAX_YEAR = 2099;
 
-constexpr fui::ActionId ACTION_FIELD = 1;
-constexpr fui::ActionId ACTION_DEC = 2;
-constexpr fui::ActionId ACTION_INC = 3;
-constexpr fui::ActionId ACTION_CANCEL = 4;
-constexpr fui::ActionId ACTION_OK = 5;
+std::string formatTwoDigits(const unsigned value) {
+  char buffer[4];
+  snprintf(buffer, sizeof(buffer), "%02u", value);
+  return buffer;
+}
 
 unsigned wrapValue(const unsigned value, const int delta, const unsigned minValue, const unsigned maxValue) {
   const int range = static_cast<int>(maxValue - minValue + 1);
@@ -68,26 +64,13 @@ void ManualDateActivity::onEnter() {
   }
 
   selectedField = 0;
-  resetUi();
-  app.on(ACTION_FIELD, &ManualDateActivity::onFieldEvent, this);
-  app.on(ACTION_DEC, &ManualDateActivity::onStepEvent, this);
-  app.on(ACTION_INC, &ManualDateActivity::onStepEvent, this);
-  app.on(ACTION_CANCEL, &ManualDateActivity::onCancelEvent, this);
-  app.on(ACTION_OK, &ManualDateActivity::onOkEvent, this);
-  app.setScreen(&ManualDateActivity::screenTrampoline, this);
   requestUpdate();
 }
 
-void ManualDateActivity::selectField(const int field) {
-  if (field < 0 || field >= FIELD_COUNT) return;
-  selectedField = field;
-  requestUpdate();
-}
-
-void ManualDateActivity::adjustField(const int field, const int delta) {
-  if (field == FIELD_DAY) {
+void ManualDateActivity::adjustSelectedField(const int delta) {
+  if (selectedField == 0) {
     day = wrapValue(day, delta, MIN_DAY, MAX_DAY);
-  } else if (field == FIELD_MONTH) {
+  } else if (selectedField == 1) {
     month = wrapValue(month, delta, MIN_MONTH, MAX_MONTH);
   } else {
     year = std::clamp(year + delta, MIN_YEAR, MAX_YEAR);
@@ -95,7 +78,9 @@ void ManualDateActivity::adjustField(const int field, const int delta) {
   requestUpdate();
 }
 
-std::string ManualDateActivity::getSelectedDateLabel() const { return TimeUtils::formatDateParts(year, month, day); }
+std::string ManualDateActivity::getSelectedDateLabel() const {
+  return TimeUtils::formatDateParts(year, month, day);
+}
 
 void ManualDateActivity::saveDate() {
   uint32_t epoch = 0;
@@ -105,42 +90,13 @@ void ManualDateActivity::saveDate() {
 
   APP_STATE.registerValidTimeSync(epoch);
   APP_STATE.saveToFile();
+  // The system date changed, so the derived summary.json snapshot is stale.
+  // Regenerate it so the Home stats panel reflects the new reference day.
+  READING_STATS.regenerateSummaryAfterClockChange();
   finish();
 }
 
-void ManualDateActivity::screenTrampoline(UiScreen& screen, void* user) {
-  static_cast<ManualDateActivity*>(user)->buildScreen(screen);
-}
-
-void ManualDateActivity::onFieldEvent(const fui::ActionEvent& event, void* user) {
-  static_cast<ManualDateActivity*>(user)->selectField(event.value);
-}
-
-void ManualDateActivity::onStepEvent(const fui::ActionEvent& event, void* user) {
-  auto* self = static_cast<ManualDateActivity*>(user);
-  self->selectedField = std::clamp(static_cast<int>(event.value), 0, FIELD_COUNT - 1);
-  self->adjustField(event.value, event.action == ACTION_INC ? 1 : -1);
-}
-
-void ManualDateActivity::onCancelEvent(const fui::ActionEvent&, void* user) {
-  auto* self = static_cast<ManualDateActivity*>(user);
-  self->app.clearTapFlash();  // the tap leaves this screen
-  self->finish();
-}
-
-void ManualDateActivity::onOkEvent(const fui::ActionEvent&, void* user) {
-  auto* self = static_cast<ManualDateActivity*>(user);
-  self->app.clearTapFlash();
-  self->saveDate();
-}
-
 void ManualDateActivity::loop() {
-  // Touch goes through the FreeInkApp: render() registered the rows, the
-  // [-]/[+] controls and the Cancel/OK pair.
-  const auto route = routeTouch(mappedInput);
-  if (route.routed && app.invalidated()) requestUpdate();
-  if (route) return;
-
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -151,44 +107,53 @@ void ManualDateActivity::loop() {
     return;
   }
 
-  buttonNavigator.onRelease({MappedInputManager::Button::Down},
-                            [this] { selectField(ButtonNavigator::nextIndex(selectedField, FIELD_COUNT)); });
-  buttonNavigator.onRelease({MappedInputManager::Button::Up},
-                            [this] { selectField(ButtonNavigator::previousIndex(selectedField, FIELD_COUNT)); });
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] { adjustField(selectedField, -1); });
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] { adjustField(selectedField, 1); });
-}
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this] {
+    selectedField = ButtonNavigator::nextIndex(selectedField, FIELD_COUNT);
+    requestUpdate();
+  });
 
-void ManualDateActivity::buildScreen(UiScreen& screen) {
-  snprintf(dayText, sizeof(dayText), "%02u", day);
-  snprintf(monthText, sizeof(monthText), "%02u", month);
-  snprintf(yearText, sizeof(yearText), "%d", year);
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this] {
+    selectedField = ButtonNavigator::previousIndex(selectedField, FIELD_COUNT);
+    requestUpdate();
+  });
 
-  const StepperField fields[FIELD_COUNT] = {
-      {tr(STR_DAY), dayText, "00"},
-      {tr(STR_MONTH), monthText, "00"},
-      {tr(STR_YEAR), yearText, "0000"},
-  };
-  StepperFieldsSpec spec;
-  spec.fields = fields;
-  spec.count = FIELD_COUNT;
-  spec.selectedField = selectedField;
-  spec.fieldAction = ACTION_FIELD;
-  spec.decrementAction = ACTION_DEC;
-  spec.incrementAction = ACTION_INC;
-  spec.cancelAction = ACTION_CANCEL;
-  spec.okAction = ACTION_OK;
-  buildStepperFieldsScreen(screen, renderer, mappedInput, spec);
-
-  // Button-board hint; touch users have the visible [-]/[+] controls.
-  if (!mappedInput.hasTouch()) addStepperHint(screen, tr(STR_SET_DATE_HINT));
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] { adjustSelectedField(-1); });
+  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] { adjustSelectedField(1); });
 }
 
 void ManualDateActivity::render(RenderLock&&) {
   renderer.clearScreen();
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int sidePadding = metrics.contentSidePadding;
+
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_SET_DATE), getSelectedDateLabel().c_str());
-  renderUi();
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int listHeight = metrics.listWithSubtitleRowHeight * FIELD_COUNT;
+  GUI.drawList(
+      renderer, Rect{0, contentTop, pageWidth, listHeight}, FIELD_COUNT, selectedField,
+      [](int index) {
+        if (index == 0) return std::string(tr(STR_DAY));
+        if (index == 1) return std::string(tr(STR_MONTH));
+        return std::string(tr(STR_YEAR));
+      },
+      [this](int index) {
+        if (index == 0) return formatTwoDigits(day);
+        if (index == 1) return formatTwoDigits(month);
+        return std::to_string(year);
+      },
+      [](int) { return UIIcon::Recent; }, nullptr, false);
+
+  const int hintTop = contentTop + listHeight + metrics.verticalSpacing;
+  const int hintWidth = pageWidth - sidePadding * 2;
+  const std::string hint = renderer.truncatedText(UI_10_FONT_ID, tr(STR_SET_DATE_HINT), hintWidth);
+  renderer.drawText(UI_10_FONT_ID, sidePadding, hintTop, hint.c_str());
+
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_CONFIRM), tr(STR_DIR_LEFT),
+                              tr(STR_DIR_RIGHT));
+
   renderer.displayBuffer();
 }

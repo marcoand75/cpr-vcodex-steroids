@@ -47,5 +47,4 @@ uint8_t* claim(const size_t minLen, size_t* lenOut) {
 void release(const uint8_t* p) {
   if (p && p == block) claimed.store(false);
 }
-
 }  // namespace buildscratch

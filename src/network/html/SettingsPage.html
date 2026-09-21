@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Settings - CPR-vCodex</title>
+  <title>Settings - CPR-vCodex Steroids</title>
   <style>
     :root {
       --font-color: #333;
@@ -280,14 +280,20 @@
   </style>
 </head>
 <body>
-  <h1>📚 CPR-vCodex</h1>
+  <div style="text-align: center; margin-bottom: 15px">
+    <img src="/logo.png" alt="CPR-vCodex Steroids" style="max-width: 220px; height: auto" />
+  </div>
+
+  <h1>📚 CPR-vCodex Steroids</h1>
 
   <div class="nav-links">
     <a href="/">Home</a>
     <a href="/files">File Manager</a>
     <a href="/settings" class="active">Settings</a>
+    <a href="/app-settings">App Settings</a>
     <a href="/fonts">Fonts</a>
     <a href="/if-found">if_found.txt</a>
+    <a href="/steroids-settings">Steroids</a>
   </div>
 
   <div id="message" class="message"></div>
@@ -302,24 +308,17 @@
     <button class="save-btn" id="saveBtn" onclick="saveSettings()">Save Settings</button>
   </div>
 
-  <div id="wifi-container"></div>
   <div id="opds-container"></div>
 
   <div class="card">
     <p style="text-align: center; color: #95a5a6; margin: 0;">
-      CPR-vCodex • Open Source
+      CPR-vCodex Steroids • Open Source
     </p>
   </div>
 
 <script>
   let allSettings = [];
   let originalValues = {};
-  let preserveQuickResumeTimeoutOn = false;
-  let quickResumeTimeoutAutoEnabled = false;
-  // Fork enum value (CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME); upstream uses 6.
-  const SLEEP_SCREEN_MODE = {
-    QUICK_RESUME: 11
-  };
 
   function escapeHtml(unsafe) {
     return unsafe
@@ -344,12 +343,12 @@
     if (setting.type === 'toggle') {
       const checked = setting.value ? 'checked' : '';
       return '<label class="toggle-switch">' +
-        '<input type="checkbox" id="' + id + '" ' + checked + ' onchange="handleSettingChanged(\'' + setting.key + '\')">' +
+        '<input type="checkbox" id="' + id + '" ' + checked + ' onchange="markChanged()">' +
         '<span class="toggle-slider"></span></label>';
     }
 
     if (setting.type === 'enum') {
-      let html = '<select id="' + id + '" onchange="handleSettingChanged(\'' + setting.key + '\')">';
+      let html = '<select id="' + id + '" onchange="markChanged()">';
       setting.options.forEach(function(opt, idx) {
         const selected = idx === setting.value ? ' selected' : '';
         html += '<option value="' + idx + '"' + selected + '>' + escapeHtml(opt) + '</option>';
@@ -361,16 +360,14 @@
     if (setting.type === 'value') {
       return '<input type="number" id="' + id + '" value="' + setting.value + '"' +
         ' min="' + setting.min + '" max="' + setting.max + '" step="' + setting.step + '"' +
-        ' onchange="handleSettingChanged(\'' + setting.key + '\')">';
+        ' onchange="markChanged()">';
     }
 
     if (setting.type === 'string') {
-      const isPassword = setting.key === 'koPassword' || setting.name.toLowerCase().includes('password');
-      const inputType = isPassword ? 'password' : 'text';
+      const inputType = setting.name.toLowerCase().includes('password') ? 'password' : 'text';
       const val = setting.value || '';
-      const placeholder = isPassword && setting.configured ? ' placeholder="(unchanged)"' : '';
       return '<input type="' + inputType + '" id="' + id + '" value="' + escapeHtml(val) + '"' +
-        placeholder + ' oninput="handleSettingChanged(\'' + setting.key + '\')">';
+        ' oninput="markChanged()">';
     }
 
     return '';
@@ -397,112 +394,6 @@
 
   function markChanged() {
     document.getElementById('saveBtn').disabled = false;
-  }
-
-  function findSetting(key) {
-    return allSettings.find(function(s) { return s.key === key; });
-  }
-
-  function getControl(key) {
-    return document.getElementById('setting-' + key);
-  }
-
-  function getControlValue(key) {
-    const setting = findSetting(key);
-    const el = getControl(key);
-    if (!setting || !el) return undefined;
-
-    if (setting.type === 'toggle') {
-      return el.checked ? 1 : 0;
-    }
-    if (setting.type === 'enum' || setting.type === 'value') {
-      return parseInt(el.value, 10);
-    }
-    return el.value;
-  }
-
-  function setControlValue(key, value) {
-    const setting = findSetting(key);
-    const el = getControl(key);
-    if (!setting || !el) return false;
-
-    if (setting.type === 'toggle') {
-      const checked = !!value;
-      if (el.checked === checked) return false;
-      el.checked = checked;
-      return true;
-    }
-
-    const nextValue = String(value);
-    if (el.value === nextValue) return false;
-    el.value = nextValue;
-    return true;
-  }
-
-  function isQuickResumeSleepScreenSelected() {
-    const sleepScreen = findSetting('sleepScreen');
-    const sleepScreenValue = getControlValue('sleepScreen');
-    if (!sleepScreen || sleepScreenValue === undefined || !Number.isFinite(sleepScreenValue)) return false;
-
-    let selectedValue = sleepScreenValue;
-    if (Array.isArray(sleepScreen.values)) {
-      selectedValue = Number(sleepScreen.values[sleepScreenValue]);
-    } else if (Array.isArray(sleepScreen.options)) {
-      const selectedOption = sleepScreen.options[sleepScreenValue];
-      if (selectedOption && typeof selectedOption === 'object' && 'value' in selectedOption) {
-        selectedValue = Number(selectedOption.value);
-      }
-    }
-
-    return selectedValue === SLEEP_SCREEN_MODE.QUICK_RESUME;
-  }
-
-  function syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged) {
-    const timeoutValue = getControlValue('quickResumeSleepScreen');
-    if (timeoutValue === undefined) return false;
-
-    let changed = false;
-    if (quickResumeTimeoutChanged) {
-      preserveQuickResumeTimeoutOn = timeoutValue === 1;
-      quickResumeTimeoutAutoEnabled = false;
-    }
-
-    if (isQuickResumeSleepScreenSelected()) {
-      if (timeoutValue !== 1) {
-        changed = setControlValue('quickResumeSleepScreen', 1);
-        quickResumeTimeoutAutoEnabled = !preserveQuickResumeTimeoutOn;
-      } else if (sleepScreenChanged && !preserveQuickResumeTimeoutOn) {
-        quickResumeTimeoutAutoEnabled = true;
-      }
-      return changed;
-    }
-
-    if (sleepScreenChanged && quickResumeTimeoutAutoEnabled && !preserveQuickResumeTimeoutOn) {
-      changed = setControlValue('quickResumeSleepScreen', 0);
-      quickResumeTimeoutAutoEnabled = false;
-    }
-    return changed;
-  }
-
-  function updateSettingsVisibility() {
-    const shortPwrBtnVal = getControlValue('shortPwrBtn');
-    const pwrBtnFootnoteBackRow = document.getElementById('row-setting-pwrBtnFootnoteBack');
-    if (pwrBtnFootnoteBackRow) {
-      // Fork SHORT_PWRBTN::FOOTNOTES is 5 (upstream: 4) because of the fork-only TOGGLE_STATUS_BAR entry.
-      if (shortPwrBtnVal === 5) {
-        pwrBtnFootnoteBackRow.style.display = '';
-      } else {
-        pwrBtnFootnoteBackRow.style.display = 'none';
-      }
-    }
-  }
-
-  function handleSettingChanged(key) {
-    syncQuickResumeTimeoutForSleepScreen(key === 'sleepScreen', key === 'quickResumeSleepScreen');
-    if (key === 'shortPwrBtn') {
-      updateSettingsVisibility();
-    }
-    markChanged();
   }
 
   async function loadSettings() {
@@ -536,7 +427,7 @@
       for (const category in groups) {
         html += '<div class="card"><h2>' + escapeHtml(category) + '</h2>';
         groups[category].forEach(function(s) {
-          html += '<div class="setting-row" id="row-setting-' + s.key + '">' +
+          html += '<div class="setting-row">' +
             '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
             '<span class="setting-control">' + renderControl(s) + '</span>' +
             '</div>';
@@ -545,14 +436,8 @@
       }
 
       container.innerHTML = html;
-      updateSettingsVisibility();
       document.getElementById('save-container').style.display = '';
       document.getElementById('saveBtn').disabled = true;
-      preserveQuickResumeTimeoutOn = getControlValue('quickResumeSleepScreen') === 1;
-      quickResumeTimeoutAutoEnabled = false;
-      if (syncQuickResumeTimeoutForSleepScreen(true, false)) {
-        markChanged();
-      }
     } catch (e) {
       console.error(e);
       document.getElementById('settings-container').innerHTML =
@@ -592,21 +477,9 @@
         throw new Error(text || 'Save failed');
       }
 
-      // Passwords remain write-only: clear replacements from the DOM once
-      // accepted and retain only a boolean configured hint.
+      // Update original values to new values
       for (const key in changes) {
-        if (key === 'koPassword') {
-          const passwordInput = document.getElementById('setting-' + key);
-          if (passwordInput) {
-            passwordInput.value = '';
-            passwordInput.placeholder = '(unchanged)';
-          }
-          originalValues[key] = '';
-          const setting = allSettings.find(function(s) { return s.key === key; });
-          if (setting) setting.configured = true;
-        } else {
-          originalValues[key] = changes[key];
-        }
+        originalValues[key] = changes[key];
       }
 
       showMessage('Settings saved successfully!', false);
@@ -618,118 +491,9 @@
     btn.textContent = 'Save Settings';
   }
 
-  // --- Wi-Fi Network Management ---
-  // Renders an editable list of saved Wi-Fi networks using /api/wifi endpoints.
-  // Password fields are never pre-filled; when left blank during edit, existing
-  // passwords remain unchanged server-side.
-  let wifiNetworks = [];
-
-  function renderWifiNetwork(net, idx) {
-    const isNew = idx === -1;
-    const id = isNew ? 'new' : idx;
-    const lastConnected = net.isLastConnected
-      ? '<div style="margin-top:8px;color:var(--label-color);font-size:0.9em;">Last connected network</div>'
-      : '';
-
-    return '<div class="opds-server" id="wifi-' + id + '">' +
-      '<div class="setting-row">' +
-        '<span class="setting-name">SSID</span>' +
-        '<span class="setting-control"><input type="text" id="wifi-ssid-' + id + '" value="' + escapeHtml(net.ssid || '') + '"></span>' +
-      '</div>' +
-      '<div class="setting-row">' +
-        '<span class="setting-name">Password</span>' +
-        '<span class="setting-control"><input type="password" id="wifi-pass-' + id + '" placeholder="' + (net.hasPassword ? '(unchanged)' : '') + '"></span>' +
-      '</div>' +
-      lastConnected +
-      '<div class="opds-actions">' +
-        '<button class="btn-small btn-save-server" onclick="saveWifiNetwork(' + idx + ')">Save</button>' +
-        (isNew ? '' : '<button class="btn-small btn-delete" onclick="deleteWifiNetwork(' + idx + ')">Delete</button>') +
-      '</div>' +
-    '</div>';
-  }
-
-  function renderWifiSection() {
-    const container = document.getElementById('wifi-container');
-    let html = '<div class="card"><h2>Wi-Fi Networks</h2>';
-
-    if (wifiNetworks.length === 0) {
-      html += '<p style="color:var(--label-color);text-align:center;">No Wi-Fi networks saved</p>';
-    } else {
-      wifiNetworks.forEach(function(net, idx) {
-        html += renderWifiNetwork(net, idx);
-      });
-    }
-
-    html += '<div style="margin-top:12px;text-align:center;">' +
-      '<button class="btn-small btn-add" onclick="addWifiNetwork()">+ Add Network</button>' +
-    '</div></div>';
-    container.innerHTML = html;
-  }
-
-  async function loadWifiNetworks() {
-    try {
-      const resp = await fetch('/api/wifi');
-      if (!resp.ok) throw new Error('Failed to load');
-      wifiNetworks = await resp.json();
-      renderWifiSection();
-    } catch (e) {
-      console.error('Wi-Fi load error:', e);
-    }
-  }
-
-  function addWifiNetwork() {
-    const container = document.getElementById('wifi-container');
-    const card = container.querySelector('.card');
-    const addBtn = card.querySelector('.btn-add').parentElement;
-    // Prevent multiple unsaved new-network forms at once (idx -1 -> id "new")
-    if (document.getElementById('wifi-new')) return;
-    addBtn.insertAdjacentHTML('beforebegin', renderWifiNetwork({ssid:'',hasPassword:false,isLastConnected:false}, -1));
-  }
-
-  async function saveWifiNetwork(idx) {
-    const id = idx === -1 ? 'new' : idx;
-    const ssid = document.getElementById('wifi-ssid-' + id).value.trim();
-    if (!ssid) {
-      showMessage('SSID is required.', true);
-      return;
-    }
-
-    const data = { ssid: ssid };
-    // Only include password when the user actually typed something; omitting it
-    // tells the server to preserve an existing password.
-    const pass = document.getElementById('wifi-pass-' + id).value;
-    if (pass) data.password = pass;
-    if (idx >= 0) data.index = idx;
-
-    try {
-      const resp = await fetch('/api/wifi', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-      });
-      if (!resp.ok) throw new Error(await resp.text());
-      showMessage('Wi-Fi network saved!', false);
-      await loadWifiNetworks();
-    } catch (e) {
-      showMessage('Error: ' + e.message, true);
-    }
-  }
-
-  async function deleteWifiNetwork(idx) {
-    if (!confirm('Delete this Wi-Fi network?')) return;
-    try {
-      const resp = await fetch('/api/wifi/delete', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({index: idx})
-      });
-      if (!resp.ok) throw new Error(await resp.text());
-      showMessage('Wi-Fi network deleted', false);
-      await loadWifiNetworks();
-    } catch (e) {
-      showMessage('Error: ' + e.message, true);
-    }
-  }
+  loadSettings().then(function() {
+    return loadOpdsServers();
+  });
 
   // --- OPDS Server Management ---
   // Dynamically renders an editable list of OPDS servers, communicating with the
@@ -845,14 +609,6 @@
     }
   }
 
-  // Sequential, not concurrent: the device's web server handles one client
-  // connection at a time, and three simultaneous fetches on page load can
-  // stall long enough inside a single response to trip the firmware watchdog.
-  (async () => {
-    await loadSettings();
-    await loadWifiNetworks();
-    await loadOpdsServers();
-  })();
 </script>
 </body>
 </html>

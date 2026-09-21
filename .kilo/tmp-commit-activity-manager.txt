@@ -1,0 +1,20 @@
+feat(memory): add activity transition memory delta logging in ActivityManager
+
+Log ESP heap and maxAlloc before/after each activity onEnter/onExit so
+memory leaks or regressions between screens are visible in debug output.
+
+### Changes
+- Include MemoryBudget.h in ActivityManager.cpp
+- exitActivity(): snapshot before onExit(), snapshot after destroy, log delta
+- onEnter path: snapshot before onEnter(), snapshot after, log delta
+
+### Safety
+- No behavior change on release builds beyond two extra ESP.getFreeHeap()
+  / ESP.getMaxAllocHeap() reads per activity transition
+- No heap allocations in the logging path itself
+- Helps verify that home/library/reader/webserver activities all return
+  heap to a stable baseline after exit
+
+Build: python -X utf8 -m platformio run -e default -j 16
+RAM: 101,692 bytes (31.0%)
+Flash: 6,278,685 bytes (95.8%)

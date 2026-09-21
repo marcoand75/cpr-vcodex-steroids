@@ -1,19 +1,20 @@
 #include "CalibreConnectActivity.h"
 
 #include <ESPmDNS.h>
-#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Memory.h>
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/NetworkMemory.h"
-#include "util/TaskWatchdog.h"
+#include "util/WiFiUtils.h"
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";
@@ -36,7 +37,7 @@ void CalibreConnectActivity::onEnter() {
   exitRequested = false;
 
   if (WiFi.status() != WL_CONNECTED) {
-    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+    startActivityForResult(WifiSelectionActivity::createNetworkOperation(renderer, mappedInput),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& wifi = std::get<WifiResult>(result.data);
@@ -55,12 +56,11 @@ void CalibreConnectActivity::onEnter() {
 void CalibreConnectActivity::onExit() {
   Activity::onExit();
 
+  stopWebServer();
   MDNS.end();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false);
-    delay(30);
-    silentRestart();
+    WiFiUtils::gracefulDisconnectAndSilentRestart();
   }
 }
 
@@ -83,16 +83,6 @@ void CalibreConnectActivity::startWebServer() {
   if (MDNS.begin(HOSTNAME)) {
     // mDNS is optional for the Calibre plugin but still helpful for users.
     LOG_DBG("CAL", "mDNS started: http://%s.local/", HOSTNAME);
-  }
-
-  // Heap-critical allocation: SD-font caches retained for the CJK UI fallback
-  // are rebuildable — release them (again: the WiFi selection screen may have
-  // repopulated them rendering a CJK SSID) so the server object doesn't abort
-  // on OOM. See CrossPointWebServerActivity::startWebServer().
-  if (auto* fcm = renderer.getFontCacheManager()) {
-    LOG_DBG("CAL", "Free heap before SD font cache release: %d bytes", ESP.getFreeHeap());
-    fcm->releaseSdFontCaches();
-    LOG_DBG("CAL", "Free heap before server alloc: %d bytes", ESP.getFreeHeap());
   }
 
   webServer = makeUniqueNoThrow<CrossPointWebServer>();
@@ -131,12 +121,12 @@ void CalibreConnectActivity::loop() {
       LOG_DBG("CAL", "WARNING: %lu ms gap since last handleClient", timeSinceLastHandleClient);
     }
 
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
     constexpr int MAX_ITERATIONS = 80;
     for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
       webServer->handleClient();
       if ((i & 0x07) == 0x07) {
-        resetTaskWatchdogIfSubscribed();
+        esp_task_wdt_reset();
       }
       if ((i & 0x0F) == 0x0F) {
         yield();
@@ -244,8 +234,7 @@ void CalibreConnectActivity::render(RenderLock&&) {
       renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, y, msg.c_str());
     }
 
-    const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_EXIT), "", "", "");
   }
   renderer.displayBuffer();
 }

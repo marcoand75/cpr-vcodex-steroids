@@ -1,45 +1,46 @@
 #include "CrossPointWebServer.h"
 
 #include <ArduinoJson.h>
-#include <BoardConfig.h>
 #include <FsHelpers.h>
 #include <HalClock.h>
-#include <HalGPIO.h>
 #include <HalStorage.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <WiFi.h>
+#include "util/WiFiUtils.h"
+#include <cctype>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
+#include <esp_task_wdt.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <cstring>
+
+#include "util/StringUtils.h"
 
 #include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
+#include <ImageRenderConfig.h>
 #include "KOReaderCredentialStore.h"
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontGlobals.h"
-#include "SdCardFontSystem.h"
-#include "SettingsList.h"
 #include "WebDAVHandler.h"
-#include "WifiCredentialStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/IfFoundPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
+#include "html/AppSettingsPageHtml.generated.h"
+#include "html/SteroidsSettingsPageHtml.generated.h"
+#include "html/LogoPng.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/IfFoundFile.h"
-#include "util/TaskWatchdog.h"
 #include "version.h"
 
 namespace {
@@ -78,7 +79,7 @@ uint32_t getUnlockedAchievementCount() {
 CrossPointWebServer* wsInstance = nullptr;
 
 // WebSocket upload state
-HalFile wsUploadFile;
+FsFile wsUploadFile;
 String wsUploadFileName;
 String wsUploadPath;
 size_t wsUploadSize = 0;
@@ -223,7 +224,7 @@ int webSettingsCategoryIndex(StrId category) {
 }
 
 enum class WebSettingType : uint8_t { Toggle, Enum, Value, String };
-enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod };
+enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod, LibraryRootDir, ScreenSaverText, SdFontFamily, ScreenSaverDir, ScreenSaverReaderDir };
 
 struct WebSettingDef {
   StrId nameId;
@@ -255,9 +256,12 @@ constexpr StrId OPT_SLEEP_FILTER[] = {StrId::STR_NONE_OPT, StrId::STR_FILTER_CON
 constexpr StrId OPT_HIDE_BATTERY[] = {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS};
 constexpr StrId OPT_REFRESH_FREQ[] = {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15,
                                       StrId::STR_PAGES_30};
-constexpr StrId OPT_UI_THEME[] = {StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_CUSTOM, StrId::STR_THEME_LYRA_CAROUSEL};
-constexpr StrId OPT_FONT_FAMILY[] = {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS};
-constexpr StrId OPT_LINE_SPACING[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE};
+constexpr StrId OPT_DITHER_ALGORITHM[] = {StrId::STR_IMAGE_DITHER_ATKINSON, StrId::STR_IMAGE_DITHER_FLOYD};
+constexpr StrId OPT_UI_THEME[] = {StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_CUSTOM, StrId::STR_THEME_LYRA_CAROUSEL,
+                                   StrId::STR_THEME_LYRA_MARCOAND75};
+constexpr StrId OPT_FONT_SIZE[] = {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE,
+                                   StrId::STR_X_LARGE};
+constexpr StrId OPT_LINE_SPACING[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE};
 constexpr StrId OPT_ALIGNMENT[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                    StrId::STR_BOOK_S_STYLE};
 constexpr StrId OPT_BIONIC[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE};
@@ -267,14 +271,37 @@ constexpr StrId OPT_TEXT_DARKNESS[] = {StrId::STR_NORMAL, StrId::STR_LEGACY_BW, 
 constexpr StrId OPT_READER_REFRESH[] = {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_REFRESH_MODE_FAST,
                                         StrId::STR_REFRESH_MODE_HALF, StrId::STR_REFRESH_MODE_FULL};
 constexpr StrId OPT_IMAGES[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS};
+constexpr StrId OPT_EPUB_RENDER_MODE[] = {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT};
+constexpr StrId OPT_DOTS_SPACING[] = {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE};
 constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV};
-constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                             StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION};
-constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                                   StrId::STR_TOGGLE_STATUS_BAR};
+// Button action labels (shared across long-press, short power, and select settings)
+constexpr StrId OPT_BTN_ACTIONS[] = {
+    StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+    StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+    StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+    StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+    StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+    StrId::STR_BTN_ACTION_READER_SETTINGS};
+constexpr StrId OPT_SELECT_LONG_PRESS[] = {
+    StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK, StrId::STR_BTN_ACTION_READING_TIME,
+    StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_VIEW_BOOKMARKS,
+    StrId::STR_BTN_ACTION_LOOKUP_WORD, StrId::STR_BTN_ACTION_DICTIONARY,
+    StrId::STR_BTN_ACTION_CHAPTER_SKIP, StrId::STR_BTN_ACTION_ORIENTATION,
+    StrId::STR_BTN_ACTION_FONTSIZE, StrId::STR_BTN_ACTION_DARK_MODE,
+    StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS};
+constexpr StrId OPT_SHORT_PWRBTN[] = {
+    StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
+    StrId::STR_TOGGLE_STATUS_BAR, StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+    StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+    StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+    StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+    StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_DARK_MODE,
+    StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS};
 constexpr StrId OPT_TILT_PAGE_TURN[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED};
-constexpr StrId OPT_DISPLAY_HEADER[] = {StrId::STR_STATE_OFF, StrId::STR_DISPLAY_DATE_ONLY,
-                                        StrId::STR_DISPLAY_TIME_ONLY, StrId::STR_DISPLAY_DAY_AND_TIME};
+constexpr StrId OPT_SLEEP_TIMEOUT[] = {StrId::STR_MIN_1, StrId::STR_MIN_5, StrId::STR_MIN_10, StrId::STR_MIN_15,
+                                       StrId::STR_MIN_30};
 constexpr StrId OPT_AUTO_MANUAL[] = {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_MANUAL};
 constexpr StrId OPT_REMINDER_STARTS[] = {StrId::STR_STATE_OFF, StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30,
                                          StrId::STR_NUM_40,    StrId::STR_NUM_50, StrId::STR_NUM_60};
@@ -295,8 +322,37 @@ constexpr StrId OPT_BOOK_CHAPTER_HIDE[] = {StrId::STR_BOOK, StrId::STR_CHAPTER, 
 constexpr StrId OPT_BAR_THICKNESS[] = {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM,
                                        StrId::STR_PROGRESS_BAR_THICK};
 constexpr StrId OPT_XTC_STATUS_BAR[] = {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP};
-constexpr StrId OPT_STATUS_BAR_CLOCK[] = {StrId::STR_HIDE, StrId::STR_DIR_RIGHT, StrId::STR_DIR_LEFT};
-constexpr StrId OPT_CLOCK_FORMAT[] = {StrId::STR_CLOCK_FORMAT_24H, StrId::STR_CLOCK_FORMAT_12H};
+
+// Library (App settings) options
+constexpr StrId OPT_LIBRARY_LAYOUT[] = {StrId::STR_LIBRARY_4X4, StrId::STR_LIBRARY_3X3, StrId::STR_LIBRARY_2X2};
+constexpr StrId OPT_LIBRARY_FILTER[] = {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ};
+
+// Screensaver (App settings) options
+constexpr StrId OPT_SCREENSAVER_INTERVAL[] = {
+    StrId::STR_SCREENSAVER_INTERVAL_1M, StrId::STR_SCREENSAVER_INTERVAL_5M, StrId::STR_SCREENSAVER_INTERVAL_15M,
+    StrId::STR_SCREENSAVER_INTERVAL_30M, StrId::STR_SCREENSAVER_INTERVAL_1H, StrId::STR_SCREENSAVER_INTERVAL_2H,
+    StrId::STR_SCREENSAVER_INTERVAL_4H, StrId::STR_SCREENSAVER_INTERVAL_8H};
+constexpr StrId OPT_SCREENSAVER_WAKE[] = {
+    StrId::STR_SCREENSAVER_WAKE_ANY,  StrId::STR_SCREENSAVER_WAKE_BACK,    StrId::STR_SCREENSAVER_WAKE_CONFIRM,
+    StrId::STR_SCREENSAVER_WAKE_LEFT, StrId::STR_SCREENSAVER_WAKE_RIGHT,   StrId::STR_SCREENSAVER_WAKE_UP,
+    StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER,   StrId::STR_SCREENSAVER_WAKE_PAGE_BACK,
+    StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD};
+constexpr StrId OPT_SCREENSAVER_FONT_SIZE[] = {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE};
+constexpr StrId OPT_SCREENSAVER_TEXT_POSITION[] = {
+    StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT,  StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
+    StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,
+    StrId::STR_SCREENSAVER_TEXT_POS_CENTER, StrId::STR_SCREENSAVER_TEXT_POS_RANDOM};
+constexpr StrId OPT_SCREENSAVER_TEXT_STYLE[] = {
+    StrId::STR_SCREENSAVER_TEXT_WHITE, StrId::STR_SCREENSAVER_TEXT_BLACK, StrId::STR_SCREENSAVER_TEXT_WHITE_OUTLINED,
+    StrId::STR_SCREENSAVER_TEXT_BLACK_OUTLINED};
+constexpr StrId OPT_SCREENSAVER_PANEL_COLOR[] = {StrId::STR_DARK, StrId::STR_LIGHT};
+constexpr StrId OPT_SCREENSAVER_PANEL_OPACITY[] = {StrId::STR_SCREENSAVER_OPACITY_25, StrId::STR_SCREENSAVER_OPACITY_50,
+                                                   StrId::STR_SCREENSAVER_OPACITY_75, StrId::STR_SCREENSAVER_OPACITY_100};
+constexpr StrId OPT_SCREENSAVER_MIN_BATTERY[] = {
+    StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20, StrId::STR_SCREENSAVER_BAT_30,
+    StrId::STR_SCREENSAVER_BAT_40, StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
+    StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80, StrId::STR_SCREENSAVER_BAT_90};
+constexpr StrId OPT_SCREENSAVER_ORDER[] = {StrId::STR_RANDOM, StrId::STR_SEQUENTIAL};
 
 #define WEB_TOGGLE(name, member, key, category)                                                                       \
   {name, category, WebSettingType::Toggle, &CrossPointSettings::member, nullptr, 0, 0, 0, 0, WebDynamicSetting::None, \
@@ -341,16 +397,24 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_ENUM(StrId::STR_HIDE_BATTERY, hideBatteryPercentage, OPT_HIDE_BATTERY, "hideBatteryPercentage",
              StrId::STR_CAT_DISPLAY),
     WEB_ENUM(StrId::STR_REFRESH_FREQ, refreshFrequency, OPT_REFRESH_FREQ, "refreshFrequency", StrId::STR_CAT_DISPLAY),
-    WEB_ENUM(StrId::STR_UI_THEME, uiTheme, OPT_UI_THEME, "uiTheme", StrId::STR_CAT_DISPLAY),
     WEB_ENUM(StrId::STR_HOME_BOOK_SOURCE, homeBookSource, OPT_HOME_BOOK_SOURCE, "homeBookSource",
              StrId::STR_CAT_DISPLAY),
-    WEB_TOGGLE(StrId::STR_ANTI_GHOSTING_EXPERIMENTAL, antiGhostingExperimental, "antiGhostingExperimental",
-               StrId::STR_CAT_DISPLAY),
-    WEB_TOGGLE(StrId::STR_DARK_MODE, darkMode, "darkMode", StrId::STR_CAT_DISPLAY),
     WEB_TOGGLE(StrId::STR_SUNLIGHT_FADING_FIX, fadingFix, "fadingFix", StrId::STR_CAT_DISPLAY),
+    // Image rendering tuning (steroids)
+    WEB_TOGGLE(StrId::STR_IMAGE_DITHERING, imageDitheringEnabled, "imageDitheringEnabled", StrId::STR_CAT_DISPLAY),
+    WEB_TOGGLE(StrId::STR_IMAGE_LUT, imageLutEnabled, "imageLutEnabled", StrId::STR_CAT_DISPLAY),
+    WEB_ENUM(StrId::STR_IMAGE_DITHER_ALGORITHM, imageDitheringAlgorithm, OPT_DITHER_ALGORITHM,
+             "imageDitheringAlgorithm", StrId::STR_CAT_DISPLAY),
+    WEB_VALUE(StrId::STR_IMAGE_THRESHOLD_BLACK, imageThresholdBlack, 1, 253, 1, "imageThresholdBlack",
+              StrId::STR_CAT_DISPLAY),
+    WEB_VALUE(StrId::STR_IMAGE_THRESHOLD_DARK, imageThresholdDark, 2, 254, 1, "imageThresholdDark",
+              StrId::STR_CAT_DISPLAY),
+    WEB_VALUE(StrId::STR_IMAGE_THRESHOLD_LIGHT, imageThresholdLight, 3, 255, 1, "imageThresholdLight",
+              StrId::STR_CAT_DISPLAY),
+    WEB_VALUE(StrId::STR_IMAGE_GAMMA, imageGamma, 5, 30, 1, "imageGamma", StrId::STR_CAT_DISPLAY),
 
-    WEB_ENUM(StrId::STR_FONT_FAMILY, fontFamily, OPT_FONT_FAMILY, "fontFamily", StrId::STR_CAT_READER),
-    WEB_VALUE(StrId::STR_FONT_SIZE, fontPointSize, 8, 24, 1, "fontSize", StrId::STR_CAT_READER),
+    WEB_DYNAMIC_STRING(StrId::STR_FONT_INSTALLED, WebDynamicSetting::SdFontFamily, "sdFontFamily", StrId::STR_CAT_READER),
+    WEB_ENUM(StrId::STR_FONT_SIZE, fontSize, OPT_FONT_SIZE, "fontSize", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_LINE_SPACING, lineSpacing, OPT_LINE_SPACING, "lineSpacing", StrId::STR_CAT_READER),
     WEB_VALUE(StrId::STR_SCREEN_MARGIN, screenMargin, 5, 40, 5, "screenMargin", StrId::STR_CAT_READER),
     WEB_ENUM(StrId::STR_PARA_ALIGNMENT, paragraphAlignment, OPT_ALIGNMENT, "paragraphAlignment", StrId::STR_CAT_READER),
@@ -371,18 +435,13 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
              StrId::STR_CAT_CONTROLS),
     WEB_TOGGLE(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, frontButtonFollowOrientation, "frontButtonFollowOrientation",
                StrId::STR_CAT_CONTROLS),
-    WEB_ENUM(StrId::STR_LONG_PRESS_BEHAVIOR, longPressButtonBehavior, OPT_LONG_PRESS_BEHAVIOR,
-             "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
-    WEB_ENUM(StrId::STR_SHORT_PWR_BTN, shortPwrBtn, OPT_SHORT_PWR, "shortPwrBtn", StrId::STR_CAT_CONTROLS),
+    WEB_ENUM(StrId::STR_SHORT_PWR_BTN, shortPwrBtn, OPT_SHORT_PWRBTN, "shortPwrBtn", StrId::STR_CAT_CONTROLS),
     WEB_ENUM(StrId::STR_TILT_PAGE_TURN, tiltPageTurn, OPT_TILT_PAGE_TURN, "tiltPageTurn", StrId::STR_CAT_CONTROLS),
 
-    WEB_VALUE(StrId::STR_TIME_TO_SLEEP, sleepTimeoutMinutes, 1, 31, 1, "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM),
+    WEB_ENUM(StrId::STR_TIME_TO_SLEEP, sleepTimeout, OPT_SLEEP_TIMEOUT, "sleepTimeout", StrId::STR_CAT_SYSTEM),
     WEB_TOGGLE(StrId::STR_SHOW_HIDDEN_FILES, showHiddenFiles, "showHiddenFiles", StrId::STR_CAT_SYSTEM),
-    WEB_TOGGLE(StrId::STR_HIDE_FILE_EXTENSION, hideFileExtension, "hideFileExtension", StrId::STR_CAT_SYSTEM),
+    WEB_ENUM(StrId::STR_CHOOSE_WIFI, syncDayWifiChoice, OPT_AUTO_MANUAL, "syncDayWifiChoice", StrId::STR_CAT_SYSTEM),
 
-    WEB_TOGGLE(StrId::STR_DISPLAY_DAY, displayDay, "displayDay", StrId::STR_APPS),
-    WEB_ENUM(StrId::STR_DISPLAY_DAY_TIME, displayDay, OPT_DISPLAY_HEADER, "displayDay", StrId::STR_APPS),
-    WEB_ENUM(StrId::STR_CHOOSE_WIFI, syncDayWifiChoice, OPT_AUTO_MANUAL, "syncDayWifiChoice", StrId::STR_APPS),
     WEB_ENUM(StrId::STR_SYNC_DAY_REMINDER_EVERY, syncDayReminderStarts, OPT_REMINDER_STARTS, "syncDayReminderStarts",
              StrId::STR_APPS),
     WEB_ENUM(StrId::STR_DATE_FORMAT, dateFormat, OPT_DATE_FORMAT, "dateFormat", StrId::STR_APPS),
@@ -414,7 +473,7 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
              StrId::STR_SHORTCUTS_SECTION),
     WEB_ENUM(StrId::STR_MENU_RECENT_BOOKS, recentBooksShortcut, OPT_SHORTCUT_LOCATION, "recentBooksShortcut",
              StrId::STR_SHORTCUTS_SECTION),
-    WEB_ENUM(StrId::STR_HIGHLIGHTS, bookmarksShortcut, OPT_SHORTCUT_LOCATION, "bookmarksShortcut",
+    WEB_ENUM(StrId::STR_BOOKMARKS, bookmarksShortcut, OPT_SHORTCUT_LOCATION, "bookmarksShortcut",
              StrId::STR_SHORTCUTS_SECTION),
     WEB_ENUM(StrId::STR_FAVORITES, favoritesShortcut, OPT_SHORTCUT_LOCATION, "favoritesShortcut",
              StrId::STR_SHORTCUTS_SECTION),
@@ -451,9 +510,6 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_TOGGLE(StrId::STR_BATTERY, statusBarBattery, "statusBarBattery", StrId::STR_CUSTOMISE_STATUS_BAR),
     WEB_ENUM(StrId::STR_XTC_STATUS_BAR, xtcStatusBarMode, OPT_XTC_STATUS_BAR, "xtcStatusBarMode",
              StrId::STR_CUSTOMISE_STATUS_BAR),
-    WEB_ENUM(StrId::STR_CLOCK, statusBarClock, OPT_STATUS_BAR_CLOCK, "statusBarClock", StrId::STR_CUSTOMISE_STATUS_BAR),
-    WEB_ENUM(StrId::STR_CLOCK_FORMAT, clockFormat, OPT_CLOCK_FORMAT, "clockFormat", StrId::STR_CUSTOMISE_STATUS_BAR),
-    WEB_TOGGLE(StrId::STR_CLOCK_SYNCED, clockHasBeenSynced, "clockHasBeenSynced", StrId::STR_CUSTOMISE_STATUS_BAR),
 };
 
 #undef WEB_DYNAMIC_STRING
@@ -472,24 +528,7 @@ const WebSettingDef* findWebSetting(const char* key) {
 }
 
 bool isWebSettingVisible(const WebSettingDef& setting) {
-  if (setting.nameId == StrId::STR_TILT_PAGE_TURN && !halTiltSensor.isAvailable()) {
-    return false;
-  }
-  if ((setting.nameId == StrId::STR_CLOCK || setting.nameId == StrId::STR_CLOCK_FORMAT ||
-       setting.nameId == StrId::STR_CLOCK_SYNCED) &&
-      !halClock.isAvailable()) {
-    return false;
-  }
-  if (setting.nameId == StrId::STR_SYNC_DAY_REMINDER_EVERY && SETTINGS.isHardwareRtcAutoDayClockActive()) {
-    return false;
-  }
-  if (setting.nameId == StrId::STR_DISPLAY_DAY && SETTINGS.isHardwareRtcAutoDayClockActive()) {
-    return false;
-  }
-  if (setting.nameId == StrId::STR_DISPLAY_DAY_TIME && !SETTINGS.isHardwareRtcAutoDayClockActive()) {
-    return false;
-  }
-  return true;
+  return setting.nameId != StrId::STR_TILT_PAGE_TURN || halTiltSensor.isAvailable();
 }
 }  // namespace
 
@@ -533,20 +572,15 @@ void CrossPointWebServer::begin() {
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
-  WiFi.setSleep(false);
+  WiFiUtils::disableModemSleep();
   // Default varies by ESP32 core version. The activity's loss-recovery loop
   // relies on driver retries during transient disconnects.
-  WiFi.setAutoReconnect(true);
+  WiFiUtils::setAutoReconnect(true);
 
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.
 
   LOG_DBG("WEB", "[MEM] Free heap after WebServer allocation: %d bytes", ESP.getFreeHeap());
-
-  // Add Access-Control-Allow-* headers to every response so web-based clients
-  // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
-  // are answered in handleNotFound().
-  server->enableCORS(true);
 
   // Setup routes
   LOG_DBG("WEB", "Setting up routes...");
@@ -575,8 +609,13 @@ void CrossPointWebServer::begin() {
 
   // Settings endpoints
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
+  server->on("/app-settings", HTTP_GET, [this] { handleAppSettingsPage(); });
+  server->on("/steroids-settings", HTTP_GET, [this] { handleSteroidsSettingsPage(); });
+  server->on("/logo.png", HTTP_GET, [this] { handleLogo(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
+  server->on("/api/steroids-settings", HTTP_GET, [this] { handleGetSteroidsSettings(); });
+  server->on("/api/steroids-settings", HTTP_POST, [this] { handlePostSteroidsSettings(); });
 
   // Font management endpoints
   server->on("/fonts", HTTP_GET, [this] { handleFontsPage(); });
@@ -593,9 +632,6 @@ void CrossPointWebServer::begin() {
   server->on("/api/opds", HTTP_GET, [this] { handleGetOpdsServers(); });
   server->on("/api/opds", HTTP_POST, [this] { handlePostOpdsServer(); });
   server->on("/api/opds/delete", HTTP_POST, [this] { handleDeleteOpdsServer(); });
-  server->on("/api/wifi", HTTP_GET, [this] { handleGetWifiNetworks(); });
-  server->on("/api/wifi", HTTP_POST, [this] { handlePostWifiNetwork(); });
-  server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
@@ -626,11 +662,6 @@ void CrossPointWebServer::begin() {
 
   udpActive = udp.begin(LOCAL_UDP_PORT);
   LOG_DBG("WEB", "Discovery UDP %s on port %d", udpActive ? "enabled" : "failed", LOCAL_UDP_PORT);
-
-  // Do not subscribe the serving task to the task watchdog. Arduino WebServer
-  // permits five-second client and ACK waits, which can consume the entire
-  // default watchdog window on a weak connection. The interrupt watchdog still
-  // catches hard CPU lockups, matching the rest of the application lifecycle.
 
   running = true;
 
@@ -703,9 +734,11 @@ void CrossPointWebServer::stop() {
   LOG_DBG("WEB", "Web server stopped and deleted");
   LOG_DBG("WEB", "[MEM] Free heap after delete server: %d bytes", ESP.getFreeHeap());
 
-  // Note: Static upload variables (uploadFileName, uploadPath, uploadError) are declared
-  // later in the file and will be cleared when they go out of scope or on next upload
-  LOG_DBG("WEB", "[MEM] Free heap final: %d bytes", ESP.getFreeHeap());
+  // Free font upload buffer if still allocated (saves ~4KB)
+  fontUpload.freeBuffer();
+  upload.freeBuffer();
+
+  LOG_DBG("WEB", "[MEM] Free heap after buffer cleanup: %d bytes", ESP.getFreeHeap());
 }
 
 void CrossPointWebServer::handleClient() {
@@ -787,22 +820,6 @@ void CrossPointWebServer::handleJszip() const {
 }
 
 void CrossPointWebServer::handleNotFound() const {
-  // CORS preflight: routes are registered per-method, so OPTIONS requests land
-  // here. The Access-Control-Allow-* headers are added by enableCORS().
-  if (server->method() == HTTP_OPTIONS) {
-    server->send(204, "text/plain", "");
-    return;
-  }
-
-  // in AP mode, redirect unmatched browser/captive-portal requests to "/" so the OS auto-opens the browser
-  // API requests (/api/*) still return 404 so XHR errors surface correctly
-  // see https://en.wikipedia.org/wiki/Captive_portal#Detection
-  if (apMode && !server->uri().startsWith("/api/")) {
-    server->sendHeader("Location", "/", true);
-    server->send(302, "text/plain", "");
-    return;
-  }
-
   String message = "404 Not Found\n\n";
   message += "URI: " + server->uri() + "\n";
   server->send(404, "text/plain", message);
@@ -839,40 +856,14 @@ void CrossPointWebServer::handleStatus() const {
     }
   }
   doc["serial"] = validSerial ? serialNumber : "Not found";
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  doc["device"] = gpio.deviceIsX3() ? "X3" : "X4";
-#else
-  doc["device"] = BoardConfig::ACTIVE.name;
-#endif
 
-  char snBuf[33] = {0};
-  bool valid = false;
-#if !CONFIG_IDF_TARGET_ESP32
-  // Classic ESP32's efuse table has no USER_DATA block (C3/S3 only)
-  if (esp_efuse_read_field_blob(ESP_EFUSE_USER_DATA, snBuf, 256) == ESP_OK) {
-    valid = snBuf[0] != '\0' && snBuf[0] != (char)0xFF;
-    for (int i = 0; i < 32 && snBuf[i] != '\0'; i++) {
-      if (!std::isprint(static_cast<unsigned char>(snBuf[i]))) {
-        valid = false;
-        break;
-      }
-    }
-  }
-#endif
-
-  if (valid) {
-    doc["serial"] = snBuf;
-  } else {
-    doc["serial"] = "Not found";
-  }
-
-  String response;
-  serializeJson(doc, response);
-  server->send(200, "application/json", response);
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
 }
 
-void CrossPointWebServer::scanFiles(const char* path, const FileVisitor visitor, void* context) const {
-  HalFile root = Storage.open(path);
+void CrossPointWebServer::scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const {
+  FsFile root = Storage.open(path);
   if (!root) {
     LOG_DBG("WEB", "Failed to open directory: %s", path);
     return;
@@ -886,7 +877,7 @@ void CrossPointWebServer::scanFiles(const char* path, const FileVisitor visitor,
 
   LOG_DBG("WEB", "Scanning files in: %s", path);
 
-  HalFile file = root.openNextFile();
+  FsFile file = root.openNextFile();
   char name[500];
   while (file) {
     file.getName(name, sizeof(name));
@@ -925,12 +916,12 @@ void CrossPointWebServer::scanFiles(const char* path, const FileVisitor visitor,
         info.completed = isCompletedReadingFilePath(fullPath);
       }
 
-      visitor(info, context);
+      callback(info);
     }
 
     file.close();
-    yield();                          // Yield to allow WiFi and other tasks to process during long scans
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog to prevent timeout on large directories
+    yield();               // Yield to allow WiFi and other tasks to process during long scans
+    esp_task_wdt_reset();  // Reset watchdog to prevent timeout on large directories
     file = root.openNextFile();
   }
   root.close();
@@ -975,7 +966,7 @@ void CrossPointWebServer::handleFontList() const {
       const char* name = strrchr(file.path.c_str(), '/');
       fileObj["name"] = name ? name + 1 : file.path.c_str();
 
-      HalFile f;
+      FsFile f;
       if (Storage.openFileForRead("WEB", file.path.c_str(), f)) {
         fileObj["size"] = static_cast<unsigned long>(f.size());
         f.close();
@@ -995,8 +986,15 @@ void CrossPointWebServer::handleFontUploadData() {
 
   switch (upload.status) {
     case UPLOAD_FILE_START: {
-      resetTaskWatchdogIfSubscribed();
+      esp_task_wdt_reset();
       String family = server->arg("family");
+
+      // Allocate font upload buffer on heap (saves ~4KB of DRAM when not uploading)
+      if (!fontUpload.allocateBuffer()) {
+        LOG_ERR("WEB", "Failed to allocate font upload buffer");
+        break;
+      }
+
       fontUpload.file = HalFile();
       fontUpload.valid = false;
       fontUpload.magicChecked = false;
@@ -1041,7 +1039,7 @@ void CrossPointWebServer::handleFontUploadData() {
 
     case UPLOAD_FILE_WRITE: {
       if (!fontUpload.valid) break;
-      resetTaskWatchdogIfSubscribed();
+      esp_task_wdt_reset();
 
       if (!fontUpload.magicChecked && upload.currentSize >= 8) {
         if (memcmp(upload.buf, "CPFONT\0\0", 8) != 0) {
@@ -1057,16 +1055,16 @@ void CrossPointWebServer::handleFontUploadData() {
       while (remaining > 0) {
         const size_t space = FontUploadState::BUFFER_SIZE - fontUpload.bufferPos;
         const size_t chunk = (remaining < space) ? remaining : space;
-        memcpy(fontUpload.buffer.data() + fontUpload.bufferPos, src, chunk);
+        memcpy(fontUpload.buffer.get() + fontUpload.bufferPos, src, chunk);
         fontUpload.bufferPos += chunk;
         src += chunk;
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
           fontUpload.bytesWritten += fontUpload.bufferPos;
           fontUpload.bufferPos = 0;
-          resetTaskWatchdogIfSubscribed();
+          esp_task_wdt_reset();
         }
       }
       break;
@@ -1074,7 +1072,7 @@ void CrossPointWebServer::handleFontUploadData() {
 
     case UPLOAD_FILE_END: {
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
         fontUpload.bytesWritten += fontUpload.bufferPos;
         fontUpload.bufferPos = 0;
       }
@@ -1087,6 +1085,7 @@ void CrossPointWebServer::handleFontUploadData() {
       }
 
       LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
+      fontUpload.freeBuffer();
       break;
     }
 
@@ -1099,6 +1098,7 @@ void CrossPointWebServer::handleFontUploadData() {
       }
       fontUpload.valid = false;
       LOG_DBG("WEB", "Font upload aborted");
+      fontUpload.freeBuffer();
       break;
     }
   }
@@ -1176,7 +1176,7 @@ void CrossPointWebServer::handlePostIfFound() {
     path = IfFoundFile::DEFAULT_PATH;
   }
 
-  HalFile file;
+  FsFile file;
   if (!Storage.openFileForWrite("IFF", path, file)) {
     server->send(500, "application/json", "{\"error\":\"Could not open if_found.txt for writing\"}");
     return;
@@ -1221,82 +1221,35 @@ void CrossPointWebServer::handleFileListData() const {
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
-  // Keep writes near a TCP segment without adding 1.4KB to this task's stack.
-  // Allocation is fallible; low-memory devices retain the per-entry path.
-  constexpr size_t BATCH_CAPACITY = 1400;
-  constexpr size_t OUTPUT_CAPACITY = 640;
-  constexpr size_t FALLBACK_OUTPUT_CAPACITY = 240;
-  auto scratch = makeUniqueNoThrow<char[]>(BATCH_CAPACITY + OUTPUT_CAPACITY);
-  char fallbackOutput[FALLBACK_OUTPUT_CAPACITY];
+  server->sendContent("[");
+  char output[640];
+  constexpr size_t outputSize = sizeof(output);
+  bool seenFirst = false;
   JsonDocument doc;
 
-  struct FileListContext {
-    WebServer* server;
-    char* batch;
-    size_t batchLength;
-    char* output;
-    size_t outputCapacity;
-    JsonDocument* doc;
-    bool seenFirst;
-  } context{server.get(),
-            scratch ? scratch.get() : nullptr,
-            0,
-            scratch ? scratch.get() + BATCH_CAPACITY : fallbackOutput,
-            scratch ? OUTPUT_CAPACITY : FALLBACK_OUTPUT_CAPACITY,
-            &doc,
-            false};
+  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
+    doc.clear();
+    doc["name"] = info.name;
+    doc["size"] = info.size;
+    doc["isDirectory"] = info.isDirectory;
+    doc["isEpub"] = info.isEpub;
+    doc["completed"] = info.completed;
 
-  if (context.batch) {
-    context.batch[context.batchLength++] = '[';
-  } else {
-    LOG_ERR("WEB", "OOM: file list scratch buffer; using limited per-entry sends");
-    server->sendContent("[");
-  }
-
-  scanFiles(
-      currentPath.c_str(),
-      [](const FileInfo& info, void* rawContext) {
-        auto& context = *static_cast<FileListContext*>(rawContext);
-        context.doc->clear();
-        (*context.doc)["name"] = info.name;
-        (*context.doc)["size"] = info.size;
-        (*context.doc)["isDirectory"] = info.isDirectory;
-        (*context.doc)["isEpub"] = info.isEpub;
-        (*context.doc)["completed"] = info.completed;
-
-        const size_t written = serializeJson(*context.doc, context.output, context.outputCapacity);
-        if (written >= context.outputCapacity) {
-          LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
-          return;
-        }
-
-        const size_t required = written + (context.seenFirst ? 1 : 0);
-        if (context.batch) {
-          if (context.batchLength + required > BATCH_CAPACITY) {
-            context.server->sendContent(context.batch, context.batchLength);
-            context.batchLength = 0;
-          }
-          if (context.seenFirst) context.batch[context.batchLength++] = ',';
-          memcpy(context.batch + context.batchLength, context.output, written);
-          context.batchLength += written;
-        } else {
-          if (context.seenFirst) context.server->sendContent(",");
-          context.server->sendContent(context.output);
-        }
-        context.seenFirst = true;
-      },
-      &context);
-
-  if (context.batch) {
-    if (context.batchLength + 1 > BATCH_CAPACITY) {
-      server->sendContent(context.batch, context.batchLength);
-      context.batchLength = 0;
+    const size_t written = serializeJson(doc, output, outputSize);
+    if (written >= outputSize) {
+      // JSON output truncated; skip this entry to avoid sending malformed JSON
+      LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
+      return;
     }
-    context.batch[context.batchLength++] = ']';
-    server->sendContent(context.batch, context.batchLength);
-  } else {
-    server->sendContent("]");
-  }
+
+    if (seenFirst) {
+      server->sendContent(",");
+    } else {
+      seenFirst = true;
+    }
+    server->sendContent(output);
+  });
+  server->sendContent("]");
   // End of streamed response, empty chunk to signal client
   server->sendContent("");
   LOG_DBG("WEB", "Served file listing page for path: %s", currentPath.c_str());
@@ -1334,7 +1287,7 @@ void CrossPointWebServer::handleDownload() const {
     return;
   }
 
-  HalFile file = Storage.open(itemPath.c_str());
+  FsFile file = Storage.open(itemPath.c_str());
   if (!file) {
     server->send(500, "text/plain", "Failed to open file");
     return;
@@ -1368,7 +1321,7 @@ void CrossPointWebServer::handleDownload() const {
 
   file.seekSet(0);
   while (sent < fileSize && client.connected()) {
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
     const size_t remaining = fileSize - sent;
     const size_t toRead = std::min(chunkSize, remaining);
     const int bytesRead = file.read(buffer, toRead);
@@ -1379,7 +1332,7 @@ void CrossPointWebServer::handleDownload() const {
     size_t writtenForChunk = 0;
     uint8_t zeroWriteRetries = 0;
     while (writtenForChunk < static_cast<size_t>(bytesRead) && client.connected()) {
-      resetTaskWatchdogIfSubscribed();
+      esp_task_wdt_reset();
       const size_t wrote = client.write(buffer + writtenForChunk, static_cast<size_t>(bytesRead) - writtenForChunk);
       if (wrote == 0) {
         if (++zeroWriteRetries >= 5) {
@@ -1413,12 +1366,12 @@ static size_t writeCount = 0;
 
 static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
   if (state.bufferPos > 0 && state.file) {
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog before potentially slow SD write
+    esp_task_wdt_reset();  // Reset watchdog before potentially slow SD write
     const unsigned long writeStart = millis();
-    const size_t written = state.file.write(state.buffer.data(), state.bufferPos);
+    const size_t written = state.file.write(state.buffer.get(), state.bufferPos);
     totalWriteTime += millis() - writeStart;
     writeCount++;
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog after SD write
+    esp_task_wdt_reset();  // Reset watchdog after SD write
 
     if (written != state.bufferPos) {
       LOG_DBG("WEB", "[UPLOAD] Buffer flush failed: expected %d, wrote %d", state.bufferPos, written);
@@ -1434,7 +1387,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
   static size_t lastLoggedSize = 0;
 
   // Reset watchdog at start of every upload callback - HTTP parsing can be slow
-  resetTaskWatchdogIfSubscribed();
+  esp_task_wdt_reset();
 
   // Safety check: ensure server is still valid
   if (!running || !server) {
@@ -1446,7 +1399,10 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
 
   if (upload.status == UPLOAD_FILE_START) {
     // Reset watchdog - this is the critical 1% crash point
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
+
+    // Allocate upload buffer on heap (saves ~4KB of DRAM when not uploading)
+    state.allocateBuffer();
 
     state.fileName = upload.filename;
     state.size = 0;
@@ -1478,26 +1434,27 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
     LOG_DBG("WEB", "[UPLOAD] Free heap: %d bytes", ESP.getFreeHeap());
 
+    // Create file path
     String filePath = state.path;
     if (!filePath.endsWith("/")) filePath += "/";
     filePath += state.fileName;
 
     // Check if file already exists - SD operations can be slow
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
     if (Storage.exists(filePath.c_str())) {
-      state.error = "File already exists: " + state.fileName;
-      LOG_DBG("WEB", "[UPLOAD] Collision: %s", filePath.c_str());
-      return;
+      LOG_DBG("WEB", "[UPLOAD] Overwriting existing file: %s", filePath.c_str());
+      esp_task_wdt_reset();
+      Storage.remove(filePath.c_str());
     }
 
     // Open file for writing - this can be slow due to FAT cluster allocation
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
     if (!Storage.openFileForWrite("WEB", filePath, state.file)) {
       state.error = "Failed to create file on SD card";
       LOG_DBG("WEB", "[UPLOAD] FAILED to create file: %s", filePath.c_str());
       return;
     }
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
 
     LOG_DBG("WEB", "[UPLOAD] File created successfully: %s", filePath.c_str());
   } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -1511,7 +1468,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         const size_t space = UploadState::UPLOAD_BUFFER_SIZE - state.bufferPos;
         const size_t toCopy = (remaining < space) ? remaining : space;
 
-        memcpy(state.buffer.data() + state.bufferPos, data, toCopy);
+        memcpy(state.buffer.get() + state.bufferPos, data, toCopy);
         state.bufferPos += toCopy;
         data += toCopy;
         remaining -= toCopy;
@@ -1555,12 +1512,13 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         LOG_DBG("WEB", "[UPLOAD] Diagnostics: %d writes, total write time: %lu ms (%.1f%%)", writeCount, totalWriteTime,
                 writePercent);
 
-        // Clear epub cache after uploading the file
+        // Clear epub cache to prevent stale metadata issues when overwriting files
         String filePath = state.path;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
         clearBookCache(filePath.c_str());
       }
+      state.freeBuffer();
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     state.bufferPos = 0;  // Discard buffered data
@@ -1574,6 +1532,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
     state.error = "Upload aborted";
     LOG_DBG("WEB", "Upload aborted");
+    state.freeBuffer();
   }
 }
 
@@ -1678,7 +1637,7 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  HalFile file = Storage.open(itemPath.c_str());
+  FsFile file = Storage.open(itemPath.c_str());
   if (!file) {
     server->send(500, "text/plain", "Failed to open file");
     return;
@@ -1754,7 +1713,7 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
-  HalFile file = Storage.open(itemPath.c_str());
+  FsFile file = Storage.open(itemPath.c_str());
   if (!file) {
     server->send(500, "text/plain", "Failed to open file");
     return;
@@ -1770,7 +1729,7 @@ void CrossPointWebServer::handleMove() const {
     server->send(404, "text/plain", "Destination not found");
     return;
   }
-  HalFile destDir = Storage.open(destPath.c_str());
+  FsFile destDir = Storage.open(destPath.c_str());
   if (!destDir || !destDir.isDirectory()) {
     if (destDir) {
       destDir.close();
@@ -1900,10 +1859,10 @@ void CrossPointWebServer::handleDelete() const {
 
     // Decide whether it's a directory or file by opening it
     bool success = false;
-    HalFile f = Storage.open(itemPath.c_str());
+    FsFile f = Storage.open(itemPath.c_str());
     if (f && f.isDirectory()) {
       // For folders, ensure empty before removing
-      HalFile entry = f.openNextFile();
+      FsFile entry = f.openNextFile();
       if (entry) {
         entry.close();
         f.close();
@@ -1936,6 +1895,21 @@ void CrossPointWebServer::handleDelete() const {
 void CrossPointWebServer::handleSettingsPage() const {
   sendHtmlContent(server.get(), SettingsPageHtml, sizeof(SettingsPageHtml));
   LOG_DBG("WEB", "Served settings page");
+}
+
+void CrossPointWebServer::handleAppSettingsPage() const {
+  sendHtmlContent(server.get(), AppSettingsPageHtml, sizeof(AppSettingsPageHtml));
+  LOG_DBG("WEB", "Served app settings page");
+}
+
+void CrossPointWebServer::handleSteroidsSettingsPage() const {
+  sendHtmlContent(server.get(), SteroidsSettingsPageHtml, sizeof(SteroidsSettingsPageHtml));
+  LOG_DBG("WEB", "Served steroids settings page");
+}
+
+void CrossPointWebServer::handleLogo() const {
+  server->sendHeader("Cache-Control", "public, max-age=86400");
+  server->send_P(200, "image/png", LogoPng, LogoPngSize);
 }
 
 void CrossPointWebServer::handleGetSettings() const {
@@ -2040,6 +2014,21 @@ void CrossPointWebServer::handleGetSettings() const {
           case WebDynamicSetting::KoServerUrl:
             value = KOREADER_STORE.getServerUrl();
             break;
+          case WebDynamicSetting::LibraryRootDir:
+            value = SETTINGS.libraryRootDir;
+            break;
+          case WebDynamicSetting::ScreenSaverText:
+            value = SETTINGS.screenSaverText;
+            break;
+          case WebDynamicSetting::ScreenSaverDir:
+            value = SETTINGS.screenSaverDirectory;
+            break;
+          case WebDynamicSetting::ScreenSaverReaderDir:
+            value = SETTINGS.screenSaverReaderDir;
+            break;
+          case WebDynamicSetting::SdFontFamily:
+            value = SETTINGS.sdFontFamilyName;
+            break;
           default:
             break;
         }
@@ -2062,7 +2051,7 @@ void CrossPointWebServer::handleGetSettings() const {
 
     server->sendContent("}", 1);
     yield();
-    resetTaskWatchdogIfSubscribed();
+    esp_task_wdt_reset();
   }
 
   server->sendContent("]");
@@ -2110,9 +2099,6 @@ void CrossPointWebServer::handlePostSettings() {
           if (s.valuePtr) {
             const uint8_t previousValue = SETTINGS.*(s.valuePtr);
             SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
-            if (s.valuePtr == &CrossPointSettings::fontFamily) {
-              SETTINGS.sdFontFamilyName[0] = '\0';
-            }
             if (s.valuePtr == &CrossPointSettings::readingStatsAutoBackup &&
                 SETTINGS.readingStatsAutoBackup != previousValue &&
                 SETTINGS.getReadingStatsAutoBackupIntervalDays() > 0 && !READING_STATS.hasAutoBackups()) {
@@ -2153,6 +2139,26 @@ void CrossPointWebServer::handlePostSettings() {
             KOREADER_STORE.setServerUrl(val);
             saveKOReader = true;
             break;
+          case WebDynamicSetting::LibraryRootDir:
+            StringUtils::copyToFixedBuffer(SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir), val);
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverText:
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText), val);
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverDir:
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverDirectory, sizeof(SETTINGS.screenSaverDirectory), val);
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::ScreenSaverReaderDir:
+            StringUtils::copyToFixedBuffer(SETTINGS.screenSaverReaderDir, sizeof(SETTINGS.screenSaverReaderDir), val);
+            saveSettings = true;
+            break;
+          case WebDynamicSetting::SdFontFamily:
+            StringUtils::copyToFixedBuffer(SETTINGS.sdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName), val);
+            saveSettings = true;
+            break;
           default:
             break;
         }
@@ -2178,6 +2184,667 @@ void CrossPointWebServer::handlePostSettings() {
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
 }
 
+// ---- Steroids Settings API ----
+
+void CrossPointWebServer::handleGetSteroidsSettings() const {
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+
+  // Map all steroids fields to JSON for the web UI.
+  // This mirrors the WEB_SETTINGS pattern but for steroids-only fields.
+  const auto& s = CrossPointSettings::getInstance();
+
+  // Display & Theme
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "uiTheme";
+    obj["name"] = "UI Theme";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Lyra"); opts.add("Lyra Custom"); opts.add("Lyra Carousel"); opts.add("MarcoAnd75");
+    obj["value"] = s.uiTheme;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "darkMode";
+    obj["name"] = "Dark Mode";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "toggle";
+    obj["value"] = s.darkMode;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "displayDay";
+    obj["name"] = "Header Display";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Off"); opts.add("Date"); opts.add("Time"); opts.add("Date & Time");
+    obj["value"] = s.displayDay;
+  }
+
+  // Image Rendering Tuning (steroids)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageDitheringEnabled";
+    obj["name"] = "Image Dithering";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "toggle";
+    obj["value"] = s.imageDitheringEnabled;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageLutEnabled";
+    obj["name"] = "Gamma LUT";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "toggle";
+    obj["value"] = s.imageLutEnabled;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageDitheringAlgorithm";
+    obj["name"] = "Dither Algorithm";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Atkinson"); opts.add("Floyd-Steinberg");
+    obj["value"] = s.imageDitheringAlgorithm;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageThresholdBlack";
+    obj["name"] = "Black Threshold";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "value";
+    obj["min"] = 1; obj["max"] = 253; obj["step"] = 1;
+    obj["value"] = s.imageThresholdBlack;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageThresholdDark";
+    obj["name"] = "Dark Gray Threshold";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "value";
+    obj["min"] = 2; obj["max"] = 254; obj["step"] = 1;
+    obj["value"] = s.imageThresholdDark;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageThresholdLight";
+    obj["name"] = "Light Gray Threshold";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "value";
+    obj["min"] = 3; obj["max"] = 255; obj["step"] = 1;
+    obj["value"] = s.imageThresholdLight;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "imageGamma";
+    obj["name"] = "Gamma Value (x10)";
+    obj["category"] = "Display & Theme";
+    obj["type"] = "value";
+    obj["min"] = 5; obj["max"] = 30; obj["step"] = 1;
+    obj["value"] = s.imageGamma;
+  }
+
+  // Font & Rendering
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "fontFamily";
+    obj["name"] = "Font Family";
+    obj["category"] = "Font & Rendering";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Bookerly"); opts.add("Noto Sans");
+#ifdef LEXEND_AVAILABLE
+    opts.add("Lexend");
+#endif
+    obj["value"] = s.fontFamily;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "guideReadingEnabled";
+    obj["name"] = "Guide Reading";
+    obj["category"] = "Font & Rendering";
+    obj["type"] = "toggle";
+    obj["value"] = s.guideReadingEnabled;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "dotsSpacing";
+    obj["name"] = "Dots Spacing";
+    obj["category"] = "Font & Rendering";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Standard"); opts.add("Large");
+    obj["value"] = s.dotsSpacing;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "epubRenderMode";
+    obj["name"] = "EPUB Render Mode";
+    obj["category"] = "Font & Rendering";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Default"); opts.add("Balanced"); opts.add("Light");
+    obj["value"] = s.epubRenderMode;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "antiGhostingExperimental";
+    obj["name"] = "Anti-Ghosting (Experimental)";
+    obj["category"] = "Font & Rendering";
+    obj["type"] = "toggle";
+    obj["value"] = s.antiGhostingExperimental;
+  }
+
+  // Controls — Long-press Up (side button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "longPressUpBehavior";
+    obj["name"] = I18N.get(StrId::STR_LONG_PRESS_UP);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.longPressUpBehavior;
+  }
+  // Long-press Down (side button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "longPressDownBehavior";
+    obj["name"] = I18N.get(StrId::STR_LONG_PRESS_DOWN);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.longPressDownBehavior;
+  }
+  // Long-press Left (front button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "frontLongPressLeftBehavior";
+    obj["name"] = I18N.get(StrId::STR_FRONT_LONG_PRESS_LEFT);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.frontLongPressLeftBehavior;
+  }
+  // Long-press Right (front button)
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "frontLongPressRightBehavior";
+    obj["name"] = I18N.get(StrId::STR_FRONT_LONG_PRESS_RIGHT);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    obj["value"] = s.frontLongPressRightBehavior;
+  }
+  // Select Long Press
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "selectLongPressBehavior";
+    obj["name"] = I18N.get(StrId::STR_SELECT_LONG_PRESS);
+    obj["category"] = I18N.get(StrId::STR_CAT_CONTROLS);
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_OFF));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ADD_CLIPPING));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_CLIPPINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_VIEW_BOOKMARKS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_LOOKUP_WORD));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DICTIONARY));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_CHAPTER_SKIP));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_ORIENTATION));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FONTSIZE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_DARK_MODE));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_FULL_REFRESH));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READER_SETTINGS));
+    opts.add(I18N.get(StrId::STR_BTN_ACTION_READING_TIME));
+    obj["value"] = s.selectLongPressBehavior;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "cycleScreensaverOnTap";
+    obj["name"] = "Cycle Screensaver on Tap";
+    obj["category"] = "Controls";
+    obj["type"] = "toggle";
+    obj["value"] = s.cycleScreensaverOnTap;
+  }
+
+  // Status Bar Extras
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "statusBarTimeLeft";
+    obj["name"] = "Time Left Estimate";
+    obj["category"] = "Status Bar Extras";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Hide"); opts.add("Chapter"); opts.add("Book"); opts.add("Session Duration"); opts.add("Today Total");
+    obj["value"] = s.statusBarTimeLeft;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "clockFormat";
+    obj["name"] = "Clock Format";
+    obj["category"] = "Status Bar Extras";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("24-hour"); opts.add("12-hour");
+    obj["value"] = s.clockFormat;
+  }
+
+  // Library
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryLayout";
+    obj["name"] = "Library Layout";
+    obj["category"] = "Library";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("4x4"); opts.add("3x3"); opts.add("2x2");
+    obj["value"] = s.libraryLayout;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryFilter";
+    obj["name"] = "Library Filter";
+    obj["category"] = "Library";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("All"); opts.add("Favorites"); opts.add("Latest Read"); opts.add("Unread"); opts.add("Completed");
+    obj["value"] = s.libraryFilter;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "librarySort";
+    obj["name"] = "Library Sort";
+    obj["category"] = "Library";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Title A-Z"); opts.add("Title Z-A"); opts.add("Author A-Z"); opts.add("Author Z-A");
+    opts.add("Recent"); opts.add("Progress"); opts.add("Collections");
+    obj["value"] = s.librarySort;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryUpdateMode";
+    obj["name"] = "Library Update";
+    obj["category"] = "Library";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Manual"); opts.add("Auto");
+    obj["value"] = s.libraryUpdateMode;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryFolderCollections";
+    obj["name"] = "Enable Collection from Folders";
+    obj["category"] = "Library";
+    obj["type"] = "toggle";
+    obj["value"] = s.libraryFolderCollections;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryMetadataSeries";
+    obj["name"] = "Enable Series from Metadata";
+    obj["category"] = "Library";
+    obj["type"] = "toggle";
+    obj["value"] = s.libraryMetadataSeries;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "libraryRootDir";
+    obj["name"] = "Library Root Directory";
+    obj["category"] = "Library";
+    obj["type"] = "string";
+    obj["value"] = s.libraryRootDir;
+  }
+
+  // Screensaver
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverDirectory";
+    obj["name"] = "Screensaver Directory";
+    obj["category"] = "Screensaver";
+    obj["type"] = "string";
+    obj["value"] = s.screenSaverDirectory;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverOrder";
+    obj["name"] = "Screensaver Order";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Shuffle"); opts.add("Sequential");
+    obj["value"] = s.screenSaverOrder;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverInterval";
+    obj["name"] = "Screensaver Interval";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("1 min"); opts.add("5 min"); opts.add("15 min"); opts.add("30 min");
+    opts.add("1 hour"); opts.add("2 hours"); opts.add("4 hours"); opts.add("8 hours");
+    obj["value"] = s.screenSaverInterval;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverWakeButton";
+    obj["name"] = "Screensaver Wake Button";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Any"); opts.add("Back"); opts.add("Confirm"); opts.add("Left"); opts.add("Right");
+    opts.add("Up"); opts.add("Down"); opts.add("Power"); opts.add("Page Back"); opts.add("Page Forward");
+    obj["value"] = s.screenSaverWakeButton;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverReplaceSleep";
+    obj["name"] = "Replace Sleep with Screensaver";
+    obj["category"] = "Screensaver";
+    obj["type"] = "toggle";
+    obj["value"] = s.screenSaverReplaceSleep;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverText";
+    obj["name"] = "Screensaver Text";
+    obj["category"] = "Screensaver";
+    obj["type"] = "string";
+    obj["value"] = s.screenSaverText;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverFontSize";
+    obj["name"] = "Screensaver Font Size";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("X-Small"); opts.add("Small"); opts.add("Medium"); opts.add("Large"); opts.add("X-Large");
+    obj["value"] = s.screenSaverFontSize;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverTextPosition";
+    obj["name"] = "Screensaver Text Position";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Top Left"); opts.add("Top Right"); opts.add("Bottom Left");
+    opts.add("Bottom Right"); opts.add("Center"); opts.add("Random");
+    obj["value"] = s.screenSaverTextPosition;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverTextStyle";
+    obj["name"] = "Screensaver Text Style";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("White"); opts.add("Black"); opts.add("White Outlined"); opts.add("Black Outlined");
+    obj["value"] = s.screenSaverTextStyle;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverShowPanel";
+    obj["name"] = "Screensaver Show Panel";
+    obj["category"] = "Screensaver";
+    obj["type"] = "toggle";
+    obj["value"] = s.screenSaverShowPanel;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverPanelColor";
+    obj["name"] = "Screensaver Panel Color";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Black"); opts.add("White");
+    obj["value"] = s.screenSaverPanelColor;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverPanelOpacity";
+    obj["name"] = "Screensaver Panel Opacity";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("None"); opts.add("25%"); opts.add("50%"); opts.add("75%");
+    obj["value"] = s.screenSaverPanelOpacity;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverMinBattery";
+    obj["name"] = "Screensaver Min Battery";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    for (int i = 10; i <= 90; i += 10) {
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%d%%", i);
+      opts.add(buf);
+    }
+    obj["value"] = s.screenSaverMinBattery;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverReaderDir";
+    obj["name"] = "Reader Screensaver Directory";
+    obj["category"] = "Screensaver";
+    obj["type"] = "string";
+    obj["value"] = s.screenSaverReaderDir;
+  }
+  {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = "screenSaverReaderOrder";
+    obj["name"] = "Reader Screensaver Order";
+    obj["category"] = "Screensaver";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Shuffle"); opts.add("Sequential");
+    obj["value"] = s.screenSaverReaderOrder;
+  }
+
+  // Shortcuts
+  auto addShortcut = [&](const char* key, const char* name, uint8_t location, uint8_t order, uint8_t visible) {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["key"] = key;
+    obj["name"] = name;
+    obj["category"] = "Shortcuts";
+    obj["type"] = "enum";
+    JsonArray opts = obj["options"].to<JsonArray>();
+    opts.add("Home"); opts.add("Apps"); opts.add("None");
+    obj["value"] = location;
+    // Also expose order and visible as separate settings
+    JsonObject obj2 = arr.add<JsonObject>();
+    obj2["key"] = (std::string(key) + "Order").c_str();
+    obj2["name"] = (std::string(name) + " Order").c_str();
+    obj2["category"] = "Shortcuts";
+    obj2["type"] = "value";
+    obj2["min"] = 0;
+    obj2["max"] = 50;
+    obj2["step"] = 1;
+    obj2["value"] = order;
+    JsonObject obj3 = arr.add<JsonObject>();
+    obj3["key"] = (std::string(key) + "Visible").c_str();
+    obj3["name"] = (std::string(name) + " Visible").c_str();
+    obj3["category"] = "Shortcuts";
+    obj3["type"] = "toggle";
+    obj3["value"] = visible;
+  };
+  addShortcut("libraryShortcut", "Library Shortcut", s.libraryShortcut, s.libraryShortcutOrder, s.libraryShortcutVisible);
+  addShortcut("screenSaverShortcut", "Screensaver Shortcut", s.screenSaverShortcut, s.screenSaverShortcutOrder, s.screenSaverShortcutVisible);
+  addShortcut("clippingsShortcut", "Clippings Shortcut", s.clippingsShortcut, s.clippingsShortcutOrder, s.clippingsShortcutVisible);
+  addShortcut("wikipediaShortcut", "Wikipedia Shortcut", s.wikipediaShortcut, s.wikipediaShortcutOrder, s.wikipediaShortcutVisible);
+
+  String jsonStr;
+  serializeJson(doc, jsonStr);
+  server->send(200, "application/json", jsonStr);
+}
+
+void CrossPointWebServer::handlePostSteroidsSettings() {
+  String body = server->arg("plain");
+  if (body.isEmpty()) {
+    server->send(400, "text/plain", "Empty body");
+    return;
+  }
+
+  JsonDocument doc;
+  auto error = deserializeJson(doc, body);
+  if (error) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  auto& s = CrossPointSettings::getInstance();
+  int applied = 0;
+
+  auto applyToggle = [&](const char* key, uint8_t& field) {
+    if (doc[key].is<int>()) { field = doc[key].as<int>() ? 1 : 0; applied++; }
+  };
+  auto applyEnum = [&](const char* key, uint8_t& field, uint8_t maxVal) {
+    if (doc[key].is<int>()) {
+      int v = doc[key].as<int>();
+      if (v >= 0 && v < static_cast<int>(maxVal)) { field = static_cast<uint8_t>(v); applied++; }
+    }
+  };
+  auto applyString = [&](const char* key, char* dest, size_t maxLen) {
+    if (doc[key].is<const char*>()) {
+      const char* val = doc[key].as<const char*>();
+      StringUtils::copyToFixedBuffer(dest, maxLen, std::string(val));
+      applied++;
+    }
+  };
+  auto applyValue = [&](const char* key, uint8_t& field, uint8_t minVal, uint8_t maxVal) {
+    if (doc[key].is<int>()) {
+      int v = doc[key].as<int>();
+      if (v >= minVal && v <= maxVal) { field = static_cast<uint8_t>(v); applied++; }
+    }
+  };
+
+  applyEnum("uiTheme", s.uiTheme, CrossPointSettings::UI_THEME_COUNT);
+  applyToggle("darkMode", s.darkMode);
+  applyEnum("displayDay", s.displayDay, CrossPointSettings::DISPLAY_HEADER_MODE_COUNT);
+  applyEnum("fontFamily", s.fontFamily, CrossPointSettings::FONT_FAMILY_COUNT);
+  applyToggle("guideReadingEnabled", s.guideReadingEnabled);
+  applyEnum("dotsSpacing", s.dotsSpacing, CrossPointSettings::DOTS_SPACING_COUNT);
+  applyEnum("epubRenderMode", s.epubRenderMode, CrossPointSettings::EPUB_RENDER_MODE_COUNT);
+  applyToggle("antiGhostingExperimental", s.antiGhostingExperimental);
+  // Image rendering tuning (steroids)
+  applyToggle("imageDitheringEnabled", s.imageDitheringEnabled);
+  applyToggle("imageLutEnabled", s.imageLutEnabled);
+  applyEnum("imageDitheringAlgorithm", s.imageDitheringAlgorithm, static_cast<uint8_t>(2));
+  applyValue("imageThresholdBlack", s.imageThresholdBlack, 1, 253);
+  applyValue("imageThresholdDark", s.imageThresholdDark, 2, 254);
+  applyValue("imageThresholdLight", s.imageThresholdLight, 3, 255);
+  applyValue("imageGamma", s.imageGamma, 5, 30);
+   applyEnum("longPressUpBehavior", s.longPressUpBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("longPressDownBehavior", s.longPressDownBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("frontLongPressLeftBehavior", s.frontLongPressLeftBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("frontLongPressRightBehavior", s.frontLongPressRightBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("selectLongPressBehavior", s.selectLongPressBehavior, CrossPointSettings::BTN_ACTION_COUNT);
+   applyEnum("shortPwrBtn", s.shortPwrBtn, CrossPointSettings::SHORT_PWRBTN_COUNT);
+   applyToggle("cycleScreensaverOnTap", s.cycleScreensaverOnTap);
+  applyEnum("statusBarTimeLeft", s.statusBarTimeLeft, CrossPointSettings::STATUS_BAR_TIME_LEFT_COUNT);
+  applyEnum("clockFormat", s.clockFormat, static_cast<uint8_t>(2));
+  applyEnum("libraryLayout", s.libraryLayout, CrossPointSettings::LIBRARY_LAYOUT_COUNT);
+  applyEnum("libraryFilter", s.libraryFilter, CrossPointSettings::LIBRARY_FILTER_COUNT);
+  applyEnum("librarySort", s.librarySort, CrossPointSettings::LIBRARY_SORT_COUNT);
+  applyEnum("libraryUpdateMode", s.libraryUpdateMode, CrossPointSettings::LIBRARY_UPDATE_MODE_COUNT);
+  applyToggle("libraryFolderCollections", s.libraryFolderCollections);
+  applyToggle("libraryMetadataSeries", s.libraryMetadataSeries);
+  applyString("libraryRootDir", s.libraryRootDir, sizeof(s.libraryRootDir));
+  applyString("screenSaverDirectory", s.screenSaverDirectory, sizeof(s.screenSaverDirectory));
+  applyEnum("screenSaverOrder", s.screenSaverOrder, CrossPointSettings::SCREENSAVER_ORDER_COUNT);
+  applyEnum("screenSaverInterval", s.screenSaverInterval, CrossPointSettings::SCREENSAVER_INTERVAL_COUNT);
+  applyEnum("screenSaverWakeButton", s.screenSaverWakeButton, CrossPointSettings::SCREENSAVER_WAKE_BUTTON_COUNT);
+  applyToggle("screenSaverReplaceSleep", s.screenSaverReplaceSleep);
+  applyString("screenSaverText", s.screenSaverText, sizeof(s.screenSaverText));
+  applyEnum("screenSaverFontSize", s.screenSaverFontSize, CrossPointSettings::SCREENSAVER_FONT_SIZE_COUNT);
+  applyEnum("screenSaverTextPosition", s.screenSaverTextPosition, CrossPointSettings::SCREENSAVER_TEXT_POSITION_COUNT);
+  applyEnum("screenSaverTextStyle", s.screenSaverTextStyle, CrossPointSettings::SCREENSAVER_TEXT_STYLE_COUNT);
+  applyToggle("screenSaverShowPanel", s.screenSaverShowPanel);
+  applyEnum("screenSaverPanelColor", s.screenSaverPanelColor, static_cast<uint8_t>(2));
+  applyEnum("screenSaverPanelOpacity", s.screenSaverPanelOpacity, static_cast<uint8_t>(4));
+  applyEnum("screenSaverMinBattery", s.screenSaverMinBattery, static_cast<uint8_t>(9));
+  applyString("screenSaverReaderDir", s.screenSaverReaderDir, sizeof(s.screenSaverReaderDir));
+  applyEnum("screenSaverReaderOrder", s.screenSaverReaderOrder, CrossPointSettings::SCREENSAVER_ORDER_COUNT);
+  applyEnum("libraryShortcut", s.libraryShortcut, CrossPointSettings::SHORTCUT_LOCATION_COUNT);
+  applyValue("libraryShortcutOrder", s.libraryShortcutOrder, 0, 50);
+  applyToggle("libraryShortcutVisible", s.libraryShortcutVisible);
+  applyEnum("screenSaverShortcut", s.screenSaverShortcut, CrossPointSettings::SHORTCUT_LOCATION_COUNT);
+  applyValue("screenSaverShortcutOrder", s.screenSaverShortcutOrder, 0, 50);
+  applyToggle("screenSaverShortcutVisible", s.screenSaverShortcutVisible);
+  applyEnum("clippingsShortcut", s.clippingsShortcut, CrossPointSettings::SHORTCUT_LOCATION_COUNT);
+  applyValue("clippingsShortcutOrder", s.clippingsShortcutOrder, 0, 50);
+  applyToggle("clippingsShortcutVisible", s.clippingsShortcutVisible);
+  applyEnum("wikipediaShortcut", s.wikipediaShortcut, CrossPointSettings::SHORTCUT_LOCATION_COUNT);
+  applyValue("wikipediaShortcutOrder", s.wikipediaShortcutOrder, 0, 50);
+  applyToggle("wikipediaShortcutVisible", s.wikipediaShortcutVisible);
+
+  SETTINGS.saveToFile();
+  imageRenderConfigApplySettings();
+  LOG_DBG("WEB", "Applied %d steroids setting(s)", applied);
+  server->send(200, "text/plain", String("Applied ") + String(applied) + " steroid setting(s)");
+}
+
 // ---- OPDS Server API ----
 
 void CrossPointWebServer::handleGetOpdsServers() const {
@@ -2201,8 +2868,6 @@ void CrossPointWebServer::handleGetOpdsServers() const {
     sendRaw(server.get(), ",\"hasPassword\":");
     sendRaw(server.get(), servers[i].password.empty() ? "false" : "true");
     server->sendContent("}", 1);
-    yield();
-    resetTaskWatchdogIfSubscribed();
   }
 
   server->sendContent("]");
@@ -2291,148 +2956,6 @@ void CrossPointWebServer::handleDeleteOpdsServer() {
   server->send(200, "text/plain", "OK");
 }
 
-// ---- Wi-Fi Credentials API ----
-
-void CrossPointWebServer::handleGetWifiNetworks() const {
-  const auto credentials = WIFI_STORE.getCredentialSummaries();
-
-  // Stream JSON array incrementally to avoid allocating the full response in memory
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  server->sendContent("[");
-
-  char output[320];
-  constexpr size_t outputSize = sizeof(output);
-  JsonDocument doc;
-
-  for (size_t i = 0; i < credentials.size(); i++) {
-    doc.clear();
-    doc["index"] = i;
-    doc["ssid"] = credentials[i].ssid;
-    // Never expose Wi-Fi passwords over the API — only indicate whether one is set
-    doc["hasPassword"] = credentials[i].hasPassword;
-    doc["isLastConnected"] = credentials[i].isLastConnected;
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) continue;
-
-    if (i > 0) server->sendContent(",");
-    server->sendContent(output);
-    yield();                          // Yield to allow WiFi and other tasks to process during a slow send
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
-  }
-
-  server->sendContent("]");
-  server->sendContent("");
-  LOG_DBG("WEB", "Served Wi-Fi credentials API (%zu network(s))", credentials.size());
-}
-
-void CrossPointWebServer::handlePostWifiNetwork() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  std::string ssid = doc["ssid"] | std::string("");
-  if (ssid.empty()) {
-    server->send(400, "text/plain", "SSID is required");
-    return;
-  }
-
-  // The password field is optional in the JSON payload. When absent (vs. present but empty),
-  // preserve the existing password for updates. Empty passwords are valid for open networks.
-  bool hasPasswordField = doc["password"].is<const char*>() || doc["password"].is<std::string>();
-  std::string password = doc["password"] | std::string("");
-
-  if (doc["index"].is<int>()) {
-    int idx = doc["index"].as<int>();
-    if (idx < 0) {
-      server->send(400, "text/plain", "Invalid network index");
-      return;
-    }
-    const auto credential = WIFI_STORE.getCredentialAt(static_cast<size_t>(idx));
-    if (!credential) {
-      server->send(400, "text/plain", "Invalid network index");
-      return;
-    }
-
-    const std::string oldSsid = credential->ssid;
-    if (!hasPasswordField) {
-      password = credential->password;
-    }
-
-    bool ok = true;
-    if (oldSsid != ssid) {
-      ok = WIFI_STORE.removeCredential(oldSsid) && WIFI_STORE.addCredential(ssid, password);
-    } else {
-      ok = WIFI_STORE.addCredential(ssid, password);
-    }
-
-    if (!ok) {
-      server->send(400, "text/plain", "Failed to update Wi-Fi network");
-      return;
-    }
-
-    LOG_DBG("WEB", "Updated Wi-Fi network at index %d (SSID: %s)", idx, ssid.c_str());
-  } else {
-    if (!WIFI_STORE.addCredential(ssid, password)) {
-      server->send(400, "text/plain", "Cannot add network (limit reached)");
-      return;
-    }
-    LOG_DBG("WEB", "Added Wi-Fi network: %s", ssid.c_str());
-  }
-
-  server->send(200, "text/plain", "OK");
-}
-
-// Uses POST (not HTTP DELETE) because ESP32 WebServer doesn't support DELETE with body.
-void CrossPointWebServer::handleDeleteWifiNetwork() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  if (!doc["index"].is<int>()) {
-    server->send(400, "text/plain", "Missing index");
-    return;
-  }
-
-  int idx = doc["index"].as<int>();
-  if (idx < 0) {
-    server->send(400, "text/plain", "Invalid network index");
-    return;
-  }
-  const auto ssid = WIFI_STORE.getSsidAt(static_cast<size_t>(idx));
-  if (!ssid) {
-    server->send(400, "text/plain", "Invalid network index");
-    return;
-  }
-
-  if (!WIFI_STORE.removeCredential(*ssid)) {
-    server->send(400, "text/plain", "Failed to delete Wi-Fi network");
-    return;
-  }
-
-  LOG_DBG("WEB", "Deleted Wi-Fi network at index %d (SSID: %s)", idx, ssid->c_str());
-  server->send(200, "text/plain", "OK");
-}
-
 // WebSocket callback trampoline
 void CrossPointWebServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (wsInstance) {
@@ -2506,29 +3029,29 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsUploadPath = wsUploadPath.substring(0, wsUploadPath.length() - 1);
           }
 
+          // Build file path
           String filePath = wsUploadPath;
           if (!filePath.endsWith("/")) filePath += "/";
           filePath += wsUploadFileName;
 
-          resetTaskWatchdogIfSubscribed();
-          if (Storage.exists(filePath.c_str())) {
-            LOG_DBG("WS", "Upload collision: %s", filePath.c_str());
-            wsServer->sendTXT(num, "ERROR:File already exists: " + wsUploadFileName);
-            return;
-          }
-
           LOG_DBG("WS", "Starting upload: %s (%d bytes) to %s", wsUploadFileName.c_str(), wsUploadSize,
                   filePath.c_str());
 
+          // Check if file exists and remove it
+          esp_task_wdt_reset();
+          if (Storage.exists(filePath.c_str())) {
+            Storage.remove(filePath.c_str());
+          }
+
           // Open file for writing
-          resetTaskWatchdogIfSubscribed();
+          esp_task_wdt_reset();
           if (!Storage.openFileForWrite("WS", filePath, wsUploadFile)) {
             wsServer->sendTXT(num, "ERROR:Failed to create file");
             wsUploadInProgress = false;
             wsUploadClientNum = 255;
             return;
           }
-          resetTaskWatchdogIfSubscribed();
+          esp_task_wdt_reset();
 
           // Zero-byte upload: complete immediately without waiting for BIN frames
           if (wsUploadSize == 0) {
@@ -2567,9 +3090,9 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         wsServer->sendTXT(num, "ERROR:Upload overflow");
         return;
       }
-      resetTaskWatchdogIfSubscribed();
+      esp_task_wdt_reset();
       size_t written = wsUploadFile.write(payload, length);
-      resetTaskWatchdogIfSubscribed();
+      esp_task_wdt_reset();
 
       if (written != length) {
         abortWsUpload("WS");
@@ -2603,7 +3126,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         LOG_DBG("WS", "Upload complete: %s (%d bytes in %lu ms, %.1f KB/s)", wsUploadFileName.c_str(), wsUploadSize,
                 elapsed, kbps);
 
-        // Clear epub cache after uploading the file
+        // Clear epub cache to prevent stale metadata issues when overwriting files
         String filePath = wsUploadPath;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += wsUploadFileName;

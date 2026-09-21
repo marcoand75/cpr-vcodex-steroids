@@ -34,11 +34,13 @@ bool isNaturalDirectionClass(const uchar cls) {
   }
 }
 
-// Visual-reorder scratch shared by applyBidiVisual() and
-// computeVisualWordOrder(). Neither function calls the other, and bidiMutex
-// already serialises both, so a single buffer serves both instead of a
-// per-function static — saving ~1.5 KB of always-resident RAM.
+// Shared visual-reorder scratch for applyBidiVisual() and
+// computeVisualWordOrder(). Both run on the single render task and never call
+// each other, so one buffer is reused instead of a per-function static — saving
+// ~1.5 KB of always-resident RAM. Not reentrant (same assumption as the
+// previous per-function statics).
 bidi_char sharedBidiLine[BIDI_MAX_LINE];
+bidi_char sharedBidiShaped[BIDI_MAX_LINE];
 
 }  // namespace
 
@@ -96,7 +98,7 @@ bool applyBidiVisual(const char* utf8, std::string& out, int paragraphLevel) {
   const std::lock_guard<std::mutex> lock(bidiMutex);
 
   bidi_char* const line = sharedBidiLine;
-  static bidi_char shaped[BIDI_MAX_LINE];
+  bidi_char* const shaped = sharedBidiShaped;
   int count = 0;
   int lastBase = -1;           // last non-formatter character (mintty's ibase)
   uint8_t pendingJoiners = 0;  // ZWJ/ZWNJ seen since lastBase

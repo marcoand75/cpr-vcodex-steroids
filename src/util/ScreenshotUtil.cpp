@@ -93,7 +93,6 @@ void ScreenshotUtil::takeScreenshot(GfxRenderer& renderer) {
     renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
     int width = renderer.getScreenWidth() - marginLeft - marginRight - 1;
     int height = renderer.getScreenHeight() - marginTop - marginBottom - 1;
-    // Add extra margin to the border to make it more visible
     renderer.drawRect(marginLeft + 1, marginTop + 1, width - 2, height - 2, 2, true);
     renderer.displayBuffer();
     delay(1000);
@@ -122,7 +121,7 @@ bool ScreenshotUtil::saveFramebufferAsBmp(const char* filename, const uint8_t* f
     }
   }
 
-  HalFile file;
+  FsFile file;
   if (!Storage.openFileForWrite("SCR", filename, file)) {
     LOG_ERR("SCR", "Failed to save screenshot");
     return false;

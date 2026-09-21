@@ -31,7 +31,8 @@ struct BlockStyle {
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
   bool isRtl = false;              // true if resolved direction is RTL
   bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
-
+  bool pageBreakBefore = false;
+  bool pageBreakAfter = false;
   // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
   // a full line-height gap when the <br> block stays empty (section-break use case).
   // NOT propagated through getCombinedBlockStyle so it can't leak into sibling blocks.
@@ -98,16 +99,14 @@ struct BlockStyle {
       result.paddingTop = static_cast<int16_t>(child.paddingTop + paddingTop);
       result.paddingBottom = static_cast<int16_t>(child.paddingBottom + paddingBottom);
     }
+    // fromBrElement is consumed by startNewTextBlock and should not leak through ancestor style merging.
+    result.fromBrElement = false;
 
-    // Direction is not axis-specific. Inherit from parent when child doesn't define it.
+    // Direction is inherited independently of the horizontal/vertical box model.
     if (!child.directionDefined && directionDefined) {
       result.isRtl = isRtl;
       result.directionDefined = true;
     }
-
-    // fromBrElement is consumed by startNewTextBlock when an empty <br> block
-    // is merged with the following paragraph; never propagate it further.
-    result.fromBrElement = false;
     return result;
   }
 
@@ -143,10 +142,15 @@ struct BlockStyle {
     } else {
       blockStyle.alignment = paragraphAlignment;
     }
-    // RTL direction from CSS/HTML
     if (cssStyle.hasDirection()) {
-      blockStyle.isRtl = (cssStyle.direction == CssTextDirection::Rtl);
+      blockStyle.isRtl = cssStyle.direction == CssTextDirection::Rtl;
       blockStyle.directionDefined = true;
+    }
+    if (cssStyle.hasPageBreakBefore()) {
+      blockStyle.pageBreakBefore = cssStyle.pageBreakBefore;
+    }
+    if (cssStyle.hasPageBreakAfter()) {
+      blockStyle.pageBreakAfter = cssStyle.pageBreakAfter;
     }
     return blockStyle;
   }

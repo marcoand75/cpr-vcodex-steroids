@@ -2,43 +2,35 @@
 #include <Epub.h>
 
 #include <memory>
-#include <string>
 
-#include "activities/UiListActivity.h"
+#include "../Activity.h"
+#include "util/ButtonNavigator.h"
 
-class EpubReaderChapterSelectionActivity final : public UiListActivity {
+class EpubReaderChapterSelectionActivity final : public Activity {
   std::shared_ptr<Epub> epub;
+  std::string epubPath;
+  ButtonNavigator buttonNavigator;
   int currentSpineIndex = 0;
+  int selectorIndex = 0;
 
-  // Windowed row buffers: TOC entries are SD-backed (BookMetadataCache LUT
-  // reads), so only the rows around the viewport are materialized. A
-  // several-hundred-entry TOC (547 in a large collection) built up front cost
-  // ~60KB of labels + ListItems — starving the CJK glyph arena into
-  // SD-per-repaint — for rows that were never drawn. The window follows
-  // nav.top via itemsWindowFirst (see fui::ListProps); refreshing it also
-  // batch-prewarms the window's fallback glyphs, so each page of the list
-  // pays one bounded SD pass and repaints stay RAM-only.
-  static constexpr int TOC_WINDOW = 24;
-  std::string windowLabels[TOC_WINDOW];
-  freeink::ui::ListItem windowItems[TOC_WINDOW];
-  int windowStart = -1;
-  int windowCount = 0;
-  void refreshTocWindow(int start);
+  // Number of items that fit on a page, derived from logical screen height.
+  // This adapts automatically when switching between portrait and landscape.
+  int getPageItems() const;
 
   // Total TOC items count
-  int listCount() const override { return epub ? epub->getTocItemsCount() : 0; }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  // Back cancels with a result and Confirm activates on RELEASE here, and a
-  // missing epub swallows everything past Back.
-  bool handleButtons() override;
-  // Header is drawn inside the safe area (not full-width like the base).
-  void drawChrome() override;
+  int getTotalItems() const;
 
  public:
   explicit EpubReaderChapterSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                              const std::shared_ptr<Epub>& epub, int currentSpineIndex);
+                                              const std::shared_ptr<Epub>& epub, const std::string& epubPath,
+                                              const int currentSpineIndex)
+      : Activity("EpubReaderChapterSelection", renderer, mappedInput),
+        epub(epub),
+        epubPath(epubPath),
+        currentSpineIndex(currentSpineIndex) {}
   void onEnter() override;
-  // Fork: keeps the reader-aware forced refresh / sleep handling while stacked over a book.
+  void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
   bool isReaderActivity() const override { return true; }
 };

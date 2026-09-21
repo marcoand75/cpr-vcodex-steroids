@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 /**
  * Credential obfuscation utilities using the ESP32's unique hardware MAC address.

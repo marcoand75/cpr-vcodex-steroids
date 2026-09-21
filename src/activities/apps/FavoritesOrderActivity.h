@@ -1,44 +1,28 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
 #include "FavoritesStore.h"
-#include "activities/UiListActivity.h"
+#include "../Activity.h"
+#include "../util/OrderListActivity.h"
 
-// Reorder / remove favorites. Buttons: Confirm toggles "move mode" (Up/Down
-// then move the picked entry), a Confirm hold removes it. Touch: tap picks an
-// entry (move mode), tapping another row swaps the picked entry into that
-// slot, tapping it again drops it; long-press removes.
-class FavoritesOrderActivity final : public UiListActivity {
+class FavoritesOrderActivity final : public OrderListActivity<FavoritesOrderActivity, FavoriteBook> {
  public:
   FavoritesOrderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("FavoritesOrder", renderer, mappedInput, /*wantsTouchLongPress=*/true) {}
+      : OrderListActivity("FavoritesOrder", renderer, mappedInput) {}
 
-  void onEnter() override;
-  void onExit() override;
+  void reloadEntries() override;
+  void moveSelectedEntry(int delta) override;
+  void confirmDeleteSelectedEntry();
+  void render(RenderLock&& lock) override;
 
- private:
-  std::vector<FavoriteBook> entries;
-  // Row caches derived from entries (titles fall back to the file name).
-  std::vector<std::string> rowTitles;
-  std::vector<freeink::ui::ListItem> rowItems;
-  bool moveMode = false;
+  // Hold-to-delete: when not in moveMode, a confirm press held for >=1s deletes the selected entry.
+  bool handleConfirmHold(unsigned long heldMs) override;
 
-  int listCount() const override { return static_cast<int>(entries.size()); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void onRowLongPress(int index) override;
-  // Confirm toggles move mode (hold = remove); Back leaves move mode first.
-  bool handleButtons() override;
-  // In move mode Up/Down move the entry instead of the selection.
-  void navigateButtons() override;
-  void drawChrome() override;
-  void drawFooter() override;
+  const char* getTitle() const override { return tr(STR_ORDER_FAVORITES); }
 
-  void reloadEntries();
-  void rebuildRowItems();
-  void setMoveMode(bool enabled);
-  void moveSelectedEntry(int delta);
-  void confirmDeleteEntry(int index);
+  std::string getEntryTitle(FavoriteBook entry) const override;
+
+  // FAVORITES is persisted live; nothing to do on exit.
+  void save() override {}
 };

@@ -142,6 +142,8 @@ class AchievementsStore {
   uint64_t resetDayBaselineMs = 0;
   uint32_t lastProcessedSessionSerial = 0;
   mutable bool dirty = false;
+  mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
 
   friend bool JsonSettingsIO::saveAchievements(const AchievementsStore&, const char*);
   friend bool JsonSettingsIO::loadAchievements(AchievementsStore&, const char*);
@@ -166,8 +168,15 @@ class AchievementsStore {
 
   static AchievementsStore& getInstance() { return instance; }
 
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
+
   bool saveToFile() const;
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
   void reset();
   void syncWithPreviousStats();
   void rebuildProgressFromCurrentStats();

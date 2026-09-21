@@ -1,0 +1,74 @@
+********************************************************************************
+Obsolete PIO Core v6.1.19 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Processing default (platform: https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip; board: esp32-c3-devkitm-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+Generated: src\network\html\FilesPageHtml.generated.h
+  Original: 188524 bytes
+  Minified: 185122 bytes (98.2%)
+  Compressed: 41918 bytes (22.2%)
+Generated: src\network\html\FontsPageHtml.generated.h
+  Original: 11439 bytes
+  Minified: 11210 bytes (98.0%)
+  Compressed: 3431 bytes (30.0%)
+Generated: src\network\html\HomePageHtml.generated.h
+  Original: 9855 bytes
+  Minified: 9172 bytes (93.1%)
+  Compressed: 2535 bytes (25.7%)
+Generated: src\network\html\IfFoundPageHtml.generated.h
+  Original: 8193 bytes
+  Minified: 7972 bytes (97.3%)
+  Compressed: 2432 bytes (29.7%)
+Generated: src\network\html\SettingsPageHtml.generated.h
+  Original: 17659 bytes
+  Minified: 17519 bytes (99.2%)
+  Compressed: 4583 bytes (26.0%)
+Language            Code  BCP47  Own   Fallback  Unused  Data (B)
+------------------  ----  -----  ----  --------  ------  --------
+English             EN    en     1256  0         213     26942   
+??????????          BE    be     876   380       124     27834   
+Catal?              CA    ca     897   359       140     24661   
+?e?tina             CS    cs     876   380       124     17418   
+Dansk               DA    da     819   437       92      14334   
+Deutsch             DE    de     890   366       134     16865   
+Espa?ol             ES    es     923   333       166     25077   
+Suomi               FI    fi     819   437       92      15645   
+Fran?ais            FR    fr     876   380       124     17311   
+?????               HE    he     462   794       73      11823   
+Magyar              HU    hu     876   380       124     18287   
+Italiano            IT    it     1209  47        198     22417   
+???????             KK    kk     876   380       124     27902   
+Lietuvi?            LT    lt     876   380       124     16098   
+Nederlands          NL    nl     819   437       92      15083   
+Polski              PL    pl     876   380       124     17188   
+Portugu?s (Brasil)  PT    pt-BR  876   380       124     16938   
+Rom?n?              RO    ro     819   437       92      16227   
+???????             RU    ru     897   359       140     28322   
+Sloven??ina         SI    sl     876   380       124     16344   
+Svenska             SV    sv     896   360       140     16864   
+T?rk?e              TR    tr     877   379       124     17155   
+??????????          UK    uk     878   378       126     27894   
+Ti?ng Vi?t          VI    vi     883   373       130     19258   
+
+  Total: 1256  |  Used in code: 1043  |  Never used: 213
+  Flash: 473,887 B strings (deduped)  +  60,288 B offset tables  =  534,175 B
+
+  Stripping 213 unused string(s) from output.
+
+Code generation complete!
+  Languages: 24
+  String keys: 1043
+CPR-vCodex Steroids release line: 1 (E:\PWA\cpr-vcodex-steroids\artifacts\.release-counter-1-6-0.txt (new base line starts at .1))
+CPR-vCodex Steroids build version: 1.6.0.1.dev32-a4ae01a7
+CPR-vCodex dev counter: 32 (E:\PWA\cpr-vcodex-steroids\artifacts\.dev-counter-1-6-0-r1.txt)
+Removing .pio\build\default
+Done cleaning
+========================= [SUCCESS] Took 3.72 seconds =========================
+
+Environment    Status    Duration
+-------------  --------  ------------
+default        SUCCESS   00:00:03.725
+========================= 1 succeeded in 00:00:03.725 =========================

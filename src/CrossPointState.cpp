@@ -38,11 +38,8 @@ void KOReaderSyncSessionState::clear() {
   resultPage = 0;
   resultParagraphIndex = 0;
   resultHasParagraphIndex = false;
-  resultLiIndex = 0;
-  resultHasLiIndex = false;
-  resultVisibleTextOffset = 0;
-  resultHasVisibleTextOffset = false;
-  resultXpathAnchorId.clear();
+  resultListItemIndex = 0;
+  resultHasListItemIndex = false;
   exitToHomeAfterSync = false;
   autoPullEpubPath.clear();
 }
@@ -54,39 +51,19 @@ void PendingBookmarkJumpState::clear() {
   pageNumber = 0;
 }
 
-namespace {
-bool isRecentIndex(const uint16_t* recentImages, const uint8_t recentPos, const uint8_t recentFill, const uint16_t idx,
-                   const uint8_t checkCount) {
-  const uint8_t effectiveCount = std::min(checkCount, recentFill);
+bool CrossPointState::isRecentSleep(const uint16_t idx, const uint8_t checkCount) const {
+  const uint8_t effectiveCount = std::min(checkCount, recentSleepFill);
   for (uint8_t i = 0; i < effectiveCount; i++) {
-    const uint8_t slot =
-        (recentPos + CrossPointState::SLEEP_RECENT_COUNT - 1 - i) % CrossPointState::SLEEP_RECENT_COUNT;
-    if (recentImages[slot] == idx) return true;
+    const uint8_t slot = (recentSleepPos + SLEEP_RECENT_COUNT - 1 - i) % SLEEP_RECENT_COUNT;
+    if (recentSleepImages[slot] == idx) return true;
   }
   return false;
 }
 
-void pushRecentIndex(uint16_t* recentImages, uint8_t& recentPos, uint8_t& recentFill, const uint16_t idx) {
-  recentImages[recentPos] = idx;
-  recentPos = (recentPos + 1) % CrossPointState::SLEEP_RECENT_COUNT;
-  if (recentFill < CrossPointState::SLEEP_RECENT_COUNT) recentFill++;
-}
-}  // namespace
-
-bool CrossPointState::isRecentSleep(const uint16_t idx, const uint8_t checkCount) const {
-  return isRecentIndex(recentSleepImages, recentSleepPos, recentSleepFill, idx, checkCount);
-}
-
-bool CrossPointState::isRecentOverlaySleep(const uint16_t idx, const uint8_t checkCount) const {
-  return isRecentIndex(recentOverlaySleepImages, recentOverlaySleepPos, recentOverlaySleepFill, idx, checkCount);
-}
-
 void CrossPointState::pushRecentSleep(const uint16_t idx) {
-  pushRecentIndex(recentSleepImages, recentSleepPos, recentSleepFill, idx);
-}
-
-void CrossPointState::pushRecentOverlaySleep(const uint16_t idx) {
-  pushRecentIndex(recentOverlaySleepImages, recentOverlaySleepPos, recentOverlaySleepFill, idx);
+  recentSleepImages[recentSleepPos] = idx;
+  recentSleepPos = (recentSleepPos + 1) % SLEEP_RECENT_COUNT;
+  if (recentSleepFill < SLEEP_RECENT_COUNT) recentSleepFill++;
 }
 
 uint16_t CrossPointState::getMostRecentSleepIndex() const {
@@ -95,6 +72,29 @@ uint16_t CrossPointState::getMostRecentSleepIndex() const {
   }
   const uint8_t slot = (recentSleepPos + SLEEP_RECENT_COUNT - 1) % SLEEP_RECENT_COUNT;
   return recentSleepImages[slot];
+}
+
+bool CrossPointState::isRecentScreensaver(const uint16_t idx, const uint8_t checkCount) const {
+  const uint8_t effectiveCount = std::min(checkCount, recentScreensaverFill);
+  for (uint8_t i = 0; i < effectiveCount; i++) {
+    const uint8_t slot = (recentScreensaverPos + SCREENSAVER_RECENT_COUNT - 1 - i) % SCREENSAVER_RECENT_COUNT;
+    if (recentScreensaverImages[slot] == idx) return true;
+  }
+  return false;
+}
+
+void CrossPointState::pushRecentScreensaver(const uint16_t idx) {
+  recentScreensaverImages[recentScreensaverPos] = idx;
+  recentScreensaverPos = (recentScreensaverPos + 1) % SCREENSAVER_RECENT_COUNT;
+  if (recentScreensaverFill < SCREENSAVER_RECENT_COUNT) recentScreensaverFill++;
+}
+
+uint16_t CrossPointState::getMostRecentScreensaverIndex() const {
+  if (recentScreensaverFill == 0) {
+    return UINT16_MAX;
+  }
+  const uint8_t slot = (recentScreensaverPos + SCREENSAVER_RECENT_COUNT - 1) % SCREENSAVER_RECENT_COUNT;
+  return recentScreensaverImages[slot];
 }
 
 bool CrossPointState::saveToFile() {
@@ -167,7 +167,7 @@ bool CrossPointState::shouldShowSyncDayReminder(const uint8_t reminderThreshold)
 }
 
 bool CrossPointState::loadFromBinaryFile() {
-  HalFile inputFile;
+  FsFile inputFile;
   if (!Storage.openFileForRead("CPS", STATE_FILE_BIN, inputFile)) {
     return false;
   }

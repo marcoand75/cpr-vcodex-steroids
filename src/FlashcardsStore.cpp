@@ -5,6 +5,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <MemoryBudget.h>
+#include <FileStreamReader.h>
 
 #include <algorithm>
 #include <cctype>
@@ -16,7 +17,9 @@
 #include "CrossPointState.h"
 #include "util/BookIdentity.h"
 #include "util/CprVcodexLogs.h"
+#include "util/StringUtils.h"
 #include "util/TimeUtils.h"
+#include "util/BookFilter.h"
 
 namespace {
 constexpr char FLASHCARDS_INDEX_FILE[] = "/.crosspoint/flashcards_index.json";
@@ -88,13 +91,6 @@ void trimAsciiInPlace(std::string& value) {
   if (begin > 0) {
     value.erase(0, begin);
   }
-}
-
-std::string toLowerAscii(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
-  return value;
 }
 
 std::string normalizeField(const std::string& value) {
@@ -186,13 +182,20 @@ bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocu
     return false;
   }
 
-  const String json = Storage.readFile(path);
-  if (json.isEmpty()) {
-    LOG_ERR(moduleName, "JSON file empty: %s", path);
+  HalFile file;
+  if (!Storage.openFileForRead(moduleName, path, file)) {
     return false;
   }
 
-  auto error = deserializeJson(doc, json);
+  // Deserialize incrementally from the file instead of reading the whole JSON
+  // into RAM first (Storage.readFile() returns a String holding the entire
+  // file). This removes a large transient allocation (the reading_stats.json
+  // with 26 books is tens of KB) that overlapped with the ArduinoJson pool and
+  // fragmented the boot heap, lowering maxAlloc after load.
+  FileStreamReader reader(file);
+  auto error = deserializeJson(doc, reader);
+  file.close();
+
   if (error) {
     LOG_ERR(moduleName, "JSON parse error in %s: %s", path, error.c_str());
 #ifndef CPR_DISABLE_EVENT_LOGS
@@ -407,10 +410,7 @@ uint32_t FlashcardsStore::getReferenceDayOrdinal() const {
 }
 
 std::string FlashcardsStore::getTitleFromPath(const std::string& path) {
-  const size_t slashPos = path.find_last_of('/');
-  const std::string filename = slashPos == std::string::npos ? path : path.substr(slashPos + 1);
-  const size_t dotPos = filename.rfind('.');
-  return dotPos == std::string::npos ? filename : filename.substr(0, dotPos);
+  return book_filter::filenameWithoutExtension(path);
 }
 
 std::vector<FlashcardDeckRecord> FlashcardsStore::getRecentDecks() const {
@@ -565,7 +565,15 @@ bool FlashcardsStore::loadFromFile() {
     recentDeckIds.resize(MAX_RECENT_DECKS);
   }
 
+  loaded_ = true;
+  bumpGeneration();
   return true;
+}
+
+bool FlashcardsStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std::string* error) const {
@@ -657,7 +665,7 @@ bool FlashcardsStore::loadDeck(const std::string& path, FlashcardDeck& deck, std
       firstRow = false;
       bool hasNamedHeader = false;
       for (int index = 0; index < static_cast<int>(row.size()); ++index) {
-        const std::string field = toLowerAscii(trimAscii(row[index]));
+        const std::string field = StringUtils::toLowerAscii(trimAscii(row[index]));
         if (field == "id" || field == "card_id") {
           idColumn = index;
           hasNamedHeader = true;
@@ -739,7 +747,7 @@ bool FlashcardsStore::loadDeckCard(const FlashcardDeck& deck, const int cardInde
       firstRow = false;
       bool hasNamedHeader = false;
       for (int index = 0; index < static_cast<int>(row.size()); ++index) {
-        const std::string field = toLowerAscii(trimAscii(row[index]));
+        const std::string field = StringUtils::toLowerAscii(trimAscii(row[index]));
         if (field == "id" || field == "card_id") {
           idColumn = index;
           hasNamedHeader = true;

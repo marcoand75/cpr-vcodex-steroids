@@ -153,12 +153,11 @@ std::string SleepImageUtils::resolveConfiguredSleepDirectory() {
     }
   }
 
-  char resolvedPath[16];
-  if (FsHelpers::resolveRootDirectoryIgnoreCase("/.sleep", resolvedPath, sizeof(resolvedPath))) {
-    return resolvedPath;
+  if (pathIsDirectory("/.sleep")) {
+    return "/.sleep";
   }
-  if (FsHelpers::resolveRootDirectoryIgnoreCase("/sleep", resolvedPath, sizeof(resolvedPath))) {
-    return resolvedPath;
+  if (pathIsDirectory("/sleep")) {
+    return "/sleep";
   }
 
   const auto directories = listSleepDirectories();

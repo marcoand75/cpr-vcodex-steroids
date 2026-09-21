@@ -1,17 +1,12 @@
 #include "ActivityManager.h"
 
-#include <BoardConfig.h>
-#include <FontCacheManager.h>
-#include <FsHelpers.h>
-#include <HalDisplay.h>
 #include <HalPowerManager.h>
-#include <Memory.h>
 
 #include <algorithm>
 
+#include "../CrossPointSettings.h"
+#include "../CrossPointState.h"
 #include "Activity.h"
-#include "CrossPointSettings.h"
-#include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "apps/AppsActivity.h"
 #include "boot_sleep/BootActivity.h"
@@ -21,14 +16,15 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "apps/LibraryActivity.h"
+#include "apps/LuaPluginActivity.h"
+#include "apps/PluginBrowserActivity.h"
+#include "apps/BatchCoverGenerationActivity.h"
 #include "network/CrossPointWebServerActivity.h"
-#include "network/UsbDriveActivity.h"
 #include "reader/KOReaderSyncActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
-#include "util/BmpViewerActivity.h"
-#include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
 namespace {
@@ -61,20 +57,13 @@ void ActivityManager::requestUiTransitionRefresh(const uint8_t previousWeight, c
     renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   }
 }
-static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
 void ActivityManager::begin() {
-#if defined(configNUM_CORES) && configNUM_CORES > 1
-  constexpr BaseType_t renderTaskCore = 1;
-#else
-  constexpr BaseType_t renderTaskCore = 0;
-#endif
-  xTaskCreatePinnedToCore(&renderTaskTrampoline, "ActivityManagerRender",
-                          8192,               // Stack size
-                          this,               // Parameters
-                          1,                  // Priority
-                          &renderTaskHandle,  // Task handle
-                          renderTaskCore  // Keep long renders/cover decodes off CPU 0's idle watchdog when available
+  xTaskCreate(&renderTaskTrampoline, "ActivityManagerRender",
+              8192,              // Stack size
+              this,              // Parameters
+              1,                 // Priority
+              &renderTaskHandle  // Task handle
   );
   assert(renderTaskHandle != nullptr && "Failed to create render task");
 }
@@ -92,18 +81,14 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
-      // Night mode: the fork renders dark mode through GfxRenderer::setDarkMode()
-      // (SETTINGS.darkMode, refreshed every loop in main.cpp); upstream's
-      // screenInverted is an alias of that flag, so the panel polarity must NOT
-      // be inverted here as well or the screen double-inverts.
       currentActivity->render(std::move(lock));
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
-    taskENTER_CRITICAL(&activityManagerSpinlock);
+    taskENTER_CRITICAL(nullptr);
     waiter = waitingTaskHandle;
     waitingTaskHandle = nullptr;
-    taskEXIT_CRITICAL(&activityManagerSpinlock);
+    taskEXIT_CRITICAL(nullptr);
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
@@ -111,45 +96,7 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
-  if (mappedInput.consumeSuppressedRelease()) return;
-
-  if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
-    currentActivity->loop();
-    // An exclusive-storage activity must restart rather than navigate away:
-    // processing a pending action here could re-enable filesystem users while
-    // the USB host still owns the raw SD card.
-    if (requestedUpdate.exchange(false) && renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
-    }
-    return;
-  }
-
   if (currentActivity) {
-    if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
-      if (currentActivity->handleHomeGesture()) {
-        return;
-      }
-      goHome();
-      return;
-    }
-
-    // Tap-first control-center entry: a tap on the status-bar band of the
-    // top-level tab screens opens it, mirroring the top-edge swipe (which some
-    // panels' etched glass makes unreliable). The reader keeps its clean page
-    // (no status bar there to tap). Touch boards only, like the swipe itself.
-    bool statusBarTap = false;
-    if (mappedInput.hasTouch() &&
-        (currentActivity->name == "Home" || currentActivity->name == "FileBrowser" ||
-         currentActivity->name == "Settings" || currentActivity->name == "NetworkModeSelection")) {
-      int tx = 0;
-      int ty = 0;
-      statusBarTap = mappedInput.wasScreenTapped(tx, ty) && ty < 44;
-    }
-    if (currentActivity->name != "FrontlightPanel" && (statusBarTap || mappedInput.wasLightPanelGesture())) {
-      pushActivity(std::make_unique<FrontlightPanelActivity>(renderer, mappedInput));
-      return;
-    }
-
     // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
     currentActivity->loop();
   }
@@ -183,6 +130,7 @@ void ActivityManager::loop() {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
         mappedInput.armConfirmReleaseGuard();
+        mappedInput.armBackReleaseGuard();
         requestUiTransitionRefresh(previousWeight, currentActivity->getUiTransitionRefreshWeight());
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         // Handle result if necessary
@@ -208,8 +156,8 @@ void ActivityManager::loop() {
     } else if (pendingActivity) {
       // Current activity has requested a new activity to be launched
       RenderLock lock;
-      uint8_t previousWeight =
-          currentActivity ? currentActivity->getUiTransitionRefreshWeight() : deferredPreviousUiRefreshWeight;
+      uint8_t previousWeight = currentActivity ? currentActivity->getUiTransitionRefreshWeight()
+                                               : deferredPreviousUiRefreshWeight;
       deferredPreviousUiRefreshWeight = 0;
       const uint8_t nextWeight = pendingActivity ? pendingActivity->getUiTransitionRefreshWeight()
                                                  : Activity::UI_TRANSITION_REFRESH_WEIGHT_NONE;
@@ -223,6 +171,12 @@ void ActivityManager::loop() {
           stackActivities.pop_back();
         }
       } else if (pendingAction == PendingAction::Push) {
+        // Notify the current activity that it is going into background so it
+        // can release temporary memory (library entries, page caches, etc.)
+        // before the new activity takes over.
+        if (currentActivity) {
+          currentActivity->freeBackgroundMemory();
+        }
         // Move current activity to stack
         stackActivities.push_back(std::move(currentActivity));
         LOG_DBG("ACT", "Pushed to activity stack, new size = %zu", stackActivities.size());
@@ -230,6 +184,7 @@ void ActivityManager::loop() {
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
       mappedInput.armConfirmReleaseGuard();
+      mappedInput.armBackReleaseGuard();
       requestUiTransitionRefresh(previousWeight, nextWeight);
 
       lock.unlock();  // onEnter may acquire its own lock
@@ -240,7 +195,8 @@ void ActivityManager::loop() {
     }
   }
 
-  if (requestedUpdate.exchange(false)) {
+  if (requestedUpdate) {
+    requestedUpdate = false;
     // Using direct notification to signal the render task to update
     // Increment counter so multiple rapid calls won't be lost
     if (renderTaskHandle) {
@@ -273,6 +229,7 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
         newActivity ? newActivity->getUiTransitionRefreshWeight() : Activity::UI_TRANSITION_REFRESH_WEIGHT_NONE;
     currentActivity = std::move(newActivity);
     mappedInput.armConfirmReleaseGuard();
+    mappedInput.armBackReleaseGuard();
     requestUiTransitionRefresh(previousWeight, nextWeight);
     currentActivity->onEnter();
   }
@@ -282,22 +239,31 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToUsbDrive() {
-#if FREEINK_CAP_USB_MSC
-  auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);
-  if (!activity) {
-    LOG_ERR("ACT", "OOM: USB Drive activity");
-    return;
-  }
-  replaceActivity(std::move(activity));
-#else
-  LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
-#endif
-}
-
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToApps() { replaceActivity(std::make_unique<AppsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
+  replaceActivity(std::make_unique<LuaPluginActivity>(
+      std::string(pluginName), renderer, mappedInput, fromApps, returnToPluginBrowser));
+}
+
+// Launches a plugin WITHOUT the silent reboot: the current activity (Plugin
+// Browser) is pushed onto the stack so a normal popActivity() returns to it.
+// The plugin exits in-process (LuaPluginActivity::onExit() must NOT restart).
+void ActivityManager::goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser) {
+  pushActivity(std::make_unique<LuaPluginActivity>(
+      std::string(pluginName), renderer, mappedInput, /*launchFromApps=*/false, returnToPluginBrowser,
+      /*launchInProcess=*/true));
+}
+
+void ActivityManager::goToPluginBrowser() {
+  replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToBatchCoverGeneration() {
+  replaceActivity(std::make_unique<BatchCoverGenerationActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
@@ -305,6 +271,10 @@ void ActivityManager::goToFileBrowser(std::string path) {
 
 void ActivityManager::goToRecentBooks() {
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToLibrary(bool launchFromApps) {
+  replaceActivity(std::make_unique<LibraryActivity>(renderer, mappedInput, launchFromApps));
 }
 
 void ActivityManager::goToBrowser() {
@@ -317,6 +287,10 @@ void ActivityManager::goToBrowser() {
   }
 }
 
+void ActivityManager::goToReader(std::string path) {
+  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
+}
+
 void ActivityManager::goToKOReaderSync() {
   const auto& sync = APP_STATE.koReaderSyncSession;
   if (!sync.active || sync.epubPath.empty()) {
@@ -327,40 +301,16 @@ void ActivityManager::goToKOReaderSync() {
   replaceActivity(std::make_unique<KOReaderSyncActivity>(
       renderer, mappedInput, sync.epubPath, sync.spineIndex, sync.page, sync.totalPagesInSpine, sync.paragraphIndex,
       sync.hasParagraphIndex, sync.xhtmlSeekHint, sync.intent, sync.hasLocalKoReaderPosition,
-      SavedProgressPosition{sync.localKoReaderProgress, sync.localKoReaderPercentage}, sync.localChapterLabel));
+      KOReaderPosition{sync.localKoReaderProgress, sync.localKoReaderPercentage}, sync.localChapterLabel));
 }
 
-void ActivityManager::goToEpubBookmark(std::string path, const int spineIndex, const uint32_t page,
-                                       const bool hasVisibleTextOffset, const uint32_t visibleTextOffset) {
+void ActivityManager::goToEpubBookmark(std::string path, const int spineIndex, const uint32_t page) {
   replaceActivity(std::make_unique<ReaderActivity>(
-      renderer, mappedInput, std::move(path),
-      ReaderActivity::EpubBookmarkLaunch{true, spineIndex, page, hasVisibleTextOffset, visibleTextOffset}));
+      renderer, mappedInput, std::move(path), ReaderActivity::EpubBookmarkLaunch{true, spineIndex, page}));
 }
 
-void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh) {
-  if (path.empty()) {
-    goToFileBrowser("/");
-    return;
-  }
-
-  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path)) {
-    auto activity = makeUniqueNoThrow<BmpViewerActivity>(renderer, mappedInput, std::move(path));
-    if (!activity) {
-      LOG_ERR("ACT", "OOM: bitmap viewer activity");
-      return;
-    }
-    replaceActivity(std::move(activity));
-    return;
-  }
-
-  auto activity = ReaderActivity::create(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
-  if (activity) {
-    replaceActivity(std::move(activity));
-  }
-}
-
-void ActivityManager::goToSleep(bool fromTimeout) {
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout));
+void ActivityManager::goToSleep() {
+  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 
@@ -370,28 +320,20 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
   replaceActivity(std::make_unique<FullScreenMessageActivity>(renderer, mappedInput, std::move(message), style));
 }
 
-void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
-  if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
-    const auto& activityName = currentActivity->name;
-    if (activityName == "FileBrowser") {
-      initialMenuItem = HomeMenuItem::FILE_BROWSER;
-    } else if (activityName == "RecentBooks") {
-      initialMenuItem = HomeMenuItem::RECENTS;
-    } else if (activityName == "OpdsBookBrowser") {
-      initialMenuItem = HomeMenuItem::OPDS_BROWSER;
-    } else if (activityName == "CrossPointWebServer") {
-      initialMenuItem = HomeMenuItem::FILE_TRANSFER;
-    } else if (activityName == "Settings") {
-      initialMenuItem = HomeMenuItem::SETTINGS_MENU;
-    }
-  }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
-}
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goHome() { replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   if (pendingActivity) {
-    // Should never happen in practice
+    // If the same activity is already pending, ignore the duplicate push
+    // to avoid spamming the log and corrupting the activity state. This can
+    // happen when the power button is pressed multiple times in quick succession,
+    // or when an activity requests a push while another push is already pending.
+    if (pendingActivity->name == activity->name) {
+      LOG_INF("ACT", "Duplicate push of pending activity '%s', ignoring", activity->name.c_str());
+      return;
+    }
     LOG_ERR("ACT", "pendingActivity while pushActivity is not expected");
     pendingActivity.reset();
   }
@@ -410,19 +352,13 @@ void ActivityManager::popActivity() {
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
-bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }
-
-bool ActivityManager::requiresExclusiveStorageLoop() const {
-  return currentActivity && currentActivity->requiresExclusiveStorageLoop();
-}
-
-bool ActivityManager::isReaderActivity() const {
-  return std::any_of(stackActivities.begin(), stackActivities.end(),
-                     [](const auto& activity) { return activity->isReaderActivity(); }) ||
-         (currentActivity && currentActivity->isReaderActivity());
-}
+bool ActivityManager::isReaderActivity() const { return currentActivity && currentActivity->isReaderActivity(); }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
+
+bool ActivityManager::isScreenSaverActive() const { return currentActivity && currentActivity->isScreenSaverActivity(); }
+
+bool ActivityManager::isWifiActivity() const { return currentActivity && currentActivity->isWifiActivity(); }
 
 ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   if (currentActivity) {
@@ -448,7 +384,7 @@ void ActivityManager::requestUpdateAndWait() {
   }
 
   // Atomic section to perform checks
-  taskENTER_CRITICAL(&activityManagerSpinlock);
+  taskENTER_CRITICAL(nullptr);
   auto currTaskHandler = xTaskGetCurrentTaskHandle();
   auto mutexHolder = xSemaphoreGetMutexHolder(renderingMutex);
   bool isRenderTask = (currTaskHandler == renderTaskHandle);
@@ -457,7 +393,7 @@ void ActivityManager::requestUpdateAndWait() {
   if (!alreadyWaiting && !isRenderTask && !holdingRenderLock) {
     waitingTaskHandle = currTaskHandler;
   }
-  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  taskEXIT_CRITICAL(nullptr);
 
   // Render task cannot call requestUpdateAndWait() or it will cause a deadlock
   assert(!isRenderTask && "Render task cannot call requestUpdateAndWait()");

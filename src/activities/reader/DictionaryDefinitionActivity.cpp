@@ -10,9 +10,11 @@
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "DictionaryStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
 constexpr size_t MAX_WRAPPED_DEFINITION_LINES = 180;
@@ -26,9 +28,6 @@ void DictionaryDefinitionActivity::onEnter() {
 }
 
 void DictionaryDefinitionActivity::onExit() {
-  if (auto* fcm = renderer.getFontCacheManager()) {
-    fcm->clearCache();
-  }
   Activity::onExit();
 }
 
@@ -122,13 +121,15 @@ void DictionaryDefinitionActivity::wrapText() {
 
   auto continuationPrefixFor = [](const std::string& line, const std::string& prefix) {
     size_t pos = prefix.size();
-    if (pos + 1 < line.size() && (line[pos] == '-' || line[pos] == '*' || line[pos] == '+') && line[pos + 1] == ' ') {
+    if (pos + 1 < line.size() && (line[pos] == '-' || line[pos] == '*' || line[pos] == '+') &&
+        line[pos + 1] == ' ') {
       return prefix + "  ";
     }
 
     const size_t numberStart = pos;
     while (pos < line.size() && std::isdigit(static_cast<unsigned char>(line[pos]))) ++pos;
-    if (pos > numberStart && pos + 1 < line.size() && (line[pos] == '.' || line[pos] == ')') && line[pos + 1] == ' ') {
+    if (pos > numberStart && pos + 1 < line.size() && (line[pos] == '.' || line[pos] == ')') &&
+        line[pos + 1] == ' ') {
       return prefix + std::string(pos + 2 - prefix.size(), ' ');
     }
     return prefix;
@@ -235,39 +236,46 @@ void DictionaryDefinitionActivity::wrapText() {
   currentPage = std::clamp(currentPage, 0, totalPages - 1);
 }
 
-void DictionaryDefinitionActivity::loop() {
-  bool prevPage = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
-                  mappedInput.wasReleased(MappedInputManager::Button::Left);
-  bool nextPage = mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
-                  mappedInput.wasReleased(MappedInputManager::Button::Right);
+void DictionaryDefinitionActivity::switchToDictionary(const int newDictIndex) {
+  if (query.empty()) return;
 
-  // Touch (upstream): same zones as the reader page turns inside the overlay --
-  // left third = previous page, the rest = next. A tap outside the overlay box
-  // closes it like Back; the left-edge back swipe cancels as well.
-  int tx = 0;
-  int ty = 0;
-  if (mappedInput.wasScreenTapped(tx, ty)) {
-    const Rect rect = overlayRect();
-    const bool insideOverlay = tx >= rect.x && tx < rect.x + rect.width && ty >= rect.y && ty < rect.y + rect.height;
-    if (!insideOverlay) {
-      ActivityResult result;
-      result.isCancelled = true;
-      setResult(std::move(result));
-      finish();
-      return;
+  const auto activeEntries = DICTIONARIES.getActiveEntries();
+  if (newDictIndex < 0 || newDictIndex >= static_cast<int>(activeEntries.size())) return;
+
+  DictionaryEntry* mutableEntry = const_cast<DictionaryEntry*>(activeEntries[newDictIndex]);
+  DictionaryLookupResult result = DICTIONARIES.lookupInEntry(*mutableEntry, query, true);
+
+  if (result.status == DictionaryLookupResult::Status::Found) {
+    headword = std::move(result.headword);
+    definition = std::move(result.definition);
+    truncated = result.truncated;
+    activeDictIndex = newDictIndex;
+  } else if (!result.suggestions.empty()) {
+    headword = query;
+    definition = tr(STR_DICTIONARY_SUGGESTIONS_PREFIX) + result.suggestions[0];
+    for (size_t i = 1; i < result.suggestions.size(); ++i) {
+      definition += ", ";
+      definition += result.suggestions[i];
     }
-    if (tx < rect.x + rect.width / 3) {
-      prevPage = true;
-    } else {
-      nextPage = true;
-    }
-  } else if (mappedInput.wasBackGesture()) {
-    ActivityResult result;
-    result.isCancelled = true;
-    setResult(std::move(result));
-    finish();
-    return;
+    truncated = false;
+    activeDictIndex = newDictIndex;
+  } else {
+    headword = query;
+    definition = tr(STR_DICTIONARY_NOT_READY);
+    truncated = false;
+    activeDictIndex = newDictIndex;
   }
+
+  currentPage = 0;
+  wrapText();
+  requestUpdate();
+}
+
+void DictionaryDefinitionActivity::loop() {
+  const bool prevPage = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
+                        mappedInput.wasReleased(MappedInputManager::Button::Up);
+  const bool nextPage = mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
+                        mappedInput.wasReleased(MappedInputManager::Button::Down);
 
   if (prevPage && currentPage > 0) {
     --currentPage;
@@ -279,6 +287,23 @@ void DictionaryDefinitionActivity::loop() {
     requestUpdate();
     return;
   }
+
+  if (DICTIONARIES.getLookupMode() == DictionaryStore::LookupMode::Manual) {
+    const auto activeEntries = DICTIONARIES.getActiveEntries();
+    if (!activeEntries.empty()) {
+      if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+        const int newIndex = (activeDictIndex - 1 + static_cast<int>(activeEntries.size())) % static_cast<int>(activeEntries.size());
+        switchToDictionary(newIndex);
+        return;
+      }
+      if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+        const int newIndex = (activeDictIndex + 1) % static_cast<int>(activeEntries.size());
+        switchToDictionary(newIndex);
+        return;
+      }
+    }
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     setResult(ActivityResult{});
     finish();
@@ -295,13 +320,7 @@ void DictionaryDefinitionActivity::loop() {
 void DictionaryDefinitionActivity::render(RenderLock&&) {
   if (renderPageBackground) {
     renderer.clearScreen();
-    std::optional<FontCacheManager::PrewarmScope> pageFontPrewarm;
     if (page) {
-      if (auto* fcm = renderer.getFontCacheManager()) {
-        pageFontPrewarm.emplace(*fcm);
-        page->recordFontUsage(*fcm, readerFontId, SETTINGS.bionicReading);
-        pageFontPrewarm->endScanAndPrewarm();
-      }
       page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
     }
   }
@@ -315,6 +334,15 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int titleMaxWidth = rect.width - padding * 2 - 54;
   const std::string title = renderer.truncatedText(UI_10_FONT_ID, headword.c_str(), titleMaxWidth, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, rect.x + padding, titleY, title.c_str(), true, EpdFontFamily::BOLD);
+
+  if (activeDictIndex >= 0) {
+    const auto activeEntries = DICTIONARIES.getActiveEntries();
+    if (static_cast<size_t>(activeDictIndex) < activeEntries.size()) {
+      const std::string dictLabel = std::string("[") + activeEntries[activeDictIndex]->languageId + "]";
+      const int dictWidth = renderer.getTextWidth(SMALL_FONT_ID, dictLabel.c_str());
+      renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - padding - dictWidth, titleY + 2, dictLabel.c_str());
+    }
+  }
 
   if (totalPages > 1) {
     const std::string pageText = std::to_string(currentPage + 1) + "/" + std::to_string(totalPages);
@@ -330,10 +358,10 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int startLine = currentPage * linesPerPage;
   prewarmVisibleDefinitionText();
   for (int i = 0; i < linesPerPage && startLine + i < static_cast<int>(wrappedLines.size()); ++i) {
-    renderer.drawText(definitionFontId, rect.x + padding, bodyY + i * lineHeight, wrappedLines[startLine + i].c_str());
+    renderer.drawText(definitionFontId, rect.x + padding, bodyY + i * lineHeight,
+                      wrappedLines[startLine + i].c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), tr(STR_DONE), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

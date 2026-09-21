@@ -6,6 +6,8 @@
 #include <SdCardFont.h>
 #include <SdCardFontRegistry.h>
 
+#include <algorithm>
+
 SdCardFontManager::~SdCardFontManager() {
   for (auto& lf : loaded_) {
     delete lf.font;
@@ -26,6 +28,40 @@ int SdCardFontManager::computeFontId(uint32_t contentHash, const char* familyNam
   hash *= FNV_PRIME;
   int id = static_cast<int>(hash);
   return id != 0 ? id : 1;  // 0 is reserved as "not found" sentinel
+}
+
+bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t fontSizeEnum) {
+  // Unload any previously loaded family first
+  if (!loadedFamilyName_.empty()) {
+    unloadAll(renderer);
+  }
+
+  const SdCardFontFileInfo* selected = family.findFile(getTargetSizeForEnum(family, fontSizeEnum));
+  if (!selected) {
+    LOG_ERR("SDMGR", "Family %s has no matching size for enum %u", family.name.c_str(), fontSizeEnum);
+    return false;
+  }
+
+  if (loadFile(*selected, family.name.c_str(), renderer) == 0) return false;
+
+  loadedFamilyName_ = family.name;
+  loadedPointSize_ = selected->pointSize;
+  return true;
+}
+
+uint8_t SdCardFontManager::getTargetSizeForEnum(const SdCardFontFamilyInfo& family, uint8_t fontSizeEnum) const {
+  auto sizes = family.availableSizes();
+  if (sizes.empty()) return 0;
+
+  const bool standardSizes = family.hasSize(12) && family.hasSize(14) && family.hasSize(16) && family.hasSize(18);
+  const uint8_t readerTargets[] = {12, 14, 16, 18};
+  const uint8_t idx = std::min<uint8_t>(fontSizeEnum, 3);
+
+  if (standardSizes) {
+    return readerTargets[idx];
+  }
+
+  return sizes[std::min<size_t>(idx, sizes.size() - 1)];
 }
 
 int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer) {
@@ -52,50 +88,26 @@ int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* fami
   renderer.registerSdCardFont(fontId, font);
   loaded_.push_back({font, fontId, file.pointSize});
 
-  LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u", file.path.c_str(), file.pointSize, fontId, font->styleCount());
+  LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u", file.path.c_str(), file.pointSize, fontId,
+          font->styleCount());
 
   EpdFontFamily fontFamily(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3));
   renderer.insertFont(fontId, fontFamily);
+
   return fontId;
-}
-
-bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize) {
-  // Unload any previously loaded family first
-  if (!loadedFamilyName_.empty()) {
-    unloadAll(renderer);
-  }
-
-  const SdCardFontFileInfo* selected = family.findNearestSize(pointSize);
-  if (!selected) {
-    LOG_ERR("SDMGR", "Family %s has no files to load", family.name.c_str());
-    return false;
-  }
-
-  if (loadFile(*selected, family.name.c_str(), renderer) == 0) {
-    return false;
-  }
-
-  loadedFamilyName_ = family.name;
-  loadedPointSize_ = selected->pointSize;
-  return true;
 }
 
 int SdCardFontManager::loadFamilyExtraSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer,
                                            uint8_t pointSize) {
-  const SdCardFontFileInfo* file = family.findFile(pointSize);
-  if (!file) return 0;  // family has no .cpfont at this exact size
-
-  // Reuse an already-loaded font of the same size (e.g. when a reader size
-  // happens to match a UI size) instead of double-loading the file.
-  for (const auto& lf : loaded_) {
-    if (lf.size == pointSize) return lf.fontId;
+  const auto* file = family.findFile(pointSize);
+  if (!file) return 0;
+  for (const auto& loaded : loaded_) {
+    if (loaded.size == pointSize) return loaded.fontId;
   }
-
   return loadFile(*file, family.name.c_str(), renderer);
 }
 
 void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
-  // Drop UI CJK fallbacks before the SD fonts they point at are freed.
   renderer.clearFallbackFonts();
   renderer.clearSdCardFonts();
   for (auto& lf : loaded_) {

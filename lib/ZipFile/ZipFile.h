@@ -1,12 +1,56 @@
 #pragma once
 #include <HalStorage.h>
+#include <InflateStream.h>
 
-#include <deque>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
+enum class ZipStreamStatus {
+  More,
+  Done,
+  Error,
+};
+
+struct ZipStreamInflateCtx {
+  InflateStream reader;
+  HalFile* file = nullptr;
+  size_t fileRemaining = 0;
+  uint8_t* readBuf = nullptr;
+  size_t readBufSize = 0;
+};
+
+class ZipFileStreamReader {
+ public:
+  ZipFileStreamReader() = default;
+  ~ZipFileStreamReader();
+  ZipFileStreamReader(const ZipFileStreamReader&) = delete;
+  ZipFileStreamReader& operator=(const ZipFileStreamReader&) = delete;
+
+  bool begin(const std::string& zipPath, const char* filename, size_t chunkSize);
+  ZipStreamStatus pump(Print& out, size_t maxOutputBytes = 0);
+  void abort();
+  size_t produced() const { return totalProduced; }
+
+ private:
+  std::string zipPath;
+  uint16_t method = 0;
+  uint32_t dataOffset = 0;
+  uint32_t compressedSize = 0;
+  uint32_t uncompressedSize = 0;
+  size_t chunkSize = 0;
+  size_t totalProduced = 0;
+  size_t compressedConsumed = 0;
+  uint8_t* readBuffer = nullptr;
+  uint8_t* outputBuffer = nullptr;
+  ZipStreamInflateCtx inflateCtx;
+  bool active = false;
+};
+
 class ZipFile {
+  friend class ZipFileStreamReader;
+
  public:
   struct FileStatSlim {
     uint16_t method;             // Compression method
@@ -26,6 +70,23 @@ class ZipFile {
     uint64_t hash;   // FNV-1a 64-bit hash of normalized path
     uint16_t len;    // Length of path for collision reduction
     uint16_t index;  // Caller's index (e.g. spine index)
+  };
+
+  // Target and result for batch central-directory identity lookup. The full
+  // path check prevents a hash collision from treating unrelated files as
+  // byte-identical.
+  struct EntryTarget {
+    uint64_t hash;
+    uint16_t len;
+    uint16_t index;
+    const char* path;
+  };
+
+  struct EntryIdentity {
+    uint32_t crc32 = 0;
+    uint32_t compressedSize = 0;
+    uint32_t uncompressedSize = 0;
+    bool found = false;
   };
 
   // FNV-1a 64-bit hash computed from char buffer (no std::string allocation)
@@ -65,14 +126,16 @@ class ZipFile {
   // Batch lookup: scan ZIP central dir once and fill sizes for matching targets.
   // targets must be sorted by (hash, len). sizes[target.index] receives uncompressedSize.
   // Returns number of targets matched.
-  int fillUncompressedSizes(std::deque<SizeTarget>& targets, std::deque<uint32_t>& sizes);
+  int fillUncompressedSizes(const SizeTarget* targets, size_t targetCount, uint32_t* sizes, size_t sizeCount);
+  // Batch lookup for duplicate detection. Targets must be sorted by (hash,
+  // len); identities[target.index] receives the ZIP entry's CRC and sizes.
+  int fillEntryIdentities(const EntryTarget* targets, size_t targetCount, EntryIdentity* identities,
+                          size_t identityCount);
   // Due to the memory required to run each of these, it is recommended to not preopen the zip file for multiple
   // These functions will open and close the zip as needed
   uint8_t* readFileToMemory(const char* filename, size_t* size = nullptr, bool trailingNullByte = false);
-  // allowEarlyStop: a short write from `out` is treated as the sink asking to
-  // stop (returns true) instead of a write failure — used by header probes
-  // that only need the first bytes of an entry.
   bool readFileToStream(const char* filename, Print& out, size_t chunkSize, bool allowEarlyStop = false);
+  std::unique_ptr<ZipFileStreamReader> openFileStream(const char* filename, size_t chunkSize);
 
   template <typename F>
   bool enumerateFilePaths(F&& callback) {
@@ -83,14 +146,6 @@ class ZipFile {
       return true;
     }
 
-    return enumerateFileEntries([&callback](std::string_view path, uint32_t, uint32_t) { callback(path); });
-  }
-
-  // Callback receives (path, crc32, compressedSize) for each central-directory
-  // entry. Always scans the central directory: the slim-stat cache does not
-  // hold CRCs.
-  template <typename F>
-  bool enumerateFileEntries(F&& callback) {
     const bool wasOpen = isOpen();
     if (!wasOpen && !open()) {
       return false;
@@ -114,11 +169,7 @@ class ZipFile {
         break;
       }
 
-      file.seekCur(12);
-      uint32_t crc32, compressedSize;
-      file.read(&crc32, 4);
-      file.read(&compressedSize, 4);
-      file.seekCur(4);
+      file.seekCur(24);
       uint16_t nameLen, m, k;
       file.read(&nameLen, 2);
       file.read(&m, 2);
@@ -128,7 +179,7 @@ class ZipFile {
       if (nameLen < sizeof(itemName)) {
         file.read(itemName, nameLen);
         itemName[nameLen] = '\0';
-        callback(std::string_view{itemName, nameLen}, crc32, compressedSize);
+        callback(std::string_view{itemName, nameLen});
       } else {
         file.seekCur(nameLen);
       }

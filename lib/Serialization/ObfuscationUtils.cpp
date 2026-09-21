@@ -16,8 +16,7 @@ constexpr size_t HW_KEY_LEN = 6;
 
 const uint8_t* getHwKey() {
   // Function-local static initialization is synchronized by C++, including
-  // on dual-core targets. The previous hand-rolled boolean could expose a
-  // partially initialized key to another task.
+  // on dual-core targets, so no task can observe a partially initialized key.
   static const std::array<uint8_t, HW_KEY_LEN> key = [] {
     std::array<uint8_t, HW_KEY_LEN> value{};
     esp_efuse_mac_get_default(value.data());

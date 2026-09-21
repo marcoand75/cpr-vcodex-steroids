@@ -12,6 +12,9 @@
 #include "blocks/TextBlock.h"
 
 class GfxRenderer;
+struct Arena;
+template <typename T>
+class ArenaVector;
 
 class ParsedText {
   // words/rubyTexts are std::deque, not std::vector: a paragraph can hold thousands
@@ -25,29 +28,13 @@ class ParsedText {
   // each, they never approach the contiguous-block ceiling.
   std::deque<std::string> words;
   std::vector<EpdFontFamily::Style> wordStyles;
-  // Boundary flags use all four combinations:
-  //   continues=false, noSpace=false: ordinary breakable word gap
-  //   continues=false, noSpace=true:  breakable zero-width, stretchable CJK/Korean gap
-  //   continues=true,  noSpace=false: unbreakable attachment
-  //   continues=true,  noSpace=true:  breakable zero-width, non-stretching attachment
-  std::vector<bool> wordContinues;
-  std::vector<bool> wordNoSpaceBefore;
-  // Focus Reading emphasis: bytes [0, wordFocusBoundary) render bold, the rest at wordStyles.
-  // 0 = none. An annotation rather than a token split, so the hyphenator and line breaker still
-  // see whole words; TextBlock stores emphasis the same way, so extractLine passes it through.
-  std::vector<uint8_t> wordFocusBoundary;
-  // Internal-link identity through tokenization, hyphenation and BiDi reorder.
-  // Zero means plain text; non-zero indexes linkTargets. Kept at one byte per
-  // token and discarded after layout, never added to the page-cache TextBlock.
-  std::vector<uint8_t> wordLinkIds;
-  std::vector<std::string> linkTargets;
-  // One byte while laying out; TextBlock stores it only for lines that contain
-  // a hyphen inserted by layout rather than authored in the EPUB.
-  std::vector<uint8_t> wordLayoutFlags;
-  // Zero-based visible Unicode-codepoint offsets in the spine body, stored as
-  // uint16_t deltas from a shared base to keep this layout-only metadata small.
-  // Pathological spans wider than uint16_t use sparse rebases; rendered
-  // TextBlocks do not carry any of this metadata.
+  std::vector<bool> wordContinues;          // true = word attaches to previous (no space before it)
+  std::vector<bool> wordNoSpaceBefore;      // true = may break before token, but no synthetic space when joined
+  std::vector<uint8_t> wordBionicBoundary;  // UTF-8 byte offset where the regular suffix starts; 0 = no split
+  std::vector<bool> wordGuideDotBefore;     // true = virtual guide dot belongs between previous token and this one
+  std::vector<uint8_t> wordBackgroundBlack;
+  // Layout-only text coordinates. The rendered page never retains these; use
+  // compact deltas while a paragraph is pending to protect C3 heap headroom.
   struct VisibleOffsetRebase {
     size_t wordIndex;
     uint32_t base;
@@ -56,24 +43,49 @@ class ParsedText {
   uint32_t visibleOffsetBase = 0;
   std::vector<VisibleOffsetRebase> visibleOffsetRebases;
   std::deque<std::string> rubyTexts;
-  BlockStyle blockStyle;
   bool extraParagraphSpacing;
   bool forceParagraphIndents;
   bool hyphenationEnabled;
-  bool focusReadingEnabled;
-  bool isNaturalAlign;
+  bool bionicReadingEnabled;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
+  bool guideReadingEnabled;
+  uint8_t wordSpacing;
+  BlockStyle blockStyle;
   bool hasRtlWord;
-  // Cleared after the first layout pass so a paragraph continued across builds
-  // does not receive its first-line indent twice.
-  bool firstLineIndentPending = true;
+  // True after an intermediate flush leaves the rest of the same paragraph
+  // buffered. The next layout pass must not apply first-line paragraph rules.
+  bool isContinuation_ = false;
   std::vector<std::string> reorderedWordsScratch;
   std::vector<EpdFontFamily::Style> reorderedStylesScratch;
   std::vector<uint16_t> reorderedWidthsScratch;
   std::vector<bool> reorderedContinuesScratch;
   std::vector<bool> reorderedNoSpaceBeforeScratch;
-  std::vector<uint8_t> reorderedFocusBoundaryScratch;
+  std::vector<uint8_t> reorderedBionicBoundaryScratch;
+  std::vector<bool> reorderedGuideDotBeforeScratch;
+  std::vector<uint8_t> reorderedBackgroundBlackScratch;
+  std::vector<std::string> lineWordsScratch;
+  std::vector<EpdFontFamily::Style> lineStylesScratch;
+  std::vector<uint16_t> lineWidthsScratch;
+  std::vector<uint8_t> lineBionicBoundaryScratch;
+  std::vector<bool> lineGuideDotBeforeScratch;
+  std::vector<uint8_t> lineBackgroundBlackScratch;
   std::vector<uint16_t> visualOrderScratch;
 
+  void reserveTokenCapacity(size_t additionalTokens);
+  int resolveFirstLineIndent(bool isFirstLine, const GfxRenderer& renderer, int fontId) const;
+  bool calculateGapMetrics(ArenaVector<int16_t>& naturalGaps, ArenaVector<uint8_t>& gapSlots,
+                           const GfxRenderer& renderer, int fontId);
+  bool computeLineBreaks(Arena& scratchArena, const GfxRenderer& renderer, int fontId, int pageWidth,
+                         ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
+                         std::vector<bool>& noSpaceBeforeVec, ArenaVector<int16_t>& naturalGaps,
+                         ArenaVector<uint8_t>& gapSlots, ArenaVector<size_t>& lineBreakIndices);
+  bool computeHyphenatedLineBreaks(const GfxRenderer& renderer, int fontId, int pageWidth,
+                                   ArenaVector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
+                                   std::vector<bool>& noSpaceBeforeVec, ArenaVector<size_t>& lineBreakIndices);
+  bool hyphenateWordAtIndex(size_t wordIndex, int availableWidth, const GfxRenderer& renderer, int fontId,
+                            ArenaVector<uint16_t>& wordWidths, bool allowFallbackBreaks);
+  bool splitPathologicalTokenAtIndex(size_t wordIndex, int availableWidth, const GfxRenderer& renderer, int fontId,
+                                     ArenaVector<uint16_t>& wordWidths);
   uint32_t visibleOffsetBaseAt(size_t wordIndex) const;
   uint32_t visibleOffsetAt(size_t wordIndex) const;
   void pushVisibleOffset(uint32_t offset);
@@ -82,39 +94,33 @@ class ParsedText {
   int calculateRubyExtraStartOffset(size_t wordIdx, size_t maxWordIdx, const GfxRenderer& renderer, int fontId) const;
   int calculateRubyExtraEndOffset(size_t lineStartIdx, size_t lineBreakIdx, const GfxRenderer& renderer,
                                   int fontId) const;
-  int resolveFirstLineIndent(bool isFirstLine, const GfxRenderer& renderer, int fontId) const;
-  std::vector<size_t> computeLineBreaks(const GfxRenderer& renderer, int fontId, int pageWidth,
-                                        std::vector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
-                                        std::vector<bool>& noSpaceBeforeVec);
-  std::vector<size_t> computeHyphenatedLineBreaks(const GfxRenderer& renderer, int fontId, int pageWidth,
-                                                  std::vector<uint16_t>& wordWidths, std::vector<bool>& continuesVec,
-                                                  std::vector<bool>& noSpaceBeforeVec);
-  bool hyphenateWordAtIndex(size_t wordIndex, int availableWidth, const GfxRenderer& renderer, int fontId,
-                            std::vector<uint16_t>& wordWidths, bool allowFallbackBreaks);
-  void extractLine(size_t breakIndex, int pageWidth, const std::vector<uint16_t>& wordWidths,
+  bool extractLine(Arena& scratchArena, size_t breakIndex, int pageWidth, const ArenaVector<uint16_t>& wordWidths,
                    const std::vector<bool>& continuesVec, const std::vector<bool>& noSpaceBeforeVec,
-                   const std::vector<size_t>& lineBreakIndices,
+                   const ArenaVector<int16_t>& naturalGaps, const ArenaVector<uint8_t>& gapSlots,
+                   const ArenaVector<size_t>& lineBreakIndices,
                    const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
                    const GfxRenderer& renderer, int fontId);
-  std::vector<uint16_t> calculateWordWidths(const GfxRenderer& renderer, int fontId);
+  bool calculateWordWidths(ArenaVector<uint16_t>& wordWidths, const GfxRenderer& renderer, int fontId);
 
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
-                      const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                      const bool hyphenationEnabled = false, const bool bionicReadingEnabled = false,
+                      const uint8_t bionicReadingMode = 0, const bool guideReadingEnabled = false,
+                      const uint8_t wordSpacing = 0,
                       const BlockStyle& blockStyle = BlockStyle())
-      : blockStyle(blockStyle),
-        extraParagraphSpacing(extraParagraphSpacing),
+      : extraParagraphSpacing(extraParagraphSpacing),
         forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
-        focusReadingEnabled(focusReadingEnabled),
-        isNaturalAlign(false),
+        bionicReadingEnabled(bionicReadingEnabled),
+        bionicReadingMode(bionicReadingMode),
+        guideReadingEnabled(guideReadingEnabled),
+        wordSpacing(wordSpacing),
+        blockStyle(blockStyle),
         hasRtlWord(false) {}
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false,
-               uint32_t visibleTextOffset = 0, uint8_t linkId = 0);
-  uint8_t addLinkTarget(const char* href);
-  bool linkTargetMatches(uint8_t linkId, const char* href) const;
+               bool backgroundBlack = false, uint8_t linkId = 0, uint32_t visibleTextOffset = 0);
   void setRubyForWordAt(size_t index, const std::string& ruby);
   void setRubyGroupAt(size_t startIndex, size_t count, const std::string& ruby);
   EpdFontFamily::Style getWordStyleAt(size_t index) const {
@@ -126,7 +132,10 @@ class ParsedText {
   BlockStyle& getBlockStyle() { return blockStyle; }
   size_t size() const { return words.size(); }
   bool isEmpty() const { return words.empty(); }
-  void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
+  bool isContinuation() const { return isContinuation_; }
+  bool layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                              const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
                              bool includeLastLine = true);
+  bool layoutAndExtractLinesPreservingSource(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
+                                             const std::function<void(std::shared_ptr<TextBlock>)>& processLine) const;
 };

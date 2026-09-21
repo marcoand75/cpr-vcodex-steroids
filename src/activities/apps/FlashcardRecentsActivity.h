@@ -3,35 +3,25 @@
 #include <string>
 #include <vector>
 
+#include "../Activity.h"
 #include "FlashcardsStore.h"
-#include "activities/UiListActivity.h"
+#include "util/ButtonNavigator.h"
 
-// Recently opened decks. Activate opens a review session; a Confirm hold or
-// touch long-press removes the deck from the recents list.
-class FlashcardRecentsActivity final : public UiListActivity {
+class FlashcardRecentsActivity final : public Activity {
+  ButtonNavigator buttonNavigator;
   std::vector<FlashcardDeckRecord> decks;
-  // Row caches derived from decks (progress | accuracy subtitles).
-  std::vector<std::string> rowSubtitles;
-  std::vector<freeink::ui::ListItem> rowItems;
+  int selectedIndex = 0;
+  std::string transientMessage;
+  unsigned long transientUntilMs = 0;
 
   void reloadDecks();
-  void rebuildRowItems();
-  void openDeck(int index);
-  void confirmRemoveDeck(int index);
-
-  int listCount() const override { return static_cast<int>(decks.size()); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void onRowLongPress(int index) override;
-  // Confirm activates on release; a hold prompts removal.
-  bool handleButtons() override;
-  void drawChrome() override;
-  void drawFooter() override;
+  bool openSelectedDeck();
 
  public:
   explicit FlashcardRecentsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("FlashcardRecents", renderer, mappedInput, /*wantsTouchLongPress=*/true) {}
+      : Activity("FlashcardRecents", renderer, mappedInput) {}
 
   void onEnter() override;
-  void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 };

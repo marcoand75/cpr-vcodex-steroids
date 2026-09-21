@@ -1,0 +1,66 @@
+feat(memory): complete arena-allocator rollout with peak tracking, parser ownership fixes, and frame scratch migration
+
+This commit finalizes the memory-arena refactor across the firmware, renderer,
+parsers, readers, home, library, and webserver. The primary goal is to reduce
+heap fragmentation on the ESP32-C3 (~380 KB usable RAM, no PSRAM).
+
+Phase 1 — Core Arena
+- Add `lib/Arena/Arena.h` with bump-pointer allocation, alignment-aware `alloc()`,
+  `reset()`, `peakUsed()`, `exhausted()`, and fallback-to-heap semantics when the
+  arena is invalid or full.
+- Add `ArenaAllocator<T>` so STL containers (e.g. `std::vector`) can use the arena
+  while safely falling back to `malloc`/`free` on exhaustion.
+
+Phase 2 — FrameArena in `GfxRenderer`
+- Add `mutable mem::Arena frameArena_` to `GfxRenderer`.
+- Migrate `drawBitmap`, `drawBitmap1Bit`, and `fillPolygon` scratch buffers to
+  `frameArena_` first, with heap fallback.
+- Add `GfxRenderer::allocateFrameScratch()` for reusable render scratch.
+- Reset `frameArena_` at the end of `displayBuffer()`.
+- Add peak-usage debug logging (warn when peak exceeds 75 % capacity).
+
+Phase 3 — SectionArena + parser element ownership
+- Add arena helpers in `ChapterHtmlSlimParser`: `setArena()`, `arenaUnique()`,
+  `arenaShared()`, and `NoOpDeleter`.
+- Migrate parser allocations to arena: `Page`, `ParsedText`, `PageTableFragment`,
+  `PageHorizontalRule`, `ImageBlock`, `PageImage`, `PageLine`.
+- Change section callback to raw `Page*` ownership to avoid arena double-free bugs;
+  serialize then manually destroy.
+- Initialize `SectionArena` in `Section::createSectionFile()` and log
+  capacity/used/remaining/peak; warn when peak exceeds 75 % capacity.
+- Track parser arena fallback count and emit a final debug count.
+- Fix `completePageFn` ownership: accept `Page*` instead of `std::unique_ptr<Page>`
+  so the deleter is not invoked after arena-backed serialization. This eliminates
+  the heap-poisoning crash observed when moving from Library to Reader.
+
+Phase 4 — Reader page-buffer reuse
+- Replace per-page `malloc`/`free` in `XtcReaderActivity` and `TxtReaderActivity`
+  with reused member vectors (`pageBuffer_` / `readBuffer_`).
+- Reserve capacity up front to avoid reallocations during page turns.
+
+Phase 5 — Home and library arena boundaries
+- Add `HomeActivity::homeCoverArena_` with init/reset and peak logging.
+- Add `LibraryCache::libraryScanArena` for `scan()` and `sync()`, reset per
+  operation with peak/75 % warnings.
+- Reuse static temporary buffers in `LibraryCache::scan()` / `sync()` to cut
+  repeated heap churn (`paths`, `records`, `worklist`, `depth`).
+
+Phase 6 — Webserver upload reuse
+- Make `UploadState` and `FontUploadState` buffers persistent across uploads and
+  free only on server stop.
+
+Phase 6.1 — Tiled grayscale scratch via FrameArena
+- Route tiled grayscale scratch in `ReaderUtils.h` through
+  `GfxRenderer::allocateFrameScratch()` with heap fallback.
+
+Memory budget and logging
+- Add explicit peak-usage warnings for:
+  - `FrameArena` in `GfxRenderer`
+  - `SectionArena` in `Section`
+  - `homeCoverArena_` in `HomeActivity`
+  - `libraryScanArena` in `LibraryCache`
+- Add parser arena fallback counter in `ChapterHtmlSlimParser`.
+
+Build metrics (default environment)
+- RAM: 101,748 bytes (31.1 % of 327,680 bytes)
+- Flash: 6,281,257 bytes (95.9 % of 6,553,600 bytes)

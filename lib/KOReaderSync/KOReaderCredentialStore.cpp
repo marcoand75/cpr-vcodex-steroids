@@ -118,8 +118,15 @@ bool KOReaderCredentialStore::loadFromFile() {
   return false;
 }
 
+void KOReaderCredentialStore::ensureLoaded() const {
+  if (!loaded_) {
+    const_cast<KOReaderCredentialStore*>(this)->loadFromFile();
+    loaded_ = true;
+  }
+}
+
 bool KOReaderCredentialStore::loadFromBinaryFile() {
-  HalFile file;
+  FsFile file;
   if (!Storage.openFileForRead("KRS", KOREADER_FILE_BIN, file)) {
     return false;
   }
@@ -177,14 +184,18 @@ void KOReaderCredentialStore::setCredentials(const std::string& user, const std:
 }
 
 const std::string& KOReaderCredentialStore::getUsername() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].username : kEmptyString;
 }
 
 const std::string& KOReaderCredentialStore::getPassword() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].password : kEmptyString;
 }
 
-std::string KOReaderCredentialStore::getMd5Password() const { return hashPassword(getPassword()); }
+std::string KOReaderCredentialStore::getMd5Password() const {
+  return hashPassword(getPassword());
+}
 
 std::string KOReaderCredentialStore::hashPassword(const std::string& password) {
   if (password.empty()) {
@@ -232,16 +243,12 @@ void KOReaderCredentialStore::setServerUrl(const std::string& url) {
 }
 
 const std::string& KOReaderCredentialStore::getServerUrl() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].serverUrl : kEmptyString;
 }
 
-std::string KOReaderCredentialStore::getBaseUrl() const { return resolveBaseUrl(getServerUrl()); }
-
-bool KOReaderCredentialStore::usesCrossPointSyncServer() const {
-  // Upstream's crosspoint-sync server (sync.crosspointreader.com) accepts a CrossPoint-
-  // specific `position` extension; third-party KOSync servers must never receive it.
-  static constexpr char CROSSPOINT_SYNC_SERVER_URL[] = "https://sync.crosspointreader.com";
-  return getBaseUrl() == CROSSPOINT_SYNC_SERVER_URL;
+std::string KOReaderCredentialStore::getBaseUrl() const {
+  return resolveBaseUrl(getServerUrl());
 }
 
 std::string KOReaderCredentialStore::resolveBaseUrl(const std::string& serverUrl) {
@@ -275,6 +282,7 @@ void KOReaderCredentialStore::setMatchMethod(DocumentMatchMethod method) {
 }
 
 DocumentMatchMethod KOReaderCredentialStore::getMatchMethod() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].matchMethod : DocumentMatchMethod::FILENAME;
 }
 
@@ -284,6 +292,7 @@ void KOReaderCredentialStore::setSendMetadata(const bool enabled) {
 }
 
 bool KOReaderCredentialStore::getSendMetadata() const {
+  ensureLoaded();
   return activeIndex >= 0 && profiles[static_cast<size_t>(activeIndex)].sendMetadata;
 }
 
@@ -296,6 +305,7 @@ void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {
 }
 
 KOReaderSyncBehavior KOReaderCredentialStore::getSyncBehavior() const {
+  ensureLoaded();
   return activeIndex >= 0 ? profiles[static_cast<size_t>(activeIndex)].syncBehavior
                           : KOReaderSyncBehavior::ASK_EVERY_TIME;
 }
@@ -370,6 +380,7 @@ bool KOReaderCredentialStore::removeProfile(size_t index) {
 }
 
 const KOReaderProfile* KOReaderCredentialStore::getProfile(size_t index) const {
+  ensureLoaded();
   if (index >= profiles.size()) {
     return nullptr;
   }

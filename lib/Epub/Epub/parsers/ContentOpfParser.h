@@ -1,8 +1,9 @@
 #pragma once
+#include <Arena.h>
+#include <ArenaVector.h>
 #include <Print.h>
 
 #include <algorithm>
-#include <deque>
 #include <vector>
 
 #include "Epub.h"
@@ -18,6 +19,12 @@ class ContentOpfParser final : public Print {
     IN_BOOK_TITLE,
     IN_BOOK_AUTHOR,
     IN_BOOK_LANGUAGE,
+    IN_BOOK_PUBLISHER,
+    IN_BOOK_DESCRIPTION,
+    IN_BOOK_PUBLICATION_DATE,
+    IN_BOOK_IDENTIFIER,
+    IN_BOOK_SUBJECT,
+    IN_BOOK_RIGHTS,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -31,23 +38,38 @@ class ContentOpfParser final : public Print {
   BookMetadataCache* cache;
   HalFile tempItemStore;
   std::string coverItemId;
+  Arena itemIndexArena;
+  bool parseFailed = false;
+  bool lowMemoryFailure = false;
   bool hasExplicitStartReference = false;
+  bool collectCssFiles = true;
 
-  // Index for fast idref→href lookup (binary search over .items.bin)
+  // Index for compact idref->href lookup. The temp manifest rows store only
+  // hash/length plus href, not a second full copy of every manifest ID.
   struct ItemIndexEntry {
-    uint32_t idHash;      // FNV-1a hash of itemId
+    uint64_t idHash;      // FNV-1a hash of itemId
     uint16_t idLen;       // length for collision reduction
     uint32_t fileOffset;  // offset in .items.bin
   };
-  std::deque<ItemIndexEntry> itemIndex;
-  bool useItemIndex = false;
+  ArenaVector<ItemIndexEntry> itemIndex;
 
   // FNV-1a hash function
-  static uint32_t fnvHash(const std::string& s) {
-    uint32_t hash = 2166136261u;
-    for (char c : s) {
-      hash ^= static_cast<uint8_t>(c);
-      hash *= 16777619u;
+  static uint64_t fnvHash(const char* s, size_t len) {
+    uint64_t hash = 14695981039346656037ull;
+    for (size_t i = 0; i < len; ++i) {
+      hash ^= static_cast<uint8_t>(s[i]);
+      hash *= 1099511628211ull;
+    }
+    return hash;
+  }
+  static uint64_t fnvHash(const std::string& s) { return fnvHash(s.c_str(), s.size()); }
+  static uint64_t fnvHash(const char* s) {
+    if (!s) return 0;
+    uint64_t hash = 14695981039346656037ull;
+    while (*s != '\0') {
+      hash ^= static_cast<uint8_t>(*s);
+      hash *= 1099511628211ull;
+      ++s;
     }
     return hash;
   }
@@ -60,19 +82,31 @@ class ContentOpfParser final : public Print {
   std::string title;
   std::string author;
   std::string language;
+  std::string publisher;
+  std::string description;
+  std::string publicationDate;
+  std::string identifier;
+  std::string subject;
+  std::string rights;
   std::string tocNcxPath;
-  std::string tocNavPath;  // EPUB 3 nav document path
+  std::string tocNavPath;
   std::string coverItemHref;
   std::string guideCoverPageHref;  // Guide reference with type="cover" or "cover-page" (points to XHTML wrapper)
   std::string textReferenceHref;
   std::vector<std::string> cssFiles;  // CSS stylesheet paths
 
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
-                            BookMetadataCache* cache)
-      : cachePath(cachePath), baseContentPath(baseContentPath), remainingSize(xmlSize), cache(cache) {}
+                            BookMetadataCache* cache, const bool collectCssFiles = true)
+      : cachePath(cachePath),
+        baseContentPath(baseContentPath),
+        remainingSize(xmlSize),
+        cache(cache),
+        collectCssFiles(collectCssFiles),
+        itemIndex(itemIndexArena) {}
   ~ContentOpfParser() override;
 
   bool setup();
+  bool failedForLowMemory() const { return lowMemoryFailure; }
 
   size_t write(uint8_t) override;
   size_t write(const uint8_t* buffer, size_t size) override;

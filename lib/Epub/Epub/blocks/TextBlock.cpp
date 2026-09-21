@@ -1,7 +1,6 @@
 #include "TextBlock.h"
 
 #include <BidiUtils.h>
-#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -11,176 +10,206 @@
 #include <cstring>
 
 namespace {
-constexpr uint8_t BIONIC_READING_OFF = 0;
-constexpr uint8_t BIONIC_READING_NORMAL = 1;
-constexpr uint8_t BIONIC_READING_SUBTLE = 2;
-constexpr int DECORATION_LINE_THICKNESS = 4;
-constexpr int STRIKETHROUGH_ASCENDER_PERCENT = 66;
-constexpr int UNDERLINE_BASELINE_OFFSET_PX = 6;
-constexpr uint16_t MAX_SERIALIZED_LINE_WORDS = 512;
 
-// Bionic Reading helpers — no heap, no std::string, stack-only slicing.
+constexpr uint16_t MAX_WORDS_PER_TEXT_BLOCK = 512;
 
-// Faithful port of metaguiding.py:78 — midpoint = 1 if n in (1,3) else ceil(n/2)
-static constexpr int bionicMidpoint(int n) { return (n == 1 || n == 3) ? 1 : (n + 1) / 2; }
-
-// Count UTF-8 codepoints in [begin, end) by skipping continuation bytes.
-static int utf8CodepointCount(const char* begin, const char* end) {
-  int n = 0;
-  for (const char* p = begin; p < end; ++p) {
-    if ((static_cast<uint8_t>(*p) & 0xC0) != 0x80) ++n;
+uint16_t measureBackgroundWidth(const GfxRenderer& renderer, const int fontId, const char* word,
+                                const EpdFontFamily::Style style) {
+  if (word[0] == ' ' && word[1] == '\0') {
+    return renderer.getSpaceWidth(fontId, style);
   }
-  return n;
+  return static_cast<uint16_t>(std::max(0, renderer.getTextAdvanceX(fontId, word, style)));
 }
 
-// Mirrors Python's \w under re.UNICODE: ASCII alnum/underscore + all non-ASCII bytes (UTF-8).
-static inline bool isWordByte(uint8_t b) {
-  if (b >= 0x80) return true;
-  return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b == '_');
+bool isWhitespaceOnlyBackgroundToken(const char* word) {
+  if (!word || *word == '\0') {
+    return false;
+  }
+
+  for (size_t i = 0; word[i] != '\0';) {
+    const auto c = static_cast<uint8_t>(word[i]);
+    if (c == ' ' || c == '\r' || c == '\n' || c == '\t') {
+      ++i;
+      continue;
+    }
+    if (c == 0xC2 && word[i + 1] != '\0' && static_cast<uint8_t>(word[i + 1]) == 0xA0) {
+      i += 2;
+      continue;
+    }
+    if (c == 0xE2 && word[i + 1] != '\0' && word[i + 2] != '\0' && static_cast<uint8_t>(word[i + 1]) == 0x80 &&
+        static_cast<uint8_t>(word[i + 2]) == 0xAF) {
+      i += 3;
+      continue;
+    }
+    return false;
+  }
+
+  return true;
 }
+
+bool hasSyntheticIndentPrefix(const char* word, const uint16_t len) {
+  return len >= 3 && static_cast<uint8_t>(word[0]) == 0xE2 && static_cast<uint8_t>(word[1]) == 0x80 &&
+         static_cast<uint8_t>(word[2]) == 0x83;
+}
+
 }  // namespace
 
-size_t TextBlock::arenaSize(const uint16_t wc, const bool hasFocus, const bool hasRuby, const bool hasLayoutFlags,
-                            const uint16_t baseBytes, const uint16_t rubyBytes) {
-  size_t size = static_cast<size_t>(wc) * (sizeof(uint16_t) + sizeof(int16_t) + sizeof(uint8_t));
-  if (hasRuby) size += static_cast<size_t>(wc) * sizeof(uint16_t);
-  if (hasFocus) size += static_cast<size_t>(wc) * (sizeof(uint16_t) + sizeof(uint8_t));
-  if (hasLayoutFlags) size += static_cast<size_t>(wc) * sizeof(uint8_t);
-  return size + baseBytes + rubyBytes;
+size_t TextBlock::arenaSize(const uint16_t wordCount, const bool hasBionic, const bool hasGuideDots,
+                            const bool hasWordFlags, const uint16_t textBytes) {
+  // 16-bit arrays first so direct loads stay aligned on RISC-V, then byte arrays, then text.
+  size_t size = static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(int16_t) + sizeof(uint8_t));
+  if (hasBionic) {
+    size += static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(uint8_t));
+  }
+  if (hasGuideDots) {
+    size += static_cast<size_t>(wordCount) * sizeof(uint16_t);
+  }
+  if (hasWordFlags) {
+    size += static_cast<size_t>(wordCount) * sizeof(uint8_t);
+  }
+  return size + textBytes;
 }
 
 void TextBlock::bindArenaPointers() {
   uint8_t* base = arena.get();
   const size_t wc = numWords;
-  size_t off = 0;
-  textOffArr = reinterpret_cast<const uint16_t*>(base + off);
-  off += wc * sizeof(uint16_t);
-  if (rubyPresent) {
-    rubyOffArr = reinterpret_cast<const uint16_t*>(base + off);
-    off += wc * sizeof(uint16_t);
+  textOffArr = reinterpret_cast<const uint16_t*>(base);
+  xposArr = reinterpret_cast<const int16_t*>(base + wc * 2);
+  size_t off = wc * 4;
+  if (bionicPresent) {
+    bionicRunOffsetArr = reinterpret_cast<const uint16_t*>(base + off);
+    off += wc * 2;
   }
-  xposArr = reinterpret_cast<const int16_t*>(base + off);
-  off += wc * sizeof(int16_t);
-  if (focusPresent) {
-    focusSuffixXArr = reinterpret_cast<const uint16_t*>(base + off);
-    off += wc * sizeof(uint16_t);
+  if (guideDotsPresent) {
+    guideDotXOffsetArr = reinterpret_cast<const uint16_t*>(base + off);
+    off += wc * 2;
   }
   stylesArr = base + off;
   off += wc;
-  if (focusPresent) {
-    focusBoundaryArr = base + off;
+  if (bionicPresent) {
+    bionicBoundaryArr = base + off;
     off += wc;
   }
-  if (layoutFlagsPresent) {
-    layoutFlagsArr = base + off;
+  if (wordFlagsPresent) {
+    wordFlagsArr = base + off;
     off += wc;
   }
   textArr = reinterpret_cast<const char*>(base + off);
-  off += textBytes;
-  rubyTextArr = rubyPresent ? reinterpret_cast<const char*>(base + off) : nullptr;
 }
 
 TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
-                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
-                     const std::vector<uint16_t>& focusSuffixX, const std::vector<uint8_t>& layoutFlags,
-                     const BlockStyle& style, const std::vector<std::string>& rubyTexts,
-                     std::vector<LinkSpan> linkSpans)
-    : blockStyle(style), linkSpans(std::move(linkSpans)) {
-  const bool hasFocus = !focusBoundary.empty();
-  const bool hasRuby = std::any_of(rubyTexts.begin(), rubyTexts.end(), [](const std::string& s) { return !s.empty(); });
-  const bool hasLayoutFlags =
-      std::any_of(layoutFlags.begin(), layoutFlags.end(), [](const uint8_t flags) { return flags != 0; });
-  if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
-      words.size() > MAX_SERIALIZED_LINE_WORDS ||
-      (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusSuffixX.size())) ||
-      (!layoutFlags.empty() && words.size() != layoutFlags.size()) || (hasRuby && rubyTexts.size() != words.size())) {
-    LOG_ERR("TXB", "Construction failed: inconsistent word arrays");
+                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& bionicBoundary,
+                     const std::vector<uint16_t>& bionicRunOffset, const std::vector<uint16_t>& guideDotXOffset,
+                     const std::vector<uint8_t>& wordFlags, const BlockStyle& blockStyle,
+                     std::vector<std::string> rubyTexts)
+    : blockStyle(blockStyle), rubyTexts(std::move(rubyTexts)) {
+  // A ruby-less line needs no per-word ruby vector. ParsedText passes one for
+  // every extracted line once a book contains any ruby, so free all-empty
+  // vectors before they stay resident with the page.
+  if (!hasRuby()) {
+    this->rubyTexts = std::vector<std::string>{};
+  }
+
+  const bool hasBionic = !bionicBoundary.empty();
+  const bool hasGuideDots = !guideDotXOffset.empty();
+  const bool hasWordFlags = !wordFlags.empty();
+  if (words.size() != wordXpos.size() || words.size() != wordStyles.size() || words.size() > MAX_WORDS_PER_TEXT_BLOCK ||
+      (hasBionic && (words.size() != bionicBoundary.size() || words.size() != bionicRunOffset.size())) ||
+      (!hasBionic && !bionicRunOffset.empty()) || (hasGuideDots && words.size() != guideDotXOffset.size()) ||
+      (hasWordFlags && words.size() != wordFlags.size()) ||
+      (!this->rubyTexts.empty() && words.size() != this->rubyTexts.size())) {
+    LOG_ERR("TXB",
+            "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, runOffset=%u, "
+            "dotX=%u, flags=%u)",
+            static_cast<uint32_t>(words.size()), static_cast<uint32_t>(wordXpos.size()),
+            static_cast<uint32_t>(wordStyles.size()), static_cast<uint32_t>(bionicBoundary.size()),
+            static_cast<uint32_t>(bionicRunOffset.size()), static_cast<uint32_t>(guideDotXOffset.size()),
+            static_cast<uint32_t>(wordFlags.size()));
     isValid = false;
     return;
   }
+
   numWords = static_cast<uint16_t>(words.size());
-  focusPresent = hasFocus;
-  rubyPresent = hasRuby;
-  layoutFlagsPresent = hasLayoutFlags;
-  size_t baseTotal = 0;
-  size_t rubyTotal = 0;
-  for (const auto& word : words) baseTotal += word.size() + 1;
-  if (hasRuby)
-    for (const auto& ruby : rubyTexts)
-      if (!ruby.empty()) rubyTotal += ruby.size() + 1;
-  if (baseTotal > UINT16_MAX || rubyTotal > UINT16_MAX) {
-    LOG_ERR("TXB", "Construction failed: text arena exceeds 16-bit offsets");
+  bionicPresent = hasBionic;
+  guideDotsPresent = hasGuideDots;
+  wordFlagsPresent = hasWordFlags;
+  if (numWords == 0) {
+    return;
+  }
+
+  size_t totalText = 0;
+  for (const auto& word : words) {
+    totalText += word.size() + 1;
+  }
+  if (totalText > UINT16_MAX) {
+    LOG_ERR("TXB", "Construction failed: text size %u exceeds arena limit", static_cast<uint32_t>(totalText));
     numWords = 0;
+    bionicPresent = false;
+    guideDotsPresent = false;
+    wordFlagsPresent = false;
     isValid = false;
     return;
   }
-  textBytes = static_cast<uint16_t>(baseTotal);
-  rubyTextBytes = static_cast<uint16_t>(rubyTotal);
-  if (numWords == 0) return;
-  const size_t size = arenaSize(numWords, focusPresent, rubyPresent, layoutFlagsPresent, textBytes, rubyTextBytes);
+  textBytes = static_cast<uint16_t>(totalText);
+
+  const size_t size = arenaSize(numWords, bionicPresent, guideDotsPresent, wordFlagsPresent, textBytes);
   arena = makeUniqueNoThrow<uint8_t[]>(size);
   if (!arena) {
-    LOG_ERR("TXB", "OOM: text arena %u bytes", static_cast<uint32_t>(size));
-    numWords = textBytes = rubyTextBytes = 0;
+    LOG_ERR("TXB", "OOM: arena %u bytes", static_cast<uint32_t>(size));
+    numWords = 0;
+    textBytes = 0;
+    bionicPresent = false;
+    guideDotsPresent = false;
+    wordFlagsPresent = false;
     isValid = false;
     return;
   }
   bindArenaPointers();
-  auto* offsets = const_cast<uint16_t*>(textOffArr);
-  auto* rubyOffsets = const_cast<uint16_t*>(rubyOffArr);
+
+  auto* textOff = const_cast<uint16_t*>(textOffArr);
   auto* xpos = const_cast<int16_t*>(xposArr);
   auto* styles = const_cast<uint8_t*>(stylesArr);
   auto* text = const_cast<char*>(textArr);
-  auto* rubyText = const_cast<char*>(rubyTextArr);
-  uint16_t textOff = 0;
-  uint16_t rubyOff = 0;
-  for (uint16_t i = 0; i < numWords; ++i) {
-    offsets[i] = textOff;
+  uint16_t off = 0;
+  for (uint16_t i = 0; i < numWords; i++) {
+    textOff[i] = off;
     xpos[i] = wordXpos[i];
     styles[i] = static_cast<uint8_t>(wordStyles[i]);
-    memcpy(text + textOff, words[i].c_str(), words[i].size() + 1);
-    textOff += static_cast<uint16_t>(words[i].size() + 1);
-    if (rubyPresent) {
-      if (rubyTexts[i].empty()) {
-        rubyOffsets[i] = UINT16_MAX;
-      } else {
-        rubyOffsets[i] = rubyOff;
-        memcpy(rubyText + rubyOff, rubyTexts[i].c_str(), rubyTexts[i].size() + 1);
-        rubyOff += static_cast<uint16_t>(rubyTexts[i].size() + 1);
-      }
+    memcpy(text + off, words[i].data(), words[i].size());
+    off += static_cast<uint16_t>(words[i].size());
+    text[off++] = '\0';
+  }
+  if (bionicPresent) {
+    auto* runOffset = const_cast<uint16_t*>(bionicRunOffsetArr);
+    auto* boundary = const_cast<uint8_t*>(bionicBoundaryArr);
+    for (uint16_t i = 0; i < numWords; i++) {
+      runOffset[i] = bionicRunOffset[i];
+      boundary[i] = bionicBoundary[i];
     }
   }
-  if (focusPresent) {
-    auto* suffix = const_cast<uint16_t*>(focusSuffixXArr);
-    auto* boundary = const_cast<uint8_t*>(focusBoundaryArr);
-    for (uint16_t i = 0; i < numWords; ++i) {
-      suffix[i] = focusSuffixX[i];
-      boundary[i] = focusBoundary[i];
+  if (guideDotsPresent) {
+    auto* dotX = const_cast<uint16_t*>(guideDotXOffsetArr);
+    for (uint16_t i = 0; i < numWords; i++) {
+      dotX[i] = guideDotXOffset[i];
     }
   }
-  if (layoutFlagsPresent) {
-    auto* flags = const_cast<uint8_t*>(layoutFlagsArr);
-    memcpy(flags, layoutFlags.data(), numWords);
+  if (wordFlagsPresent) {
+    auto* flags = const_cast<uint8_t*>(wordFlagsArr);
+    for (uint16_t i = 0; i < numWords; i++) {
+      flags[i] = wordFlags[i];
+    }
   }
 }
 
-void TextBlock::recordFontUsage(FontCacheManager& fontCacheManager, const int fontId,
-                                const uint8_t bionicReadingMode) const {
-  if (!isValid) return;
-  for (uint16_t i = 0; i < numWords; i++) {
-    const EpdFontFamily::Style style = wordStyle(i);
-    fontCacheManager.recordText(wordText(i), fontId, style);
-    if (bionicReadingMode == BIONIC_READING_NORMAL && (style & EpdFontFamily::BOLD) == 0) {
-      fontCacheManager.recordStyle(fontId, static_cast<EpdFontFamily::Style>(style | EpdFontFamily::BOLD));
-    }
-    if (rubyText(i)[0] != '\0') {
-      fontCacheManager.recordText(rubyText(i), fontId, EpdFontFamily::SUP);
-    }
+bool TextBlock::hasRuby() const {
+  for (const auto& ruby : rubyTexts) {
+    if (!ruby.empty()) return true;
   }
+  return false;
 }
 
 void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y,
-                       const uint8_t bionicReadingMode) const {
+                       const bool foregroundBlack) const {
   if (!isValid) {
     LOG_ERR("TXB", "Render skipped: invalid block");
     return;
@@ -188,247 +217,132 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
   const bool scanning = renderer.isFontCacheScanning();
   const int ascender = renderer.getFontAscenderSize(fontId);
+  for (uint16_t i = 0; i < numWords; i++) {
+    const char* word = wordText(i);
+    const uint16_t wordLen = wordTextLen(i);
+    const int wordX = wordXpos(i) + x;
+    const EpdFontFamily::Style currentStyle = wordStyle(i);
+    const uint8_t boundary = bionicBoundary(i);
+    const auto baseDir =
+        static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(word, blockStyle.isRtl ? 1 : 0));
 
-  // Resolve ruby positions. Layout (extractLine) has already reserved extraStartOffset on the
-  // left and extraEndOffset on the right, so the centered rubyX is always within the page margins.
-  struct RubyDrawInfo {
-    int x;
-    const char* text;
-    BidiUtils::BidiBaseDir baseDir;
-  };
-  const bool blockHasRuby = hasRuby();
-  std::vector<RubyDrawInfo> rubies;
-  if (blockHasRuby) {
-    rubies.resize(numWords);
-    for (uint16_t i = 0; i < numWords; i++) {
-      if (rubyText(i)[0] != '\0' && (wordStyle(i) & EpdFontFamily::RUBY_CONTINUE) == 0) {
-        int groupWordCount = 1;
-        while (i + groupWordCount < numWords && (wordStyle(i + groupWordCount) & EpdFontFamily::RUBY_CONTINUE) != 0) {
-          groupWordCount++;
-        }
-        int groupActualWidth = 0;
-        for (int k = 0; k < groupWordCount; ++k) {
-          groupActualWidth += renderer.getTextAdvanceX(fontId, wordText(i + k), wordStyle(i + k));
-        }
-        const int rubyWidth = renderer.getTextAdvanceX(fontId, rubyText(i), EpdFontFamily::SUP);
-        const int leaderWordX = xposArr[i] + x;
-        const auto baseDir =
-            static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(wordText(i), blockStyle.isRtl ? 1 : 0));
-        int rubyX = leaderWordX - (rubyWidth - groupActualWidth) / 2;
-        rubyX = std::max(0, std::min(rubyX, renderer.getScreenWidth() - rubyWidth));
-        rubies[i] = {rubyX, rubyText(i), baseDir};
-        i += groupWordCount - 1;
+    if ((wordFlags(i) & WORD_FLAG_BACKGROUND_BLACK) != 0 && isWhitespaceOnlyBackgroundToken(word)) {
+      const uint16_t backgroundWidth = measureBackgroundWidth(renderer, fontId, word, currentStyle);
+      if (backgroundWidth > 0) {
+        renderer.fillRect(wordX, y, backgroundWidth, renderer.getFontAscenderSize(fontId), true);
       }
     }
-  }
 
-  struct DecorationLineTracker {
-    EpdFontFamily::Style style;
-    int yOffset;
-    int startX = -1;
-    int endX = -1;
-    int yPos = 0;
-
-    bool active() const { return startX != -1; }
-    void reset() {
-      startX = -1;
-      endX = -1;
-      yPos = 0;
-    }
-  };
-
-  // y is the top of the text line; add ascender to reach baseline, then offset below.
-  DecorationLineTracker decorationLines[] = {
-      {EpdFontFamily::UNDERLINE, ascender + UNDERLINE_BASELINE_OFFSET_PX},
-      {EpdFontFamily::STRIKETHROUGH, ascender * STRIKETHROUGH_ASCENDER_PERCENT / 100},
-  };
-
-  const auto flushDecoration = [&](DecorationLineTracker& line) {
-    if (line.active()) {
-      const int lineY = line.yPos - DECORATION_LINE_THICKNESS / 2;
-      renderer.drawLine(line.startX, lineY, line.endX, lineY, DECORATION_LINE_THICKNESS, true);
-      line.reset();
-    }
-  };
-  const auto flushDecorations = [&]() {
-    for (auto& line : decorationLines) {
-      flushDecoration(line);
-    }
-  };
-
-  const int rubyShift = getRubyShift(ascender);
-  const bool bionicEnabled = bionicReadingMode == BIONIC_READING_NORMAL || bionicReadingMode == BIONIC_READING_SUBTLE;
-  const bool bionicNormal = bionicReadingMode == BIONIC_READING_NORMAL;
-
-  for (uint16_t i = 0; i < numWords; i++) {
-    const char* w = wordText(i);
-    const size_t wLen = wordTextLen(i);
-    const int wordX = xposArr[i] + x;
-    const EpdFontFamily::Style currentStyle = wordStyle(i);
-    const auto baseDir =
-        static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(w, blockStyle.isRtl ? 1 : 0));
-
-    // SUP/SUB shift the baseline passed to drawText; the glyph is also scaled 50% inside
-    // drawText, so these offsets are chosen relative to the full-size ascender:
-    //   SUP: raise by 40% of ascender — sits clearly above the cap-height
-    //   SUB: lower by 25% of ascender — descends below baseline without clashing with ascenders below
-    int wordY = y + rubyShift;
+    int wordY = y + getRubyShift(ascender);
     if ((currentStyle & EpdFontFamily::SUP) != 0) {
       wordY -= ascender * 2 / 5;
     } else if ((currentStyle & EpdFontFamily::SUB) != 0) {
       wordY += ascender / 4;
     }
 
-    // Horizontal ruby text rendering
-    if (blockHasRuby && rubyText(i)[0] != '\0' && (currentStyle & EpdFontFamily::RUBY_CONTINUE) == 0) {
-      renderer.drawText(fontId, rubies[i].x, wordY - ascender, rubies[i].text, true, EpdFontFamily::SUP,
-                        rubies[i].baseDir);
-    }
-
-    // Normal uses layout-time focus annotations; Subtle remains render-only.
-    const bool alreadyBold = (currentStyle & EpdFontFamily::BOLD) != 0;
-    const uint8_t focusSplit = focusPresent && bionicNormal && !alreadyBold ? focusBoundary(i) : 0;
-    if (bionicNormal) {
-      if (focusSplit > 0) {
-        // The bold prefix is bounded to 9 codepoints by the clamp on targetBoldChars in
-        // ParsedText::addWord; 9 UTF-8 codepoints occupy at most 9 * 4 = 36 bytes, +1 for null = 37.
-        // suffixX is computed at cache-creation time to avoid font metric lookups at render time.
-        char buf[40];
-        size_t splitByte = std::min<size_t>({static_cast<size_t>(focusSplit), wLen, sizeof(buf) - 1});
-        while (splitByte > 0 && splitByte < wLen && (static_cast<uint8_t>(w[splitByte]) & 0xC0) == 0x80) {
-          --splitByte;
-        }
-        if (splitByte > 0 && splitByte < wLen) {
-          memcpy(buf, w, splitByte);
-          buf[splitByte] = '\0';
-          const EpdFontFamily::Style boldStyle = static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
-          renderer.drawText(fontId, wordX, wordY, buf, true, boldStyle, baseDir);
-          renderer.drawText(fontId, wordX + focusSuffixX(i), wordY, w + splitByte, true, currentStyle, baseDir);
-        } else {
-          renderer.drawText(fontId, wordX, wordY, w, true, currentStyle, baseDir);
-        }
+    if (boundary > 0) {
+      const auto boldStyle = static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
+      char boldBuf[40];
+      const size_t boldLen =
+          std::min<size_t>({static_cast<size_t>(boundary), static_cast<size_t>(wordLen), sizeof(boldBuf) - 1});
+      memcpy(boldBuf, word, boldLen);
+      boldBuf[boldLen] = '\0';
+      const int secondRunX = wordX + bionicRunOffset(i);
+      if (baseDir == BidiUtils::BidiBaseDir::RTL) {
+        renderer.drawText(fontId, wordX, wordY, word + boldLen, foregroundBlack, currentStyle, baseDir);
+        renderer.drawText(fontId, secondRunX, wordY, boldBuf, foregroundBlack, boldStyle, baseDir);
       } else {
-        renderer.drawText(fontId, wordX, wordY, w, true, currentStyle, baseDir);
+        renderer.drawText(fontId, wordX, wordY, boldBuf, foregroundBlack, boldStyle, baseDir);
+        renderer.drawText(fontId, secondRunX, wordY, word + boldLen, foregroundBlack, currentStyle, baseDir);
       }
-    } else if (bionicReadingMode == BIONIC_READING_OFF || !bionicEnabled || alreadyBold || wLen >= 128) {
-      renderer.drawText(fontId, wordX, wordY, w, true, currentStyle, baseDir);
     } else {
-      // Stack slice buffer (<128 bytes, well within CLAUDE.md <256 byte rule).
-      char buf[128];
-      int cursorX = wordX;
-      size_t i0 = 0;
+      renderer.drawText(fontId, wordX, wordY, word, foregroundBlack, currentStyle, baseDir);
+    }
 
-      while (i0 < wLen) {
-        // Non-word run: draw in original style, advance cursor.
-        size_t j = i0;
-        while (j < wLen && !isWordByte(static_cast<uint8_t>(w[j]))) ++j;
-        if (j > i0) {
-          const size_t n = j - i0;
-          memcpy(buf, w + i0, n);
-          buf[n] = '\0';
-          renderer.drawText(fontId, cursorX, wordY, buf, true, currentStyle, baseDir);
-          cursorX += renderer.getTextAdvanceX(fontId, buf, currentStyle);
-          i0 = j;
-          if (i0 >= wLen) break;
-        }
-
-        // Word run: emphasize the first M codepoints, regular for the rest.
-        size_t k = i0;
-        while (k < wLen && isWordByte(static_cast<uint8_t>(w[k]))) ++k;
-
-        const int ncp = utf8CodepointCount(w + i0, w + k);
-        const int mcp = bionicMidpoint(ncp);
-
-        // Find byte boundary after the M-th codepoint.
-        size_t splitByte = i0;
-        {
-          size_t p = i0;
-          int seen = 0;
-          while (p < k && seen < mcp) {
-            ++p;
-            while (p < k && (static_cast<uint8_t>(w[p]) & 0xC0) == 0x80) ++p;
-            ++seen;
-          }
-          splitByte = p;
-        }
-
-        // Emphasized prefix.
-        {
-          const size_t n = splitByte - i0;
-          memcpy(buf, w + i0, n);
-          buf[n] = '\0';
-          if (bionicReadingMode == BIONIC_READING_SUBTLE) {
-            renderer.drawText(fontId, cursorX, wordY, buf, true, currentStyle, baseDir);
-            renderer.drawText(fontId, cursorX + 1, wordY, buf, true, currentStyle, baseDir);
-            cursorX += renderer.getTextAdvanceX(fontId, buf, currentStyle);
-          } else {
-            const EpdFontFamily::Style boldStyle =
-                static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
-            renderer.drawText(fontId, cursorX, wordY, buf, true, boldStyle, baseDir);
-            cursorX += renderer.getTextAdvanceX(fontId, buf, boldStyle);
-          }
-        }
-
-        // Regular suffix (if any).
-        if (splitByte < k) {
-          const size_t n = k - splitByte;
-          memcpy(buf, w + splitByte, n);
-          buf[n] = '\0';
-          renderer.drawText(fontId, cursorX, wordY, buf, true, currentStyle, baseDir);
-          cursorX += renderer.getTextAdvanceX(fontId, buf, currentStyle);
-        }
-
-        i0 = k;
+    if (i < rubyTexts.size() && !rubyTexts[i].empty() && (currentStyle & EpdFontFamily::RUBY_CONTINUE) == 0) {
+      uint16_t groupWords = 1;
+      while (i + groupWords < numWords && (wordStyle(i + groupWords) & EpdFontFamily::RUBY_CONTINUE) != 0) {
+        ++groupWords;
       }
+      int groupWidth = 0;
+      for (uint16_t j = 0; j < groupWords; ++j) {
+        groupWidth += renderer.getTextAdvanceX(fontId, wordText(i + j), wordStyle(i + j));
+      }
+      const int rubyWidth = renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP);
+      // ParsedText reserves any edge overhang in the line layout, so the ruby
+      // can remain centered over its base text without screen-edge clamping.
+      const int rubyX = wordX + (groupWidth - rubyWidth) / 2;
+      renderer.drawText(fontId, rubyX, wordY - ascender, rubyTexts[i].c_str(), foregroundBlack, EpdFontFamily::SUP,
+                        baseDir);
     }
 
-    if (scanning) {
-      continue;
+    const uint16_t dotOffset = guideDotXOffset(i);
+    if (dotOffset > 0) {
+      renderer.drawText(fontId, wordX + dotOffset, wordY, "\xc2\xb7", foregroundBlack, EpdFontFamily::REGULAR, baseDir);
     }
 
-    if (EpdFontFamily::hasTextDecoration(currentStyle)) {
-      int lineStartX = wordX;
-      int lineWidth = renderer.getTextWidth(fontId, w, currentStyle, baseDir);
+    if (!scanning && (currentStyle & EpdFontFamily::UNDERLINE) != 0) {
+      int startX = wordX;
+      int underlineWidth = renderer.getTextWidth(fontId, word, currentStyle, baseDir);
+      const int underlineY = wordY + ascender + 2;
 
-      // SUP/SUB glyphs are rendered at 50% scale, while the font metrics above
-      // report their full-size width. Keep underline/strikethrough aligned with
-      // the visible glyphs instead of drawing them roughly twice as long.
+      if (hasSyntheticIndentPrefix(word, wordLen)) {
+        const char* visiblePtr = word + 3;
+        const int prefixWidth = renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle);
+        startX = wordX + prefixWidth;
+        underlineWidth = renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir);
+      }
+
       if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
-        lineWidth = (lineWidth + 1) / 2;
+        underlineWidth = (underlineWidth + 1) / 2;
       }
 
-      // Do not decorate the synthetic em-space used for paragraph indentation.
-      if (wLen >= 3 && static_cast<uint8_t>(w[0]) == 0xE2 && static_cast<uint8_t>(w[1]) == 0x80 &&
-          static_cast<uint8_t>(w[2]) == 0x83) {
-        const char* visibleText = w + 3;
-        lineStartX += renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle);
-        lineWidth = renderer.getTextWidth(fontId, visibleText, currentStyle, baseDir);
-        if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
-          lineWidth = (lineWidth + 1) / 2;
+      int underlineEndX = startX + underlineWidth;
+      if (i + 1 < numWords) {
+        const EpdFontFamily::Style nextStyle = wordStyle(i + 1);
+        const bool nextSharesBaseline = (nextStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) ==
+                                        (currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB));
+        if ((nextStyle & EpdFontFamily::UNDERLINE) != 0 && nextSharesBaseline) {
+          const int nextStartX = wordXpos(i + 1) + x;
+          underlineEndX = std::max(underlineEndX, nextStartX);
+          startX = std::min(startX, nextStartX);
         }
       }
 
-      for (auto& line : decorationLines) {
-        if ((currentStyle & line.style) == 0) {
-          flushDecoration(line);
-          continue;
-        }
+      renderer.drawLine(startX, underlineY, underlineEndX, underlineY, 3, foregroundBlack);
+    }
 
-        const int lineY = wordY + line.yOffset;
-        if (line.active() && line.yPos != lineY) {
-          flushDecoration(line);
-        }
-        if (!line.active()) {
-          line.startX = lineStartX;
-          line.yPos = lineY;
-        }
-        line.endX = lineStartX + lineWidth;
+    if ((currentStyle & EpdFontFamily::STRIKETHROUGH) != 0) {
+      int startX = wordX;
+      int strikeWidth = renderer.getTextWidth(fontId, word, currentStyle, baseDir);
+      const int strikeY = y + renderer.getFontAscenderSize(fontId) / 2 + 6;
+
+      if (hasSyntheticIndentPrefix(word, wordLen)) {
+        const char* visiblePtr = word + 3;
+        const int prefixWidth = renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle);
+        startX = wordX + prefixWidth;
+        strikeWidth = renderer.getTextWidth(fontId, visiblePtr, currentStyle, baseDir);
       }
-    } else {
-      flushDecorations();
+
+      if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
+        strikeWidth = (strikeWidth + 1) / 2;
+      }
+
+      int strikeEndX = startX + strikeWidth;
+      if (i + 1 < numWords) {
+        const EpdFontFamily::Style nextStyle = wordStyle(i + 1);
+        const bool nextSharesBaseline = (nextStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) ==
+                                        (currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB));
+        if ((nextStyle & EpdFontFamily::STRIKETHROUGH) != 0 && nextSharesBaseline) {
+          const int nextStartX = wordXpos(i + 1) + x;
+          strikeEndX = std::max(strikeEndX, nextStartX);
+          startX = std::min(startX, nextStartX);
+        }
+      }
+
+      renderer.drawLine(startX, strikeY, strikeEndX, strikeY, 3, foregroundBlack);
     }
   }
-  flushDecorations();
 }
 
 bool TextBlock::serialize(HalFile& file) const {
@@ -436,131 +350,154 @@ bool TextBlock::serialize(HalFile& file) const {
     LOG_ERR("TXB", "Serialization failed: invalid block");
     return false;
   }
-  // Scalars, then the arena verbatim -- its in-memory layout is exactly the
-  // on-disk layout (see TextBlock.h), so one write covers all per-word arrays,
-  // the text blob and the ruby blob.
-  serialization::writePod(file, numWords);
-  serialization::writePod(file, static_cast<uint8_t>(focusPresent));
-  serialization::writePod(file, static_cast<uint8_t>(rubyPresent));
-  serialization::writePod(file, static_cast<uint8_t>(layoutFlagsPresent));
-  serialization::writePod(file, textBytes);
-  serialization::writePod(file, rubyTextBytes);
+
+  if (!serialization::tryWritePod(file, numWords) ||
+      !serialization::tryWritePod(file, static_cast<uint8_t>(bionicPresent ? 1 : 0)) ||
+      !serialization::tryWritePod(file, static_cast<uint8_t>(guideDotsPresent ? 1 : 0)) ||
+      !serialization::tryWritePod(file, static_cast<uint8_t>(wordFlagsPresent ? 1 : 0)) ||
+      !serialization::tryWritePod(file, textBytes)) {
+    LOG_ERR("TXB", "Serialization failed: could not write block header");
+    return false;
+  }
   if (numWords > 0) {
-    const size_t size = arenaSize(numWords, focusPresent, rubyPresent, layoutFlagsPresent, textBytes, rubyTextBytes);
-    if (file.write(arena.get(), size) != size) {
+    const size_t size = arenaSize(numWords, bionicPresent, guideDotsPresent, wordFlagsPresent, textBytes);
+    if (file.write(arena.get(), size) != static_cast<int>(size)) {
       LOG_ERR("TXB", "Serialization failed: arena write (%u bytes)", static_cast<uint32_t>(size));
       return false;
     }
   }
 
-  // Style (alignment + margins/padding/indent + direction)
-  serialization::writePod(file, blockStyle.alignment);
-  serialization::writePod(file, blockStyle.textAlignDefined);
-  serialization::writePod(file, blockStyle.marginTop);
-  serialization::writePod(file, blockStyle.marginBottom);
-  serialization::writePod(file, blockStyle.marginLeft);
-  serialization::writePod(file, blockStyle.marginRight);
-  serialization::writePod(file, blockStyle.paddingTop);
-  serialization::writePod(file, blockStyle.paddingBottom);
-  serialization::writePod(file, blockStyle.paddingLeft);
-  serialization::writePod(file, blockStyle.paddingRight);
-  serialization::writePod(file, blockStyle.textIndent);
-  serialization::writePod(file, blockStyle.textIndentDefined);
-  serialization::writePod(file, blockStyle.isRtl);
-  serialization::writePod(file, blockStyle.directionDefined);
+  uint16_t rubyCount = 0;
+  for (uint16_t i = 0; i < numWords && i < rubyTexts.size(); ++i) {
+    if (!rubyTexts[i].empty()) ++rubyCount;
+  }
+  if (!serialization::tryWritePod(file, rubyCount)) return false;
+  for (uint16_t i = 0; i < numWords && i < rubyTexts.size(); ++i) {
+    if (rubyTexts[i].empty()) continue;
+    if (!serialization::tryWritePod(file, i) || !serialization::tryWriteString(file, rubyTexts[i])) return false;
+  }
 
-  return true;
+  return serialization::tryWritePod(file, blockStyle.alignment) &&
+         serialization::tryWritePod(file, blockStyle.textAlignDefined) &&
+         serialization::tryWritePod(file, blockStyle.marginTop) &&
+         serialization::tryWritePod(file, blockStyle.marginBottom) &&
+         serialization::tryWritePod(file, blockStyle.marginLeft) &&
+         serialization::tryWritePod(file, blockStyle.marginRight) &&
+         serialization::tryWritePod(file, blockStyle.paddingTop) &&
+         serialization::tryWritePod(file, blockStyle.paddingBottom) &&
+         serialization::tryWritePod(file, blockStyle.paddingLeft) &&
+         serialization::tryWritePod(file, blockStyle.paddingRight) &&
+         serialization::tryWritePod(file, blockStyle.textIndent) &&
+         serialization::tryWritePod(file, blockStyle.textIndentDefined) &&
+         serialization::tryWritePod(file, blockStyle.isRtl) &&
+         serialization::tryWritePod(file, blockStyle.directionDefined);
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   uint16_t wc = 0;
-  uint8_t hasFocus = 0;
-  uint8_t hasRuby = 0;
-  uint8_t hasLayoutFlags = 0;
-  uint16_t baseBytes = 0;
-  uint16_t rubyBytes = 0;
-  serialization::readPod(file, wc);
-  serialization::readPod(file, hasFocus);
-  serialization::readPod(file, hasRuby);
-  serialization::readPod(file, hasLayoutFlags);
-  serialization::readPod(file, baseBytes);
-  serialization::readPod(file, rubyBytes);
-  // Sanity checks: cap the arena allocation and reject impossible geometry
-  // (every word carries at least its NUL terminator).
-  if (wc > MAX_SERIALIZED_LINE_WORDS || (wc == 0 && (baseBytes != 0 || rubyBytes != 0)) || (wc > 0 && baseBytes < wc) ||
-      (hasRuby == 0 && rubyBytes != 0)) {
-    LOG_ERR("TXB", "Deserialization failed: bad geometry (words=%u text=%u ruby=%u)", wc, baseBytes, rubyBytes);
+  uint8_t hasBionic = 0;
+  uint8_t hasGuideDots = 0;
+  uint8_t hasWordFlags = 0;
+  uint16_t textBytes = 0;
+  if (!serialization::tryReadPod(file, wc) || !serialization::tryReadPod(file, hasBionic) ||
+      !serialization::tryReadPod(file, hasGuideDots) || !serialization::tryReadPod(file, hasWordFlags) ||
+      !serialization::tryReadPod(file, textBytes)) {
+    LOG_ERR("TXB", "Deserialization failed: could not read block header");
+    return nullptr;
+  }
+
+  if (wc > MAX_WORDS_PER_TEXT_BLOCK) {
+    LOG_ERR("TXB", "Deserialization failed: word count %u exceeds maximum", wc);
+    return nullptr;
+  }
+  if (hasBionic > 1 || hasGuideDots > 1 || hasWordFlags > 1) {
+    LOG_ERR("TXB", "Deserialization failed: invalid metadata flags");
+    return nullptr;
+  }
+  if ((wc == 0 && textBytes != 0) || (wc > 0 && textBytes < wc)) {
+    LOG_ERR("TXB", "Deserialization failed: bad text size %u for %u words", textBytes, wc);
     return nullptr;
   }
 
   std::unique_ptr<TextBlock> block(new (std::nothrow) TextBlock());
   if (!block) {
-    LOG_ERR("TXB", "OOM: TextBlock");
+    LOG_ERR("TXB", "Deserialization failed: could not allocate TextBlock");
     return nullptr;
   }
   block->numWords = wc;
-  block->focusPresent = hasFocus != 0;
-  block->rubyPresent = hasRuby != 0;
-  block->layoutFlagsPresent = hasLayoutFlags != 0;
-  block->textBytes = baseBytes;
-  block->rubyTextBytes = rubyBytes;
+  block->textBytes = textBytes;
+  block->bionicPresent = hasBionic != 0;
+  block->guideDotsPresent = hasGuideDots != 0;
+  block->wordFlagsPresent = hasWordFlags != 0;
+
   if (wc > 0) {
     const size_t size =
-        arenaSize(wc, block->focusPresent, block->rubyPresent, block->layoutFlagsPresent, baseBytes, rubyBytes);
+        arenaSize(wc, block->bionicPresent, block->guideDotsPresent, block->wordFlagsPresent, textBytes);
+    const int remaining = file.available();
+    if (remaining < 0 || static_cast<size_t>(remaining) < size) {
+      LOG_ERR("TXB", "Deserialization failed: truncated arena (%u bytes needed, %d available)",
+              static_cast<uint32_t>(size), remaining);
+      return nullptr;
+    }
     block->arena = makeUniqueNoThrow<uint8_t[]>(size);
     if (!block->arena) {
       LOG_ERR("TXB", "OOM: arena %u bytes", static_cast<uint32_t>(size));
       return nullptr;
     }
-    if (file.read(block->arena.get(), size) != size) {
+    if (file.read(block->arena.get(), size) != static_cast<int>(size)) {
       LOG_ERR("TXB", "Deserialization failed: arena read (%u bytes)", static_cast<uint32_t>(size));
       return nullptr;
     }
     block->bindArenaPointers();
-    // Validate offsets before anything dereferences wordText(): offset 0 first,
-    // strictly increasing, in bounds, and every word NUL-terminated.
-    if (block->textOffArr[0] != 0 || block->textArr[baseBytes - 1] != '\0') {
+
+    const uint16_t* textOff = block->textOffArr;
+    const char* text = block->textArr;
+    if (textOff[0] != 0 || text[textBytes - 1] != '\0') {
       LOG_ERR("TXB", "Deserialization failed: corrupt text layout");
       return nullptr;
     }
-    for (uint16_t i = 1; i < wc; ++i) {
-      if (block->textOffArr[i] <= block->textOffArr[i - 1] || block->textOffArr[i] >= baseBytes ||
-          block->textArr[block->textOffArr[i] - 1] != '\0') {
+    for (uint16_t i = 1; i < wc; i++) {
+      if (textOff[i] <= textOff[i - 1] || textOff[i] >= textBytes || text[textOff[i] - 1] != '\0') {
         LOG_ERR("TXB", "Deserialization failed: corrupt word offset %u", i);
         return nullptr;
       }
     }
-    if (block->rubyPresent) {
-      if (rubyBytes == 0 || block->rubyTextArr[rubyBytes - 1] != '\0') {
-        LOG_ERR("TXB", "Deserialization failed: corrupt ruby layout");
-        return nullptr;
-      }
-      for (uint16_t i = 0; i < wc; ++i) {
-        const uint16_t off = block->rubyOffArr[i];
-        if (off != UINT16_MAX && off >= rubyBytes) {
-          LOG_ERR("TXB", "Deserialization failed: corrupt ruby offset %u", i);
-          return nullptr;
-        }
-      }
-    }
   }
 
-  // Style (alignment + margins/padding/indent + direction)
+  uint16_t rubyCount = 0;
+  if (!serialization::tryReadPod(file, rubyCount) || rubyCount > wc) {
+    LOG_ERR("TXB", "Deserialization failed: invalid ruby count %u", rubyCount);
+    return nullptr;
+  }
+  if (rubyCount > 0) block->rubyTexts.resize(wc);
+  for (uint16_t i = 0; i < rubyCount; ++i) {
+    uint16_t wordIndex = 0;
+    std::string ruby;
+    if (!serialization::tryReadPod(file, wordIndex) || wordIndex >= wc || !serialization::tryReadString(file, ruby)) {
+      LOG_ERR("TXB", "Deserialization failed: invalid ruby annotation");
+      return nullptr;
+    }
+    block->rubyTexts[wordIndex] = std::move(ruby);
+  }
+
   BlockStyle& blockStyle = block->blockStyle;
-  serialization::readPod(file, blockStyle.alignment);
-  serialization::readPod(file, blockStyle.textAlignDefined);
-  serialization::readPod(file, blockStyle.marginTop);
-  serialization::readPod(file, blockStyle.marginBottom);
-  serialization::readPod(file, blockStyle.marginLeft);
-  serialization::readPod(file, blockStyle.marginRight);
-  serialization::readPod(file, blockStyle.paddingTop);
-  serialization::readPod(file, blockStyle.paddingBottom);
-  serialization::readPod(file, blockStyle.paddingLeft);
-  serialization::readPod(file, blockStyle.paddingRight);
-  serialization::readPod(file, blockStyle.textIndent);
-  serialization::readPod(file, blockStyle.textIndentDefined);
-  serialization::readPod(file, blockStyle.isRtl);
-  serialization::readPod(file, blockStyle.directionDefined);
+  if (!serialization::tryReadPod(file, blockStyle.alignment) ||
+      !serialization::tryReadPod(file, blockStyle.textAlignDefined) ||
+      !serialization::tryReadPod(file, blockStyle.marginTop) ||
+      !serialization::tryReadPod(file, blockStyle.marginBottom) ||
+      !serialization::tryReadPod(file, blockStyle.marginLeft) ||
+      !serialization::tryReadPod(file, blockStyle.marginRight) ||
+      !serialization::tryReadPod(file, blockStyle.paddingTop) ||
+      !serialization::tryReadPod(file, blockStyle.paddingBottom) ||
+      !serialization::tryReadPod(file, blockStyle.paddingLeft) ||
+      !serialization::tryReadPod(file, blockStyle.paddingRight) ||
+      !serialization::tryReadPod(file, blockStyle.textIndent) ||
+      !serialization::tryReadPod(file, blockStyle.textIndentDefined) ||
+      !serialization::tryReadPod(file, blockStyle.isRtl) ||
+      !serialization::tryReadPod(file, blockStyle.directionDefined)) {
+    LOG_ERR("TXB", "Deserialization failed: truncated block style metadata");
+    return nullptr;
+  }
 
   return block;
 }

@@ -9,12 +9,17 @@
 
 namespace {
 // tinfl's window must be a power of two; TINFL_LZ_DICT_SIZE is 32768.
-constexpr size_t WINDOW_SIZE = TINFL_LZ_DICT_SIZE;
+constexpr size_t WINDOW_SIZE = InflateStream::STREAMING_WINDOW_SIZE;
+static_assert(WINDOW_SIZE == TINFL_LZ_DICT_SIZE, "Inflate window size must match miniz");
 // tinfl_decompressor holds mz_uint32 arrays; 8 keeps the window aligned too.
 constexpr size_t STATE_ALIGNED = (sizeof(tinfl_decompressor) + 7) & ~size_t{7};
 }  // namespace
 
 InflateStream::~InflateStream() { deinit(); }
+
+size_t InflateStream::requiredStorageSize(const bool streaming) {
+  return STATE_ALIGNED + (streaming ? WINDOW_SIZE : 0);
+}
 
 bool InflateStream::init(const bool streaming) {
   // Every consumer constructs a fresh stream per operation, so acquire storage
@@ -24,7 +29,7 @@ bool InflateStream::init(const bool streaming) {
   // During a framebuffer loan the lent 48KB is up for grabs: state (~11KB) +
   // window (32KB) fit inside it, so a chapter-build inflate costs the heap
   // nothing. Absent (or already claimed): plain heap, freed in deinit().
-  const size_t needed = STATE_ALIGNED + (streaming ? WINDOW_SIZE : 0);
+  const size_t needed = requiredStorageSize(streaming);
   arenaBase = buildscratch::claim(needed);
   if (arenaBase) {
     state = reinterpret_cast<tinfl_decompressor*>(arenaBase);

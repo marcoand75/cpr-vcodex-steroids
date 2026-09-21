@@ -115,14 +115,14 @@ def _read_counter(counter_path, default_value):
 
 
 def _extract_release_number(base_version, text):
-    match = re.search(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex", text)
+    match = re.search(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex-steroids", text)
     return int(match.group(1)) if match else None
 
 
 def _latest_tag_release_number(project_dir, base_version):
     try:
         tags = subprocess.check_output(
-            ["git", "tag", "--list", f"{base_version}.*-cpr-vcodex"],
+            ["git", "tag", "--list", f"{base_version}.*-cpr-vcodex-steroids"],
             text=True,
             stderr=subprocess.PIPE,
             cwd=project_dir,
@@ -203,9 +203,9 @@ def release_number_from_tag(base_version):
     if not tag:
         return None
 
-    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex", tag)
+    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex-steroids", tag)
     if not match:
-        raise ValueError(f"Release tag {tag!r} does not match expected pattern {base_version}.<release>-cpr-vcodex")
+        raise ValueError(f"Release tag {tag!r} does not match expected pattern {base_version}.<release>-cpr-vcodex-steroids")
 
     return int(match.group(1)), tag
 
@@ -294,7 +294,7 @@ def inject_version(env):
             build_kind="simulator",
         )
         env.Append(CPPDEFINES=[("CPR_VCODEX_BUILD_KIND_SIMULATOR", 1)])
-        print(f"CPR-vCodex build version: {version_string}")
+        print(f"CPR-vCodex Steroids build version: {version_string}")
         return
     if env_name not in SUPPORTED_ENVS:
         return
@@ -313,7 +313,7 @@ def inject_version(env):
         # names) distinct so S3 and C3 dev binaries never collide.
         version_string = f"{base_version}.{release_number}.dev{build_counter}-{short_sha}{kind_suffix}"
         build_kind = "dev" + kind_suffix
-        print(f"CPR-vCodex release line: {release_number} ({release_counter_path})")
+        print(f"CPR-vCodex Steroids release line: {release_number} ({release_counter_path})")
     elif kind_env == "gh_release":
         tagged_release = release_number_from_tag(base_version)
         if tagged_release:
@@ -333,7 +333,7 @@ def inject_version(env):
         version_string = f"{base_version}-rc+{rc_hash}"
         build_kind = "rc" + kind_suffix
         counter_path = "CROSSPOINT_RC_HASH env"
-        print(f"CPR-vCodex release line: {release_number} ({release_counter_path})")
+        print(f"CPR-vCodex Steroids release line: {release_number} ({release_counter_path})")
     else:
         release_number, release_counter_path = get_current_release_number(project_dir, base_version)
         build_counter = release_number
@@ -350,7 +350,8 @@ def inject_version(env):
         release_number=release_number,
         build_kind=build_kind,
     )
-    print(f"CPR-vCodex build version: {version_string}")
+    env.Append(PROJECT_VER=version_string)
+    print(f"CPR-vCodex Steroids build version: {version_string}")
     print(f"CPR-vCodex {build_kind} counter: {build_counter} ({counter_path})")
 
 

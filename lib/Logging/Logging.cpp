@@ -1,8 +1,5 @@
 #include "Logging.h"
 
-#include <BoardConfig.h>
-#include <esp_rom_sys.h>
-
 #include <string>
 
 #define MAX_ENTRY_LEN 256
@@ -33,6 +30,24 @@ void addToLogRingBuffer(const char* message) {
   logHead = (logHead + 1) % MAX_LOG_LINES;
 }
 
+// Shared formatting helper: builds the "[timestamp] [level] [origin] message"
+// string into buf. Returns buf on success, nullptr if formatting fails.
+static char* formatLogEntry(char* buf, size_t bufSize, const char* level, const char* origin,
+                            const char* format, va_list args) {
+  char* c = buf;
+  unsigned long ms = millis();
+  int len = snprintf(c, bufSize, "[%lu] [%s] [%s] ", ms, level, origin);
+  if (len < 0) {
+    return nullptr;
+  }
+  c += std::min(len, static_cast<int>(bufSize));
+  len = vsnprintf(c, bufSize - (c - buf), format, args);
+  if (len < 0) {
+    return nullptr;
+  }
+  return buf;
+}
+
 // Since logging can take a large amount of flash, we want to make the format string as short as possible.
 // This logPrintf prepend the timestamp, level and origin to the user-provided message, so that the user only needs to
 // provide the format string for the message itself.
@@ -40,39 +55,25 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
   va_list args;
   va_start(args, format);
   char buf[MAX_ENTRY_LEN];
-  char* c = buf;
-  // add timestamp, level and origin
-  {
-    unsigned long ms = millis();
-    int len = snprintf(c, sizeof(buf), "[%lu] [%s] [%s] ", ms, level, origin);
-    // error while writing => return
-    if (len < 0) {
-      va_end(args);
-      return;
+  if (formatLogEntry(buf, sizeof(buf), level, origin, format, args)) {
+    if (logSerial) {
+      logSerial.print(buf);
     }
-    // clamp c to be in buffer range
-    c += std::min(len, MAX_ENTRY_LEN);
-  }
-  // add the user message
-  {
-    int len = vsnprintf(c, sizeof(buf) - (c - buf), format, args);
-    if (len < 0) {
-      va_end(args);
-      return;
-    }
+    addToLogRingBuffer(buf);
   }
   va_end(args);
-#if FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF
-  // IDF/ROM console path for boards monitored over USB-Serial-JTAG, where the
-  // HWCDC `operator bool` reads false under `pio device monitor` and logs would
-  // otherwise be silently dropped (e.g. Sticky).
-  esp_rom_printf("%s", buf);
-#else
-  if (logSerial) {
-    logSerial.print(buf);
+}
+
+// Ring-buffer-only variant: always writes to the RTC ring buffer so that
+// crash_report.txt contains "Last logs" even when serial output is disabled.
+void logRtcPrintf(const char* level, const char* origin, const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  char buf[MAX_ENTRY_LEN];
+  if (formatLogEntry(buf, sizeof(buf), level, origin, format, args)) {
+    addToLogRingBuffer(buf);
   }
-#endif
-  addToLogRingBuffer(buf);
+  va_end(args);
 }
 
 std::string getLastLogs() {

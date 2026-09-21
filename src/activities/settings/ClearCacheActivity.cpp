@@ -8,20 +8,14 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/BookCacheUtils.h"
+#include "../reader/ProgressFile.h"
 
 void ClearCacheActivity::onEnter() {
   Activity::onEnter();
 
   state = WARNING;
-  const char* options[] = {tr(STR_CANCEL), tr(STR_CLEAR_BUTTON)};
-  confirmPopup.show(tr(STR_CLEAR_READING_CACHE), options, 2, 0, [this](int idx) {
-    if (idx == 1) {
-      beginClear();
-    } else {
-      goBack();
-    }
-  });
   requestUpdate();
 }
 
@@ -37,16 +31,36 @@ void ClearCacheActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CLEAR_READING_CACHE));
 
   if (state == WARNING) {
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 60, tr(STR_CLEAR_CACHE_WARNING_1), true);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 30, tr(STR_CLEAR_CACHE_WARNING_2), true,
-                              EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, tr(STR_CLEAR_CACHE_WARNING_3), true);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 30, tr(STR_CLEAR_CACHE_WARNING_4), true);
+    // Build the full warning message and wrap it for the display width.
+    // We combine the four i18n keys into one paragraph so the renderer can
+    // flow long translations (e.g. "Your reading position and stats will be
+    // preserved.") onto multiple lines instead of clipping past the margin.
+    const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const auto sideMargin = 20;
+    const auto maxWidth = pageWidth - sideMargin * 2;
+    constexpr int maxLines = 6;
 
-    if (confirmPopup.processRender(renderer, mappedInput)) return;
+    std::string fullWarning;
+    fullWarning.reserve(256);
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_1);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_2);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_3);
+    fullWarning += " ";
+    fullWarning += tr(STR_CLEAR_CACHE_WARNING_4);
 
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_CLEAR_BUTTON), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    const auto lines = renderer.wrappedText(UI_10_FONT_ID, fullWarning.c_str(), maxWidth, maxLines);
+
+    const int totalHeight = static_cast<int>(lines.size()) * lineHeight;
+    const int startY = (pageHeight - totalHeight) / 2;
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+      const int y = startY + static_cast<int>(i) * lineHeight;
+      renderer.drawCenteredText(UI_10_FONT_ID, y, lines[i].c_str(), true);
+    }
+
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_CANCEL), tr(STR_CLEAR_BUTTON), "", "");
     renderer.displayBuffer();
     return;
   }
@@ -65,8 +79,7 @@ void ClearCacheActivity::render(RenderLock&&) {
     }
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, resultText.c_str());
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
@@ -76,22 +89,39 @@ void ClearCacheActivity::render(RenderLock&&) {
                               EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, tr(STR_CHECK_SERIAL_OUTPUT));
 
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", "", "");
     renderer.displayBuffer();
     return;
   }
 }
 
-void ClearCacheActivity::beginClear() {
-  LOG_DBG("CLEAR_CACHE", "User confirmed, starting cache clear");
-  {
-    RenderLock lock(*this);
-    state = CLEARING;
+namespace {
+std::string preserveProgressFromCacheDir(const std::string& cacheDir) {
+  const std::string legacyPath = cacheDir + "/progress.bin";
+  FsFile f;
+  if (!Storage.openFileForRead("CLEAR_CACHE", legacyPath, f)) {
+    return {};
   }
-  requestUpdateAndWait();
-  clearCache();
+  std::string data;
+  data.resize(64);
+  const int read = f.read(data.data(), static_cast<int>(data.size()));
+  if (read <= 0) {
+    return {};
+  }
+  data.resize(static_cast<size_t>(read));
+  return data;
 }
+
+bool restoreProgressToCacheDir(const std::string& cacheDir, const std::string& data) {
+  if (data.empty()) {
+    return true;
+  }
+  const std::string legacyPath = cacheDir + "/progress.bin";
+  return ProgressFile::writeAtomicPath("CLEAR_CACHE", legacyPath,
+                                       reinterpret_cast<const uint8_t*>(data.data()),
+                                       static_cast<int>(data.size()));
+}
+}  // namespace
 
 void ClearCacheActivity::clearCache() {
   LOG_DBG("CLEAR_CACHE", "Clearing cache...");
@@ -115,14 +145,17 @@ void ClearCacheActivity::clearCache() {
     file.getName(name, sizeof(name));
     String itemName(name);
 
-    // Only delete directories matching known book cache names.
     if (file.isDirectory() && isBookCacheDirectoryName(itemName.c_str())) {
       String fullPath = "/.crosspoint/" + itemName;
       LOG_DBG("CLEAR_CACHE", "Removing cache: %s", fullPath.c_str());
 
       file.close();  // Close before attempting to delete
 
+      const std::string progressData = preserveProgressFromCacheDir(fullPath.c_str());
+
       if (Storage.removeDir(fullPath.c_str())) {
+        // Restore legacy progress file so reading position survives cache clear.
+        restoreProgressToCacheDir(fullPath.c_str(), progressData);
         clearedCount++;
       } else {
         LOG_ERR("CLEAR_CACHE", "Failed to remove: %s", fullPath.c_str());
@@ -142,10 +175,15 @@ void ClearCacheActivity::clearCache() {
 
 void ClearCacheActivity::loop() {
   if (state == WARNING) {
-    if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
-
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      beginClear();
+      LOG_DBG("CLEAR_CACHE", "User confirmed, starting cache clear");
+      {
+        RenderLock lock(*this);
+        state = CLEARING;
+      }
+      requestUpdateAndWait();
+
+      clearCache();
     }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
@@ -156,11 +194,10 @@ void ClearCacheActivity::loop() {
   }
 
   if (state == SUCCESS || state == FAILED) {
-    int x = 0;
-    int y = 0;
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
       goBack();
     }
     return;
   }
 }
+

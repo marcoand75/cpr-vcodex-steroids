@@ -1,4 +1,5 @@
 #include "AchievementsStore.h"
+#include "StoreManager.h"
 
 #include <HalStorage.h>
 #include <I18n.h>
@@ -416,6 +417,9 @@ void AchievementsStore::reconcileFromCurrentStats() {
 }
 
 void AchievementsStore::recordSessionEnded(const ReadingSessionSnapshot& snapshot) {
+  if (!ensureLoaded()) {
+    return;
+  }
   if (!SETTINGS.achievementsEnabled || !snapshot.valid || snapshot.serial == 0 ||
       snapshot.serial == lastProcessedSessionSerial || (snapshot.bookId.empty() && snapshot.path.empty())) {
     return;
@@ -462,7 +466,7 @@ void AchievementsStore::recordSessionEnded(const ReadingSessionSnapshot& snapsho
 }
 
 void AchievementsStore::recordBookmarkAdded() {
-  if (!SETTINGS.achievementsEnabled) {
+  if (!ensureLoaded() || !SETTINGS.achievementsEnabled) {
     return;
   }
 
@@ -572,7 +576,15 @@ bool AchievementsStore::loadFromFile() {
   if (dirty) {
     saveToFile();
   }
+  loaded_ = true;
+  bumpGeneration();
   return true;
+}
+
+bool AchievementsStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
 }
 
 void AchievementsStore::reset() {
@@ -599,6 +611,8 @@ void AchievementsStore::reset() {
     resetDayBaselineMs = 0;
   }
 
+  loaded_ = false;
+  bumpGeneration();
   markDirty();
   saveToFile();
 }

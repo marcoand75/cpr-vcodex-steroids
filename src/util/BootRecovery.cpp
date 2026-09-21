@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <string>
 
@@ -180,7 +181,17 @@ void initialize() {
   recordedStageRaw = static_cast<uint8_t>(BootStage::None);
 }
 
-void enterStage(const BootStage stage) { recordedStageRaw = static_cast<uint8_t>(stage); }
+void enterStage(const BootStage stage) {
+  recordedStageRaw = static_cast<uint8_t>(stage);
+  // FRAGMENTATION DIAGNOSTIC (boot): after each stage load, log free + largest
+  // contiguous block + loss, so we can see exactly where maxAlloc drops and the
+  // heap fragments during startup. free - maxA = fragmentation in bytes.
+  const auto frag = heapFragInfo();
+  LOG_DBG("HCR-FRAG", "boot stage %-18s Free=%d MaxAlloc=%d frag=%d blocks=%u",
+          getStageName(stage), static_cast<int>(frag.freeBytes),
+          static_cast<int>(frag.largest), static_cast<int>(frag.freeBytes - frag.largest),
+          static_cast<unsigned>(frag.freeBlocks));
+}
 
 void markBootCompleted() {
   recordedStageRaw = static_cast<uint8_t>(BootStage::Completed);
@@ -188,6 +199,29 @@ void markBootCompleted() {
     CPR_VCODEX_LOG_EVENT("BOOT", "Boot completed successfully; clearing recovery state");
     clearRecoveryState();
   }
+}
+
+namespace {
+SkipLogFn skipLogFn = nullptr;
+}  // namespace
+
+void setSkipLogFn(SkipLogFn fn) { skipLogFn = fn; }
+
+bool runBootStage(const BootStage stage, const bool shouldSkip, const char* const stageLabel,
+                  const std::function<void()>& loader) {
+  if (shouldSkip) {
+    if (skipLogFn != nullptr) {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "Skipping %s load due to recovery mode", stageLabel);
+      skipLogFn(msg);
+    }
+    return false;
+  }
+  enterStage(stage);
+  if (loader) {
+    loader();
+  }
+  return true;
 }
 
 BootStage getRecordedStage() {

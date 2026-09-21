@@ -1,5 +1,6 @@
 #pragma once
 
+#ifndef OMIT_BOOKERLY
 #include <builtinFonts/bookerly_10_bold.h>
 #include <builtinFonts/bookerly_10_bolditalic.h>
 #include <builtinFonts/bookerly_10_italic.h>
@@ -20,6 +21,21 @@
 #include <builtinFonts/bookerly_18_bolditalic.h>
 #include <builtinFonts/bookerly_18_italic.h>
 #include <builtinFonts/bookerly_18_regular.h>
+#endif
+
+#ifndef OMIT_LEXEND
+#include <builtinFonts/lexend_10_bold.h>
+#include <builtinFonts/lexend_10_regular.h>
+#include <builtinFonts/lexend_12_bold.h>
+#include <builtinFonts/lexend_12_regular.h>
+#include <builtinFonts/lexend_14_bold.h>
+#include <builtinFonts/lexend_14_regular.h>
+#include <builtinFonts/lexend_16_bold.h>
+#include <builtinFonts/lexend_16_regular.h>
+#include <builtinFonts/lexend_18_bold.h>
+#include <builtinFonts/lexend_18_regular.h>
+#endif
+
 #include <builtinFonts/notosans_10_bold.h>
 #include <builtinFonts/notosans_10_bolditalic.h>
 #include <builtinFonts/notosans_10_italic.h>
@@ -41,7 +57,10 @@
 #include <builtinFonts/notosans_18_bolditalic.h>
 #include <builtinFonts/notosans_18_italic.h>
 #include <builtinFonts/notosans_18_regular.h>
+
+#ifndef OMIT_UBUNTU
 #include <builtinFonts/ubuntu_10_bold.h>
 #include <builtinFonts/ubuntu_10_regular.h>
 #include <builtinFonts/ubuntu_12_bold.h>
 #include <builtinFonts/ubuntu_12_regular.h>
+#endif

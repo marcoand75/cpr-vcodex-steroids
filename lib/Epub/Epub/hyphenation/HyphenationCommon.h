@@ -11,7 +11,6 @@ struct CodepointInfo {
 };
 
 uint32_t toLowerLatin(uint32_t cp);
-uint32_t toLowerTurkish(uint32_t cp);
 uint32_t toLowerCyrillic(uint32_t cp);
 
 bool isLatinLetter(uint32_t cp);

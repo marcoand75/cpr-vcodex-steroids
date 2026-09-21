@@ -1,99 +1,80 @@
 #pragma once
 #include <Epub.h>
-#include <GfxRenderer.h>
 
+#include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
-
-#include "KOReaderSyncClient.h"
 
 /**
  * CrossPoint position representation.
  */
 struct CrossPointPosition {
   int spineIndex;                  // Current spine item (chapter) index
-  int pageNumber;                  // Current page within the spine item
+  int pageNumber;                  // Current page within the spine item (estimated if no paragraph LUT)
   int totalPages;                  // Total pages in the current spine item
-  uint32_t visibleTextOffset = 0;  // Authoritative zero-based visible codepoint offset
-  bool hasVisibleTextOffset = false;
-  uint16_t paragraphIndex = 0;     // 1-based synthetic paragraph index from XPath p[N]
-  bool hasParagraphIndex = false;  // True when paragraphIndex was resolved from XPath
-  uint16_t liIndex = 0;            // Running <li> count at the matched XPath element
-  bool hasLiIndex = false;         // True when target element is <li> and liIndex was resolved
-  char xpathAnchorId[64] = {};     // First <a id> captured inside the matched XPath element
+  uint16_t paragraphIndex = 0;     // 1-based <p> index (0 if unavailable)
+  bool hasParagraphIndex = false;  // True when paragraphIndex is valid
+  uint16_t listItemIndex = 0;      // 1-based running <li> count when target XPath ends in /li[N]
+  bool hasListItemIndex = false;   // True when listItemIndex is valid
+  uint32_t xhtmlSeekHint = 0;      // Byte offset hint for findXPathForParagraph (0 = no hint)
 };
 
 /**
- * Progress position representation.
+ * KOReader position representation.
  */
-struct SavedProgressPosition {
+struct KOReaderPosition {
   std::string xpath;  // XPath-like progress string
   float percentage;   // Progress percentage (0.0 to 1.0)
 };
 
 /**
- * Maps between CrossPoint and SavedProgress position formats, such as those used by KOReader.
+ * Maps between CrossPoint and KOReader position formats.
  *
- * CrossPoint tracks position as (spineIndex, visibleTextOffset). Page number is
- * derived from the current section layout.
- * SavedProgress uses XPath-like strings + percentage.
+ * CrossPoint tracks position as (spineIndex, pageNumber).
+ * KOReader uses XPath-like strings + percentage.
  *
- * The section cache records page-start visible offsets during pagination. The
- * same body-text counting rules are used to generate and resolve KOReader
- * XPaths. Percentage remains metadata and a fallback only.
+ * Forward mapping (CrossPoint -> KOReader):
+ * - Prefer element-level XPath extracted from current spine XHTML.
+ * - Fallback to synthetic chapter XPath if extraction fails.
+ *
+ * Reverse mapping (KOReader -> CrossPoint):
+ * - Prefer incoming XPath (DocFragment + element path) when resolvable.
+ * - Fallback to percentage-based approximation when XPath is missing/invalid.
+ *
+ * This keeps behavior stable on low-memory devices while improving round-trip
+ * sync precision when KOReader provides detailed paths.
  */
 class ProgressMapper {
  public:
   /**
-   * Convert CrossPoint position to SavedProgress format.
+   * Convert CrossPoint position to KOReader format.
    *
    * @param epub The EPUB book
    * @param pos CrossPoint position
-   * @return SavedProgress position
+   * @return KOReader position
    */
-  static SavedProgressPosition toSavedProgress(const std::shared_ptr<Epub>& epub, const CrossPointPosition& pos);
+  static KOReaderPosition toKOReader(const std::shared_ptr<Epub>& epub, const CrossPointPosition& pos);
 
   /**
-   * Convert SavedProgress position to CrossPoint format.
+   * Convert KOReader position to CrossPoint format.
    *
-   * Note: The returned pageNumber may be approximate since different
-   * rendering settings produce different page counts.
+   * Uses XPath-first resolution when possible and percentage fallback otherwise.
+   * Returned pageNumber can still be approximate because page counts differ
+   * across renderer/font/layout settings.
    *
    * @param epub The EPUB book
-   * @param savedPos SavedProgress position
-   * @param renderer GfxRenderer for page count estimation
+   * @param koPos KOReader position
    * @param currentSpineIndex Index of the currently open spine item (for density estimation)
    * @param totalPagesInCurrentSpine Total pages in the current spine item (for density estimation)
    * @return CrossPoint position
    */
-  static CrossPointPosition toCrossPoint(const std::shared_ptr<Epub>& epub, const SavedProgressPosition& savedPos,
-                                         GfxRenderer& renderer, int currentSpineIndex = -1,
-                                         int totalPagesInCurrentSpine = 0, int fallbackTotalPages = 0);
-
-  /**
-   * Convert a rich CrossPoint position (downloaded from a crosspoint-sync
-   * server) directly to a CrossPoint position. Its standard KOReader XPath is
-   * resolved to a content offset first; legacy spine/page/paragraph hints are
-   * used only when that content anchor cannot be applied.
-   *
-   * @param xpathAlreadyTried when true, skip re-resolving rich.xpath and go straight to the
-   *        legacy page hints. The caller sets this when it just resolved the identical XPath via
-   *        toCrossPoint(), so retrying it here would decompress the chapter twice for nothing.
-   * @return The position, or std::nullopt when the rich position cannot be
-   *         applied (spine out of range, no section cache) and the caller
-   *         should fall back to toCrossPoint().
-   */
-  static std::optional<CrossPointPosition> fromRichPosition(const std::shared_ptr<Epub>& epub,
-                                                            const KOReaderRichPosition& rich, GfxRenderer& renderer,
-                                                            bool xpathAlreadyTried = false);
+  static CrossPointPosition toCrossPoint(const std::shared_ptr<Epub>& epub, const KOReaderPosition& koPos,
+                                         int currentSpineIndex = -1, int totalPagesInCurrentSpine = 0);
 
  private:
   /**
-   * Generate a fallback XPath by streaming the spine item's XHTML and resolving
-   * a paragraph/text position from intra-spine progress.
-   * Produces a full ancestry path such as
-   * /body/DocFragment[3]/body/p[42]/text().17.
+   * Generate XPath for KOReader compatibility.
+   * Fallback format: /body/DocFragment[spineIndex + 1]/body
    */
-  static std::string generateXPath(const std::shared_ptr<Epub>& epub, int spineIndex, float intraSpineProgress);
+  static std::string generateXPath(int spineIndex);
 };

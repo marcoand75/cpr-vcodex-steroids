@@ -9,8 +9,8 @@
 // esp_partition_write + ota_boot::switchTo (no Arduino Update class, no
 // esp_image_verify — those reject our patched image on X4 silicon).
 //
-// Used by the SD update activity. Network OTA streams directly to the inactive
-// partition through esp_ota_* in OtaUpdater; it does not stage a file on SD.
+// Both the SD update activity and the OTA path land here. OTA first
+// downloads the firmware to an SD-card cache file, then calls this.
 
 namespace firmware_flash {
 
@@ -24,7 +24,6 @@ enum class Result {
   BAD_CHECKSUM,  // ESP image XOR checksum mismatch
   BAD_SHA,       // SHA256 trailer mismatch (hash_appended images)
   BAD_CHIP,      // image chip_id doesn't match the running MCU family
-  WRONG_BOARD,   // image carries a board tag naming a different board
   BAD_SIZE,      // body+pad+sha length doesn't match file size
   NO_PARTITION,
   OOM,
@@ -51,10 +50,8 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
 
 // Full-image integrity check that mirrors the bootloader's verification:
 // header magic, segment table walk, XOR checksum, and SHA256 trailer (when
-// hash_appended == 1). Also scans for the embedded board tag (see
-// FirmwareBoardTag.h) and rejects an image tagged for a different board.
-// Run this before flashing a candidate firmware so a truncated/corrupted/
-// wrong-board .bin never reaches otadata.
+// hash_appended == 1). Run this before flashing a candidate firmware so a
+// truncated/corrupted .bin never reaches otadata.
 //
 // `partitionSize` is the size of the destination OTA partition; pass 0 to
 // skip the size-fits-partition check (e.g. when validating ahead of partition
@@ -62,12 +59,11 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
 // success so the caller can immediately reread it for flashing.
 Result validateImageFile(const char* sdPath, size_t partitionSize);
 
-const char* resultName(Result r);
+  const char* resultName(Result r);
 
-// Returns the chip_id (esp_image_header_t offset 12) of the currently-running
-// image, or 0xFFFF if it cannot be read. Because the running slot booted
-// successfully, its chip_id is authoritative for the current CPU, so a
-// candidate image must match it to be safe to flash.
-uint16_t runningPartitionChipId();
+  // Read the chip_id embedded in the currently running image. The running slot
+  // is authoritative for this device even on X4 units whose image verification
+  // path differs from stock ESP-IDF.
+  uint16_t runningPartitionChipId();
 
 }  // namespace firmware_flash

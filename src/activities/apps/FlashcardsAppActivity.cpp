@@ -3,24 +3,26 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include "FlashcardsStore.h"
 #include "FlashcardBrowserActivity.h"
 #include "FlashcardRecentsActivity.h"
 #include "FlashcardSettingsActivity.h"
 #include "FlashcardStatsActivity.h"
-#include "FlashcardsStore.h"
 #include "components/UITheme.h"
-#include "components/UiAppHelpers.h"
+#include "fontIds.h"
+#include "../util/ListLayout.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 
-namespace fui = freeink::ui;
-
 namespace {
+constexpr int ACTION_COUNT = 4;
+
 bool hasStatsToShow(const FlashcardDeckRecord& record) {
   return record.sessionCount > 0 || record.seenCards > 0 || record.totalReviewed > 0 || record.totalCorrect > 0 ||
          record.totalWrong > 0 || record.totalSkipped > 0 || record.lastReviewedAt > 0;
 }
 
-std::string getSettingsSubtitle() {
+static std::string getSettingsSubtitle() {
   std::string studyModeLabel;
   switch (SETTINGS.flashcardStudyMode) {
     case CrossPointSettings::FLASHCARD_STUDY_DUE:
@@ -46,10 +48,13 @@ std::string getSettingsSubtitle() {
   return studyModeLabel + " | " +
          (SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_ALL
               ? std::string(tr(STR_ALL))
-              : std::to_string(SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_10   ? 10
-                               : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_20 ? 20
-                               : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_30 ? 30
-                                                                                                           : 50));
+              : std::to_string(SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_10
+                                   ? 10
+                                   : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_20
+                                         ? 20
+                                         : SETTINGS.flashcardSessionSize == CrossPointSettings::FLASHCARD_SESSION_30
+                                               ? 30
+                                               : 50));
 }
 }  // namespace
 
@@ -61,21 +66,12 @@ void FlashcardsAppActivity::refreshCounts() {
       deckCount++;
     }
   }
-  // Assign into the existing strings; the rows keep pointing at them.
-  rowSubtitles[0] = tr(STR_FLASHCARDS_OPEN_DESC);
-  rowSubtitles[1] = std::to_string(recentCount);
-  rowSubtitles[2] = std::to_string(deckCount);
-  rowSubtitles[3] = getSettingsSubtitle();
-  for (int i = 0; i < ACTION_COUNT; ++i) {
-    rowItems[i].subtitle = rowSubtitles[i].c_str();
-  }
+  selectedIndex = ButtonNavigator::clampIndex(selectedIndex, ACTION_COUNT);
 }
 
-void FlashcardsAppActivity::activateIndex(const int index) {
-  app.clearTapFlash();  // every row opens a sub-screen
-  nav.selected = index;
+void FlashcardsAppActivity::openSelectedEntry() {
   std::unique_ptr<Activity> activity;
-  switch (index) {
+  switch (selectedIndex) {
     case 0:
       activity = std::make_unique<FlashcardBrowserActivity>(renderer, mappedInput);
       break;
@@ -91,26 +87,45 @@ void FlashcardsAppActivity::activateIndex(const int index) {
   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
-    RenderLock lock(*this);
     refreshCounts();
     requestUpdate();
   });
 }
 
-void FlashcardsAppActivity::onEnter() {
-  UiListActivity::onEnter();
-  renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+void FlashcardsAppActivity::onBack(void* ctx) {
+  static_cast<FlashcardsAppActivity*>(ctx)->finish();
+}
 
-  const StrId labels[ACTION_COUNT] = {StrId::STR_OPEN, StrId::STR_RECENTS, StrId::STR_STATISTICS,
-                                      StrId::STR_SETTINGS_TITLE};
-  const UIIcon icons[ACTION_COUNT] = {UIIcon::Folder, UIIcon::Recent, UIIcon::Library, UIIcon::Settings};
-  for (int i = 0; i < ACTION_COUNT; ++i) {
-    rowItems[i] = fui::ListItem{};
-    rowItems[i].label = I18N.get(labels[i]);
-    rowItems[i].icon = listIconFor(icons[i], 32);
-    rowItems[i].actionValue = static_cast<int16_t>(i);
-  }
+void FlashcardsAppActivity::onConfirm(void* ctx) {
+  static_cast<FlashcardsAppActivity*>(ctx)->openSelectedEntry();
+}
+
+void FlashcardsAppActivity::releaseNav(void* ctx, int delta) {
+  auto* self = static_cast<FlashcardsAppActivity*>(ctx);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextIndex(self->selectedIndex, ACTION_COUNT);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousIndex(self->selectedIndex, ACTION_COUNT);
+  self->requestUpdate();
+}
+
+void FlashcardsAppActivity::continuousNav(void* ctx, int delta) {
+  auto* self = static_cast<FlashcardsAppActivity*>(ctx);
+  const int pageItems = UITheme::getNumberOfItemsPerPage(self->renderer, true, false, true, true);
+  if (delta > 0) self->selectedIndex = ButtonNavigator::nextPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  else if (delta < 0) self->selectedIndex = ButtonNavigator::previousPageIndex(self->selectedIndex, ACTION_COUNT, pageItems);
+  self->requestUpdate();
+}
+
+void FlashcardsAppActivity::onEnter() {
+  Activity::onEnter();
+  FLASHCARDS.ensureLoaded();
+  renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
   refreshCounts();
+
+  listInputMapper.setBackHandler(onBack, this, true);
+  listInputMapper.setConfirmHandler(onConfirm, this, true);
+  listInputMapper.setNavReleaseAndContinuous(releaseNav, continuousNav, this);
+
+  requestUpdate();
 }
 
 void FlashcardsAppActivity::onExit() {
@@ -118,24 +133,58 @@ void FlashcardsAppActivity::onExit() {
   Activity::onExit();
 }
 
-void FlashcardsAppActivity::drawChrome() {
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_FLASHCARDS), std::to_string(deckCount).c_str());
+void FlashcardsAppActivity::loop() {
+  listInputMapper.loop(mappedInput);
 }
 
-void FlashcardsAppActivity::buildScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+void FlashcardsAppActivity::render(RenderLock&&) {
+  refreshCounts();
+  renderer.clearScreen();
 
-  fui::ListProps props;
-  props.items = rowItems;
-  props.count = static_cast<uint16_t>(ACTION_COUNT);
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  fui::TextStyle label = screen.theme().smallText;
-  label.bold = true;
-  props.labelText = label;
-  syncListViewport(screen, props, /*hasSubtitle=*/true);
-  screen.list(props);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto layout = ListLayout::compute(renderer, true, true, metrics.verticalSpacing);
+
+  ListRenderHelper::drawHeader(renderer, tr(STR_FLASHCARDS), std::to_string(deckCount).c_str(), true);
+
+  ListRenderHelper::drawList(
+      renderer, layout, ACTION_COUNT, selectedIndex,
+      [](const int index) {
+        switch (index) {
+          case 0:
+            return std::string(tr(STR_OPEN));
+          case 1:
+            return std::string(tr(STR_RECENTS));
+          case 2:
+            return std::string(tr(STR_STATISTICS));
+          default:
+            return std::string(tr(STR_SETTINGS_TITLE));
+        }
+      },
+      [this](const int index) -> std::string {
+        switch (index) {
+          case 0:
+            return tr(STR_FLASHCARDS_OPEN_DESC);
+          case 1:
+            return std::to_string(recentCount);
+          case 2:
+            return std::to_string(deckCount);
+          default:
+            return getSettingsSubtitle();
+        }
+      },
+      [](const int index) {
+        switch (index) {
+          case 0:
+            return UIIcon::Folder;
+          case 1:
+            return UIIcon::Recent;
+          case 2:
+            return UIIcon::Library;
+          default:
+            return UIIcon::Settings;
+        }
+      });
+
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
+  renderer.displayBuffer();
 }

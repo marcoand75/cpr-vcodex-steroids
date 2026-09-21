@@ -6,49 +6,56 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "activities/UiTabListActivity.h"
-#include "components/OptionPopup.h"
+#include "util/PopupUtils.h"
+#include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
+
+struct Rect;
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING, SECTION };
 
 enum class SettingAction {
-  None,
-  RemapFrontButtons,
-  CustomiseStatusBar,
-  KOReaderSync,
-  OPDSBrowser,
-  Network,
-  ClearCache,
-  CheckForUpdates,
-  SdFirmwareUpdate,
-  Language,
-  DownloadFonts,
-  TextSettings,
-  KeyboardLayouts,
-  // Fork: Apps tab
-  SyncDay,
-  ClockSync,
-  TimeZone,
-  ReadingStats,
-  ResetReadingStats,
-  ExportReadingStats,
-  ImportReadingStats,
-  ClearReadingStatsBackups,
-  ReadingHeatmap,
-  ReadingProfile,
-  Achievements,
-  ResetAchievements,
-  SyncAchievementsFromStats,
-  ShortcutLocation,
-  ShortcutVisibility,
-  OrderHomeShortcuts,
-  OrderAppsShortcuts,
-  Bookmarks,
-  Favorites,
-  Flashcards,
-  ScreenClean,
-  SleepApp,
-  IfFound,
+   None,
+   RemapFrontButtons,
+   CustomiseStatusBar,
+   KOReaderSync,
+   OPDSBrowser,
+   Network,
+   ClearCache,
+   CheckForUpdates,
+   SdFirmwareUpdate,
+   Language,
+   SyncDay,
+   TimeZone,
+   ReadingStats,
+   ResetReadingStats,
+   ExportReadingStats,
+   ImportReadingStats,
+   ClearReadingStatsBackups,
+   ReadingHeatmap,
+   ReadingProfile,
+   Achievements,
+   ResetAchievements,
+   SyncAchievementsFromStats,
+   ShortcutLocation,
+   ShortcutVisibility,
+   OrderHomeShortcuts,
+   OrderAppsShortcuts,
+   ReaderMenuVisibility,
+   ReaderMenuOrder,
+   Bookmarks,
+   Favorites,
+   Flashcards,
+   ScreenClean,
+   SleepApp,
+   ScreenSaverDir,
+   IfFound,
+   DownloadFonts,
+   RebuildLibrary,
+   ClearCorruptCovers,
+   UpdateLibrary,
+   ScreenSaverReaderDir,
+   BatchGenerateCovers,
 };
 
 struct SettingInfo {
@@ -56,7 +63,6 @@ struct SettingInfo {
   SettingType type;
   uint8_t CrossPointSettings::* valuePtr = nullptr;
   std::vector<StrId> enumValues;
-  std::vector<std::string> enumStringValues;  // runtime alternative to StrId enumValues (for SD card fonts etc.)
   SettingAction action = SettingAction::None;
 
   struct ValueRange {
@@ -69,7 +75,6 @@ struct SettingInfo {
   const char* key = nullptr;             // JSON API key (nullptr for ACTION types)
   StrId category = StrId::STR_NONE_OPT;  // Category for web UI grouping
   bool obfuscated = false;               // Save/load via base64 obfuscation (passwords)
-  bool inTextSettings = false;           // Surfaced in the Text Settings screen; hidden from the flat Reader list
 
   // Direct char[] string fields (for settings stored in CrossPointSettings)
   size_t stringOffset = 0;
@@ -83,11 +88,6 @@ struct SettingInfo {
 
   SettingInfo& withObfuscated() {
     obfuscated = true;
-    return *this;
-  }
-
-  SettingInfo& withTextSettings() {
-    inTextSettings = true;
     return *this;
   }
 
@@ -122,7 +122,6 @@ struct SettingInfo {
     return s;
   }
 
-  // Non-interactive heading row (fork: Apps tab sections).
   static SettingInfo Section(StrId nameId) {
     SettingInfo s;
     s.nameId = nameId;
@@ -182,75 +181,50 @@ struct SettingInfo {
   }
 };
 
-class SettingsActivity final : public UiTabListActivity {
+class SettingsActivity final : public Activity {
+  using SettingRef = const SettingInfo*;
+
+  ButtonNavigator buttonNavigator;
+
   int selectedCategoryIndex = 0;  // Currently selected category
+  int selectedSettingIndex = 0;
   int settingsCount = 0;
 
-  // Per-category settings: the fork's explicit on-device lists (see the .cpp),
-  // filtered for board capabilities, plus device-only ACTION rows.
-  std::vector<SettingInfo> displaySettings;
-  std::vector<SettingInfo> readerSettings;
-  std::vector<SettingInfo> controlsSettings;
-  std::vector<SettingInfo> systemSettings;
-  std::vector<SettingInfo> appSettings;
-  const std::vector<SettingInfo>* currentSettings = nullptr;
-
-  bool preserveQuickResumeTimeoutOn = false;
-  bool quickResumeTimeoutAutoEnabled = false;
-
-  OptionPopup optionPopup;
-
-  // Row structure (label/actionValue) for *currentSettings, rebuilt only when
-  // the active category or a category's setting list changes
-  // (rebuildRowItems(), called from selectCategory()/rebuildSettingsLists())
-  // — not on every repaint. rowValues_ holds the live per-row value text,
-  // refreshed every buildScreen() call by assigning into the existing
-  // strings (no vector growth).
-  std::vector<std::string> rowValues_;
-  std::vector<freeink::ui::ListItem> rowItems_;
-  void rebuildRowItems();
+  // Per-category settings derived from shared list + device-only actions
+  std::vector<SettingRef> displaySettings;
+  std::vector<SettingRef> readerSettings;
+  std::vector<SettingRef> controlsSettings;
+  std::vector<SettingRef> systemSettings;
+  std::vector<SettingRef> appSettings;
+  const std::vector<SettingRef>* currentSettings = nullptr;
+  bool settingsListsBuilt = false;
 
   static constexpr int categoryCount = 5;
-  static constexpr StrId categoryNames[categoryCount] = {
-      StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER, StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM, StrId::STR_APPS};
+  static const StrId categoryNames[categoryCount];
 
-  // --- UiTabListActivity contract ---
-  int listCount() const override { return settingsCount; }
-  int tabCount() const override { return categoryCount; }
-  int activeTab() const override { return selectedCategoryIndex; }
-  const char* tabLabel(int index) const override { return I18N.get(categoryNames[index]); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void onTabAction(int index) override;
-  void stepTab(int direction) override;
-  bool handleButtons() override;
-  bool handleCustomInput() override;
-  // Ring walk that skips the Apps tab's section headings.
-  void navigateButtons() override;
-
-  std::string settingValueText(const SettingInfo& setting) const;
-  void selectCategory(int categoryIndex);
-  void applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr);
-
+  void enterCategory(int categoryIndex);
   bool isSelectableSetting(int settingIndex) const;
-  int firstSelectableRing() const;
-  int stepRing(int direction) const;
+  int firstSelectableSettingIndex() const;
+  int stepSettingSelection(int direction) const;
+  void renderAppSettingsList(const Rect& rect) const;
+  bool prewarmSettingsRenderText(const char* settingsTitle, const char* selectedCategoryLabel,
+                                 const char* firmwareVersion, const char* confirmLabel) const;
   void toggleCurrentSetting();
-  void runAction(const SettingInfo& setting);
-  // Post-change hooks shared by the direct toggle path and the popup callback:
-  // quick-resume sync, save, list rebuild, theme/dark-mode/font reloads, and
-  // the fork's achievements / reading-stats side effects.
-  void afterSettingChanged(const SettingInfo& setting, uint8_t previousReadingStatsAutoBackup, bool sleepScreenChanged,
-                           bool quickResumeTimeoutChanged);
-  void openSleepTimeoutPicker();
-  void rebuildSettingsLists();
-  void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
+  void buildSettingsLists();
+
+  // Value editing mode (fast up/down for numeric settings)
+  bool valueEditingMode = false;
+  uint8_t valueEditOriginal = 0;
+  void enterValueEditMode(const SettingInfo& setting);
+  void exitValueEditMode(bool confirmed);
+  void adjustValueEdit(int delta);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+      : Activity("Settings", renderer, mappedInput) {}
   void onEnter() override;
   void onExit() override;
+  void loop() override;
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
 };

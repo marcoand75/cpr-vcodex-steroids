@@ -1,26 +1,23 @@
 #pragma once
 
-#include <vector>
+#include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
+#include "../util/ListInputMapper.h"
 
-#include "activities/UiListActivity.h"
-
-// Time zone preset picker: one FreeInkUI list row per registry preset, the
-// active preset marked "Selected". Activating a row saves it and finishes.
-class TimeZoneSelectActivity final : public UiListActivity {
+class TimeZoneSelectActivity final : public Activity {
  public:
   explicit TimeZoneSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("TimeZoneSelect", renderer, mappedInput) {}
+      : Activity("TimeZoneSelect", renderer, mappedInput) {}
 
   void onEnter() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 
  private:
-  int listCount() const override { return static_cast<int>(rowItems.size()); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  const char* headerTitle() const override;
+  int selectedIndex = 0;
+  ListInputMapper listInputMapper;
 
-  // Row cache: labels are static registry strings, built once in onEnter()
-  // (activateIndex() finishes immediately, so the "Selected" marker cannot go
-  // stale within one visit).
-  std::vector<freeink::ui::ListItem> rowItems;
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 };

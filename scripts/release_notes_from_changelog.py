@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 
-TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-cpr-vcodex$")
+TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-cpr-vcodex-steroids$")
 BREAK_RE = re.compile(r"\s*<br\s*/?>\s*", re.IGNORECASE)
 
 
@@ -34,8 +34,8 @@ def render_release_notes(changelog_path: Path, tag: str) -> str:
     changes = extract_changes(changelog_path.read_text(encoding="utf-8"), version)
     return (
         f"## Changes\n\n{changes}\n\n"
-        f"[Full changelog](https://github.com/franssjz/cpr-vcodex/blob/{tag}/CHANGELOG.md) · "
-        "[Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html)\n"
+        f"[Full changelog](https://github.com/marcoand75/cpr-vcodex-steroids/blob/{tag}/CHANGELOG.md) · "
+        "[Auto Flash](https://marcoand75.github.io/cpr-vcodex-steroids/flash.html)\n"
     )
 
 

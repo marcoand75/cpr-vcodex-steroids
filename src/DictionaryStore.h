@@ -46,6 +46,8 @@ class DictionaryStore {
     DEF_TEXT_SIZE_COUNT
   };
 
+  enum class LookupMode : uint8_t { Failover, Manual };
+
   static DictionaryStore& getInstance();
 
   void loadConfig();
@@ -63,9 +65,22 @@ class DictionaryStore {
   bool hasActiveDictionary() const;
 
   DictionaryLookupResult lookup(const std::string& rawWord, bool includeSuggestions = true);
+  DictionaryLookupResult lookupInActive(size_t activeIndex, const std::string& rawWord, bool includeSuggestions);
+  DictionaryLookupResult lookupInEntry(DictionaryEntry& entry, const std::string& rawWord, bool includeSuggestions);
   std::vector<std::string> getHistory();
   void addHistory(const std::string& word);
   void clearHistory();
+
+  const std::vector<std::string>& getActiveIfoPaths() const { return activeIfoPaths; }
+  const std::vector<std::string>& getLookupOrder() const { return lookupOrder; }
+  LookupMode getLookupMode() const { return lookupMode; }
+  bool setActiveIfoPaths(const std::vector<std::string>& paths);
+  bool setLookupOrder(const std::vector<std::string>& order);
+  bool setLookupMode(LookupMode mode);
+  std::vector<const DictionaryEntry*> getActiveEntries() const;
+  bool prepareEntry(const std::string& ifoPath, const std::function<void(int percent)>& onProgress = nullptr);
+  bool removeMissingEntries();
+  bool setEntriesOrder(const std::vector<std::string>& ifoPaths);
 
   static std::string cleanWord(const std::string& word);
 
@@ -91,6 +106,9 @@ class DictionaryStore {
   std::vector<DictionaryEntry> entries;
   DictionaryEntry activeOnlyEntry;
   std::string activeIfoPath;
+  std::vector<std::string> activeIfoPaths;
+  std::vector<std::string> lookupOrder;
+  LookupMode lookupMode = LookupMode::Failover;
   int activeIndex = -1;
   bool configLoaded = false;
   bool scanned = false;

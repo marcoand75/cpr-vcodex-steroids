@@ -1,0 +1,20 @@
+feat(memory): add boot heap baseline and main-loop memory watchdog in main.cpp
+
+Log a heap snapshot at the end of setup() so the boot baseline is visible,
+and add a lightweight pressure check in loop() that warns when free heap
+drops below 32KB or maxAlloc drops below 24KB.
+
+### Changes
+- Include MemoryBudget.h in main.cpp
+- setup(): log free/maxAlloc after boot recovery completes
+- loop(): every 1s, check ESP.getFreeHeap() and ESP.getMaxAllocHeap();
+  emit LOG_ERR when thresholds are crossed
+
+### Safety
+- No allocations in the watchdog path
+- Thresholds are conservative for ESP32-C3 with ~380KB heap and no PSRAM
+- Gives ongoing runtime assurance that memory pressure is visible in logs
+
+Build: python -X utf8 -m platformio run -e default -j 16
+RAM: 101,700 bytes (31.0%)
+Flash: 6,278,929 bytes (95.8%)

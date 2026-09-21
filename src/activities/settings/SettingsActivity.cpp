@@ -1,46 +1,44 @@
 #include "SettingsActivity.h"
 
 #include <Arduino.h>
-#include <BoardConfig.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
-#include <HalDisplay.h>
-#include <HalFrontlight.h>
 #include <HalStorage.h>
 #include <HalTiltSensor.h>
+#include <ImageRenderConfig.h>
 #include <Logging.h>
-#include <Memory.h>
+#include <Utf8.h>
 #include <WiFi.h>
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
-#include <iterator>
+#include <ctime>
 
 #include "AchievementsStore.h"
+#include "ButtonActionSelectorActivity.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
-#include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "FontDownloadActivity.h"
 #include "FontSelectionActivity.h"
 #include "KOReaderSettingsActivity.h"
-#include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
-#include "ReaderFontSizes.h"
 #include "ReadingStatsImportActivity.h"
+#include "ReaderMenuOrderActivity.h"
 #include "ReadingStatsStore.h"
 #include "SdCardFontGlobals.h"
 #include "SdFirmwareUpdateActivity.h"
+#include "SettingsList.h"
 #include "ShortcutLocationActivity.h"
 #include "ShortcutOrderActivity.h"
 #include "ShortcutVisibilityActivity.h"
-#include "SilentRestart.h"
+#include "ReaderMenuVisibilityActivity.h"
 #include "StatusBarSettingsActivity.h"
-#include "TextSettingsActivity.h"
 #include "TimeZoneSelectActivity.h"
+#include "EnumSelectorActivity.h"
 #include "activities/apps/AchievementsActivity.h"
 #include "activities/apps/BookmarksAppActivity.h"
 #include "activities/apps/FavoritesAppActivity.h"
@@ -50,347 +48,329 @@
 #include "activities/apps/ReadingProfileActivity.h"
 #include "activities/apps/ReadingStatsActivity.h"
 #include "activities/apps/ScreenCleanActivity.h"
+#include "activities/apps/ScreenSaverDirActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
-#include "activities/util/IntervalSelectionActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
+#include "components/LibraryCache.h"
 #include "components/UITheme.h"
-#include "components/UIThemeTokens.h"
-#include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
+#include "util/SleepImageUtils.h"
+#include "util/StringUtils.h"
 #include "util/TimeUtils.h"
 #include "version.h"
 
-namespace fui = freeink::ui;
+const StrId SettingsActivity::categoryNames[categoryCount] = {
+    StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER, StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM, StrId::STR_APPS};
 
 namespace {
-// ---------------------------------------------------------------------------
-// On-device setting lists.
-//
-// Device settings intentionally avoid the shared web/API settings list
-// (SettingsList.h): that list carries dynamic/web metadata and is the wrong
-// dependency for the on-device screen. Board-capability filters (touch / home
-// key / frontlight / tilt) are applied here, matching upstream's behaviour.
-// ---------------------------------------------------------------------------
+constexpr size_t SETTINGS_TAB_MAX_CHARS = 10;
 
-std::vector<StrId> buildSleepScreenValues() {
-  // Enum settings are persisted as numeric values. Assign these labels by enum
-  // value so a reordered menu or enum cannot silently swap their behavior.
-  std::vector<StrId> values(CrossPointSettings::SLEEP_SCREEN_MODE_COUNT, StrId::STR_NONE_OPT);
-  values[CrossPointSettings::DARK] = StrId::STR_DARK;
-  values[CrossPointSettings::LIGHT] = StrId::STR_LIGHT;
-  values[CrossPointSettings::CUSTOM] = StrId::STR_CUSTOM;
-  values[CrossPointSettings::COVER] = StrId::STR_COVER;
-  values[CrossPointSettings::BLANK] = StrId::STR_NONE_OPT;
-  values[CrossPointSettings::COVER_CUSTOM] = StrId::STR_COVER_CUSTOM;
-  values[CrossPointSettings::READING_DASHBOARD] = StrId::STR_READING_DASHBOARD;
-  values[CrossPointSettings::COVER_STATS] = StrId::STR_COVER_STATS;
-  values[CrossPointSettings::COVER_STATS_V2] = StrId::STR_COVER_STATS_V2;
-  values[CrossPointSettings::CUSTOM_STATS] = StrId::STR_CUSTOM_STATS;
-  values[CrossPointSettings::CUSTOM_STATS_V2] = StrId::STR_CUSTOM_STATS_V2;
-  values[CrossPointSettings::QUICK_RESUME] = StrId::STR_QUICK_RESUME;
-  values[CrossPointSettings::TRANSPARENT_CUSTOM] = StrId::STR_TRANSPARENT;
-  return values;
-}
-
-std::vector<StrId> buildUiThemeValues() {
-  std::vector<StrId> values(CrossPointSettings::UI_THEME_COUNT, StrId::STR_THEME_LYRA);
-  values[CrossPointSettings::LYRA] = StrId::STR_THEME_LYRA;
-  values[CrossPointSettings::LYRA_CUSTOM] = StrId::STR_THEME_LYRA_CUSTOM;
-  values[CrossPointSettings::LYRA_CAROUSEL] = StrId::STR_THEME_LYRA_CAROUSEL;
-  values[CrossPointSettings::CLASSIC] = StrId::STR_THEME_CLASSIC;
-  values[CrossPointSettings::ROUNDEDRAFF] = StrId::STR_THEME_ROUNDEDRAFF;
-  values[CrossPointSettings::LYRA_3_COVERS] = StrId::STR_THEME_LYRA_EXTENDED;
-  return values;
-}
-
-std::vector<StrId> buildShortPwrBtnValues() {
-  std::vector<StrId> values(CrossPointSettings::SHORT_PWRBTN_COUNT, StrId::STR_IGNORE);
-  values[CrossPointSettings::IGNORE] = StrId::STR_IGNORE;
-  values[CrossPointSettings::SLEEP] = StrId::STR_SLEEP;
-  values[CrossPointSettings::PAGE_TURN] = StrId::STR_PAGE_TURN;
-  values[CrossPointSettings::FORCE_REFRESH] = StrId::STR_FORCE_REFRESH;
-  values[CrossPointSettings::TOGGLE_STATUS_BAR] = StrId::STR_TOGGLE_STATUS_BAR;
-  values[CrossPointSettings::FOOTNOTES] = StrId::STR_FOOTNOTES;
-  values[CrossPointSettings::PWR_CONFIRM] = StrId::STR_CONFIRM;
-  // "Power = Confirm" only makes sense on touch boards (upstream gates it the
-  // same way); it is the last enum value, so trimming keeps the indices stable.
-  if (!BoardConfig::hasTouch()) values.resize(CrossPointSettings::PWR_CONFIRM);
-  return values;
-}
-
-std::vector<StrId> buildLongPressMenuValues() {
-  static constexpr StrId VALUES[] = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
-                                     StrId::STR_DICTIONARY, StrId::STR_READER_MENU};
-  // The Reader Menu option is only offered on boards with a Home key.
-  const size_t count = BoardConfig::hasHomeKey() ? std::size(VALUES) : std::size(VALUES) - 1;
-  return {VALUES, VALUES + count};
-}
-
-// Reader font size: the options are the point sizes the active family actually
-// ships (upstream's fontPointSize model, see ReaderFontSizes.h), so this row is
-// rebuilt whenever the lists are rebuilt (family changes included).
-SettingInfo buildReaderFontSizeSetting(const SdCardFontRegistry* registry) {
-  const std::vector<uint8_t> sizes = readerFontPointSizes(registry, SETTINGS.sdFontFamilyName);
-
-  // "pt" is deliberately not translated (matches TextSettingsActivity).
-  std::vector<std::string> labels;
-  labels.reserve(sizes.size());
-  for (const uint8_t pt : sizes) {
-    labels.push_back(std::to_string(pt) + " pt");
-  }
-
-  SettingInfo s;
-  s.nameId = StrId::STR_FONT_SIZE;
-  s.type = SettingType::ENUM;
-  s.enumStringValues = std::move(labels);
-  s.valueGetter = [sizes]() -> uint8_t {
-    const uint8_t pt = snapToNearestPointSize(sizes, SETTINGS.fontPointSize);
-    for (int i = 0; i < static_cast<int>(sizes.size()); i++) {
-      if (sizes[i] == pt) return static_cast<uint8_t>(i);
-    }
-    return 0;
-  };
-  s.valueSetter = [sizes](uint8_t v) {
-    if (v < sizes.size()) SETTINGS.fontPointSize = sizes[v];
-  };
-  return s;
-}
-
-std::vector<SettingInfo> buildDisplaySettings() {
-  std::vector<SettingInfo> v = {
-      SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen, buildSleepScreenValues()),
+const std::vector<SettingInfo>& getDeviceDisplaySettings() {
+  static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_SLEEP_SCREEN),
+      SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
+                        {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER, StrId::STR_NONE_OPT,
+                         StrId::STR_COVER_CUSTOM, StrId::STR_READING_DASHBOARD, StrId::STR_COVER_STATS,
+                         StrId::STR_COVER_STATS_V2, StrId::STR_CUSTOM_STATS, StrId::STR_CUSTOM_STATS_V2}),
       SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                         {StrId::STR_FIT, StrId::STR_CROP}),
       SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                         {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED}),
       SettingInfo::Toggle(StrId::STR_CLEAN_SLEEP_REFRESH, &CrossPointSettings::cleanSleepRefresh),
-      SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
-                        {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}),
+      SettingInfo::Toggle(StrId::STR_CYCLE_SCREENSAVER_ON_TAP, &CrossPointSettings::cycleScreensaverOnTap),
+
+      SettingInfo::Section(StrId::STR_SECTION_APPEARANCE),
       SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                         {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}),
-      SettingInfo::Enum(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
-                        {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15,
-                         StrId::STR_PAGES_30, StrId::STR_NEVER}),
-      SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme, buildUiThemeValues()),
+      SettingInfo::Enum(
+          StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
+          {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15, StrId::STR_PAGES_30}),
+      SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
+                        {StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_CUSTOM, StrId::STR_THEME_LYRA_CAROUSEL,
+                         StrId::STR_THEME_LYRA_MARCOAND75}),
       SettingInfo::Enum(StrId::STR_HOME_BOOK_SOURCE, &CrossPointSettings::homeBookSource,
                         {StrId::STR_RECENTS, StrId::STR_FAVORITES}),
       SettingInfo::Toggle(StrId::STR_ANTI_GHOSTING_EXPERIMENTAL, &CrossPointSettings::antiGhostingExperimental),
-      // Dark mode = inverted output polarity everywhere (upstream's "night
-      // mode"; screenInverted aliases this field).
       SettingInfo::Toggle(StrId::STR_DARK_MODE, &CrossPointSettings::darkMode),
+      SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix),
+
+      SettingInfo::Section(StrId::STR_SECTION_IMAGE_TUNING),
+      SettingInfo::Toggle(StrId::STR_IMAGE_DITHERING, &CrossPointSettings::imageDitheringEnabled),
+      SettingInfo::Toggle(StrId::STR_IMAGE_LUT, &CrossPointSettings::imageLutEnabled),
+      SettingInfo::Enum(StrId::STR_IMAGE_DITHER_ALGORITHM, &CrossPointSettings::imageDitheringAlgorithm,
+                        {StrId::STR_IMAGE_DITHER_ATKINSON, StrId::STR_IMAGE_DITHER_FLOYD}),
+      SettingInfo::Value(StrId::STR_IMAGE_THRESHOLD_BLACK, &CrossPointSettings::imageThresholdBlack, {1, 253, 1}),
+      SettingInfo::Value(StrId::STR_IMAGE_THRESHOLD_DARK, &CrossPointSettings::imageThresholdDark, {2, 254, 1}),
+      SettingInfo::Value(StrId::STR_IMAGE_THRESHOLD_LIGHT, &CrossPointSettings::imageThresholdLight, {3, 255, 1}),
+      SettingInfo::Value(StrId::STR_IMAGE_GAMMA, &CrossPointSettings::imageGamma, {5, 30, 1}),
   };
-  // The sunlight fading fix is a grayscale-waveform compensation that does not
-  // apply on touch boards / the X4 Pro / X4 Classic (plain OTP waveform).
-  if (!BoardConfig::hasTouch() && !BoardConfig::isX4Pro() && !BoardConfig::isX4Classic()) {
-    v.push_back(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix));
-  }
-#if FREEINK_CAP_FRONTLIGHT
-  if (Frontlight.present()) {
-    v.push_back(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake));
-  }
-#endif
-  return v;
+  return settings;
 }
 
-std::vector<SettingInfo> buildReaderSettings(const SdCardFontRegistry* registry) {
-  std::vector<SettingInfo> v = {
-      // Upstream's tabbed Font / Size / Layout / Style screen with live preview.
-      SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings),
-      SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts),
-      // Font family opens the fork's picker (built-in + SD families), see runAction.
+const std::vector<SettingInfo>& getDeviceReaderSettings() {
+  static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_FONT_TEXT),
+#ifdef OMIT_LEXEND
       SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
                         {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS}),
-      buildReaderFontSizeSetting(registry),
+#else
+      SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
+                        {StrId::STR_BOOKERLY, StrId::STR_NOTO_SANS, StrId::STR_LEXEND}),
+#endif
+      SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts),
+      SettingInfo::Enum(
+          StrId::STR_FONT_SIZE, &CrossPointSettings::fontSize,
+          {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE}),
       SettingInfo::Enum(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacing,
-                        {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE}),
-      SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin,
-                         {CrossPointSettings::SCREEN_MARGIN_MIN, CrossPointSettings::SCREEN_MARGIN_MAX,
-                          CrossPointSettings::SCREEN_MARGIN_STEP}),
+                        {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE}),
+      SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin, {5, 40, 5}),
       SettingInfo::Enum(StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
                         {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                          StrId::STR_BOOK_S_STYLE}),
       SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle),
       SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled),
+
+      SettingInfo::Section(StrId::STR_SECTION_READING_ENHANCEMENTS),
       SettingInfo::Enum(StrId::STR_BIONIC_READING, &CrossPointSettings::bionicReading,
                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_SUBTLE}),
-      SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
-                        {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
+      SettingInfo::Toggle(StrId::STR_GUIDE_READING, &CrossPointSettings::guideReadingEnabled),
+      SettingInfo::Enum(StrId::STR_DOTS_SPACING, &CrossPointSettings::dotsSpacing,
+                        {StrId::STR_DOTS_SPACING_STANDARD, StrId::STR_DOTS_SPACING_LARGE}),
       SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing),
       SettingInfo::Toggle(StrId::STR_FORCE_PARAGRAPH_INDENTS, &CrossPointSettings::forceParagraphIndents),
+
+      SettingInfo::Section(StrId::STR_SECTION_DISPLAY_QUALITY),
+      SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
+                        {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED, StrId::STR_LANDSCAPE_CCW}),
       SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing),
       SettingInfo::Enum(StrId::STR_TEXT_DARKNESS, &CrossPointSettings::textDarkness,
                         {StrId::STR_NORMAL, StrId::STR_LEGACY_BW, StrId::STR_DARK, StrId::STR_EXTRA_DARK}),
-      SettingInfo::Enum(StrId::STR_READER_REFRESH_MODE, &CrossPointSettings::readerRefreshMode,
-                        {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_REFRESH_MODE_FAST, StrId::STR_REFRESH_MODE_HALF,
-                         StrId::STR_REFRESH_MODE_FULL}),
-      SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
-                        {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
+SettingInfo::Enum(StrId::STR_READER_REFRESH_MODE, &CrossPointSettings::readerRefreshMode,
+                          {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_REFRESH_MODE_FAST, StrId::STR_REFRESH_MODE_HALF,
+                           StrId::STR_REFRESH_MODE_FULL}),
+        SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
+                          {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS}),
+        SettingInfo::Enum(StrId::STR_EPUB_RENDER_MODE, &CrossPointSettings::epubRenderMode,
+                          {StrId::STR_STATE_DEFAULT, StrId::STR_BALANCED, StrId::STR_LIGHT}),
+        SettingInfo::Section(StrId::STR_SECTION_READER_MENU),
+        SettingInfo::Action(StrId::STR_READER_MENU_VISIBILITY, SettingAction::ReaderMenuVisibility),
+        SettingInfo::Action(StrId::STR_READER_MENU_ORDER, SettingAction::ReaderMenuOrder),
+        SettingInfo::Section(StrId::STR_CUSTOMISE_STATUS_BAR),
+        SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar),
   };
-  // No dictionary row here: the fork's dictionary picker lives in the
-  // Dictionary app (DICTIONARIES is authoritative, not SETTINGS.dictionaryName).
-  if (BoardConfig::hasTouch()) {
-    // The toolbar reader menu is touch-first chrome: button boards keep the
-    // classic list menu, so the style choice is hidden there.
-    v.push_back(SettingInfo::Enum(StrId::STR_READER_MENU_STYLE, &CrossPointSettings::readerMenuStyle,
-                                  {StrId::STR_MENU_STYLE_LIST, StrId::STR_MENU_STYLE_TOOLBAR}));
-  }
-  v.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-  return v;
+  return settings;
 }
 
-std::vector<SettingInfo> buildControlsSettings() {
-  std::vector<SettingInfo> v;
-  if (!BoardConfig::hasTouch()) {
-    v.push_back(SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
-  }
-  v.push_back(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
-                                {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}));
-  if (BoardConfig::hasTouch()) {
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_TOUCH_READER_CONTROLS, &CrossPointSettings::touchReaderControls,
-        {StrId::STR_STATE_OFF, StrId::STR_STATE_TAP, StrId::STR_STATE_SWIPE, StrId::STR_STATE_INVERTED_TAP}));
-  }
-  // The reader-menu gesture choice only makes sense where the menu stays
-  // reachable without the tap and the bottom edge is free (the capacitive
-  // Home key); everywhere else the setting stays at its Tap default.
-  if (BoardConfig::hasHomeKey()) {
-    v.push_back(SettingInfo::Enum(StrId::STR_SHOW_READER_MENU, &CrossPointSettings::showReaderMenu,
-                                  {StrId::STR_STATE_OFF, StrId::STR_STATE_TAP, StrId::STR_STATE_SWIPE_UP}));
-  }
-  if (!BoardConfig::hasTouch()) {
-    v.push_back(SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION,
-                                    &CrossPointSettings::frontButtonFollowOrientation));
-  }
-  v.push_back(SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
-                                {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                 StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION}));
-  v.push_back(SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
-                                buildLongPressMenuValues()));
-  v.push_back(SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn, buildShortPwrBtnValues()));
-  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
-    v.push_back(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack));
-  }
-  if (!BoardConfig::hasTouch()) {
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser));
-  }
-  if (halTiltSensor.isAvailable()) {
-    v.push_back(SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
-                                  {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}));
-  }
-  return v;
+const std::vector<SettingInfo>& getDeviceControlsSettings() {
+  static const std::vector<SettingInfo> settings = [] {
+    std::vector<SettingInfo> result = {
+        SettingInfo::Section(StrId::STR_SECTION_BUTTONS),
+        SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons),
+        SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
+                          {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV}),
+        SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, &CrossPointSettings::frontButtonFollowOrientation),
+        // Legacy long-press settings (kept for backward compat, hidden from UI)
+        // New per-directional settings below
+        SettingInfo::Enum(StrId::STR_LONG_PRESS_UP, &CrossPointSettings::longPressUpBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_LONG_PRESS_DOWN, &CrossPointSettings::longPressDownBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_FRONT_LONG_PRESS_LEFT, &CrossPointSettings::frontLongPressLeftBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_FRONT_LONG_PRESS_RIGHT, &CrossPointSettings::frontLongPressRightBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
+                          {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
+                           StrId::STR_TOGGLE_STATUS_BAR,
+                           StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_DARK_MODE,
+                           StrId::STR_BTN_ACTION_FULL_REFRESH, StrId::STR_BTN_ACTION_READER_SETTINGS}),
+        SettingInfo::Enum(StrId::STR_SELECT_LONG_PRESS, &CrossPointSettings::selectLongPressBehavior,
+                          {StrId::STR_BTN_ACTION_OFF, StrId::STR_BTN_ACTION_ADD_CLIPPING,
+                           StrId::STR_BTN_ACTION_VIEW_CLIPPINGS, StrId::STR_BTN_ACTION_TOGGLE_BOOKMARK,
+                           StrId::STR_BTN_ACTION_VIEW_BOOKMARKS, StrId::STR_BTN_ACTION_LOOKUP_WORD,
+                           StrId::STR_BTN_ACTION_DICTIONARY, StrId::STR_BTN_ACTION_CHAPTER_SKIP,
+                           StrId::STR_BTN_ACTION_ORIENTATION, StrId::STR_BTN_ACTION_FONTSIZE,
+                           StrId::STR_BTN_ACTION_DARK_MODE, StrId::STR_BTN_ACTION_FULL_REFRESH,
+                           StrId::STR_BTN_ACTION_READER_SETTINGS, StrId::STR_BTN_ACTION_READING_TIME}),
+    };
+    if (halTiltSensor.isAvailable()) {
+      result.push_back(SettingInfo::Section(StrId::STR_SECTION_SENSORS));
+      result.push_back(SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
+                                         {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}));
+    }
+    return result;
+  }();
+  return settings;
 }
 
-std::vector<SettingInfo> buildSystemSettings() {
-  return {
-      // Minutes picker (IntervalSelectionActivity), see openSleepTimeoutPicker.
-      SettingInfo::Value(
-          StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
-          {CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1}),
+const std::vector<SettingInfo>& getDeviceSystemSettings() {
+  static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SECTION_DEVICE),
+      SettingInfo::Enum(StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeout,
+                        {StrId::STR_MIN_1, StrId::STR_MIN_5, StrId::STR_MIN_10, StrId::STR_MIN_15, StrId::STR_MIN_30}),
       SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles),
-      SettingInfo::Toggle(StrId::STR_HIDE_FILE_EXTENSION, &CrossPointSettings::hideFileExtension),
-      SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents),
+      SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language),
+
+      SettingInfo::Section(StrId::STR_SECTION_NETWORK_SYNC),
       SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network),
       SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync),
       SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
                         {StrId::STR_AUTHOR_TITLE, StrId::STR_TITLE_AUTHOR}),
       SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser),
+      // Global Wi-Fi connection policy (issue #90): Auto = network operations auto-connect to a
+      // saved in-range network; Manual = always show the selectable network list.
+      SettingInfo::Enum(StrId::STR_CHOOSE_WIFI, &CrossPointSettings::syncDayWifiChoice,
+                        {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_MANUAL}),
+
+      SettingInfo::Section(StrId::STR_SECTION_MAINTENANCE),
       SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache),
-      // OTA fetches this board's own release asset (see OtaUpdater); boards whose
-      // asset isn't published yet just report no update available.
       SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates),
       SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate),
-      SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language),
-      SettingInfo::Action(StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts),
   };
+  return settings;
 }
 
-// Fork: the Apps tab. On X3 with a synced RTC, the Sync Day action becomes a
-// clock sync and Display Day becomes a date/time mode picker.
-std::vector<SettingInfo> buildAppSettings() {
-  const bool rtcClockActive = SETTINGS.isHardwareRtcAutoDayClockActive();
-  std::vector<SettingInfo> v;
-  v.reserve(48);
-  v.push_back(SettingInfo::Section(StrId::STR_SYNC_DAY));
-  if (rtcClockActive) {
-    v.push_back(SettingInfo::Action(StrId::STR_CLOCK_SYNC_NOW, SettingAction::ClockSync));
-  } else {
-    v.push_back(SettingInfo::Action(StrId::STR_SYNC_DAY, SettingAction::SyncDay));
-  }
-  v.push_back(SettingInfo::Action(StrId::STR_TIME_ZONE, SettingAction::TimeZone));
-  if (rtcClockActive) {
-    v.push_back(SettingInfo::Enum(StrId::STR_DISPLAY_DAY_TIME, &CrossPointSettings::displayDay,
-                                  {StrId::STR_STATE_OFF, StrId::STR_DISPLAY_DATE_ONLY, StrId::STR_DISPLAY_TIME_ONLY,
-                                   StrId::STR_DISPLAY_DAY_AND_TIME}));
-  } else {
-    v.push_back(SettingInfo::Toggle(StrId::STR_DISPLAY_DAY, &CrossPointSettings::displayDay));
-  }
-  v.push_back(SettingInfo::Enum(StrId::STR_CHOOSE_WIFI, &CrossPointSettings::syncDayWifiChoice,
-                                {StrId::STR_REFRESH_MODE_AUTO, StrId::STR_MANUAL}));
-  if (!rtcClockActive) {
-    v.push_back(SettingInfo::Enum(StrId::STR_SYNC_DAY_REMINDER_EVERY, &CrossPointSettings::syncDayReminderStarts,
-                                  {StrId::STR_STATE_OFF, StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30,
-                                   StrId::STR_NUM_40, StrId::STR_NUM_50, StrId::STR_NUM_60}));
-  }
-  v.push_back(SettingInfo::Enum(
-      StrId::STR_DATE_FORMAT, &CrossPointSettings::dateFormat,
-      {StrId::STR_DATE_FORMAT_DD_MM_YYYY, StrId::STR_DATE_FORMAT_MM_DD_YYYY, StrId::STR_DATE_FORMAT_YYYY_MM_DD}));
-
-  v.push_back(SettingInfo::Section(StrId::STR_READING_STATS));
-  v.push_back(SettingInfo::Action(StrId::STR_READING_STATS, SettingAction::ReadingStats));
-  v.push_back(SettingInfo::Enum(StrId::STR_DAILY_GOAL, &CrossPointSettings::dailyGoalTarget,
-                                {StrId::STR_MIN_15, StrId::STR_MIN_30, StrId::STR_MIN_45, StrId::STR_MIN_60}));
-  v.push_back(SettingInfo::Enum(
-      StrId::STR_READING_STATS_AUTOBACKUP, &CrossPointSettings::readingStatsAutoBackup,
-      {StrId::STR_STATE_OFF, StrId::STR_NUM_1, StrId::STR_NUM_7, StrId::STR_NUM_14, StrId::STR_NUM_21}));
-  v.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_STATS_BACKUPS, SettingAction::ClearReadingStatsBackups));
-  v.push_back(SettingInfo::Toggle(StrId::STR_SHOW_AFTER_READING, &CrossPointSettings::showStatsAfterReading));
-  v.push_back(SettingInfo::Toggle(StrId::STR_MOVE_COMPLETED_BOOKS, &CrossPointSettings::moveCompletedBooks));
-  v.push_back(SettingInfo::Action(StrId::STR_RESET_READING_STATS, SettingAction::ResetReadingStats));
-  v.push_back(SettingInfo::Action(StrId::STR_EXPORT_READING_STATS, SettingAction::ExportReadingStats));
-  v.push_back(SettingInfo::Action(StrId::STR_IMPORT_READING_STATS, SettingAction::ImportReadingStats));
-  v.push_back(SettingInfo::Action(StrId::STR_READING_HEATMAP, SettingAction::ReadingHeatmap));
-  v.push_back(SettingInfo::Action(StrId::STR_READING_PROFILE, SettingAction::ReadingProfile));
-
-  v.push_back(SettingInfo::Section(StrId::STR_ACHIEVEMENTS));
-  v.push_back(SettingInfo::Action(StrId::STR_ACHIEVEMENTS, SettingAction::Achievements));
-  v.push_back(SettingInfo::Toggle(StrId::STR_ENABLE_ACHIEVEMENTS, &CrossPointSettings::achievementsEnabled));
-  v.push_back(SettingInfo::Toggle(StrId::STR_ACHIEVEMENT_POPUPS, &CrossPointSettings::achievementPopups));
-  v.push_back(SettingInfo::Action(StrId::STR_RESET_ACHIEVEMENTS, SettingAction::ResetAchievements));
-  v.push_back(SettingInfo::Action(StrId::STR_SYNC_WITH_PREV_STATS, SettingAction::SyncAchievementsFromStats));
-
-  v.push_back(SettingInfo::Section(StrId::STR_APPS));
-  v.push_back(SettingInfo::Action(StrId::STR_HIGHLIGHTS, SettingAction::Bookmarks));
-  v.push_back(SettingInfo::Action(StrId::STR_FAVORITES, SettingAction::Favorites));
-  v.push_back(SettingInfo::Action(StrId::STR_SCREEN_CLEAN, SettingAction::ScreenClean));
-  v.push_back(SettingInfo::Action(StrId::STR_SLEEP, SettingAction::SleepApp));
-  v.push_back(SettingInfo::Action(StrId::STR_IF_FOUND_RETURN_ME, SettingAction::IfFound));
-
-  v.push_back(SettingInfo::Section(StrId::STR_FLASHCARDS));
-  v.push_back(SettingInfo::Action(StrId::STR_FLASHCARDS, SettingAction::Flashcards));
-  v.push_back(
+const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
+  static const std::vector<SettingInfo> settings = {
+      SettingInfo::Section(StrId::STR_SYNC_DAY),
+      SettingInfo::Action(StrId::STR_SYNC_DAY, SettingAction::SyncDay),
+      SettingInfo::Action(StrId::STR_TIME_ZONE, SettingAction::TimeZone),
+      SettingInfo::Toggle(StrId::STR_DISPLAY_DAY, &CrossPointSettings::displayDay),
+      SettingInfo::Enum(StrId::STR_SYNC_DAY_REMINDER_EVERY, &CrossPointSettings::syncDayReminderStarts,
+                        {StrId::STR_STATE_OFF, StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30,
+                         StrId::STR_NUM_40, StrId::STR_NUM_50, StrId::STR_NUM_60}),
+      SettingInfo::Enum(
+          StrId::STR_DATE_FORMAT, &CrossPointSettings::dateFormat,
+          {StrId::STR_DATE_FORMAT_DD_MM_YYYY, StrId::STR_DATE_FORMAT_MM_DD_YYYY, StrId::STR_DATE_FORMAT_YYYY_MM_DD}),
+      SettingInfo::Section(StrId::STR_READING_STATS),
+      SettingInfo::Action(StrId::STR_READING_STATS, SettingAction::ReadingStats),
+      SettingInfo::Enum(StrId::STR_DAILY_GOAL, &CrossPointSettings::dailyGoalTarget,
+                        {StrId::STR_MIN_15, StrId::STR_MIN_30, StrId::STR_MIN_45, StrId::STR_MIN_60}),
+      SettingInfo::Enum(
+          StrId::STR_READING_STATS_AUTOBACKUP, &CrossPointSettings::readingStatsAutoBackup,
+          {StrId::STR_STATE_OFF, StrId::STR_NUM_1, StrId::STR_NUM_7, StrId::STR_NUM_14, StrId::STR_NUM_21}),
+      SettingInfo::Action(StrId::STR_CLEAR_READING_STATS_BACKUPS, SettingAction::ClearReadingStatsBackups),
+      SettingInfo::Toggle(StrId::STR_SHOW_AFTER_READING, &CrossPointSettings::showStatsAfterReading),
+      SettingInfo::Toggle(StrId::STR_MOVE_COMPLETED_BOOKS, &CrossPointSettings::moveCompletedBooks),
+      SettingInfo::Action(StrId::STR_RESET_READING_STATS, SettingAction::ResetReadingStats),
+      SettingInfo::Action(StrId::STR_EXPORT_READING_STATS, SettingAction::ExportReadingStats),
+      SettingInfo::Action(StrId::STR_IMPORT_READING_STATS, SettingAction::ImportReadingStats),
+      SettingInfo::Action(StrId::STR_READING_HEATMAP, SettingAction::ReadingHeatmap),
+      SettingInfo::Action(StrId::STR_READING_PROFILE, SettingAction::ReadingProfile),
+      SettingInfo::Section(StrId::STR_ACHIEVEMENTS),
+      SettingInfo::Action(StrId::STR_ACHIEVEMENTS, SettingAction::Achievements),
+      SettingInfo::Toggle(StrId::STR_ENABLE_ACHIEVEMENTS, &CrossPointSettings::achievementsEnabled),
+      SettingInfo::Toggle(StrId::STR_ACHIEVEMENT_POPUPS, &CrossPointSettings::achievementPopups),
+      SettingInfo::Action(StrId::STR_RESET_ACHIEVEMENTS, SettingAction::ResetAchievements),
+      SettingInfo::Action(StrId::STR_SYNC_WITH_PREV_STATS, SettingAction::SyncAchievementsFromStats),
+      SettingInfo::Section(StrId::STR_APPS),
+      SettingInfo::Action(StrId::STR_BOOKMARKS, SettingAction::Bookmarks),
+      SettingInfo::Action(StrId::STR_FAVORITES, SettingAction::Favorites),
+      SettingInfo::Action(StrId::STR_SCREEN_CLEAN, SettingAction::ScreenClean),
+      SettingInfo::Action(StrId::STR_SLEEP, SettingAction::SleepApp),
+      SettingInfo::Action(StrId::STR_IF_FOUND_RETURN_ME, SettingAction::IfFound),
+      SettingInfo::Section(StrId::STR_MENU_LIBRARY),
+      SettingInfo::Enum(StrId::STR_LIBRARY_LAYOUT, &CrossPointSettings::libraryLayout,
+                        {StrId::STR_LIBRARY_4X4, StrId::STR_LIBRARY_3X3, StrId::STR_LIBRARY_2X2}),
+      SettingInfo::Enum(StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
+                        {StrId::STR_ALL_BOOKS, StrId::STR_FAVOURITES, StrId::STR_LATEST_READ}),
+      SettingInfo::Enum(StrId::STR_LIBRARY_UPDATE_MODE, &CrossPointSettings::libraryUpdateMode,
+                        {StrId::STR_LIBRARY_UPDATE_MANUAL, StrId::STR_LIBRARY_UPDATE_AUTO}),
+      SettingInfo::Toggle(StrId::STR_LIBRARY_FOLDER_COLLECTIONS, &CrossPointSettings::libraryFolderCollections),
+      SettingInfo::Toggle(StrId::STR_LIBRARY_METADATA_SERIES, &CrossPointSettings::libraryMetadataSeries),
+      SettingInfo::String(StrId::STR_LIBRARY_ROOT_DIR, SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir)),
+      SettingInfo::Action(StrId::STR_UPDATE_LIBRARY, SettingAction::UpdateLibrary),
+      SettingInfo::Action(StrId::STR_REBUILD_LIBRARY, SettingAction::RebuildLibrary),
+      SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers),
+      SettingInfo::Action(StrId::STR_BATCH_GENERATE_COVERS, SettingAction::BatchGenerateCovers),
+      SettingInfo::Section(StrId::STR_SCREENSAVER),
+      SettingInfo::Action(StrId::STR_SCREENSAVER_DIRECTORY, SettingAction::ScreenSaverDir),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_INTERVAL, &CrossPointSettings::screenSaverInterval,
+                        {StrId::STR_SCREENSAVER_INTERVAL_1M, StrId::STR_SCREENSAVER_INTERVAL_5M,
+                         StrId::STR_SCREENSAVER_INTERVAL_15M, StrId::STR_SCREENSAVER_INTERVAL_30M,
+                         StrId::STR_SCREENSAVER_INTERVAL_1H, StrId::STR_SCREENSAVER_INTERVAL_2H,
+                         StrId::STR_SCREENSAVER_INTERVAL_4H, StrId::STR_SCREENSAVER_INTERVAL_8H}),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_WAKE_BUTTON, &CrossPointSettings::screenSaverWakeButton,
+                        {StrId::STR_SCREENSAVER_WAKE_ANY, StrId::STR_SCREENSAVER_WAKE_BACK,
+                         StrId::STR_SCREENSAVER_WAKE_CONFIRM, StrId::STR_SCREENSAVER_WAKE_LEFT,
+                         StrId::STR_SCREENSAVER_WAKE_RIGHT, StrId::STR_SCREENSAVER_WAKE_UP,
+                         StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER,
+                         StrId::STR_SCREENSAVER_WAKE_PAGE_BACK, StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD}),
+      SettingInfo::Section(StrId::STR_SCREENSAVER_READER_SECTION),
+      SettingInfo::Action(StrId::STR_SCREENSAVER_READER_DIR, SettingAction::ScreenSaverReaderDir),
+      SettingInfo::Toggle(StrId::STR_SCREENSAVER_REPLACE_SLEEP, &CrossPointSettings::screenSaverReplaceSleep),
+      SettingInfo::Section(StrId::STR_SCREENSAVER_TEXT_SECTION),
+      SettingInfo::String(StrId::STR_SCREENSAVER_TEXT, SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText)),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_FONT_SIZE_OPT, &CrossPointSettings::screenSaverFontSize,
+                        {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE}),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_TEXT_POSITION_OPT, &CrossPointSettings::screenSaverTextPosition,
+                        {StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
+                         StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,
+                         StrId::STR_SCREENSAVER_TEXT_POS_CENTER, StrId::STR_SCREENSAVER_TEXT_POS_RANDOM}),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_TEXT_STYLE_OPT, &CrossPointSettings::screenSaverTextStyle,
+                        {StrId::STR_SCREENSAVER_TEXT_WHITE, StrId::STR_SCREENSAVER_TEXT_BLACK,
+                         StrId::STR_SCREENSAVER_TEXT_WHITE_OUTLINED, StrId::STR_SCREENSAVER_TEXT_BLACK_OUTLINED}),
+      SettingInfo::Toggle(StrId::STR_SCREENSAVER_SHOW_PANEL, &CrossPointSettings::screenSaverShowPanel),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_PANEL_COLOR, &CrossPointSettings::screenSaverPanelColor,
+                        {StrId::STR_DARK, StrId::STR_LIGHT}),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_PANEL_OPACITY, &CrossPointSettings::screenSaverPanelOpacity,
+                        {StrId::STR_SCREENSAVER_OPACITY_25, StrId::STR_SCREENSAVER_OPACITY_50,
+                         StrId::STR_SCREENSAVER_OPACITY_75, StrId::STR_SCREENSAVER_OPACITY_100}),
+      SettingInfo::Enum(StrId::STR_SCREENSAVER_MIN_BATTERY, &CrossPointSettings::screenSaverMinBattery,
+                         {StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20,
+                          StrId::STR_SCREENSAVER_BAT_30, StrId::STR_SCREENSAVER_BAT_40,
+                          StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
+                           StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80,
+                           StrId::STR_SCREENSAVER_BAT_90}),
+      SettingInfo::Section(StrId::STR_FLASHCARDS),
+      SettingInfo::Action(StrId::STR_FLASHCARDS, SettingAction::Flashcards),
       SettingInfo::Enum(StrId::STR_STUDY_MODE, &CrossPointSettings::flashcardStudyMode,
-                        {StrId::STR_DUE, StrId::STR_SCHEDULED, StrId::STR_RANDOM_PRACTICE, StrId::STR_SEQUENTIAL}));
-  v.push_back(
+                        {StrId::STR_DUE, StrId::STR_SCHEDULED, StrId::STR_RANDOM_PRACTICE, StrId::STR_SEQUENTIAL}),
       SettingInfo::Enum(StrId::STR_SESSION_SIZE, &CrossPointSettings::flashcardSessionSize,
-                        {StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30, StrId::STR_NUM_50, StrId::STR_ALL}));
-
-  v.push_back(SettingInfo::Section(StrId::STR_SHORTCUTS_SECTION));
-  v.push_back(SettingInfo::Action(StrId::STR_SHORTCUT_LOCATION, SettingAction::ShortcutLocation));
-  v.push_back(SettingInfo::Action(StrId::STR_SHORTCUT_VISIBILITY, SettingAction::ShortcutVisibility));
-  v.push_back(SettingInfo::Action(StrId::STR_ORDER_HOME_SHORTCUTS, SettingAction::OrderHomeShortcuts));
-  v.push_back(SettingInfo::Action(StrId::STR_ORDER_APPS_SHORTCUTS, SettingAction::OrderAppsShortcuts));
-  return v;
+                        {StrId::STR_NUM_10, StrId::STR_NUM_20, StrId::STR_NUM_30, StrId::STR_NUM_50, StrId::STR_ALL}),
+      SettingInfo::Section(StrId::STR_SHORTCUTS_SECTION),
+      SettingInfo::Action(StrId::STR_SHORTCUT_LOCATION, SettingAction::ShortcutLocation),
+      SettingInfo::Action(StrId::STR_SHORTCUT_VISIBILITY, SettingAction::ShortcutVisibility),
+      SettingInfo::Action(StrId::STR_ORDER_HOME_SHORTCUTS, SettingAction::OrderHomeShortcuts),
+      SettingInfo::Action(StrId::STR_ORDER_APPS_SHORTCUTS, SettingAction::OrderAppsShortcuts),
+  };
+  return settings;
 }
-
-// ---------------------------------------------------------------------------
-// Value-text helpers (fork).
-// ---------------------------------------------------------------------------
 
 std::string getReadingStatsExportPath() { return "/exports/stats_exported"; }
 
@@ -402,17 +382,7 @@ std::string fileNameFromPath(const std::string& path) {
   return path.substr(pos + 1);
 }
 
-std::string getLatestReadingStatsImportPath() {
-  const auto paths = ReadingStatsImportActivity::getImportPaths();
-  return paths.empty() ? std::string() : paths.front();
-}
-
 std::string getReadingStatsExportFileName() { return fileNameFromPath(getReadingStatsExportPath()); }
-
-std::string getLatestReadingStatsImportFileName() {
-  const std::string path = getLatestReadingStatsImportPath();
-  return path.empty() ? std::string() : fileNameFromPath(path);
-}
 
 std::string getNetworkSettingValueText() {
   const wifi_mode_t wifiMode = WiFi.getMode();
@@ -429,7 +399,7 @@ std::string getNetworkSettingValueText() {
 }
 
 std::string getShortcutLocationSettingValueText() {
-  int homeCount = 1;  // Apps hub is always in Home.
+  int homeCount = 1;
   int appsCount = 0;
   for (const auto& definition : getShortcutDefinitions()) {
     const auto location = static_cast<CrossPointSettings::SHORTCUT_LOCATION>(SETTINGS.*(definition.locationPtr));
@@ -456,145 +426,215 @@ std::string getShortcutOrderSettingValueText(const ShortcutOrderGroup group) {
   return std::to_string(getShortcutOrderEntries(group).size());
 }
 
-std::string getActionValueText(const SettingInfo& setting) {
-  switch (setting.action) {
-    case SettingAction::Network:
-      return getNetworkSettingValueText();
-    case SettingAction::CheckForUpdates:
-      return CROSSPOINT_VERSION;
-    case SettingAction::Language:
-      return I18N.getLanguageName(I18N.getLanguage());
-    case SettingAction::TimeZone:
-      return TimeUtils::getCurrentTimeZoneLabel();
-    case SettingAction::ReadingStats: {
-      const auto* definition = findShortcutDefinition(ShortcutId::ReadingStats);
-      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
-    }
-    case SettingAction::Achievements: {
-      const auto* definition = findShortcutDefinition(ShortcutId::Achievements);
-      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
-    }
-    case SettingAction::Flashcards: {
-      const auto* definition = findShortcutDefinition(ShortcutId::Flashcards);
-      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
-    }
-    case SettingAction::ScreenClean: {
-      const auto* definition = findShortcutDefinition(ShortcutId::ScreenClean);
-      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
-    }
-    case SettingAction::SleepApp: {
-      const auto* definition = findShortcutDefinition(ShortcutId::Sleep);
-      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
-    }
-    case SettingAction::ShortcutLocation:
-      return getShortcutLocationSettingValueText();
-    case SettingAction::ShortcutVisibility:
-      return getShortcutVisibilitySettingValueText();
-    case SettingAction::OrderHomeShortcuts:
-      return getShortcutOrderSettingValueText(ShortcutOrderGroup::Home);
-    case SettingAction::OrderAppsShortcuts:
-      return getShortcutOrderSettingValueText(ShortcutOrderGroup::Apps);
-    // The export/import rows show the file name they act on.
-    case SettingAction::ExportReadingStats:
-      return getReadingStatsExportFileName();
-    case SettingAction::ImportReadingStats:
-      return getLatestReadingStatsImportFileName();
-    default:
-      return "";
-  }
+std::string getLatestReadingStatsImportPath() {
+  const auto paths = ReadingStatsImportActivity::getImportPaths();
+  return paths.empty() ? std::string() : paths.front();
 }
+
+std::string getLatestReadingStatsImportFileName() {
+  const std::string path = getLatestReadingStatsImportPath();
+  return path.empty() ? std::string() : fileNameFromPath(path);
+}
+
+size_t utf8CodepointCount(const std::string& text) {
+  size_t count = 0;
+  const unsigned char* ptr = reinterpret_cast<const unsigned char*>(text.c_str());
+  while (*ptr != '\0') {
+    utf8NextCodepoint(&ptr);
+    ++count;
+  }
+  return count;
+}
+
+std::string utf8LimitChars(std::string text, const size_t maxChars) {
+  const size_t count = utf8CodepointCount(text);
+  if (count <= maxChars) {
+    return text;
+  }
+  utf8TruncateChars(text, count - maxChars);
+  return text;
+}
+
+std::string getSettingValueText(const SettingInfo& setting) {
+  if (setting.nameId == StrId::STR_FONT_FAMILY && SETTINGS.sdFontFamilyName[0] != '\0') {
+    return SETTINGS.sdFontFamilyName;
+  }
+  if (setting.type == SettingType::STRING && setting.stringOffset != 0) {
+    const char* strPtr = (const char*)&SETTINGS + setting.stringOffset;
+    return std::string(strPtr);
+  }
+  if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
+    const bool value = SETTINGS.*(setting.valuePtr);
+    return value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  }
+  if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
+    if (setting.enumValues.empty()) {
+      return "";
+    }
+    const uint8_t value = SETTINGS.*(setting.valuePtr);
+    const size_t safeIndex = std::min<size_t>(value, setting.enumValues.size() - 1);
+    return I18N.get(setting.enumValues[safeIndex]);
+  }
+  if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
+    const uint8_t value = SETTINGS.*(setting.valuePtr);
+    uint8_t defaultVal = 0;
+    bool hasDefault = false;
+    if (setting.valuePtr == &CrossPointSettings::imageThresholdBlack) {
+      defaultVal = 50; hasDefault = true;
+    } else if (setting.valuePtr == &CrossPointSettings::imageThresholdDark) {
+      defaultVal = 120; hasDefault = true;
+    } else if (setting.valuePtr == &CrossPointSettings::imageThresholdLight) {
+      defaultVal = 200; hasDefault = true;
+    } else if (setting.valuePtr == &CrossPointSettings::imageGamma) {
+      defaultVal = 15; hasDefault = true;
+    }
+    if (hasDefault) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%u  (%s: %u)", value, tr(STR_DEFAULT_VALUE), defaultVal);
+      return std::string(buf);
+    }
+    return std::to_string(value);
+  }
+  if (setting.type == SettingType::ACTION && setting.action == SettingAction::TimeZone) {
+    return TimeUtils::getCurrentTimeZoneLabel();
+  }
+  if (setting.type == SettingType::ACTION) {
+    switch (setting.action) {
+      case SettingAction::Network:
+        return getNetworkSettingValueText();
+      case SettingAction::CheckForUpdates:
+        return CROSSPOINT_VERSION;
+      case SettingAction::Language:
+        return I18N.getLanguageName(I18N.getLanguage());
+      case SettingAction::ReadingStats: {
+        const auto* definition = findShortcutDefinition(ShortcutId::ReadingStats);
+        return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::Achievements: {
+        const auto* definition = findShortcutDefinition(ShortcutId::Achievements);
+        return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::Flashcards: {
+        const auto* definition = findShortcutDefinition(ShortcutId::Flashcards);
+        return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::ScreenClean: {
+        const auto* definition = findShortcutDefinition(ShortcutId::ScreenClean);
+        return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::SleepApp: {
+        const auto* definition = findShortcutDefinition(ShortcutId::Sleep);
+        return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+      }
+      case SettingAction::ScreenSaverDir: {
+        const std::string orderLabel = SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SHUFFLE
+                                           ? tr(STR_SHUFFLE)
+                                           : tr(STR_SEQUENTIAL);
+        if (SETTINGS.screenSaverDirectory[0] == '\0') {
+          return orderLabel;
+        }
+        return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverDirectory) + " - " + orderLabel;
+      }
+      case SettingAction::ScreenSaverReaderDir: {
+        const std::string orderLabel = SETTINGS.screenSaverReaderOrder == CrossPointSettings::SCREENSAVER_SHUFFLE
+                                           ? tr(STR_SHUFFLE)
+                                           : tr(STR_SEQUENTIAL);
+        if (SETTINGS.screenSaverReaderDir[0] == '\0') {
+          return orderLabel;
+        }
+        return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverReaderDir) + " - " + orderLabel;
+      }
+      case SettingAction::ShortcutLocation:
+        return getShortcutLocationSettingValueText();
+      case SettingAction::ShortcutVisibility:
+        return getShortcutVisibilitySettingValueText();
+      case SettingAction::OrderHomeShortcuts:
+        return getShortcutOrderSettingValueText(ShortcutOrderGroup::Home);
+      case SettingAction::OrderAppsShortcuts:
+        return getShortcutOrderSettingValueText(ShortcutOrderGroup::Apps);
+      default:
+        break;
+    }
+  }
+  return "";
+}
+
+const char* getSettingNameText(const SettingInfo& setting) { return I18N.get(setting.nameId); }
+
+void appendPrewarmText(std::string& text, const char* value) {
+  if (value == nullptr || value[0] == '\0') {
+    return;
+  }
+  text += value;
+  text += '\n';
+}
+
+void appendPrewarmText(std::string& text, const std::string& value) { appendPrewarmText(text, value.c_str()); }
 }  // namespace
 
-SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Settings", renderer, mappedInput) {}
-
-void SettingsActivity::rebuildSettingsLists() {
-  // Pick up any fonts uploaded/deleted over the web server since the last
-  // reader activity ran — otherwise the font-family picker shows a stale list.
-  sdFontSystem.refreshIfDirty();
-
-  displaySettings = buildDisplaySettings();
-  readerSettings = buildReaderSettings(&sdFontSystem.registry());
-  controlsSettings = buildControlsSettings();
-  systemSettings = buildSystemSettings();
-  appSettings = buildAppSettings();
-
-  selectCategory(selectedCategoryIndex);
+void SettingsActivity::onEnter() {
+  Activity::onEnter();
+  buildSettingsLists();
+  selectedCategoryIndex = 0;
+  selectedSettingIndex = 0;
+  enterCategory(0);
+  requestUpdate();
 }
 
-void SettingsActivity::onEnter() {
-  UiTabListActivity::onEnter();
+void SettingsActivity::buildSettingsLists() {
+  if (settingsListsBuilt) {
+    return;
+  }
+  const auto& deviceDisplay = getDeviceDisplaySettings();
+  const auto& deviceReader = getDeviceReaderSettings();
+  const auto& deviceControls = getDeviceControlsSettings();
+  const auto& deviceSystem = getDeviceSystemSettings();
+  const auto& deviceApps = getDeviceOnlyAppSettings();
+  displaySettings.clear();
+  readerSettings.clear();
+  controlsSettings.clear();
+  systemSettings.clear();
+  appSettings.clear();
 
-  // Reset selection to first category (ring position 0, the tab bar, comes
-  // from the base's per-tab nav reset)
-  selectedCategoryIndex = 0;
-  preserveQuickResumeTimeoutOn =
-      SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-  quickResumeTimeoutAutoEnabled = false;
-  syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
+  displaySettings.reserve(deviceDisplay.size());
+  readerSettings.reserve(deviceReader.size());
+  controlsSettings.reserve(deviceControls.size());
+  systemSettings.reserve(deviceSystem.size());
+  appSettings.reserve(deviceApps.size());
 
-  rebuildSettingsLists();
+  for (const auto& setting : deviceDisplay) { displaySettings.push_back(&setting); }
+  for (const auto& setting : deviceReader) { readerSettings.push_back(&setting); }
+  for (const auto& setting : deviceControls) { controlsSettings.push_back(&setting); }
+  for (const auto& setting : deviceSystem) { systemSettings.push_back(&setting); }
+  for (const auto& setting : deviceApps) { appSettings.push_back(&setting); }
+  settingsListsBuilt = true;
 }
 
 void SettingsActivity::onExit() {
   Activity::onExit();
-
-  UITheme::getInstance().reload();  // Re-apply theme in case it was changed
+  UITheme::getInstance().reload();
 }
 
-void SettingsActivity::selectCategory(const int categoryIndex) {
+void SettingsActivity::enterCategory(const int categoryIndex) {
   selectedCategoryIndex = categoryIndex;
   switch (selectedCategoryIndex) {
-    case 0:
-      currentSettings = &displaySettings;
-      break;
-    case 1:
-      currentSettings = &readerSettings;
-      break;
-    case 2:
-      currentSettings = &controlsSettings;
-      break;
-    case 3:
-      currentSettings = &systemSettings;
-      break;
-    default:
-      currentSettings = &appSettings;
-      break;
+    case 0: currentSettings = &displaySettings; break;
+    case 1: currentSettings = &readerSettings; break;
+    case 2: currentSettings = &controlsSettings; break;
+    case 3: currentSettings = &systemSettings; break;
+    default: currentSettings = &appSettings; break;
   }
   settingsCount = static_cast<int>(currentSettings->size());
-  // Keep a remembered ring position inside the (possibly shorter) new list.
-  if (activeNav().selected > settingsCount) activeNav().selected = settingsCount;
-  rebuildRowItems();
-}
-
-// Rebuilds rowValues_/rowItems_ (label + actionValue) for *currentSettings.
-// Structural — call only when the active category or a category's setting
-// list changes, never from buildScreen(), which only refreshes rowValues_
-// content and rowItems_[].value pointers in place.
-void SettingsActivity::rebuildRowItems() {
-  const auto& settings = *currentSettings;
-  rowValues_.assign(settings.size(), std::string());
-  rowItems_.clear();
-  rowItems_.reserve(settings.size());
-  for (size_t i = 0; i < settings.size(); i++) {
-    fui::ListItem item;
-    item.label = I18N.get(settings[i].nameId);
-    item.actionValue = static_cast<int16_t>(i);
-    // Section headings are non-interactive rows (never selected or focused);
-    // navigateButtons() steps over them.
-    item.isHeader = settings[i].type == SettingType::SECTION;
-    rowItems_.push_back(item);
-  }
 }
 
 bool SettingsActivity::isSelectableSetting(const int settingIndex) const {
   if (currentSettings == nullptr || settingIndex < 0 || settingIndex >= settingsCount) {
     return false;
   }
-  return (*currentSettings)[settingIndex].type != SettingType::SECTION;
+  return (*currentSettings)[settingIndex]->type != SettingType::SECTION;
 }
 
-int SettingsActivity::firstSelectableRing() const {
+int SettingsActivity::firstSelectableSettingIndex() const {
   for (int index = 0; index < settingsCount; ++index) {
     if (isSelectableSetting(index)) {
       return index + 1;
@@ -603,226 +643,465 @@ int SettingsActivity::firstSelectableRing() const {
   return 0;
 }
 
-int SettingsActivity::stepRing(const int direction) const {
-  const int ringSize = settingsCount + 1;
-  if (ringSize <= 1) {
+int SettingsActivity::stepSettingSelection(const int direction) const {
+  const int totalSlots = settingsCount + 1;
+  if (totalSlots <= 1) {
     return 0;
   }
-  int candidate = ringPos();
-  for (int guard = 0; guard < ringSize; ++guard) {
-    candidate = direction > 0 ? ButtonNavigator::nextIndex(candidate, ringSize)
-                              : ButtonNavigator::previousIndex(candidate, ringSize);
+  int candidate = selectedSettingIndex;
+  for (int guard = 0; guard < totalSlots; ++guard) {
+    candidate = direction > 0 ? ButtonNavigator::nextIndex(candidate, totalSlots)
+                              : ButtonNavigator::previousIndex(candidate, totalSlots);
     if (candidate == 0 || isSelectableSetting(candidate - 1)) {
       return candidate;
     }
   }
-  return ringPos();
+  return selectedSettingIndex;
 }
 
-void SettingsActivity::navigateButtons() {
-  // Same ring walk as the base, but section headings are skipped.
-  buttonNavigator.onNextRelease([this] { moveRingTo(stepRing(1)); });
-  buttonNavigator.onPreviousRelease([this] { moveRingTo(stepRing(-1)); });
-  buttonNavigator.onNextContinuous([this] { stepTab(1); });
-  buttonNavigator.onPreviousContinuous([this] { stepTab(-1); });
-}
+void SettingsActivity::loop() {
+  bool hasChangedCategory = false;
 
-void SettingsActivity::onTabAction(const int index) {
-  if (optionPopup.isActive()) return;
-  selectCategory(index);
-  activeNav().selected = 0;  // tab taps land with the tab bar focused
-  activeNav().top = 0;
-  // The switched-to tab repaints as the selected pill; a flash overlay on top
-  // of it just repaints the pill in the focused style.
-  app.clearTapFlash();
-}
-
-void SettingsActivity::activateIndex(const int index) {
-  if (optionPopup.isActive()) return;
-  if (!isSelectableSetting(index)) return;  // section heading
-  // Most rows repaint a different surface (popup, sub-activity, new value);
-  // a lingering tap flash would gray an unrelated element.
-  app.clearTapFlash();
-  toggleCurrentSetting();  // reads the ring position set by onRowAction
-  // Tap-first: a tapped row is not a cursor position. Leaving it focused
-  // (inverted) after the tap meant the row stayed black once its sub-screen or
-  // popup closed, and Back then had to clear that focus before a second Back
-  // left Settings. Hand the focus back to the tab band; the viewport stays put.
-  if (mappedInput.hasTouch()) {
-    activeNav().selected = 0;
-  }
-}
-
-void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr) {
-  // Theme changes take effect immediately, on this screen — reload the theme
-  // and re-derive the app's tokens so the very next repaint is in the new look.
-  if (valuePtr != &CrossPointSettings::uiTheme) {
+  // ── Value editing mode: up/down adjusts the value, Select/Back exits ──
+  if (valueEditingMode) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      exitValueEditMode(true);
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      exitValueEditMode(false);
+      requestUpdate();
+      return;
+    }
+    // Up short = +step, Up long = +5*step
+    buttonNavigator.onNextRelease([this] { adjustValueEdit(+1); });
+    buttonNavigator.onNextContinuous([this] { adjustValueEdit(+5); });
+    // Down short = -step, Down long = -5*step
+    buttonNavigator.onPreviousRelease([this] { adjustValueEdit(-1); });
+    buttonNavigator.onPreviousContinuous([this] { adjustValueEdit(-5); });
     return;
   }
-  UITheme::getInstance().reload();
-  // Re-derive the shared tokens for the new look; the gate stays closed until
-  // the repaint that rebuilds the interaction table in the new layout.
-  resetUi();
-}
 
-bool SettingsActivity::handleCustomInput() {
-  return optionPopup.handleInput(mappedInput, [this] { requestUpdate(); });
-}
-
-void SettingsActivity::stepTab(const int direction) {
-  // Ring position 0 stays on the tab bar; a row selection collapses to the
-  // new category's first selectable row (per-tab memory is deliberately not
-  // kept here).
-  const bool onTabBar = ringPos() == 0;
-  selectedCategoryIndex = direction > 0 ? ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount)
-                                        : ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
-  selectCategory(selectedCategoryIndex);
-  activeNav().top = 0;  // category switches start the list at the top
-  activeNav().selected = onTabBar ? 0 : firstSelectableRing();
-  requestUpdate();
-}
-
-bool SettingsActivity::handleButtons() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (ringPos() == 0) {
-      stepTab(1);
+  // ── Normal navigation mode ──
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (selectedSettingIndex == 0) {
+      selectedCategoryIndex = (selectedCategoryIndex < categoryCount - 1) ? (selectedCategoryIndex + 1) : 0;
+      hasChangedCategory = true;
+      requestUpdate();
     } else {
       toggleCurrentSetting();
       requestUpdate();
+      return;
     }
-    return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (ringPos() > 0) {
-      activeNav().selected = 0;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (selectedSettingIndex > 0) {
+      selectedSettingIndex = 0;
       requestUpdate();
     } else {
       SETTINGS.saveToFile();
+      imageRenderConfigApplySettings();
       onGoHome();
     }
-    return true;
+    return;
   }
 
-  return false;
-}
+  buttonNavigator.onNextRelease([this] {
+    selectedSettingIndex = stepSettingSelection(1);
+    requestUpdate();
+  });
 
-void SettingsActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
-  requestUpdateAndWait();
+  buttonNavigator.onPreviousRelease([this] {
+    selectedSettingIndex = stepSettingSelection(-1);
+    requestUpdate();
+  });
 
-  {
-    RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
-    if (progress >= 0) {
-      GUI.fillPopupProgress(renderer, popupRect, progress);
-    }
-  }
+  buttonNavigator.onNextContinuous([this, &hasChangedCategory] {
+    hasChangedCategory = true;
+    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
+    requestUpdate();
+  });
 
-  if (delayMs > 0) {
-    delay(delayMs);
+  buttonNavigator.onPreviousContinuous([this, &hasChangedCategory] {
+    hasChangedCategory = true;
+    selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
+    requestUpdate();
+  });
+
+  if (hasChangedCategory) {
+    selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : firstSelectableSettingIndex();
+    enterCategory(selectedCategoryIndex);
   }
 }
 
 void SettingsActivity::toggleCurrentSetting() {
-  const int selectedSetting = ringPos() - 1;
+  int selectedSetting = selectedSettingIndex - 1;
   if (selectedSetting < 0 || selectedSetting >= settingsCount) {
     return;
   }
 
-  // Copy: the popup callbacks below outlive this call, and rebuildSettingsLists()
-  // reallocates the category vectors.
-  const SettingInfo setting = (*currentSettings)[selectedSetting];
+  const auto& setting = *(*currentSettings)[selectedSetting];
   const uint8_t previousReadingStatsAutoBackup = SETTINGS.readingStatsAutoBackup;
-  const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
-  const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
 
-  if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
-    openSleepTimeoutPicker();
+  if (setting.type == SettingType::STRING && setting.stringOffset != 0) {
+    // Open keyboard to edit the string value, pre-filled with current content
+    const char* strPtr = (const char*)&SETTINGS + setting.stringOffset;
+    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput,
+                            std::string(I18N.get(setting.nameId)), std::string(strPtr)),
+                           [this, setting](const ActivityResult& result) {
+                             if (!result.isCancelled) {
+                               const auto* kbResult = std::get_if<KeyboardResult>(&result.data);
+                                if (kbResult) {
+                                  char* strPtr = (char*)&SETTINGS + setting.stringOffset;
+                                  StringUtils::copyToFixedBuffer(strPtr, setting.stringMaxLen, kbResult->text);
+                                  SETTINGS.saveToFile();
+                               }
+                             }
+                             requestUpdate(true);
+                           });
     return;
-  }
-
-  if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
-    // Toggle the boolean value using the member pointer
+  } else if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {
-      // Fork: the family picker lists built-in + SD families on its own screen.
-      sdFontSystem.refreshIfDirty();
       startActivityForResult(std::make_unique<FontSelectionActivity>(renderer, mappedInput, &sdFontSystem.registry()),
                              [this](const ActivityResult&) {
-                               ensureSdFontLoaded();
+                               onReaderResume();
                                SETTINGS.saveToFile();
-                               rebuildSettingsLists();  // the size row tracks the family
                                requestUpdate(true);
                              });
       return;
     }
-    const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
-    if (setting.enumValues.size() > 2) {
-      const auto valuePtr = setting.valuePtr;
-      optionPopup.show(
-          setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()), currentValue,
-          [this, setting, valuePtr, previousReadingStatsAutoBackup, sleepScreenChanged,
-           quickResumeTimeoutChanged](int idx) {
-            SETTINGS.*valuePtr = idx;
-            afterSettingChanged(setting, previousReadingStatsAutoBackup, sleepScreenChanged, quickResumeTimeoutChanged);
-          });
-      requestUpdate();
-      return;
-    }
-    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
-  } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
-    const uint8_t totalValues = setting.enumStringValues.empty()
-                                    ? static_cast<uint8_t>(setting.enumValues.size())
-                                    : static_cast<uint8_t>(setting.enumStringValues.size());
-    if (totalValues == 0) return;
-    const uint8_t cur = setting.valueGetter();
-    if (totalValues > 2) {
-      auto onSelect = [this, setting, previousReadingStatsAutoBackup, sleepScreenChanged,
-                       quickResumeTimeoutChanged](int idx) {
-        setting.valueSetter(static_cast<uint8_t>(idx));
-        afterSettingChanged(setting, previousReadingStatsAutoBackup, sleepScreenChanged, quickResumeTimeoutChanged);
-      };
-      if (!setting.enumStringValues.empty()) {
-        optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));
-      } else {
-        optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()), cur,
-                         std::move(onSelect));
-      }
-      requestUpdate();
-      return;
-    }
-    setting.valueSetter((cur + 1) % totalValues);
+// Button action settings — open the popup list selector
+     const bool isShortPwrBtn = (setting.nameId == StrId::STR_SHORT_PWR_BTN);
+     if (setting.nameId == StrId::STR_LONG_PRESS_UP ||
+         setting.nameId == StrId::STR_LONG_PRESS_DOWN ||
+         setting.nameId == StrId::STR_FRONT_LONG_PRESS_LEFT ||
+         setting.nameId == StrId::STR_FRONT_LONG_PRESS_RIGHT ||
+         isShortPwrBtn ||
+         setting.nameId == StrId::STR_SELECT_LONG_PRESS) {
+       const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+       startActivityForResult(
+           std::make_unique<ButtonActionSelectorActivity>(renderer, mappedInput, currentValue,
+                                                          isShortPwrBtn
+                                                              ? ButtonActionSelectorActivity::Mode::SHORT_PWRBTN
+                                                              : ButtonActionSelectorActivity::Mode::BUTTON_ACTION),
+           [this, setting](const ActivityResult& result) {
+             if (!result.isCancelled) {
+               SETTINGS.*(setting.valuePtr) =
+                   static_cast<uint8_t>(std::get<PageResult>(result.data).page);
+               SETTINGS.saveToFile();
+             }
+             requestUpdate(true);
+           });
+        return;
+     }
+     // For enum settings not handled above:
+     if (setting.enumValues.size() > 2) {
+         // Use popup selector for enums with more than 2 options
+         const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+         startActivityForResult(
+             std::make_unique<EnumSelectorActivity>(renderer, mappedInput, currentValue, setting.enumValues),
+             [this, setting](const ActivityResult& result) {
+                 if (!result.isCancelled) {
+                     SETTINGS.*(setting.valuePtr) =
+                         static_cast<uint8_t>(std::get<PageResult>(result.data).page);
+                     SETTINGS.saveToFile();
+                 }
+                 requestUpdate(true);
+             });
+         return;
+     }
+     // Fallback: cycle enum values for any other enum settings not handled above (2 or fewer options)
+     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+     SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
+     SETTINGS.saveToFile();
+     requestUpdate(true);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
-    const int currentValue = SETTINGS.*(setting.valuePtr);
-    if (currentValue + setting.valueRange.step > setting.valueRange.max) {
-      SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
-    } else {
-      SETTINGS.*(setting.valuePtr) = static_cast<uint8_t>(currentValue + setting.valueRange.step);
-    }
+    enterValueEditMode(setting);
+    return;
   } else if (setting.type == SettingType::ACTION) {
-    runAction(setting);
-    return;  // Results will be handled in the result handler, so we can return early here
+    auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
+
+    switch (setting.action) {
+      case SettingAction::RemapFrontButtons:
+        startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::CustomiseStatusBar:
+        startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::KOReaderSync:
+        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::OPDSBrowser:
+        startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::Network:
+        startActivityForResult(WifiSelectionActivity::createForWifiManagement(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ClearCache:
+        startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::CheckForUpdates:
+        startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::SdFirmwareUpdate:
+        startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::Language:
+        startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::DownloadFonts:
+        startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 onReaderResume();
+                                 SETTINGS.saveToFile();
+                                 requestUpdate(true);
+                               });
+        break;
+      case SettingAction::SyncDay:
+        startActivityForResult(std::make_unique<SyncDayActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::TimeZone:
+        startActivityForResult(std::make_unique<TimeZoneSelectActivity>(renderer, mappedInput), resultHandler);
+        break;
+case SettingAction::ReaderMenuVisibility:
+          startActivityForResult(std::make_unique<ReaderMenuVisibilityActivity>(renderer, mappedInput), resultHandler);
+          break;
+        case SettingAction::ReaderMenuOrder:
+          startActivityForResult(std::make_unique<ReaderMenuOrderActivity>(renderer, mappedInput), resultHandler);
+          break;
+        case SettingAction::ReadingStats:
+         startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), resultHandler);
+         break;
+      case SettingAction::ResetReadingStats:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_READING_STATS_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) { READING_STATS.reset(); }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::ExportReadingStats: {
+        PopupUtils::showTransientPopup(*this,tr(STR_EXPORTING), 20, 120);
+        Storage.mkdir("/exports");
+        const std::string exportPath = getReadingStatsExportPath();
+        if (Storage.exists(exportPath.c_str())) { Storage.remove(exportPath.c_str()); }
+        const bool exported = READING_STATS.exportToFile(exportPath);
+        PopupUtils::showTransientPopup(*this,exported ? tr(STR_EXPORT_DONE) : tr(STR_EXPORT_FAILED), exported ? 100 : -1,
+                           exported ? 350 : 700);
+        requestUpdate(true);
+        break;
+      }
+      case SettingAction::ImportReadingStats:
+        if (ReadingStatsImportActivity::getImportPaths().empty()) {
+          PopupUtils::showTransientPopup(*this,tr(STR_NO_READING_STATS_EXPORT), -1, 700);
+          requestUpdate(true);
+          break;
+        }
+        startActivityForResult(std::make_unique<ReadingStatsImportActivity>(renderer, mappedInput),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled) {
+                                   const auto* path = std::get_if<FilePathResult>(&result.data);
+                                   if (path == nullptr || path->path.empty()) {
+                                     PopupUtils::showTransientPopup(*this,tr(STR_IMPORT_FAILED), -1, 700);
+                                   } else {
+                                     PopupUtils::showTransientPopup(*this,tr(STR_IMPORTING), 20, 120);
+                                     const bool imported = READING_STATS.importFromFile(path->path);
+                                     if (imported) { ACHIEVEMENTS.rebuildProgressFromCurrentStats(); }
+                                     PopupUtils::showTransientPopup(*this,imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
+                                                        imported ? 100 : -1, imported ? 350 : 700);
+                                   }
+                                 }
+                                 requestUpdate(true);
+                               });
+        break;
+      case SettingAction::ClearReadingStatsBackups:
+        startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                                      tr(STR_CLEAR_READING_STATS_BACKUPS_CONFIRM), ""),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled) {
+                                   PopupUtils::showTransientPopup(*this,tr(STR_CLEARING_READING_STATS_BACKUPS), 20, 120);
+                                   const int removedCount = READING_STATS.clearAutoBackups();
+                                   PopupUtils::showTransientPopup(*this,removedCount > 0 ? tr(STR_READING_STATS_BACKUPS_CLEARED)
+                                                                       : tr(STR_NO_READING_STATS_BACKUPS),
+                                                      removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
+                                 }
+                                 requestUpdate(true);
+                               });
+        break;
+      case SettingAction::ReadingHeatmap:
+        startActivityForResult(std::make_unique<ReadingHeatmapActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ReadingProfile:
+        startActivityForResult(std::make_unique<ReadingProfileActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::Achievements:
+        startActivityForResult(std::make_unique<AchievementsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ShortcutLocation:
+        startActivityForResult(std::make_unique<ShortcutLocationActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ShortcutVisibility:
+        startActivityForResult(std::make_unique<ShortcutVisibilityActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::OrderHomeShortcuts:
+        startActivityForResult(std::make_unique<ShortcutOrderActivity>(renderer, mappedInput, ShortcutOrderGroup::Home),
+                               resultHandler);
+        break;
+      case SettingAction::OrderAppsShortcuts:
+        startActivityForResult(std::make_unique<ShortcutOrderActivity>(renderer, mappedInput, ShortcutOrderGroup::Apps),
+                               resultHandler);
+        break;
+      case SettingAction::ResetAchievements:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_ACHIEVEMENTS_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) { ACHIEVEMENTS.reset(); }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::SyncAchievementsFromStats:
+        PopupUtils::showTransientPopup(*this,tr(STR_SYNC_WITH_PREV_STATS), 20, 120);
+        ACHIEVEMENTS.syncWithPreviousStats();
+        PopupUtils::showTransientPopup(*this,tr(STR_DONE), 100, 350);
+        requestUpdate(true);
+        break;
+      case SettingAction::Bookmarks:
+        startActivityForResult(std::make_unique<BookmarksAppActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::Favorites:
+        startActivityForResult(std::make_unique<FavoritesAppActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::Flashcards:
+        startActivityForResult(std::make_unique<FlashcardsAppActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ScreenClean:
+        startActivityForResult(std::make_unique<ScreenCleanActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::SleepApp:
+        startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ScreenSaverDir:
+        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, false), resultHandler);
+        break;
+      case SettingAction::ScreenSaverReaderDir:
+        startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, true), resultHandler);
+        break;
+      case SettingAction::IfFound:
+        startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::RebuildLibrary:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_REBUILD_LIBRARY_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                LibraryCache::invalidate();
+                PopupUtils::showTransientPopup(*this,tr(STR_REBUILD_LIBRARY_DONE), 100, 350);
+              }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::ClearCorruptCovers:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_CLEAR_CORRUPT_COVERS_CONFIRM), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                int removedCount = 0;
+                auto root = Storage.open("/.crosspoint");
+                if (root && root.isDirectory()) {
+                  char name[128];
+                  for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+                    file.getName(name, sizeof(name));
+                    const std::string itemName(name);
+                    file.close();
+
+                    const bool isCacheDir =
+                        itemName.size() > 5 &&
+                        (itemName.compare(0, 5, "epub_") == 0 || itemName.compare(0, 4, "xtc_") == 0 ||
+                         itemName.compare(0, 4, "txt_") == 0);
+                    if (!isCacheDir) continue;
+
+                    std::string dirPath = "/.crosspoint/" + itemName;
+                    auto dir = Storage.open(dirPath.c_str());
+                    if (!dir || !dir.isDirectory()) {
+                      if (dir) dir.close();
+                      continue;
+                    }
+
+                    char fileName[128];
+                    for (auto bmpFile = dir.openNextFile(); bmpFile; bmpFile = dir.openNextFile()) {
+                      bmpFile.getName(fileName, sizeof(fileName));
+                      const std::string fname(fileName);
+                      const size_t len = fname.size();
+                      if (len >= 4 && fname.compare(len - 4, 4, ".bmp") == 0 && bmpFile.fileSize() == 0) {
+                        bmpFile.close();
+                        std::string fullBmpPath = dirPath + "/" + fname;
+                        if (Storage.remove(fullBmpPath.c_str())) {
+                          ++removedCount;
+                          LOG_DBG("CLR_CVR", "Removed corrupt cover: %s", fullBmpPath.c_str());
+                        }
+                        continue;
+                      }
+                      bmpFile.close();
+                    }
+                    dir.close();
+                  }
+                  root.close();
+                }
+
+                char msg[64];
+                if (removedCount > 0) {
+                  std::snprintf(msg, sizeof(msg), "%d %s", removedCount, tr(STR_CORRUPT_COVERS_REMOVED));
+                } else {
+                  std::snprintf(msg, sizeof(msg), "%s", tr(STR_NO_CORRUPT_COVERS));
+                }
+                PopupUtils::showTransientPopup(*this,msg, removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
+              }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::UpdateLibrary:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_UPDATE_LIBRARY_PROMPT), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                // Forces a full scan on next LibraryActivity launch by marking
+                // the cache as needing refresh, then navigate to the library.
+                LibraryCache::invalidate();
+                activityManager.goToLibrary();
+              }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::BatchGenerateCovers:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_BATCH_GENERATE_COVERS), ""),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                activityManager.goToBatchCoverGeneration();
+              }
+              requestUpdate(true);
+            });
+        break;
+      case SettingAction::None:
+        break;
+    }
+    return;
+  } else if (setting.type == SettingType::SECTION) {
+    return;
   } else {
-    return;  // SECTION / STRING rows are not toggled on device
+    return;
   }
 
-  afterSettingChanged(setting, previousReadingStatsAutoBackup, sleepScreenChanged, quickResumeTimeoutChanged);
-  activeNav().selected = std::min(ringPos(), settingsCount);
-}
-
-void SettingsActivity::afterSettingChanged(const SettingInfo& setting, const uint8_t previousReadingStatsAutoBackup,
-                                           const bool sleepScreenChanged, const bool quickResumeTimeoutChanged) {
-  syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
-
-  // Fork hooks: achievements follow the daily goal; the reader font reloads
-  // when the size changes; dark mode repaints immediately.
   if (setting.valuePtr == &CrossPointSettings::dailyGoalTarget) {
     ACHIEVEMENTS.syncWithPreviousStats();
   }
-  if (setting.nameId == StrId::STR_FONT_SIZE || setting.nameId == StrId::STR_FONT_FAMILY) {
-    ensureSdFontLoaded();
+  if (setting.valuePtr == &CrossPointSettings::fontSize) {
+    onReaderResume();
   }
   if (setting.valuePtr == &CrossPointSettings::darkMode) {
     renderer.setDarkMode(SETTINGS.darkMode);
@@ -836,373 +1115,317 @@ void SettingsActivity::afterSettingChanged(const SettingInfo& setting, const uin
                                                !READING_STATS.hasAutoBackups();
 
   SETTINGS.saveToFile();
-  // Lists depend on live state (font sizes per family, footnote-back row,
-  // RTC clock rows), so rebuild after every change.
-  rebuildSettingsLists();
-  applyUiSettingChange(setting.valuePtr);
-
   if (createInitialReadingStatsBackup) {
-    showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+    PopupUtils::showTransientPopup(*this,tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
     const bool backupReady = READING_STATS.ensureAutoBackupForEnabledSetting();
-    showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+    PopupUtils::showTransientPopup(*this,backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
                        backupReady ? 100 : -1, backupReady ? 350 : 700);
     requestUpdate(true);
   }
 }
 
-void SettingsActivity::runAction(const SettingInfo& setting) {
-  auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
-  // Rows whose value text or presence depends on the sub-screen's outcome
-  // need the lists rebuilt on return (labels are translated once in
-  // rebuildRowItems() and don't re-run on Pop).
-  auto rebuildingHandler = [this](const ActivityResult&) {
-    SETTINGS.saveToFile();
-    rebuildSettingsLists();
-    requestUpdate(true);
+void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto& settings = *currentSettings;
+  if (settings.empty() || rect.height <= 0) { return; }
+
+  // Use settings.size() (not the member settingsCount), so the loops are always
+  // consistent with the vector we just read. The member can be updated out of
+  // band by enterCategory() while the render runs, which caused an out-of-bounds
+  // read and intermittent use-after-free when switching tabs quickly.
+  const int settingsCount = static_cast<int>(settings.size());
+
+  const int rowHeight = metrics.listRowHeight;
+  const int sectionHeight = 40;
+  const int sidePadding = metrics.contentSidePadding;
+  constexpr int scrollBarWidth = 4;
+  constexpr int scrollBarGap = 6;
+  const int rowX = rect.x + sidePadding;
+  const int rowWidth = rect.width - sidePadding * 2 - scrollBarWidth - scrollBarGap;
+  const int viewportHeight = rect.height;
+
+  auto getItemHeight = [rowHeight, sectionHeight](const SettingInfo* setting) {
+    return setting->type == SettingType::SECTION ? sectionHeight : rowHeight;
   };
 
-  switch (setting.action) {
-    case SettingAction::RemapFrontButtons:
-      startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::CustomiseStatusBar:
-      startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::KOReaderSync:
-      startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::OPDSBrowser:
-      startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::Network:
-      startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
-      break;
-    case SettingAction::ClearCache:
-      startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::CheckForUpdates:
-      // CrossInk enters OTA through a fresh network boot, keeping Settings and
-      // previously visited screens out of the C3's TLS heap.
-      silentRestartToOta();
-      break;
-    case SettingAction::SdFirmwareUpdate:
-      startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::Language:
-      startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), rebuildingHandler);
-      break;
-    case SettingAction::DownloadFonts:
-      startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               ensureSdFontLoaded();
-                               SETTINGS.saveToFile();
-                               rebuildSettingsLists();
-                               requestUpdate(true);
-                             });
-      break;
-    case SettingAction::TextSettings:
-      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                    TextSettingsActivity::Tab::Family),
-                             [this](const ActivityResult&) {
-                               // TextSettingsActivity saves on each change; the
-                               // reader font follows the (possibly new) family/size.
-                               ensureSdFontLoaded();
-                               rebuildSettingsLists();
-                               requestUpdate(true);
-                             });
-      break;
-    case SettingAction::KeyboardLayouts:
-      if (auto activity = makeUniqueNoThrow<KeyboardLayoutsActivity>(renderer, mappedInput)) {
-        startActivityForResult(std::move(activity), nullptr);
-      } else {
-        LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
+  std::vector<int> itemOffsets(settingsCount, 0);
+  int totalHeight = 0;
+  for (int index = 0; index < settingsCount; ++index) {
+    itemOffsets[index] = totalHeight;
+    totalHeight += getItemHeight(settings[index]);
+  }
+
+  int firstVisibleIndex = 0;
+  int visibleWindowHeight = 0;
+  if (selectedSettingIndex > 0) {
+    const int selectedIndex = std::clamp(selectedSettingIndex - 1, 0, settingsCount - 1);
+    for (int index = 0; index <= selectedIndex; ++index) {
+      visibleWindowHeight += getItemHeight(settings[index]);
+      while (visibleWindowHeight > viewportHeight && firstVisibleIndex <= index) {
+        visibleWindowHeight -= getItemHeight(settings[firstVisibleIndex]);
+        ++firstVisibleIndex;
       }
-      break;
-    case SettingAction::SyncDay:
-      startActivityForResult(std::make_unique<SyncDayActivity>(renderer, mappedInput), rebuildingHandler);
-      break;
-    case SettingAction::ClockSync:
-      startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), rebuildingHandler);
-      break;
-    case SettingAction::TimeZone:
-      startActivityForResult(std::make_unique<TimeZoneSelectActivity>(renderer, mappedInput), rebuildingHandler);
-      break;
-    case SettingAction::ReadingStats:
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::ResetReadingStats:
-      startActivityForResult(
-          std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_READING_STATS_CONFIRM), ""),
-          [this](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              READING_STATS.reset();
-            }
-            requestUpdate(true);
-          });
-      break;
-    case SettingAction::ExportReadingStats: {
-      showTransientPopup(tr(STR_EXPORTING), 20, 120);
-      Storage.mkdir("/exports");
-      const std::string exportPath = getReadingStatsExportPath();
-      if (Storage.exists(exportPath.c_str())) {
-        Storage.remove(exportPath.c_str());
-      }
-      const bool exported = READING_STATS.exportToFile(exportPath);
-      showTransientPopup(exported ? tr(STR_EXPORT_DONE) : tr(STR_EXPORT_FAILED), exported ? 100 : -1,
-                         exported ? 350 : 700);
-      requestUpdate(true);
-      break;
     }
-    case SettingAction::ImportReadingStats:
-      if (ReadingStatsImportActivity::getImportPaths().empty()) {
-        showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
-        requestUpdate(true);
-        break;
+    if (firstVisibleIndex > 0 && settings[firstVisibleIndex - 1]->type == SettingType::SECTION) {
+      const int headerHeight = getItemHeight(settings[firstVisibleIndex - 1]);
+      if (visibleWindowHeight + headerHeight <= viewportHeight) {
+        --firstVisibleIndex;
+        visibleWindowHeight += headerHeight;
       }
-      startActivityForResult(std::make_unique<ReadingStatsImportActivity>(renderer, mappedInput),
-                             [this](const ActivityResult& result) {
-                               if (!result.isCancelled) {
-                                 const auto* path = std::get_if<FilePathResult>(&result.data);
-                                 if (path == nullptr || path->path.empty()) {
-                                   showTransientPopup(tr(STR_IMPORT_FAILED), -1, 700);
-                                 } else {
-                                   showTransientPopup(tr(STR_IMPORTING), 20, 120);
-                                   const bool imported = READING_STATS.importFromFile(path->path);
-                                   if (imported) {
-                                     ACHIEVEMENTS.rebuildProgressFromCurrentStats();
-                                   }
-                                   showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
-                                                      imported ? 100 : -1, imported ? 350 : 700);
-                                 }
-                               }
-                               requestUpdate(true);
-                             });
-      break;
-    case SettingAction::ClearReadingStatsBackups:
-      startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
-                                                                    tr(STR_CLEAR_READING_STATS_BACKUPS_CONFIRM), ""),
-                             [this](const ActivityResult& result) {
-                               if (!result.isCancelled) {
-                                 showTransientPopup(tr(STR_CLEARING_READING_STATS_BACKUPS), 20, 120);
-                                 const int removedCount = READING_STATS.clearAutoBackups();
-                                 showTransientPopup(removedCount > 0 ? tr(STR_READING_STATS_BACKUPS_CLEARED)
-                                                                     : tr(STR_NO_READING_STATS_BACKUPS),
-                                                    removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
-                               }
-                               requestUpdate(true);
-                             });
-      break;
-    case SettingAction::ReadingHeatmap:
-      startActivityForResult(std::make_unique<ReadingHeatmapActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::ReadingProfile:
-      startActivityForResult(std::make_unique<ReadingProfileActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::Achievements:
-      startActivityForResult(std::make_unique<AchievementsActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::ShortcutLocation:
-      startActivityForResult(std::make_unique<ShortcutLocationActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::ShortcutVisibility:
-      startActivityForResult(std::make_unique<ShortcutVisibilityActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::OrderHomeShortcuts:
-      startActivityForResult(std::make_unique<ShortcutOrderActivity>(renderer, mappedInput, ShortcutOrderGroup::Home),
-                             resultHandler);
-      break;
-    case SettingAction::OrderAppsShortcuts:
-      startActivityForResult(std::make_unique<ShortcutOrderActivity>(renderer, mappedInput, ShortcutOrderGroup::Apps),
-                             resultHandler);
-      break;
-    case SettingAction::ResetAchievements:
-      startActivityForResult(
-          std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_ACHIEVEMENTS_CONFIRM), ""),
-          [this](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              ACHIEVEMENTS.reset();
-            }
-            requestUpdate(true);
-          });
-      break;
-    case SettingAction::SyncAchievementsFromStats:
-      showTransientPopup(tr(STR_SYNC_WITH_PREV_STATS), 20, 120);
-      ACHIEVEMENTS.syncWithPreviousStats();
-      showTransientPopup(tr(STR_DONE), 100, 350);
-      requestUpdate(true);
-      break;
-    case SettingAction::Bookmarks:
-      startActivityForResult(std::make_unique<BookmarksAppActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::Favorites:
-      startActivityForResult(std::make_unique<FavoritesAppActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::Flashcards:
-      startActivityForResult(std::make_unique<FlashcardsAppActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::ScreenClean:
-      startActivityForResult(std::make_unique<ScreenCleanActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::SleepApp:
-      startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::IfFound:
-      startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);
-      break;
-    case SettingAction::None:
-      // Do nothing
-      break;
-  }
-}
-
-void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
-  if (quickResumeTimeoutChanged) {
-    preserveQuickResumeTimeoutOn =
-        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-    quickResumeTimeoutAutoEnabled = false;
-  }
-
-  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME) {
-    if (SETTINGS.quickResumeSleepScreen != CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT) {
-      SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-      quickResumeTimeoutAutoEnabled = !preserveQuickResumeTimeoutOn;
-    } else if (sleepScreenChanged && !preserveQuickResumeTimeoutOn) {
-      quickResumeTimeoutAutoEnabled = true;
     }
-    return;
   }
 
-  if (sleepScreenChanged && quickResumeTimeoutAutoEnabled && !preserveQuickResumeTimeoutOn) {
-    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
-    quickResumeTimeoutAutoEnabled = false;
-  }
-}
+  int currentY = rect.y;
+  int renderedHeight = 0;
+  for (int index = firstVisibleIndex; index < settingsCount; ++index) {
+    const auto& setting = settings[index];
+    const int itemHeight = getItemHeight(setting);
+    if (renderedHeight + itemHeight > viewportHeight) { break; }
 
-void SettingsActivity::openSleepTimeoutPicker() {
-  startActivityForResult(
-      std::make_unique<IntervalSelectionActivity>(
-          renderer, mappedInput, "SleepTimeoutInterval", StrId::STR_TIME_TO_SLEEP, SETTINGS.sleepTimeoutMinutes,
-          CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1, 5,
-          StrId::STR_SLEEP_TIMER_VALUE_FORMAT, false, StrId::STR_SLEEP_NEVER),
-      [this](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          SETTINGS.sleepTimeoutMinutes = static_cast<uint8_t>(std::get<IntervalResult>(result.data).value);
-          SETTINGS.saveToFile();
+    if (setting->type == SettingType::SECTION) {
+      renderer.drawText(UI_10_FONT_ID, rowX, currentY + 4, getSettingNameText(*setting), true, EpdFontFamily::BOLD);
+      renderer.drawLine(rowX, currentY + itemHeight - 5, rowX + rowWidth, currentY + itemHeight - 5, true);
+      currentY += itemHeight;
+      renderedHeight += itemHeight;
+      continue;
+    }
+
+    const bool selected = selectedSettingIndex == index + 1;
+    const Rect rowRect{rowX, currentY, rowWidth, itemHeight - 4};
+    if (selected) {
+      renderer.fillRectDither(rowRect.x, rowRect.y, rowRect.width, rowRect.height, Color::LightGray);
+      renderer.drawRect(rowRect.x, rowRect.y, rowRect.width, rowRect.height);
+    }
+
+    const std::string valueText = getSettingValueText(*setting);
+    const bool showExportFileName =
+        setting->type == SettingType::ACTION && setting->action == SettingAction::ExportReadingStats;
+    const bool showImportFileName =
+        setting->type == SettingType::ACTION && setting->action == SettingAction::ImportReadingStats;
+    const std::string sideNote = showExportFileName
+                                     ? getReadingStatsExportFileName()
+                                     : (showImportFileName ? getLatestReadingStatsImportFileName() : std::string());
+    const int valueWidth =
+        valueText.empty() ? 0 : renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str(), EpdFontFamily::REGULAR);
+    const int leftPadding = 12;
+    const int rightPadding = 12;
+    if (showExportFileName || showImportFileName) {
+      const int sideNoteMaxWidth = rowRect.width / 2 - leftPadding - rightPadding;
+      const std::string truncatedSideNote =
+          sideNote.empty()
+              ? std::string()
+              : renderer.truncatedText(SMALL_FONT_ID, sideNote.c_str(), sideNoteMaxWidth, EpdFontFamily::REGULAR);
+      const int sideNoteWidth =
+          truncatedSideNote.empty()
+              ? 0
+              : renderer.getTextWidth(SMALL_FONT_ID, truncatedSideNote.c_str(), EpdFontFamily::REGULAR);
+      const int labelWidth = rowRect.width - leftPadding - rightPadding - (sideNoteWidth > 0 ? sideNoteWidth + 12 : 0);
+      const std::string titleText =
+          renderer.truncatedText(UI_10_FONT_ID, getSettingNameText(*setting), labelWidth, EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, rowRect.x + leftPadding, rowRect.y + 9, titleText.c_str(), true,
+                        EpdFontFamily::REGULAR);
+      if (!truncatedSideNote.empty()) {
+        renderer.drawText(SMALL_FONT_ID, rowRect.x + rowRect.width - rightPadding - sideNoteWidth, rowRect.y + 11,
+                          truncatedSideNote.c_str(), true, EpdFontFamily::REGULAR);
+      }
+    } else {
+      const int labelWidth = rowRect.width - leftPadding - rightPadding - (valueWidth > 0 ? valueWidth + 12 : 0);
+      const std::string titleText =
+          renderer.truncatedText(UI_10_FONT_ID, getSettingNameText(*setting), labelWidth, EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, rowRect.x + leftPadding, rowRect.y + 9, titleText.c_str(), true,
+                        EpdFontFamily::REGULAR);
+      if (setting->type == SettingType::TOGGLE && setting->valuePtr != nullptr) {
+        const bool checked = SETTINGS.*(setting->valuePtr);
+        const int checkboxSize = 16;
+        const int checkboxX = rowRect.x + rowRect.width - rightPadding - checkboxSize;
+        const int checkboxY = rowRect.y + (itemHeight - checkboxSize) / 2 - 2;
+        // Draw checkbox: white background, black V-checkmark when enabled
+        renderer.fillRect(checkboxX, checkboxY, checkboxSize, checkboxSize, false); // white fill
+        renderer.drawRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 1, true); // black border
+        if (checked) {
+          // V-shaped checkmark, same style as LyraMarcoand75 goal badge
+          const int leftX = checkboxX + checkboxSize * 3 / 16;
+          const int midX = checkboxX + checkboxSize * 7 / 16;
+          const int rightX = checkboxX + checkboxSize * 13 / 16;
+          const int leftY = checkboxY + checkboxSize * 9 / 16;
+          const int midY = checkboxY + checkboxSize * 12 / 16;
+          const int rightY = checkboxY + checkboxSize * 4 / 16;
+          renderer.drawLine(leftX, leftY, midX, midY, 2, true);
+          renderer.drawLine(midX, midY, rightX, rightY, 2, true);
         }
-        requestUpdate();
-      });
-}
-
-std::string SettingsActivity::settingValueText(const SettingInfo& setting) const {
-  if (setting.nameId == StrId::STR_FONT_FAMILY && SETTINGS.sdFontFamilyName[0] != '\0') {
-    return SETTINGS.sdFontFamilyName;
-  }
-  if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
-    return SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
-  }
-  if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
-    // Guard like the valueGetter branch below: a corrupt/migrated settings
-    // byte must not index past the enum table.
-    const uint8_t value = SETTINGS.*(setting.valuePtr);
-    if (value >= setting.enumValues.size()) return "";
-    return I18N.get(setting.enumValues[value]);
-  }
-  if (setting.type == SettingType::ENUM && setting.valueGetter) {
-    const uint8_t value = setting.valueGetter();
-    if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
-      return setting.enumStringValues[value];
-    }
-    if (value < setting.enumValues.size()) {
-      return I18N.get(setting.enumValues[value]);
-    }
-    return "";
-  }
-  if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
-    if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
-      if (SETTINGS.sleepTimeoutMinutes >= CrossPointSettings::SLEEP_TIMEOUT_NEVER_MINUTES) {
-        return tr(STR_SLEEP_NEVER);
+      } else if (!valueText.empty()) {
+        renderer.drawText(UI_10_FONT_ID, rowRect.x + rowRect.width - rightPadding - valueWidth, rowRect.y + 9,
+                          valueText.c_str(), true, EpdFontFamily::REGULAR);
       }
-      char valueBuffer[32];
-      snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_SLEEP_TIMER_VALUE_FORMAT),
-               static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
-      return valueBuffer;
     }
-    return std::to_string(SETTINGS.*(setting.valuePtr));
+    currentY += itemHeight;
+    renderedHeight += itemHeight;
   }
-  if (setting.type == SettingType::ACTION) {
-    return getActionValueText(setting);
+
+  if (totalHeight > viewportHeight) {
+    const int scrollTrackX = rect.x + rect.width - sidePadding;
+    const int scrollOffset = itemOffsets[firstVisibleIndex];
+    const int scrollBarHeight = std::max(18, (viewportHeight * viewportHeight) / totalHeight);
+    const int maxScrollOffset = std::max(1, totalHeight - viewportHeight);
+    const int scrollBarY =
+        rect.y + ((viewportHeight - scrollBarHeight) * std::min(scrollOffset, maxScrollOffset)) / maxScrollOffset;
+    renderer.drawLine(scrollTrackX, rect.y, scrollTrackX, rect.y + viewportHeight, true);
+    renderer.fillRect(scrollTrackX - scrollBarWidth + 1, scrollBarY, scrollBarWidth, scrollBarHeight, true);
   }
-  return "";
 }
 
-void SettingsActivity::buildScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+bool SettingsActivity::prewarmSettingsRenderText(const char* settingsTitle, const char* selectedCategoryLabel,
+                                                 const char* firmwareVersion, const char* confirmLabel) const {
+  auto* fontCache = renderer.getFontCacheManager();
+  if (fontCache == nullptr || currentSettings == nullptr) { return false; }
 
-  buildTabBar(screen);
+  std::string text;
+  text.reserve(2048);
+  appendPrewarmText(text, settingsTitle);
+  appendPrewarmText(text, selectedCategoryLabel);
+  appendPrewarmText(text, firmwareVersion);
+  appendPrewarmText(text, confirmLabel);
+  appendPrewarmText(text, tr(STR_BACK));
+  appendPrewarmText(text, tr(STR_DIR_UP));
+  appendPrewarmText(text, tr(STR_DIR_DOWN));
 
-  // rowItems_ (label/actionValue) was built by rebuildRowItems() when the
-  // category was last selected/rebuilt; only the live value text needs
-  // refreshing here, by assigning into the existing rowValues_ strings (no
-  // vector growth) rather than building a new items/values vector on every
-  // render.
-  const auto& settings = *currentSettings;
-  for (size_t i = 0; i < settings.size(); i++) {
-    rowValues_[i] = settings[i].type == SettingType::SECTION ? std::string() : settingValueText(settings[i]);
-    rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();
+  for (int i = 0; i < categoryCount; ++i) {
+    appendPrewarmText(text, I18N.get(categoryNames[i]));
   }
 
-  fui::ListProps props;
-  props.items = rowItems_.data();
-  props.count = static_cast<uint16_t>(rowItems_.size());
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  props.valueInset = 8;               // air between the value and the row edge
-  // Titles match the value's font size (smallText) so both sides of a row
-  // read as one unit; labels that still don't fit wrap onto a second line.
-  // maxLines=2 also marks the style explicitly set (an all-default smallText
-  // fails textStyleUnset and the list would substitute bodyText back); the
-  // common fits-on-one-line case takes the renderer's fast path anyway.
-  props.labelText = screen.theme().smallText;
-  props.labelText.maxLines = 2;
-  syncTabListViewport(screen, props);
-  screen.list(props);
+  for (const auto* setting : *currentSettings) {
+    appendPrewarmText(text, getSettingNameText(*setting));
+    appendPrewarmText(text, getSettingValueText(*setting));
+  }
+
+  if (text.empty()) { return false; }
+
+  constexpr uint8_t regularAndBold =
+      (1 << static_cast<uint8_t>(EpdFontFamily::REGULAR)) | (1 << static_cast<uint8_t>(EpdFontFamily::BOLD));
+  fontCache->clearCache();
+  fontCache->prewarmCache(UI_10_FONT_ID, text.c_str(), regularAndBold);
+  fontCache->prewarmCache(UI_12_FONT_ID, text.c_str(), regularAndBold);
+  return true;
 }
 
 void SettingsActivity::render(RenderLock&&) {
-  if (optionPopup.processRender(renderer, mappedInput)) return;
-
   renderer.clearScreen();
-
   const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
+  const char* settingsTitle = tr(STR_SETTINGS_TITLE);
+  const char* selectedCategoryLabel = I18N.get(categoryNames[selectedCategoryIndex]);
+  const char* firmwareVersion = CROSSPOINT_VERSION;
+  const char* confirmLabel = nullptr;
+  if (selectedSettingIndex == 0) {
+    confirmLabel = I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount]);
+  } else if (valueEditingMode) {
+    confirmLabel = tr(STR_CONFIRM);
+  } else {
+    const auto& selectedSetting = *(*currentSettings)[selectedSettingIndex - 1];
+    confirmLabel = (selectedSetting.type == SettingType::ACTION || selectedSetting.type == SettingType::SECTION ||
+                    selectedSetting.type == SettingType::STRING)
+                       ? tr(STR_SELECT)
+                       : tr(STR_TOGGLE);
+  }
+  const bool prewarmedFonts =
+      prewarmSettingsRenderText(settingsTitle, selectedCategoryLabel, firmwareVersion, confirmLabel);
 
-  // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
-  // indicator; the rest of the screen renders through the app.
-  // Version rides in the header's trailing label slot: the footer position
-  // conflicts with button hints on non-touch devices.
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
-                 CROSSPOINT_VERSION);
-  // Fork: date/time in the top line when the user enabled it.
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, settingsTitle, nullptr);
   HeaderDateUtils::drawTopLine(renderer, HeaderDateUtils::getDisplayDateText());
 
-  renderUi();
-
-  const int ring = ringPos();
-  const char* confirmLabel = I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount]);
-  if (ring > 0 && ring <= settingsCount) {
-    const auto& selectedSetting = (*currentSettings)[ring - 1];
-    const bool selectStyle =
-        selectedSetting.type == SettingType::ACTION || selectedSetting.type == SettingType::SECTION ||
-        selectedSetting.nameId == StrId::STR_TIME_TO_SLEEP || selectedSetting.nameId == StrId::STR_FONT_FAMILY;
-    confirmLabel = selectStyle ? tr(STR_SELECT) : tr(STR_TOGGLE);
+  const int titleX = metrics.contentSidePadding;
+  const int titleY = metrics.topPadding + metrics.batteryBarHeight + 3;
+  const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, settingsTitle, EpdFontFamily::BOLD);
+  const int categoryGap = 10;
+  const int categoryX = titleX + titleWidth + categoryGap;
+  const int versionWidth = renderer.getTextWidth(SMALL_FONT_ID, firmwareVersion, EpdFontFamily::REGULAR);
+  const int versionX = pageWidth - metrics.contentSidePadding - versionWidth;
+  const int versionGap = 12;
+  const int categoryMaxWidth = std::max(0, versionX - categoryX - versionGap);
+  if (categoryMaxWidth > 24) {
+    const std::string headerCategory =
+        renderer.truncatedText(SMALL_FONT_ID, selectedCategoryLabel, categoryMaxWidth, EpdFontFamily::REGULAR);
+    if (!headerCategory.empty()) {
+      const std::string categoryPrefix = "/ ";
+      renderer.drawText(SMALL_FONT_ID, categoryX, titleY + 4, categoryPrefix.c_str(), true, EpdFontFamily::REGULAR);
+      renderer.drawText(
+          SMALL_FONT_ID,
+          categoryX + renderer.getTextWidth(SMALL_FONT_ID, categoryPrefix.c_str(), EpdFontFamily::REGULAR), titleY + 4,
+          headerCategory.c_str(), true, EpdFontFamily::REGULAR);
+    }
   }
+  renderer.drawText(SMALL_FONT_ID, versionX, titleY + 4, firmwareVersion, true, EpdFontFamily::REGULAR);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  std::vector<std::string> tabLabels;
+  tabLabels.reserve(categoryCount);
+  std::vector<TabInfo> tabs;
+  tabs.reserve(categoryCount);
+  for (int i = 0; i < categoryCount; i++) {
+    const char* fullLabel = I18N.get(categoryNames[i]);
+    tabLabels.push_back(
+        utf8LimitChars(fullLabel != nullptr ? std::string(fullLabel) : std::string(), SETTINGS_TAB_MAX_CHARS));
+    const bool compact =
+        utf8CodepointCount(fullLabel != nullptr ? std::string(fullLabel) : std::string()) > SETTINGS_TAB_MAX_CHARS;
+    tabs.push_back({tabLabels.back(), selectedCategoryIndex == i, compact});
+  }
+  GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight}, tabs,
+                 selectedSettingIndex == 0);
 
-  // Always use standard refresh for settings screen
+  constexpr int listBottomGap = 10;
+  const Rect listRect{0, metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing,
+                      pageWidth,
+                      pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
+                                    metrics.buttonHintsHeight + metrics.verticalSpacing * 2 + listBottomGap)};
+  const auto& settings = *currentSettings;
+  renderAppSettingsList(listRect);
+
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
+  if (prewarmedFonts) {
+    renderer.getFontCacheManager()->clearCache();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Value editing mode helpers (steroids – fast numeric setting adjustment)
+// ─────────────────────────────────────────────────────────────────────────────
+void SettingsActivity::enterValueEditMode(const SettingInfo& setting) {
+  valueEditingMode = true;
+  valueEditOriginal = SETTINGS.*(setting.valuePtr);
+  // Keep the current selected setting so the render continues to highlight it.
+}
+
+void SettingsActivity::exitValueEditMode(const bool confirmed) {
+  valueEditingMode = false;
+  if (!confirmed) {
+    // Restore the original value (undo any adjustments made during editing).
+    const int selectedSetting = selectedSettingIndex - 1;
+    if (selectedSetting >= 0 && selectedSetting < settingsCount) {
+      const auto& setting = *(*currentSettings)[selectedSetting];
+      if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
+        SETTINGS.*(setting.valuePtr) = valueEditOriginal;
+      }
+    }
+  }
+}
+
+void SettingsActivity::adjustValueEdit(const int delta) {
+  const int selectedSetting = selectedSettingIndex - 1;
+  if (selectedSetting < 0 || selectedSetting >= settingsCount) return;
+  const auto& setting = *(*currentSettings)[selectedSetting];
+  if (setting.type != SettingType::VALUE || setting.valuePtr == nullptr) return;
+
+  const int step = setting.valueRange.step;
+  const int currentValue = SETTINGS.*(setting.valuePtr);
+  const int newValue = currentValue + delta * step;
+
+  if (newValue < setting.valueRange.min) {
+    SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
+  } else if (newValue > setting.valueRange.max) {
+    SETTINGS.*(setting.valuePtr) = setting.valueRange.max;
+  } else {
+    SETTINGS.*(setting.valuePtr) = static_cast<uint8_t>(newValue);
+  }
+  requestUpdate();
 }

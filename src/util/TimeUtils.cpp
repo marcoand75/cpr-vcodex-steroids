@@ -1,9 +1,11 @@
 #include "TimeUtils.h"
 
 #include <HalClock.h>
+#include <WiFi.h>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "SilentRestart.h"
 
 #include <Arduino.h>
 #include <esp_sntp.h>
@@ -343,7 +345,7 @@ bool TimeUtils::formatStatusBarClockTime(char* buf, const size_t bufSize, const 
 }
 
 bool TimeUtils::applySystemClockFromRtc(const bool forceRefresh) {
-  if (!halClock.isAvailable() || !SETTINGS.clockHasBeenSynced) {
+  if (!halClock.isAvailable()) {
     return false;
   }
 

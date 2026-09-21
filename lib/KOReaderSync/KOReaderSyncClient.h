@@ -1,5 +1,4 @@
 #pragma once
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -10,32 +9,16 @@ struct KOReaderMetadata {
 };
 
 /**
- * Rich CrossPoint position sent alongside progress uploads. Maps 1:1 onto the
- * crosspoint-sync extended `position` object (see crosspoint-sync docs/API.md).
- * It is only transmitted to sync.crosspointreader.com. These fields remain
- * layout-dependent compatibility hints; the standard XPath is the content anchor.
- */
-struct KOReaderRichPosition {
-  uint32_t pctQ = 0;                       // Percentage quantized 0..1,000,000 (metadata/fallback)
-  uint16_t spineIndex = 0;                 // Spine (chapter) index
-  uint16_t pageNumber = 0;                 // Page within spine (layout-dependent hint)
-  uint16_t totalPages = 1;                 // Spine page count (layout-dependent hint)
-  std::optional<uint16_t> paragraphIndex;  // Synthetic 1-based paragraph index
-  std::string xpath;                       // KOReader-style xpath (server cap: 120 bytes)
-};
-
-/**
  * Progress data from KOReader sync server.
  */
 struct KOReaderProgress {
-  std::string document;                          // Document hash
-  std::string progress;                          // XPath-like progress string
-  float percentage;                              // Progress percentage (0.0 to 1.0)
-  std::string device;                            // Device name
-  std::string deviceId;                          // Device ID
-  int64_t timestamp;                             // Unix timestamp of last update
-  std::optional<KOReaderMetadata> metadata;      // Optional document metadata
-  std::optional<KOReaderRichPosition> position;  // Optional rich position (crosspoint-sync servers only)
+  std::string document;  // Document hash
+  std::string progress;  // XPath-like progress string
+  float percentage;      // Progress percentage (0.0 to 1.0)
+  std::string device;    // Device name
+  std::string deviceId;  // Device ID
+  int64_t timestamp;     // Unix timestamp of last update
+  std::optional<KOReaderMetadata> metadata;
 };
 
 /**
@@ -63,7 +46,6 @@ class KOReaderSyncClient {
     SERVER_ERROR,
     JSON_ERROR,
     NOT_FOUND,
-    LOW_MEMORY,
     USER_EXISTS,
     REGISTRATION_DISABLED,
     REDIRECT_ERROR,
@@ -76,9 +58,8 @@ class KOReaderSyncClient {
    * @return OK on success, USER_EXISTS if taken, REGISTRATION_DISABLED if server disallows it
    */
   static Error registerUser();
-  static Error registerUser(const std::string& username, const std::string& md5Password, const std::string& baseUrl);
-  /** Upstream name for registerUser() (stored credentials). */
-  static Error createUser() { return registerUser(); }
+  static Error registerUser(const std::string& username, const std::string& md5Password,
+                            const std::string& baseUrl);
 
   /**
    * Authenticate with the sync server (validate credentials).

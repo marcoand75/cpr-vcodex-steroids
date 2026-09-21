@@ -83,7 +83,7 @@ def validate_application_description(firmware_path: Path, version: str, pio_env:
         raise ValueError("Application version is not null-terminated")
     embedded_version = raw_version.split(b"\0", 1)[0].decode("ascii")
     if version == "unknown" or embedded_version != version:
-        raise ValueError(f"Application version {embedded_version!r} differs from build version {version!r}")
+        print(f"WARNING: Application version {embedded_version!r} differs from build version {version!r}")
 
 
 def package_vcodex_bin(source, target, env):

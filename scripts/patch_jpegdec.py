@@ -1,19 +1,14 @@
 """
 PlatformIO pre-build script: apply CrossPoint's JPEGDEC patches via `git apply`.
 
-The upstream JPEGDEC pin still has progressive grayscale bugs: wild-pointer
-and DC writes on MCU_SKIP, consuming chroma absent from the current scan,
-and using the wrong Huffman tables when skipping the last chroma component.
-The patches in `scripts/jpegdec_patches/` carry the fix; this script applies
-each one against the libdep working tree.
+The upstream JPEGDEC pin still has the wild-pointer and DC-write bugs in
+JPEGDecodeMCU_P that surface when EIGHT_BIT_GRAYSCALE decodes a 3-component
+progressive JPEG. The patches in `scripts/jpegdec_patches/` carry the fix.
 
 Each patch's idempotency is decided by git itself:
   * `git apply --check --reverse` succeeds  -> already applied, skip
-  * `git apply --check`            succeeds  -> apply
-  * neither succeeds                          -> abort the build
-
-Patches live in `scripts/jpegdec_patches/` as one-commit-per-fix files
-(see the file headers for context). Applied in lexical order.
+  * `git apply --check` succeeds            -> apply
+  * neither succeeds                        -> abort the build
 """
 
 Import("env")  # noqa: F821 (SCons-injected global)

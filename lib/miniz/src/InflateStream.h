@@ -35,6 +35,8 @@ struct tinfl_decompressor_tag;
 // zlib header (e.g. PNG IDAT).
 class InflateStream {
  public:
+  static constexpr size_t STREAMING_WINDOW_SIZE = 32768;
+
   enum class Status {
     Ok,     // Output buffer full; more decompressed data remains.
     Done,   // Stream ended cleanly. produced may be < maxLen.
@@ -49,9 +51,11 @@ class InflateStream {
   InflateStream& operator=(const InflateStream&) = delete;
 
   // Allocate decompressor state (and the 32KB window when streaming) and reset
-  // stream state. Reuses existing allocations on repeated calls. Returns false
-  // on OOM.
+  // stream state, releasing any previous backing first. Returns false on OOM.
   bool init(bool streaming);
+
+  // Transient storage needed when the framebuffer scratch loan is unavailable.
+  static size_t requiredStorageSize(bool streaming);
 
   // Free the decompressor state and window.
   void deinit();

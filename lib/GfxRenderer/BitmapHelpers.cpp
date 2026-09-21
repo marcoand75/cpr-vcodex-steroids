@@ -2,94 +2,75 @@
 
 #include <cstdint>
 #include <cstring>  // Added for memset
+#include <cmath>
 
 #include "Bitmap.h"
+#include "DitheringConfig.h"
 
-// Brightness/Contrast adjustments:
-constexpr bool USE_BRIGHTNESS = false;       // true: apply brightness/gamma adjustments
-constexpr int BRIGHTNESS_BOOST = 10;         // Brightness offset (0-50)
-constexpr bool GAMMA_CORRECTION = false;     // Gamma curve (brightens midtones)
-constexpr float CONTRAST_FACTOR = 1.15f;     // Contrast multiplier (1.0 = no change, >1 = more contrast)
-constexpr bool USE_NOISE_DITHERING = false;  // Hash-based noise dithering
+// Gamma lookup table. Populated once by initGammaLUT() (called at boot);
+// adjustPixel() also lazily initializes it so a forgotten call cannot produce
+// a fully-black image.
+uint8_t gammaLUT[256];
+static bool gammaLUTReady = false;
+static float lastGammaValue = -1.0f;  // Track last gamma so we can detect changes
 
-// Integer approximation of gamma correction (brightens midtones)
-// Uses a simple curve: out = 255 * sqrt(in/255) ≈ sqrt(in * 255)
-static inline int applyGamma(int gray) {
-  if (!GAMMA_CORRECTION) return gray;
-  // Fast integer square root approximation for gamma ~0.5 (brightening)
-  // This brightens dark/mid tones while preserving highlights
-  const int product = gray * 255;
-  // Newton-Raphson integer sqrt (2 iterations for good accuracy)
-  int x = gray;
-  if (x > 0) {
-    x = (x + product / x) >> 1;
-    x = (x + product / x) >> 1;
+void initGammaLUT() {
+  initGammaLUT(g_imageRenderGamma);
+}
+
+void initGammaLUT(float gamma) {
+  if (gamma <= 0.0f) gamma = g_imageRenderGamma;
+  for (int i = 0; i < 256; ++i) {
+    const float norm = static_cast<float>(i) / 255.0f;
+    const float correct = std::pow(norm, 1.0f / gamma);
+    gammaLUT[i] = static_cast<uint8_t>(correct * 255.0f + 0.5f);
   }
-  return x > 255 ? 255 : x;
+  lastGammaValue = gamma;
+  gammaLUTReady = true;
 }
 
-// Apply contrast adjustment around midpoint (128)
-// factor > 1.0 increases contrast, < 1.0 decreases
-static inline int applyContrast(int gray) {
-  // Integer-based contrast: (gray - 128) * factor + 128
-  // Using fixed-point: factor 1.15 ≈ 115/100
-  constexpr int factorNum = static_cast<int>(CONTRAST_FACTOR * 100);
-  int adjusted = ((gray - 128) * factorNum) / 100 + 128;
-  if (adjusted < 0) adjusted = 0;
-  if (adjusted > 255) adjusted = 255;
-  return adjusted;
-}
-// Combined brightness/contrast/gamma adjustment
+// Apply the gamma-corrected luminance. The LUT maps the input 8-bit luminance
+// so that midtones get a perceptually correct weight before 4-level quantization.
 int adjustPixel(int gray) {
-  if (!USE_BRIGHTNESS) return gray;
+  // If the LUT is disabled via settings, return the input unchanged.
+  if (!g_imageRenderLutEnabled) return gray;
 
-  // Order: contrast first, then brightness, then gamma
-  gray = applyContrast(gray);
-  gray += BRIGHTNESS_BOOST;
-  if (gray > 255) gray = 255;
+  // If gamma changed since last init, rebuild the LUT.
+  if (!gammaLUTReady || lastGammaValue != g_imageRenderGamma)
+    initGammaLUT(g_imageRenderGamma);
+
   if (gray < 0) gray = 0;
-  gray = applyGamma(gray);
-
-  return gray;
+  if (gray > 255) gray = 255;
+  return gammaLUT[static_cast<uint8_t>(gray)];
 }
-// Simple quantization without dithering - divide into 4 levels
-// The thresholds are fine-tuned to the X4 display
+
+// Simple quantization without dithering – divide into 4 levels.
+// Thresholds now come from runtime settings (ImageRenderConfig globals).
 uint8_t quantizeSimple(int gray) {
-  if (gray < 45) {
+  if (gray < g_imageRenderThresholdBlack) {
     return 0;
-  } else if (gray < 70) {
+  } else if (gray < g_imageRenderThresholdDark) {
     return 1;
-  } else if (gray < 140) {
+  } else if (gray < g_imageRenderThresholdLight) {
     return 2;
   } else {
     return 3;
   }
 }
 
-// Hash-based noise dithering - survives downsampling without moiré artifacts
-// Uses integer hash to generate pseudo-random threshold per pixel
-static inline uint8_t quantizeNoise(int gray, int x, int y) {
-  uint32_t hash = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(y) * 668265263u;
-  hash = (hash ^ (hash >> 13)) * 1274126177u;
-  const int threshold = static_cast<int>(hash >> 24);
-
-  const int scaled = gray * 3;
-  if (scaled < 255) {
-    return (scaled + threshold >= 255) ? 1 : 0;
-  } else if (scaled < 510) {
-    return ((scaled - 255) + threshold >= 255) ? 2 : 1;
-  } else {
-    return ((scaled - 510) + threshold >= 255) ? 3 : 2;
+// Reconstruct the 8-bit gray value that a 2-bit level represents on the panel.
+uint8_t unquantize(uint8_t level) {
+  switch (level) {
+    case 0: return GRAY_LEVEL_0;
+    case 1: return GRAY_LEVEL_1;
+    case 2: return GRAY_LEVEL_2;
+    default: return GRAY_LEVEL_3;
   }
 }
 
-// Main quantization function - selects between methods based on config
-uint8_t quantize(int gray, int x, int y) {
-  if (USE_NOISE_DITHERING) {
-    return quantizeNoise(gray, x, y);
-  } else {
-    return quantizeSimple(gray);
-  }
+// Main quantization function (2-bit, 4 levels).
+uint8_t quantize(int gray, int /*x*/, int /*y*/) {
+  return quantizeSimple(gray);
 }
 
 // 1-bit noise dithering for fast home screen rendering

@@ -1,5 +1,5 @@
 #pragma once
-#include "activities/Activity.h"
+#include "../Activity.h"
 
 class BootActivity final : public Activity {
  public:

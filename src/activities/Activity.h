@@ -32,6 +32,7 @@ class Activity {
   explicit Activity(std::string name, GfxRenderer& renderer, MappedInputManager& mappedInput)
       : name(std::move(name)), renderer(renderer), mappedInput(mappedInput) {}
   virtual ~Activity() = default;
+  GfxRenderer& getRenderer() const { return renderer; }
   virtual void onEnter();
   virtual void onExit();
   virtual void loop() {}
@@ -47,16 +48,16 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
-  // Exclusive storage activities suspend global controls and normal activity
-  // transitions so no filesystem code races a raw SD-card owner.
-  virtual bool requiresExclusiveStorageLoop() const { return false; }
   virtual bool isReaderActivity() const { return false; }
-  // Returns true when the activity schedules a reader-aware forced refresh.
-  virtual bool handleForcedRefresh() { return false; }
+  virtual bool isScreenSaverActivity() const { return false; }
+  virtual bool isWifiActivity() const { return false; }
   virtual uint8_t getUiTransitionRefreshWeight() const { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
-  virtual bool isHomeActivity() const { return false; }
-  virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
+
+  /// Free temporary memory that is not needed while this activity is in the
+  /// background (under a reader or screensaver).  Default: no-op.
+  /// Called by ActivityManager::pushActivity() before the new activity runs.
+  virtual void freeBackgroundMemory() {}
 
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes
@@ -68,8 +69,11 @@ class Activity {
   // Finish this activity and return to the previous one on the stack (if any)
   void finish();
 
-  // Convenience method to facilitate API transition to ActivityManager
-  // TODO: remove this in near future
-  void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
+  // Convenience forwarders to ActivityManager. Widely used across the
+  // codebase (OpdsBookBrowser, RecentBooks, HomeActivity, FileBrowser,
+  // ScreenSaverActivity, LibraryActivity, ReadingStatsDetail, etc.) — the
+  // methods are intentionally kept on Activity to keep call sites short
+  // and to make the activity lifecycle a single point of contact.
+  void onGoHome();
   void onSelectBook(const std::string& path);
 };

@@ -6,11 +6,12 @@
 #include <string>
 #include <vector>
 
+#include "../Activity.h"
 #include "./FileBrowserActivity.h"
-#include "RecentBooksStore.h"
-#include "activities/Activity.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
+struct RecentBook;
 struct Rect;
 
 class HomeActivity final : public Activity {
@@ -36,20 +37,20 @@ class HomeActivity final : public Activity {
   int cachedCarouselFrameHashIndex = -1;
   uint32_t cachedCarouselFrameHash = 0;
   bool cachedCarouselFrameHashValid = false;
+  uint32_t cachedCarouselFramePrefixHash = 0;
+  bool cachedCarouselFramePrefixValid = false;
+  int cachedCarouselFramePrefixBookCount = 0;
+  std::vector<uint32_t> carouselPerBookHashes;
   std::string carouselCoverLoadAttemptPath;
   bool carouselFramesReady = false;
   std::vector<RecentBook> recentBooks;
-  // Menu entry to pre-select on entry (set by ActivityManager::goHome when
-  // returning from a sub-screen) and whether the first paint should be a
-  // HALF refresh (wake from sleep / home gesture) instead of the default.
-  const HomeMenuItem initialMenuItem;
-  const bool cleanInitialRefresh;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onAppsOpen();
   void onReadingStatsOpen();
   void onSyncDayOpen();
   void onOpdsBrowserOpen();
+  void onWikipediaOpen();
 
   int getMenuItemCount() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image
@@ -64,29 +65,19 @@ class HomeActivity final : public Activity {
   void requestFreshHomeRender(bool immediate = false);
   uint32_t getCachedCarouselFrameHash(int bookIndex);
   void scheduleCarouselCoverLoadIfNeeded();
+  void pruneCarouselFrameCache();  // remove cached frames no longer matching the current book set
   void loadRecentBooks(int maxBooks);
   void reloadHomeBooks(int maxBooks);
-  // Selector index of the Home shortcut matching a HomeMenuItem (0 when absent).
-  int indexForMenuItem(HomeMenuItem item) const;
-  // Open whatever selectorIndex points at (book, shortcut, or Apps hub).
-  void activateSelection();
-  void promptRemoveSelectedBook();
-  // Touch handling for the cover tile(s) and the shortcut rows/icons.
-  // Returns true when the pass was consumed.
-  bool handleTouch();
   void loadRecentCovers(int coverHeight);
   bool needsRecentCoverLoad(int coverHeight) const;
+  void drawCarouselRecentsPanel(GfxRenderer& renderer, int totalBooks);
 
  public:
-  explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                        HomeMenuItem initialMenuItemValue = HomeMenuItem::NONE, bool cleanInitialRefresh = false)
-      : Activity("Home", renderer, mappedInput),
-        initialMenuItem(initialMenuItemValue),
-        cleanInitialRefresh(cleanInitialRefresh) {}
+  explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+      : Activity("Home", renderer, mappedInput) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool isHomeActivity() const override { return true; }
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
 };

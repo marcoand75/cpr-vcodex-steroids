@@ -16,22 +16,15 @@ class SdCardFontManager {
   SdCardFontManager(const SdCardFontManager&) = delete;
   SdCardFontManager& operator=(const SdCardFontManager&) = delete;
 
-  // Load the family's .cpfont at `pointSize`, or the nearest size it ships if
-  // that exact size is not installed. Only one .cpfont file is loaded; other
-  // sizes remain on disk. This keeps resident interval + kern/ligature tables to
-  // one size's worth of memory. Returns true on success.
-  bool loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize);
-
-  // Additively load the .cpfont of `family` at the exact physical `pointSize`
-  // (used for size-matched CJK UI fallback alongside the reader-size font).
-  // Does not unload anything. If a font of that size is already loaded its id
-  // is reused. Returns the font id, or 0 if the family has no file at that size
-  // or loading failed.
+  // Load the font file matching fontSizeEnum (SMALL=0 .. EXTRA_LARGE=3).
+  // Returns true on success.
+  bool loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t fontSizeEnum);
+  // Load an additional size for the currently loaded family (for fallback fonts).
+  // Returns the font ID, or 0 on failure.
   int loadFamilyExtraSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize);
 
   // Unload everything, unregister from renderer.
   void unloadAll(GfxRenderer& renderer);
-  // Fork: true while any .cpfont is registered (used by SdCardFontSystem::releaseForNetwork).
   bool hasLoadedFont() const { return !loaded_.empty(); }
 
   // Look up the font ID for the loaded family. Returns 0 if nothing loaded
@@ -41,9 +34,13 @@ class SdCardFontManager {
   // Get name of currently loaded family (empty if none).
   const std::string& currentFamilyName() const { return loadedFamilyName_; };
 
-  // Point size that was actually loaded.
+  // Point size that was actually loaded (closest match to targetPtSize).
   // 0 if nothing loaded.
   uint8_t currentPointSize() const { return loadedPointSize_; };
+
+  // Compute the point size this manager would select for the given family
+  // and font-size enum, using the same standard-size detection as loadFamily().
+  uint8_t getTargetSizeForEnum(const SdCardFontFamilyInfo& family, uint8_t fontSizeEnum) const;
 
  private:
   struct LoadedFont {
@@ -52,9 +49,6 @@ class SdCardFontManager {
     uint8_t size;
   };
   static int computeFontId(uint32_t contentHash, const char* familyName, uint8_t pointSize);
-
-  // Load+register a single .cpfont file and append it to loaded_.
-  // Returns the font id, or 0 on failure (allocation, read, or id collision).
   int loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer);
 
   std::string loadedFamilyName_;

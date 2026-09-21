@@ -25,6 +25,8 @@ class RecentBooksStore {
   static RecentBooksStore instance;
 
   std::vector<RecentBook> recentBooks;
+  mutable bool loaded_ = false;
+  uint32_t generation_ = 0;
 
   friend bool JsonSettingsIO::saveRecentBooks(const RecentBooksStore&, const char*);
   friend bool JsonSettingsIO::loadRecentBooks(RecentBooksStore&, const char*);
@@ -34,6 +36,10 @@ class RecentBooksStore {
 
   // Get singleton instance
   static RecentBooksStore& getInstance() { return instance; }
+
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   // Add a book to the recent list (moves to front if already exists)
   void addBook(const std::string& path, const std::string& title, const std::string& author,
@@ -46,16 +52,6 @@ class RecentBooksStore {
                       const std::string& bookId = "");
 
   bool removeBook(const std::string& key);
-
-  // Upstream API: remove the entry whose path matches (used when a book is removed from recents or
-  // finished/read). Returns true if an entry was found and removed. Persistence is best-effort.
-  bool removeByPath(const std::string& path) { return removeBook(path); }
-
-  // Upstream API: repoint an entry's path (and coverBmpPath, if it lived under the old cache dir)
-  // after the backing file and cache dir were moved on disk. No-op if no entry matches oldPath.
-  // Persists on success. Keeps the entry's list position (does not reorder).
-  void updatePath(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
-                  const std::string& newCachePath);
 
   // True if the book's backing file is no longer present on the SD card.
   static bool isMissing(const RecentBook& book);
@@ -73,7 +69,11 @@ class RecentBooksStore {
   bool saveToFile() const;
 
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; bumpGeneration(); }
   RecentBook getDataFromBook(std::string path) const;
+  const RecentBook* findBook(const std::string& path) const;
 
  private:
   int findBookIndex(const std::string& path, const std::string& bookId) const;
@@ -82,5 +82,4 @@ class RecentBooksStore {
   bool loadFromBinaryFile();
 };
 
-// Helper macro to access recent books store
 #define RECENT_BOOKS RecentBooksStore::getInstance()

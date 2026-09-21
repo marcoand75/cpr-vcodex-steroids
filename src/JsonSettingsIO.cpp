@@ -1,28 +1,30 @@
 #include "JsonSettingsIO.h"
 
 #include <ArduinoJson.h>
-#include <CredentialIntegrity.h>
 #include <HalStorage.h>
-#include <I18n.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
+#include <Serialization.h>
 #include <Stream.h>
 
 #include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <string>
-#include <utility>
-#include <vector>
+
+#include "util/StringUtils.h"
 
 #include "AchievementsStore.h"
+#include <CredentialIntegrity.h>
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FavoritesStore.h"
+#include "UserCollectionsStore.h"
 #include "KOReaderCredentialStore.h"
 #include "OpdsServerStore.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "StoreManager.h"
 #include "SettingsList.h"
 #include "WifiCredentialStore.h"
 #include "util/BookIdentity.h"
@@ -30,358 +32,8 @@
 #include "util/ShortcutRegistry.h"
 #include "util/TimeZoneRegistry.h"
 
-namespace {
-constexpr uint8_t FONT_FAMILY_SCHEMA_VERSION = 3;
-// 1: 0..3 SMALL..EXTRA_LARGE slot; 2: 0..4 X_SMALL..EXTRA_LARGE slot; 3: point size
-// (upstream-compatible: "fontSize" holds the point size, values <= LEGACY_FONT_SIZE_MAX are slots).
-constexpr uint8_t FONT_SIZE_SCHEMA_VERSION = 3;
-constexpr uint8_t LEGACY_FONT_SIZE_SLOT_SCHEMA_VERSION = 2;
-constexpr uint8_t UI_THEME_SCHEMA_VERSION = 3;
-constexpr uint8_t TEXT_DARKNESS_SCHEMA_VERSION = 2;
-constexpr uint8_t FLASHCARD_STUDY_MODE_SCHEMA_VERSION = 2;
-constexpr uint8_t LEGACY_LEXEND_FONT_FAMILY = 2;
-constexpr char LEXEND_SD_FAMILY_NAME[] = "Lexend";
+#include "JsonSettingsIOShared.inc"
 
-class HalFileStream : public Stream {
- public:
-  explicit HalFileStream(HalFile& file) : file(file) {}
-
-  int available() override { return file.available() + (peekedByte >= 0 ? 1 : 0); }
-
-  int read() override {
-    if (peekedByte >= 0) {
-      const int byte = peekedByte;
-      peekedByte = -1;
-      return byte;
-    }
-    return file.read();
-  }
-
-  int peek() override {
-    if (peekedByte < 0) {
-      peekedByte = file.read();
-    }
-    return peekedByte;
-  }
-
-  void flush() override { file.flush(); }
-
-  size_t write(uint8_t value) override { return file.write(value); }
-
- private:
-  HalFile& file;
-  int peekedByte = -1;
-};
-
-// Serializes one scalar at a time so large stores do not need a full
-// JsonDocument in memory while the destination file is open. String values are
-// linked only for the duration of serializeJson(), avoiding a second copy.
-class JsonStreamWriter {
- public:
-  explicit JsonStreamWriter(HalFile& file) : file_(file) {}
-
-  void literal(const char* text) {
-    if (!ok_ || !text) return;
-    const size_t length = std::strlen(text);
-    expectedBytes_ += length;
-    const size_t written = file_.write(text, length);
-    writtenBytes_ += written;
-    if (written != length) ok_ = false;
-  }
-
-  void value(const std::string& text) { writeScalar(JsonString(text.data(), text.size(), true)); }
-
-  template <typename T>
-  void value(const T value) {
-    writeScalar(value);
-  }
-
-  bool ok() const { return ok_; }
-  size_t expectedBytes() const { return expectedBytes_; }
-  size_t writtenBytes() const { return writtenBytes_; }
-
- private:
-  template <typename T>
-  void writeScalar(const T value) {
-    if (!ok_) return;
-
-    JsonDocument scalar;
-    if (!scalar.set(value) || scalar.overflowed()) {
-      ok_ = false;
-      return;
-    }
-
-    const size_t expected = measureJson(scalar);
-    const size_t written = serializeJson(scalar, file_);
-    expectedBytes_ += expected;
-    writtenBytes_ += written;
-    if (written != expected) ok_ = false;
-  }
-
-  HalFile& file_;
-  size_t expectedBytes_ = 0;
-  size_t writtenBytes_ = 0;
-  bool ok_ = true;
-};
-
-bool copyVerifiedJsonTempToTarget(const char* moduleName, const char* tempPath, const char* targetPath,
-                                  const size_t expectedSize) {
-  HalFile source;
-  if (!Storage.openFileForRead(moduleName, tempPath, source)) {
-    return false;
-  }
-
-  HalFile target;
-  if (!Storage.openFileForWrite(moduleName, targetPath, target)) {
-    source.close();
-    return false;
-  }
-
-  uint8_t buffer[256];
-  size_t copied = 0;
-  bool complete = true;
-  while (true) {
-    const int readBytes = source.read(buffer, sizeof(buffer));
-    if (readBytes < 0) {
-      complete = false;
-      break;
-    }
-    if (readBytes == 0) {
-      break;
-    }
-
-    const size_t written = target.write(buffer, static_cast<size_t>(readBytes));
-    if (written != static_cast<size_t>(readBytes)) {
-      complete = false;
-      break;
-    }
-    copied += written;
-  }
-
-  target.flush();
-  target.close();
-  source.close();
-
-  if (!complete || copied != expectedSize) {
-    Storage.remove(targetPath);
-    return false;
-  }
-
-  HalFile verification;
-  if (!Storage.openFileForRead(moduleName, targetPath, verification)) {
-    Storage.remove(targetPath);
-    return false;
-  }
-  const bool sizeMatches = verification.fileSize64() == expectedSize;
-  verification.close();
-  if (!sizeMatches) {
-    Storage.remove(targetPath);
-    return false;
-  }
-
-  return true;
-}
-
-bool promoteJsonTempFile(const char* moduleName, const char* tempPath, const char* targetPath,
-                         const size_t expectedSize) {
-  if (Storage.exists(targetPath) && !Storage.remove(targetPath)) {
-    Storage.remove(tempPath);
-    LOG_ERR(moduleName, "Could not remove JSON file before replace: %s", targetPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Could not remove JSON file before replace: ") + targetPath);
-    return false;
-  }
-
-  if (!Storage.rename(tempPath, targetPath)) {
-    LOG_ERR(moduleName, "Could not rename JSON temp file to final path: %s; trying checked copy", targetPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("JSON temp rename failed; trying checked copy for ") + targetPath);
-
-    if (!copyVerifiedJsonTempToTarget(moduleName, tempPath, targetPath, expectedSize)) {
-      LOG_ERR(moduleName, "Could not promote JSON temp file to final path: %s", targetPath);
-      CPR_VCODEX_LOG_EVENT(moduleName,
-                           std::string("Could not promote JSON temp file; kept it for recovery: ") + tempPath);
-      return false;
-    }
-
-    Storage.remove(tempPath);
-    LOG_DBG(moduleName, "Recovered JSON replacement via checked copy: %s", targetPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Recovered JSON replacement via checked copy: ") + targetPath);
-  }
-
-  return true;
-}
-
-bool saveJsonDocumentToFile(const char* moduleName, const char* path, const JsonDocument& doc) {
-  if (!path || !*path) {
-    LOG_ERR(moduleName, "Missing JSON path for write");
-    CPR_VCODEX_LOG_EVENT(moduleName, "Missing JSON path for write");
-    return false;
-  }
-
-  const char* targetPath = path;
-  char tempPath[256];
-  const int tempPathLength = snprintf(tempPath, sizeof(tempPath), "%s.tmp", targetPath);
-  if (tempPathLength < 0 || static_cast<size_t>(tempPathLength) >= sizeof(tempPath)) {
-    LOG_ERR(moduleName, "JSON path is too long for atomic write: %s", targetPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("JSON path is too long for atomic write: ") + targetPath);
-    return false;
-  }
-
-  if (doc.overflowed()) {
-    LOG_ERR(moduleName, "JSON document overflowed before write: %s", targetPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Refused to write overflowed JSON document: ") + targetPath);
-    return false;
-  }
-
-  if (Storage.exists(tempPath)) {
-    Storage.remove(tempPath);
-  }
-
-  HalFile file;
-  if (!Storage.openFileForWrite(moduleName, tempPath, file)) {
-    LOG_ERR(moduleName, "Could not open JSON file for write: %s", tempPath);
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Could not open JSON temp file for write: ") + tempPath);
-    return false;
-  }
-
-  const size_t expected = measureJson(doc);
-  const size_t written = serializeJson(doc, file);
-  file.flush();
-  file.close();
-  if (written == 0 || written != expected) {
-    Storage.remove(tempPath);
-    LOG_ERR(moduleName, "Incomplete JSON write for %s: %u/%u bytes", targetPath, static_cast<unsigned>(written),
-            static_cast<unsigned>(expected));
-    CPR_VCODEX_LOG_EVENT(moduleName, std::string("Incomplete JSON write for ") + targetPath + ": " +
-                                         std::to_string(written) + "/" + std::to_string(expected) + " bytes");
-    return false;
-  }
-
-  return promoteJsonTempFile(moduleName, tempPath, targetPath, expected);
-}
-
-bool loadJsonDocumentFromFile(const char* moduleName, const char* path, JsonDocument& doc) {
-  HalFile file;
-  if (!Storage.openFileForRead(moduleName, path, file)) {
-    LOG_ERR(moduleName, "Could not open JSON file for read: %s", path);
-    if (Storage.exists(path)) {
-      CPR_VCODEX_LOG_EVENT(moduleName, std::string("Could not open JSON file for read: ") + path);
-    }
-    return false;
-  }
-
-  HalFileStream stream(file);
-  auto error = deserializeJson(doc, stream);
-  file.close();
-  if (error || doc.overflowed()) {
-    const char* message = error ? error.c_str() : "document overflow";
-    LOG_ERR(moduleName, "JSON parse error: %s", message);
-#ifndef CPR_DISABLE_EVENT_LOGS
-    const std::string reportBody =
-        std::string("File: ") + path + "\nModule: " + moduleName + "\nError: " + message + "\n";
-    std::string outPath;
-    if (CPR_VCODEX_WRITE_REPORT("json_error", reportBody, &outPath)) {
-      CPR_VCODEX_LOG_EVENT(moduleName, std::string("Saved JSON parse error report to ") + outPath);
-    }
-#endif
-    return false;
-  }
-  return true;
-}
-
-uint8_t migrateStoredUiTheme(const uint8_t rawUiTheme, const uint8_t schemaVersion, const uint8_t currentDefault,
-                             bool* needsResave) {
-  if (schemaVersion >= UI_THEME_SCHEMA_VERSION) {
-    const uint8_t clampedTheme =
-        rawUiTheme < static_cast<uint8_t>(CrossPointSettings::UI_THEME_COUNT) ? rawUiTheme : currentDefault;
-    if (clampedTheme != rawUiTheme && needsResave) *needsResave = true;
-    return clampedTheme;
-  }
-
-  // Legacy/theme-consolidation migration:
-  // - 0 (Classic) -> Lyra
-  // - 2/3 (Extended/Custom) -> Lyra vCodex
-  // - 1 is ambiguous: in the current 2-theme schema it already means Lyra vCodex,
-  //   while in older schemas it meant Lyra. Prefer preserving the newer stored value.
-  uint8_t migratedTheme = currentDefault;
-  switch (rawUiTheme) {
-    case 0:
-      migratedTheme = CrossPointSettings::LYRA;
-      break;
-    case 1:
-      migratedTheme = CrossPointSettings::LYRA_CUSTOM;
-      break;
-    case 2:
-    case 3:
-      migratedTheme = CrossPointSettings::LYRA_CUSTOM;
-      break;
-    default:
-      migratedTheme = currentDefault;
-      break;
-  }
-
-  if (migratedTheme != rawUiTheme && needsResave) *needsResave = true;
-  return migratedTheme;
-}
-
-uint8_t migrateStoredFlashcardStudyMode(const uint8_t rawMode, const uint8_t schemaVersion,
-                                        const uint8_t currentDefault, bool* needsResave) {
-  if (schemaVersion >= FLASHCARD_STUDY_MODE_SCHEMA_VERSION) {
-    const uint8_t clampedMode =
-        rawMode < static_cast<uint8_t>(CrossPointSettings::FLASHCARD_STUDY_MODE_COUNT) ? rawMode : currentDefault;
-    if (clampedMode != rawMode && needsResave) *needsResave = true;
-    return clampedMode;
-  }
-
-  // Legacy mapping before Due existed:
-  // - 0 -> Scheduled
-  // - 1 -> Infinite
-  uint8_t migratedMode = currentDefault;
-  switch (rawMode) {
-    case 0:
-      migratedMode = CrossPointSettings::FLASHCARD_STUDY_SCHEDULED;
-      break;
-    case 1:
-      migratedMode = CrossPointSettings::FLASHCARD_STUDY_INFINITE;
-      break;
-    default:
-      migratedMode = currentDefault;
-      break;
-  }
-
-  if (migratedMode != rawMode && needsResave) *needsResave = true;
-  return migratedMode;
-}
-
-// Nearest legacy SLEEP_TIMEOUT enum for a minutes value; written alongside
-// "sleepTimeoutMinutes" so older fork builds still read a sensible timeout.
-uint8_t sleepTimeoutMinutesToLegacyEnum(const uint8_t minutes) {
-  if (minutes <= 1) return CrossPointSettings::SLEEP_1_MIN;
-  if (minutes <= 5) return CrossPointSettings::SLEEP_5_MIN;
-  if (minutes <= 10) return CrossPointSettings::SLEEP_10_MIN;
-  if (minutes <= 15) return CrossPointSettings::SLEEP_15_MIN;
-  return CrossPointSettings::SLEEP_30_MIN;
-}
-
-void migrateLegacyStatsShortcut(CrossPointSettings& settings, const JsonDocument& doc, bool* needsResave) {
-  const bool hasLegacyStatsShortcut =
-      !doc["statsShortcut"].isNull() || !doc["statsShortcutOrder"].isNull() || !doc["statsShortcutVisible"].isNull();
-  if (!hasLegacyStatsShortcut) {
-    return;
-  }
-
-  const bool legacyVisible = settings.statsShortcutVisible != 0;
-  const auto legacyLocation = static_cast<CrossPointSettings::SHORTCUT_LOCATION>(settings.statsShortcut);
-  if (legacyVisible &&
-      (legacyLocation == CrossPointSettings::SHORTCUT_HOME || legacyLocation == CrossPointSettings::SHORTCUT_APPS)) {
-    settings.readingStatsShortcut = settings.statsShortcut;
-    settings.readingStatsShortcutOrder = settings.statsShortcutOrder;
-    settings.readingStatsShortcutVisible = 1;
-  }
-
-  settings.statsShortcutVisible = 0;
-  if (needsResave) *needsResave = true;
-}
-}  // namespace
 
 // Convert legacy settings.
 void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
@@ -432,31 +84,6 @@ void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
   }
 }
 
-namespace {
-void migrateDisplayHeaderSettings(CrossPointSettings& s, const JsonDocument& doc, bool* needsResave) {
-  if (doc["displayHeaderTime"].isNull()) {
-    return;
-  }
-
-  const uint8_t headerTime = doc["displayHeaderTime"] | static_cast<uint8_t>(0);
-  if (headerTime > 1) {
-    return;
-  }
-
-  if (headerTime) {
-    if (s.displayDay == CrossPointSettings::DISPLAY_HEADER_OFF) {
-      s.displayDay = CrossPointSettings::DISPLAY_HEADER_TIME_ONLY;
-    } else if (s.displayDay == CrossPointSettings::DISPLAY_HEADER_DATE_ONLY) {
-      s.displayDay = CrossPointSettings::DISPLAY_HEADER_BOTH;
-    }
-  }
-
-  if (needsResave) {
-    *needsResave = true;
-  }
-}
-}  // namespace
-
 bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* needsResave) {
   auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
   auto loadToggle = [&](const char* key, uint8_t& field) {
@@ -476,8 +103,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   };
   auto loadString = [&](const char* key, char* dest, const size_t maxLen) {
     const std::string value = doc[key] | std::string(dest);
-    strncpy(dest, value.c_str(), maxLen - 1);
-    dest[maxLen - 1] = '\0';
+    StringUtils::copyToFixedBuffer(dest, maxLen, value);
   };
 
   if (doc["statusBarChapterPageCount"].isNull()) {
@@ -490,79 +116,26 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadToggle("cleanSleepRefresh", s.cleanSleepRefresh);
   loadEnum("hideBatteryPercentage", s.hideBatteryPercentage, CrossPointSettings::HIDE_BATTERY_PERCENTAGE_COUNT);
   loadEnum("refreshFrequency", s.refreshFrequency, CrossPointSettings::REFRESH_FREQUENCY_COUNT);
-  {
-    const uint8_t rawUiTheme = doc["uiTheme"] | s.uiTheme;
-    const uint8_t uiThemeSchemaVersion = doc["uiThemeSchemaVersion"] | static_cast<uint8_t>(0);
-    s.uiTheme = migrateStoredUiTheme(rawUiTheme, uiThemeSchemaVersion, s.uiTheme, needsResave);
-  }
   loadToggle("fadingFix", s.fadingFix);
-  // Night mode: fork key "darkMode"; upstream files carry the same flag as "screenInverted".
-  if (!doc["darkMode"].isNull()) {
-    loadToggle("darkMode", s.darkMode);
-  } else if (!doc["screenInverted"].isNull()) {
-    loadToggle("screenInverted", s.darkMode);
-    if (needsResave) *needsResave = true;
-  }
+  loadToggle("darkMode", s.darkMode);
   loadToggle("antiGhostingExperimental", s.antiGhostingExperimental);
-  loadEnum("quickResumeSleepScreen", s.quickResumeSleepScreen, CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN_COUNT);
-  loadValue("frontlightBrightness", s.frontlightBrightness, 0, 100);
-  loadValue("frontlightWarmth", s.frontlightWarmth, 0, 100);
-  loadToggle("frontlightOn", s.frontlightOn);
-  loadToggle("frontlightRestoreOnWake", s.frontlightRestoreOnWake);
 
-  loadString("sdFontFamilyName", s.sdFontFamilyName, sizeof(s.sdFontFamilyName));
-  const uint8_t rawFontFamily = doc["fontFamily"] | s.fontFamily;
-  const uint8_t fontFamilySchemaVersion = doc["fontFamilySchemaVersion"] | static_cast<uint8_t>(0);
-  if (fontFamilySchemaVersion < FONT_FAMILY_SCHEMA_VERSION && rawFontFamily == LEGACY_LEXEND_FONT_FAMILY &&
-      s.sdFontFamilyName[0] == '\0') {
-    s.fontFamily = CrossPointSettings::BOOKERLY;
-    strncpy(s.sdFontFamilyName, LEXEND_SD_FAMILY_NAME, sizeof(s.sdFontFamilyName) - 1);
-    s.sdFontFamilyName[sizeof(s.sdFontFamilyName) - 1] = '\0';
-    if (needsResave) *needsResave = true;
-  } else if (rawFontFamily >= static_cast<uint8_t>(CrossPointSettings::FONT_FAMILY_COUNT)) {
-    s.fontFamily = CrossPointSettings::BOOKERLY;
-    if (needsResave) *needsResave = true;
-  } else {
-    s.fontFamily = rawFontFamily;
-  }
-  if (fontFamilySchemaVersion < FONT_FAMILY_SCHEMA_VERSION && needsResave) {
-    *needsResave = true;
-  }
-
-  // Reader font size: an actual point size (upstream-compatible, still under the
-  // "fontSize" key). Older files hold a slot instead: 0..4 X_SMALL..EXTRA_LARGE
-  // (schema 2) or 0..3 SMALL..EXTRA_LARGE (schema < 2). No font renders at those
-  // sizes, so the range is unambiguous and folds to the point sizes the slots meant.
-  if (!doc["fontSize"].isNull()) {
-    const uint8_t fontSizeSchemaVersion = doc["fontSizeSchemaVersion"] | static_cast<uint8_t>(0);
-    const uint8_t storedFontSize = doc["fontSize"] | s.fontPointSize;
-    if (storedFontSize <= CrossPointSettings::LEGACY_FONT_SIZE_MAX) {
-      uint8_t slot = storedFontSize;
-      if (fontSizeSchemaVersion < LEGACY_FONT_SIZE_SLOT_SCHEMA_VERSION &&
-          slot < static_cast<uint8_t>(CrossPointSettings::EXTRA_LARGE)) {
-        slot++;  // pre-X_SMALL files: SMALL was slot 0
-      }
-      s.fontPointSize = CrossPointSettings::legacyFontSizeSlotToPointSize(slot);
+  loadEnum("fontSize", s.fontSize, CrossPointSettings::FONT_SIZE_COUNT);
+  const uint8_t fontSizeSchemaVersion = doc["fontSizeSchemaVersion"] | static_cast<uint8_t>(0);
+  if (fontSizeSchemaVersion < FONT_SIZE_SCHEMA_VERSION && !doc["fontSize"].isNull()) {
+    const uint8_t legacyFontSize = doc["fontSize"] | static_cast<uint8_t>(CrossPointSettings::MEDIUM - 1);
+    if (legacyFontSize < static_cast<uint8_t>(CrossPointSettings::EXTRA_LARGE)) {
+      s.fontSize = static_cast<uint8_t>(legacyFontSize + 1);
       if (needsResave) *needsResave = true;
-    } else {
-      s.fontPointSize = storedFontSize;
     }
   }
 
   loadEnum("lineSpacing", s.lineSpacing, CrossPointSettings::LINE_COMPRESSION_COUNT);
-  loadValue("screenMargin", s.screenMargin, CrossPointSettings::SCREEN_MARGIN_MIN,
-            CrossPointSettings::SCREEN_MARGIN_MAX);
+  loadValue("screenMargin", s.screenMargin, 5, 40);
   loadEnum("paragraphAlignment", s.paragraphAlignment, CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT);
   loadToggle("embeddedStyle", s.embeddedStyle);
   loadToggle("hyphenationEnabled", s.hyphenationEnabled);
-  // Fork key "bionicReading" (tri-state); upstream files carry a boolean "focusReadingEnabled".
-  if (!doc["bionicReading"].isNull()) {
-    loadEnum("bionicReading", s.bionicReading, CrossPointSettings::BIONIC_READING_MODE_COUNT);
-  } else if (!doc["focusReadingEnabled"].isNull()) {
-    loadToggle("focusReadingEnabled", s.bionicReading);
-    if (needsResave) *needsResave = true;
-  }
-  loadString("dictionaryName", s.dictionaryName, sizeof(s.dictionaryName));
+  loadEnum("bionicReading", s.bionicReading, CrossPointSettings::BIONIC_READING_MODE_COUNT);
   loadEnum("orientation", s.orientation, CrossPointSettings::ORIENTATION_COUNT);
   loadToggle("extraParagraphSpacing", s.extraParagraphSpacing);
   loadToggle("forceParagraphIndents", s.forceParagraphIndents);
@@ -589,24 +162,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   }
   loadEnum("readerRefreshMode", s.readerRefreshMode, CrossPointSettings::READER_REFRESH_MODE_COUNT);
   loadEnum("imageRendering", s.imageRendering, CrossPointSettings::IMAGE_RENDERING_COUNT);
-  loadEnum("readerMenuStyle", s.readerMenuStyle, CrossPointSettings::READER_MENU_STYLE_COUNT);
 
   loadEnum("sideButtonLayout", s.sideButtonLayout, CrossPointSettings::SIDE_BUTTON_LAYOUT_COUNT);
-  loadEnum("touchReaderControls", s.touchReaderControls, CrossPointSettings::TOUCH_READER_CONTROLS_COUNT);
-  // Legacy key name kept from upstream: 0 = Off, 1 = Tap, 2 = Swipe up.
-  loadEnum("tapForReaderMenu", s.showReaderMenu, CrossPointSettings::SHOW_READER_MENU_COUNT);
   loadToggle("frontButtonFollowOrientation", s.frontButtonFollowOrientation);
-  loadEnum("longPressMenuFunction", s.longPressMenuFunction, CrossPointSettings::LONG_PRESS_MENU_FUNCTION_COUNT);
-  loadToggle("pwrBtnFootnoteBack", s.pwrBtnFootnoteBack);
-  loadToggle("backShortToFileBrowser", s.backShortToFileBrowser);
-  if (!doc["longPressButtonBehavior"].isNull()) {
-    loadEnum("longPressButtonBehavior", s.longPressButtonBehavior,
-             CrossPointSettings::LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
-  } else if (!doc["longPressChapterSkip"].isNull()) {
-    s.longPressButtonBehavior = (doc["longPressChapterSkip"] | true) ? CrossPointSettings::LONG_PRESS_CHAPTER_SKIP
-                                                                     : CrossPointSettings::LONG_PRESS_OFF;
-    if (needsResave) *needsResave = true;
-  }
   {
     const uint8_t rawShortPwrBtn = doc["shortPwrBtn"] | s.shortPwrBtn;
     if (rawShortPwrBtn < static_cast<uint8_t>(CrossPointSettings::SHORT_PWRBTN_COUNT)) {
@@ -617,33 +175,12 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
     }
   }
   loadEnum("tiltPageTurn", s.tiltPageTurn, CrossPointSettings::TILT_PAGE_TURN_COUNT);
-  // Auto-sleep: minutes since the upstream merge; older files hold the SLEEP_TIMEOUT enum.
-  if (!doc["sleepTimeoutMinutes"].isNull()) {
-    loadValue("sleepTimeoutMinutes", s.sleepTimeoutMinutes, CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES,
-              CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES);
-  } else if (!doc["sleepTimeout"].isNull()) {
-    const uint8_t legacySleepTimeout =
-        clamp(doc["sleepTimeout"] | static_cast<uint8_t>(CrossPointSettings::SLEEP_10_MIN),
-              CrossPointSettings::SLEEP_TIMEOUT_COUNT, CrossPointSettings::SLEEP_10_MIN);
-    s.sleepTimeoutMinutes = CrossPointSettings::sleepTimeoutEnumToMinutes(legacySleepTimeout);
-    if (needsResave) *needsResave = true;
-  }
+  loadEnum("sleepTimeout", s.sleepTimeout, CrossPointSettings::SLEEP_TIMEOUT_COUNT);
   loadToggle("showHiddenFiles", s.showHiddenFiles);
   loadToggle("hideFileExtension", s.hideFileExtension);
-  loadToggle("removeReadBooksFromRecents", s.removeReadBooksFromRecents);
-
-  // Language: ISO code string for stability across enum reorders (upstream format).
-  if (doc["language"].is<const char*>()) {
-    s.language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
-  }
-  // Keyboard layout mask: absent means unconfigured (0), which is the default.
-  if (doc["keyboardLayouts"].is<uint16_t>()) {
-    s.keyboardLayouts = doc["keyboardLayouts"].as<uint16_t>();
-  }
 
   loadString("opdsServerUrl", s.opdsServerUrl, sizeof(s.opdsServerUrl));
   loadString("opdsUsername", s.opdsUsername, sizeof(s.opdsUsername));
-  loadString("opdsDownloadFolder", s.opdsDownloadFolder, sizeof(s.opdsDownloadFolder));
   loadEnum("opdsFilenameFormat", s.opdsFilenameFormat, CrossPointSettings::OPDS_FILENAME_FORMAT_COUNT);
   loadToggle("koSyncAutoPullOnOpen", s.koSyncAutoPullOnOpen);
   loadToggle("koSyncAutoPushOnClose", s.koSyncAutoPushOnClose);
@@ -654,8 +191,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       password = doc["opdsPassword"] | std::string(s.opdsPassword);
       if (password != s.opdsPassword && needsResave) *needsResave = true;
     }
-    strncpy(s.opdsPassword, password.c_str(), sizeof(s.opdsPassword) - 1);
-    s.opdsPassword[sizeof(s.opdsPassword) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(s.opdsPassword, sizeof(s.opdsPassword), password);
   }
 
   loadToggle("statusBarChapterPageCount", s.statusBarChapterPageCount);
@@ -665,11 +201,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
            CrossPointSettings::STATUS_BAR_PROGRESS_BAR_THICKNESS_COUNT);
   loadEnum("statusBarTitle", s.statusBarTitle, CrossPointSettings::STATUS_BAR_TITLE_COUNT);
   loadToggle("statusBarBattery", s.statusBarBattery);
-  loadEnum("xtcStatusBarMode", s.xtcStatusBarMode, CrossPointSettings::XTC_STATUS_BAR_MODE_COUNT);
   loadEnum("statusBarClock", s.statusBarClock, CrossPointSettings::STATUS_BAR_CLOCK_COUNT);
-  loadValue("clockUtcOffsetQ", s.clockUtcOffsetQ, 0, 104);
-  loadEnum("clockFormat", s.clockFormat, static_cast<uint8_t>(2));
   loadToggle("clockHasBeenSynced", s.clockHasBeenSynced);
+  loadEnum("xtcStatusBarMode", s.xtcStatusBarMode, CrossPointSettings::XTC_STATUS_BAR_MODE_COUNT);
 
   using S = CrossPointSettings;
   s.frontButtonBack =
@@ -681,8 +215,6 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   s.frontButtonRight =
       clamp(doc["frontButtonRight"] | (uint8_t)S::FRONT_HW_RIGHT, S::FRONT_BUTTON_HARDWARE_COUNT, S::FRONT_HW_RIGHT);
   s.homeBookSource = clamp(doc["homeBookSource"] | s.homeBookSource, S::HOME_BOOK_SOURCE_COUNT, s.homeBookSource);
-  s.displayDay = clamp(doc["displayDay"] | s.displayDay, S::DISPLAY_HEADER_MODE_COUNT, s.displayDay);
-  migrateDisplayHeaderSettings(s, doc, needsResave);
   s.autoSyncDay = clamp(doc["autoSyncDay"] | s.autoSyncDay, static_cast<uint8_t>(2), s.autoSyncDay);
   s.syncDayWifiChoice =
       clamp(doc["syncDayWifiChoice"] | s.syncDayWifiChoice, S::SYNC_DAY_WIFI_CHOICE_COUNT, s.syncDayWifiChoice);
@@ -690,8 +222,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                   S::SYNC_DAY_REMINDER_STARTS_COUNT, s.syncDayReminderStarts);
   {
     const std::string sleepDirectory = doc["sleepDirectory"] | std::string("");
-    strncpy(s.sleepDirectory, sleepDirectory.c_str(), sizeof(s.sleepDirectory) - 1);
-    s.sleepDirectory[sizeof(s.sleepDirectory) - 1] = '\0';
+    StringUtils::copyToFixedBuffer(s.sleepDirectory, sizeof(s.sleepDirectory), sleepDirectory);
   }
   s.sleepImageOrder = clamp(doc["sleepImageOrder"] | static_cast<uint8_t>(S::SLEEP_IMAGE_SHUFFLE),
                             S::SLEEP_IMAGE_ORDER_COUNT, S::SLEEP_IMAGE_SHUFFLE);
@@ -711,15 +242,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                  s.flashcardSessionSize);
   s.showStatsAfterReading =
       clamp(doc["showStatsAfterReading"] | s.showStatsAfterReading, static_cast<uint8_t>(2), s.showStatsAfterReading);
-  // Fork key "moveCompletedBooks"; upstream files carry the same flag as "moveFinishedToReadFolder".
-  if (!doc["moveCompletedBooks"].isNull()) {
-    s.moveCompletedBooks =
-        clamp(doc["moveCompletedBooks"] | s.moveCompletedBooks, static_cast<uint8_t>(2), s.moveCompletedBooks);
-  } else if (!doc["moveFinishedToReadFolder"].isNull()) {
-    s.moveCompletedBooks =
-        clamp(doc["moveFinishedToReadFolder"] | s.moveCompletedBooks, static_cast<uint8_t>(2), s.moveCompletedBooks);
-    if (needsResave) *needsResave = true;
-  }
+  s.moveCompletedBooks =
+      clamp(doc["moveCompletedBooks"] | s.moveCompletedBooks, static_cast<uint8_t>(2), s.moveCompletedBooks);
   s.achievementsEnabled =
       clamp(doc["achievementsEnabled"] | s.achievementsEnabled, static_cast<uint8_t>(2), s.achievementsEnabled);
   s.achievementPopups =
@@ -840,9 +364,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
                                        static_cast<uint8_t>(2), s.opdsBrowserShortcutVisible);
 
   migrateLegacyStatsShortcut(s, doc, needsResave);
-  normalizeShortcutOrderSettings(s);
   CrossPointSettings::validateFrontButtonMapping(s);
-  s.normalizeDisplayDay();
 
   LOG_DBG("CPS", "Settings loaded from file");
   return true;
@@ -857,11 +379,6 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   for (int i = 0; i < CrossPointState::SLEEP_RECENT_COUNT; i++) recentArr.add(s.recentSleepImages[i]);
   doc["recentSleepPos"] = s.recentSleepPos;
   doc["recentSleepFill"] = s.recentSleepFill;
-  JsonArray recentOverlayArr = doc["recentOverlaySleepImages"].to<JsonArray>();
-  for (int i = 0; i < CrossPointState::SLEEP_RECENT_COUNT; i++) recentOverlayArr.add(s.recentOverlaySleepImages[i]);
-  doc["recentOverlaySleepPos"] = s.recentOverlaySleepPos;
-  doc["recentOverlaySleepFill"] = s.recentOverlaySleepFill;
-  doc["showBootScreen"] = s.showBootScreen;
   doc["readerActivityLoadCount"] = s.readerActivityLoadCount;
   doc["lastSleepFromReader"] = s.lastSleepFromReader;
   doc["lastKnownValidTimestamp"] = s.lastKnownValidTimestamp;
@@ -887,11 +404,8 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   sync["resultPage"] = s.koReaderSyncSession.resultPage;
   sync["resultParagraphIndex"] = s.koReaderSyncSession.resultParagraphIndex;
   sync["resultHasParagraphIndex"] = s.koReaderSyncSession.resultHasParagraphIndex;
-  sync["resultLiIndex"] = s.koReaderSyncSession.resultLiIndex;
-  sync["resultHasLiIndex"] = s.koReaderSyncSession.resultHasLiIndex;
-  sync["resultVisibleTextOffset"] = s.koReaderSyncSession.resultVisibleTextOffset;
-  sync["resultHasVisibleTextOffset"] = s.koReaderSyncSession.resultHasVisibleTextOffset;
-  sync["resultXpathAnchorId"] = s.koReaderSyncSession.resultXpathAnchorId;
+  sync["resultListItemIndex"] = s.koReaderSyncSession.resultListItemIndex;
+  sync["resultHasListItemIndex"] = s.koReaderSyncSession.resultHasListItemIndex;
   sync["exitToHomeAfterSync"] = s.koReaderSyncSession.exitToHomeAfterSync;
   sync["autoPullEpubPath"] = s.koReaderSyncSession.autoPullEpubPath;
   JsonObject jump = doc["pendingBookmarkJump"].to<JsonObject>();
@@ -899,6 +413,11 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   jump["bookPath"] = s.pendingBookmarkJump.bookPath;
   jump["spineIndex"] = s.pendingBookmarkJump.spineIndex;
   jump["pageNumber"] = s.pendingBookmarkJump.pageNumber;
+  // Screensaver anti-repetition history
+  JsonArray ssRecentArr = doc["recentScreensaverImages"].to<JsonArray>();
+  for (int i = 0; i < CrossPointState::SCREENSAVER_RECENT_COUNT; i++) ssRecentArr.add(s.recentScreensaverImages[i]);
+  doc["recentScreensaverPos"] = s.recentScreensaverPos;
+  doc["recentScreensaverFill"] = s.recentScreensaverFill;
   return saveJsonDocumentToFile("CPS", path, doc);
 }
 
@@ -927,26 +446,8 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
     const uint8_t legacy = doc["lastSleepImage"] | static_cast<uint8_t>(UINT8_MAX);
     if (legacy != UINT8_MAX) s.pushRecentSleep(static_cast<uint16_t>(legacy));
   }
-  memset(s.recentOverlaySleepImages, 0, sizeof(s.recentOverlaySleepImages));
-  JsonArrayConst recentOverlayArr = doc["recentOverlaySleepImages"];
-  const int actualOverlayCount =
-      recentOverlayArr.isNull()
-          ? 0
-          : std::min(static_cast<int>(recentOverlayArr.size()), static_cast<int>(CrossPointState::SLEEP_RECENT_COUNT));
-  for (int i = 0; i < actualOverlayCount; i++) {
-    s.recentOverlaySleepImages[i] = recentOverlayArr[i] | static_cast<uint16_t>(0);
-  }
-  s.recentOverlaySleepPos = doc["recentOverlaySleepPos"] | static_cast<uint8_t>(0);
-  if (s.recentOverlaySleepPos >= CrossPointState::SLEEP_RECENT_COUNT) {
-    s.recentOverlaySleepPos =
-        actualOverlayCount > 0 ? s.recentOverlaySleepPos % CrossPointState::SLEEP_RECENT_COUNT : 0;
-  }
-  s.recentOverlaySleepFill = doc["recentOverlaySleepFill"] | static_cast<uint8_t>(0);
-  s.recentOverlaySleepFill =
-      static_cast<uint8_t>(std::min(static_cast<int>(s.recentOverlaySleepFill), actualOverlayCount));
   s.readerActivityLoadCount = doc["readerActivityLoadCount"] | (uint8_t)0;
   s.lastSleepFromReader = doc["lastSleepFromReader"] | false;
-  s.showBootScreen = doc["showBootScreen"] | true;
   s.lastKnownValidTimestamp = doc["lastKnownValidTimestamp"] | static_cast<uint32_t>(0);
   s.lastReadingStatsBackupDayOrdinal = doc["lastReadingStatsBackupDayOrdinal"] | static_cast<uint32_t>(0);
   s.syncDayReminderStartCount = doc["syncDayReminderStartCount"] | (uint8_t)0;
@@ -972,13 +473,8 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
       s.koReaderSyncSession.resultPage = sync["resultPage"] | 0;
       s.koReaderSyncSession.resultParagraphIndex = sync["resultParagraphIndex"] | static_cast<uint16_t>(0);
       s.koReaderSyncSession.resultHasParagraphIndex = sync["resultHasParagraphIndex"] | false;
-      // Pre-merge files used the listItemIndex names; accept both.
-      s.koReaderSyncSession.resultLiIndex =
-          sync["resultLiIndex"] | (sync["resultListItemIndex"] | static_cast<uint16_t>(0));
-      s.koReaderSyncSession.resultHasLiIndex = sync["resultHasLiIndex"] | (sync["resultHasListItemIndex"] | false);
-      s.koReaderSyncSession.resultVisibleTextOffset = sync["resultVisibleTextOffset"] | static_cast<uint32_t>(0);
-      s.koReaderSyncSession.resultHasVisibleTextOffset = sync["resultHasVisibleTextOffset"] | false;
-      s.koReaderSyncSession.resultXpathAnchorId = sync["resultXpathAnchorId"] | std::string("");
+      s.koReaderSyncSession.resultListItemIndex = sync["resultListItemIndex"] | static_cast<uint16_t>(0);
+      s.koReaderSyncSession.resultHasListItemIndex = sync["resultHasListItemIndex"] | false;
       s.koReaderSyncSession.exitToHomeAfterSync = sync["exitToHomeAfterSync"] | false;
       s.koReaderSyncSession.autoPullEpubPath = sync["autoPullEpubPath"] | std::string("");
     } else {
@@ -993,6 +489,18 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
     } else {
       s.pendingBookmarkJump.clear();
     }
+    // Screensaver anti-repetition history
+    memset(s.recentScreensaverImages, 0, sizeof(s.recentScreensaverImages));
+    JsonArrayConst ssRecentArr = doc["recentScreensaverImages"];
+    const int ssActualCount = ssRecentArr.isNull() ? 0
+        : std::min(static_cast<int>(ssRecentArr.size()),
+                   static_cast<int>(CrossPointState::SCREENSAVER_RECENT_COUNT));
+    for (int i = 0; i < ssActualCount; i++) s.recentScreensaverImages[i] = ssRecentArr[i] | static_cast<uint16_t>(0);
+    s.recentScreensaverPos = doc["recentScreensaverPos"] | static_cast<uint8_t>(0);
+    if (s.recentScreensaverPos >= CrossPointState::SCREENSAVER_RECENT_COUNT)
+      s.recentScreensaverPos = ssActualCount > 0 ? s.recentScreensaverPos % CrossPointState::SCREENSAVER_RECENT_COUNT : 0;
+    s.recentScreensaverFill = doc["recentScreensaverFill"] | static_cast<uint8_t>(0);
+    s.recentScreensaverFill = static_cast<uint8_t>(std::min(static_cast<int>(s.recentScreensaverFill), ssActualCount));
   }
   return true;
 }
@@ -1008,33 +516,18 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["cleanSleepRefresh"] = s.cleanSleepRefresh;
   doc["hideBatteryPercentage"] = s.hideBatteryPercentage;
   doc["refreshFrequency"] = s.refreshFrequency;
-  doc["uiTheme"] = s.uiTheme;
-  doc["uiThemeSchemaVersion"] = UI_THEME_SCHEMA_VERSION;
   doc["fadingFix"] = s.fadingFix;
-  doc["darkMode"] = s.darkMode;  // upstream name: screenInverted (alias of the same field)
+  doc["darkMode"] = s.darkMode;
   doc["antiGhostingExperimental"] = s.antiGhostingExperimental;
-  doc["quickResumeSleepScreen"] = s.quickResumeSleepScreen;
-  doc["frontlightBrightness"] = s.frontlightBrightness;
-  doc["frontlightWarmth"] = s.frontlightWarmth;
-  doc["frontlightOn"] = s.frontlightOn;
-  doc["frontlightRestoreOnWake"] = s.frontlightRestoreOnWake;
 
-  doc["fontFamily"] = s.fontFamily;
-  doc["fontFamilySchemaVersion"] = FONT_FAMILY_SCHEMA_VERSION;
-  if (s.sdFontFamilyName[0] != '\0') {
-    doc["sdFontFamilyName"] = s.sdFontFamilyName;
-  }
-  doc["fontSize"] = s.fontPointSize;  // point size (upstream-compatible key)
+  doc["fontSize"] = s.fontSize;
   doc["fontSizeSchemaVersion"] = FONT_SIZE_SCHEMA_VERSION;
-  if (s.dictionaryName[0] != '\0') {
-    doc["dictionaryName"] = s.dictionaryName;
-  }
   doc["lineSpacing"] = s.lineSpacing;
   doc["screenMargin"] = s.screenMargin;
   doc["paragraphAlignment"] = s.paragraphAlignment;
   doc["embeddedStyle"] = s.embeddedStyle;
   doc["hyphenationEnabled"] = s.hyphenationEnabled;
-  doc["bionicReading"] = s.bionicReading;  // upstream name: focusReadingEnabled (alias of the same field)
+  doc["bionicReading"] = s.bionicReading;
   doc["orientation"] = s.orientation;
   doc["extraParagraphSpacing"] = s.extraParagraphSpacing;
   doc["forceParagraphIndents"] = s.forceParagraphIndents;
@@ -1043,33 +536,15 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["textDarknessSchemaVersion"] = TEXT_DARKNESS_SCHEMA_VERSION;
   doc["readerRefreshMode"] = s.readerRefreshMode;
   doc["imageRendering"] = s.imageRendering;
-  doc["readerMenuStyle"] = s.readerMenuStyle;
 
   doc["sideButtonLayout"] = s.sideButtonLayout;
-  doc["touchReaderControls"] = s.touchReaderControls;
-  doc["tapForReaderMenu"] = s.showReaderMenu;
   doc["frontButtonFollowOrientation"] = s.frontButtonFollowOrientation;
-  doc["longPressButtonBehavior"] = s.longPressButtonBehavior;
-  doc["longPressChapterSkip"] = s.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP;
-  doc["longPressMenuFunction"] = s.longPressMenuFunction;
   doc["shortPwrBtn"] = s.shortPwrBtn;
-  doc["pwrBtnFootnoteBack"] = s.pwrBtnFootnoteBack;
-  doc["backShortToFileBrowser"] = s.backShortToFileBrowser;
   doc["tiltPageTurn"] = s.tiltPageTurn;
 
-  doc["sleepTimeoutMinutes"] = s.sleepTimeoutMinutes;
-  doc["sleepTimeout"] = sleepTimeoutMinutesToLegacyEnum(s.sleepTimeoutMinutes);  // legacy mirror
+  doc["sleepTimeout"] = s.sleepTimeout;
   doc["showHiddenFiles"] = s.showHiddenFiles;
   doc["hideFileExtension"] = s.hideFileExtension;
-  doc["removeReadBooksFromRecents"] = s.removeReadBooksFromRecents;
-  // Language as ISO code string (upstream format).
-  if (s.language < getLanguageCount()) doc["language"] = LANGUAGE_CODES[s.language];
-  // uint16_t mask; omitted while unconfigured so the default keeps following the UI language.
-  if (s.keyboardLayouts != 0) {
-    doc["keyboardLayouts"] = s.keyboardLayouts;
-  }
-
-  doc["displayDay"] = s.displayDay;
   doc["syncDayWifiChoice"] = s.syncDayWifiChoice;
   doc["syncDayReminderStarts"] = s.syncDayReminderStarts;
   doc["dateFormat"] = s.dateFormat;
@@ -1079,14 +554,13 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["flashcardStudyMode"] = s.flashcardStudyMode;
   doc["flashcardSessionSize"] = s.flashcardSessionSize;
   doc["showStatsAfterReading"] = s.showStatsAfterReading;
-  doc["moveCompletedBooks"] = s.moveCompletedBooks;  // upstream name: moveFinishedToReadFolder (alias)
+  doc["moveCompletedBooks"] = s.moveCompletedBooks;
   doc["achievementsEnabled"] = s.achievementsEnabled;
   doc["achievementPopups"] = s.achievementPopups;
 
   doc["opdsServerUrl"] = s.opdsServerUrl;
   doc["opdsUsername"] = s.opdsUsername;
   doc["opdsPassword_obf"] = obfuscation::obfuscateToBase64(s.opdsPassword);
-  doc["opdsDownloadFolder"] = s.opdsDownloadFolder;
   doc["opdsFilenameFormat"] = s.opdsFilenameFormat;
   doc["koSyncAutoPullOnOpen"] = s.koSyncAutoPullOnOpen;
   doc["koSyncAutoPushOnClose"] = s.koSyncAutoPushOnClose;
@@ -1097,11 +571,9 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["statusBarProgressBarThickness"] = s.statusBarProgressBarThickness;
   doc["statusBarTitle"] = s.statusBarTitle;
   doc["statusBarBattery"] = s.statusBarBattery;
-  doc["xtcStatusBarMode"] = s.xtcStatusBarMode;
   doc["statusBarClock"] = s.statusBarClock;
-  doc["clockUtcOffsetQ"] = s.clockUtcOffsetQ;
-  doc["clockFormat"] = s.clockFormat;
   doc["clockHasBeenSynced"] = s.clockHasBeenSynced;
+  doc["xtcStatusBarMode"] = s.xtcStatusBarMode;
 
   // Front button remap - managed by RemapFrontButtons sub-activity, not in SettingsList.
   doc["frontButtonBack"] = s.frontButtonBack;
@@ -1185,6 +657,7 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   return loadSettingsDirect(s, doc, needsResave);
 }
 
+
 // ---- KOReaderCredentialStore ----
 
 bool JsonSettingsIO::saveKOReader(const KOReaderCredentialStore& store, const char* path) {
@@ -1203,6 +676,17 @@ bool JsonSettingsIO::saveKOReader(const KOReaderCredentialStore& store, const ch
   }
   doc["activeIndex"] = store.activeIndex;
 
+  return saveJsonDocumentToFile("KRS", path, doc);
+}
+
+bool JsonSettingsIO::saveKOReaderLegacyMirror(const KOReaderCredentialStore& store, const char* path) {
+  JsonDocument doc;
+  doc["username"] = store.getUsername();
+  doc["password_obf"] = obfuscation::obfuscateToBase64(store.getPassword());
+  doc["serverUrl"] = store.getServerUrl();
+  doc["matchMethod"] = static_cast<uint8_t>(store.getMatchMethod());
+  doc["sendMetadata"] = store.getSendMetadata();
+  doc["syncBehavior"] = static_cast<uint8_t>(store.getSyncBehavior());
   return saveJsonDocumentToFile("KRS", path, doc);
 }
 
@@ -1244,19 +728,18 @@ bool JsonSettingsIO::loadKOReader(KOReaderCredentialStore& store, const char* js
       store.profiles.push_back(std::move(profile));
     }
     const int active = doc["activeIndex"] | 0;
-    store.activeIndex = (active >= 0 && static_cast<size_t>(active) < store.profiles.size())
-                            ? active
-                            : (store.profiles.empty() ? -1 : 0);
-  } else {
-    // Legacy single-record format written before multi-profile support -- wrap it
-    // into a single "Profile 1" and flag for resave so the file upgrades on disk.
+    store.setActiveIndex(active);
+    LOG_DBG("KRS", "Loaded %u KOReader profiles (active=%d)", store.profiles.size(), store.getActiveIndex());
+  } else if (store.profiles.empty()) {
+    // Single legacy profile — migrate into the new multi-profile store.
     KOReaderProfile profile;
-    profile.name = "Profile 1";
+    profile.name = "Default";
     profile.username = doc["username"] | std::string("");
-    bool ok = false;
-    profile.password = obfuscation::deobfuscateFromBase64(doc["password_obf"] | "", &ok);
-    if (!ok || profile.password.empty()) {
+    bool ok2 = false;
+    profile.password = obfuscation::deobfuscateFromBase64(doc["password_obf"] | "", &ok2);
+    if (!ok2 || profile.password.empty()) {
       profile.password = doc["password"] | std::string("");
+      if (!profile.password.empty() && needsResave) *needsResave = true;
     }
     profile.serverUrl = doc["serverUrl"] | std::string("");
     const uint8_t method = doc["matchMethod"] | static_cast<uint8_t>(DocumentMatchMethod::FILENAME);
@@ -1264,34 +747,17 @@ bool JsonSettingsIO::loadKOReader(KOReaderCredentialStore& store, const char* js
                               ? static_cast<DocumentMatchMethod>(method)
                               : DocumentMatchMethod::FILENAME;
     profile.sendMetadata = doc["sendMetadata"] | false;
-    const uint8_t behavior = doc["syncBehavior"] | static_cast<uint8_t>(KOReaderSyncBehavior::ASK_EVERY_TIME);
+    const uint8_t behavior =
+        doc["syncBehavior"] | static_cast<uint8_t>(KOReaderSyncBehavior::ASK_EVERY_TIME);
     profile.syncBehavior = behavior <= static_cast<uint8_t>(KOReaderSyncBehavior::SMART)
                                ? static_cast<KOReaderSyncBehavior>(behavior)
                                : KOReaderSyncBehavior::ASK_EVERY_TIME;
-
-    store.profiles.clear();
     store.profiles.push_back(std::move(profile));
-    store.activeIndex = 0;
     if (needsResave) *needsResave = true;
+    LOG_DBG("KRS", "Migrated single legacy KOReader profile into multi-profile store");
   }
 
-  LOG_DBG("KRS", "Loaded %zu KOReader profile(s), active index %d", store.profiles.size(), store.activeIndex);
   return true;
-}
-
-// Legacy single-record mirror (koreader.json's original shape). Kept in sync with
-// whichever profile is active so other firmware sharing the same SD card (e.g. stock
-// crosspoint-reader, which only ever understood one KOReader account) keeps working
-// unchanged -- it never sees the multi-profile store and has no reason to.
-bool JsonSettingsIO::saveKOReaderLegacyMirror(const KOReaderCredentialStore& store, const char* path) {
-  JsonDocument doc;
-  doc["username"] = store.getUsername();
-  doc["password_obf"] = obfuscation::obfuscateToBase64(store.getPassword());
-  doc["serverUrl"] = store.getServerUrl();
-  doc["matchMethod"] = static_cast<uint8_t>(store.getMatchMethod());
-  doc["sendMetadata"] = store.getSendMetadata();
-  doc["syncBehavior"] = static_cast<uint8_t>(store.getSyncBehavior());
-  return saveJsonDocumentToFile("KRS", path, doc);
 }
 
 bool JsonSettingsIO::loadKOReaderLegacyProfile(KOReaderProfile& profile, const char* json) {
@@ -1315,7 +781,8 @@ bool JsonSettingsIO::loadKOReaderLegacyProfile(KOReaderProfile& profile, const c
                             ? static_cast<DocumentMatchMethod>(method)
                             : DocumentMatchMethod::FILENAME;
   profile.sendMetadata = doc["sendMetadata"] | false;
-  const uint8_t behavior = doc["syncBehavior"] | static_cast<uint8_t>(KOReaderSyncBehavior::ASK_EVERY_TIME);
+  const uint8_t behavior =
+      doc["syncBehavior"] | static_cast<uint8_t>(KOReaderSyncBehavior::ASK_EVERY_TIME);
   profile.syncBehavior = behavior <= static_cast<uint8_t>(KOReaderSyncBehavior::SMART)
                              ? static_cast<KOReaderSyncBehavior>(behavior)
                              : KOReaderSyncBehavior::ASK_EVERY_TIME;
@@ -1383,8 +850,8 @@ bool JsonSettingsIO::loadWifi(WifiCredentialStore& store, const char* json, bool
 
     bool ok = false;
     bool tooLong = false;
-    cred.password =
-        obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", store.MAX_PASSWORD_LENGTH, &ok, &tooLong);
+    cred.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", store.MAX_PASSWORD_LENGTH, &ok,
+                                                       &tooLong);
     if (tooLong) {
       LOG_ERR("WCS", "Discarding oversized password for %s", cred.ssid.c_str());
       resave = true;
@@ -1464,17 +931,25 @@ bool JsonSettingsIO::saveRecentBooks(const RecentBooksStore& store, const char* 
 }
 
 bool JsonSettingsIO::loadRecentBooks(RecentBooksStore& store, const char* json) {
+  const int js0Free = static_cast<int>(ESP.getFreeHeap());
+  const int js0Max = static_cast<int>(ESP.getMaxAllocHeap());
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
+  LOG_DBG("HCR-FRAG", "JsonDocument deserialize: free=%d->%d maxA=%d->%d frag=%d", js0Free,
+          static_cast<int>(ESP.getFreeHeap()), js0Max, static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
   if (error) {
     LOG_ERR("RBS", "JSON parse error: %s", error.c_str());
     CPR_VCODEX_LOG_EVENT("RBS", std::string("Recent books JSON parse error: ") + error.c_str());
     return false;
   }
+  const int js1Free = static_cast<int>(ESP.getFreeHeap());
+  const int js1Max = static_cast<int>(ESP.getMaxAllocHeap());
 
   store.recentBooks.clear();
   const uint32_t formatVersion = doc["formatVersion"] | static_cast<uint32_t>(1);
   JsonArray arr = doc["books"].as<JsonArray>();
+  int count = 0;
   for (JsonObject obj : arr) {
     if (store.getCount() >= 10) break;
     RecentBook book;
@@ -1487,7 +962,16 @@ bool JsonSettingsIO::loadRecentBooks(RecentBooksStore& store, const char* json) 
       book.bookId.clear();
     }
     store.recentBooks.push_back(book);
+    count++;
+    if ((count & 0x3) == 0) {
+      LOG_DBG("HCR-FRAG", "  RBS after %d books: free=%d maxA=%d frag=%d", count,
+              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+              static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+    }
   }
+  LOG_DBG("HCR-FRAG", "RBS %d books: free=%d->%d maxA=%d->%d frag=%d", count, js1Free,
+          static_cast<int>(ESP.getFreeHeap()), js1Max, static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
 
   store.normalizeBooks();
   LOG_DBG("RBS", "Recent books loaded from file (%d entries)", store.getCount());
@@ -1535,6 +1019,66 @@ bool JsonSettingsIO::loadFavorites(FavoritesStore& store, const char* json) {
 
   store.normalizeBooks();
   LOG_DBG("FAV", "Favorites loaded from file (%d entries)", store.getCount());
+  return true;
+}
+
+// ---- UserCollectionsStore ----
+
+bool JsonSettingsIO::saveUserCollections(const UserCollectionsStore& store, const char* path) {
+  JsonDocument doc;
+  doc["version"] = 1;
+  JsonArray collArr = doc["collections"].to<JsonArray>();
+  for (const auto& c : store.collections()) {
+    JsonObject obj = collArr.add<JsonObject>();
+    obj["id"] = c.id;
+    obj["name"] = c.name;
+    obj["createdAt"] = static_cast<uint32_t>(c.createdAt);
+  }
+  JsonArray memArr = doc["members"].to<JsonArray>();
+  for (const auto& m : store.allMembers()) {
+    JsonObject obj = memArr.add<JsonObject>();
+    obj["collectionId"] = m.collectionId;
+    obj["bookId"] = m.bookId;
+    obj["position"] = m.position;
+  }
+
+  return saveJsonDocumentToFile("UCS", path, doc);
+}
+
+bool JsonSettingsIO::loadUserCollections(UserCollectionsStore& store, const char* json) {
+  JsonDocument doc;
+  auto error = deserializeJson(doc, json);
+  if (error) {
+    LOG_ERR("UCS", "JSON parse error: %s", error.c_str());
+    return false;
+  }
+
+  store.collections_.clear();
+  store.members_.clear();
+
+  JsonArray collArr = doc["collections"].as<JsonArray>();
+  for (JsonObject obj : collArr) {
+    UserCollection c;
+    c.id = obj["id"] | std::string("");
+    c.name = obj["name"] | std::string("");
+    c.createdAt = obj["createdAt"] | 0u;
+    if (!c.id.empty() && !c.name.empty()) {
+      store.collections_.push_back(c);
+    }
+  }
+
+  JsonArray memArr = doc["members"].as<JsonArray>();
+  for (JsonObject obj : memArr) {
+    CollectionMember m;
+    m.collectionId = obj["collectionId"] | std::string("");
+    m.bookId = obj["bookId"] | 0u;
+    m.position = obj["position"] | 0.0f;
+    if (!m.collectionId.empty() && m.bookId != 0) {
+      store.members_.push_back(m);
+    }
+  }
+
+  LOG_DBG("UCS", "Loaded %d collections, %d members", static_cast<int>(store.collections_.size()), static_cast<int>(store.members_.size()));
   return true;
 }
 
@@ -1653,6 +1197,12 @@ bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore& store, const char
     writer.value(book.chapterProgressPercent);
     writer.literal(",\"completed\":");
     writer.value(book.completed);
+    if (book.avgSecondsPerForwardPage > 0) {
+      writer.literal(",\"avgSecondsPerForwardPage\":");
+      writer.value(book.avgSecondsPerForwardPage);
+      writer.literal(",\"paceSampleCount\":");
+      writer.value(book.paceSampleCount);
+    }
     writer.literal(",\"readingDays\":[");
     bool firstBookDay = true;
     for (const auto& day : book.readingDays) {
@@ -1672,7 +1222,8 @@ bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore& store, const char
   file.close();
   if (!writer.ok() || writer.writtenBytes() == 0 || writer.writtenBytes() != writer.expectedBytes()) {
     Storage.remove(tempPath);
-    LOG_ERR("RST", "Incomplete JSON write for %s: %u/%u bytes", path, static_cast<unsigned>(writer.writtenBytes()),
+    LOG_ERR("RST", "Incomplete JSON write for %s: %u/%u bytes", path,
+            static_cast<unsigned>(writer.writtenBytes()),
             static_cast<unsigned>(writer.expectedBytes()));
     CPR_VCODEX_LOG_EVENT("RST", std::string("Incomplete JSON write for ") + path + ": " +
                                     std::to_string(writer.writtenBytes()) + "/" +
@@ -1683,7 +1234,20 @@ bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore& store, const char
   return promoteJsonTempFile("RST", tempPath, path, writer.writtenBytes());
 }
 
+bool JsonSettingsIO::loadReadingStats(ReadingStatsStore& store, const char* json) {
+  JsonDocument doc;
+  auto error = deserializeJson(doc, json);
+  if (error || doc.overflowed()) {
+    const char* message = error ? error.c_str() : "document overflow";
+    LOG_ERR("RST", "JSON parse error: %s", message);
+    CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats JSON parse error: ") + message);
+    return false;
+  }
+  return loadReadingStatsDocument(store, doc);
+}
+
 bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const JsonDocument& doc) {
+  // Validate document structure (upstream 1.5.0.3: JsonObjectConst/JsonArrayConst checks)
   if (!doc.is<JsonObjectConst>()) {
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats root is not a JSON object");
     return false;
@@ -1696,8 +1260,8 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
   }
   const uint32_t formatVersion = formatValue | static_cast<uint32_t>(1);
   if (formatVersion == 0 || formatVersion > 6) {
-    CPR_VCODEX_LOG_EVENT("RST",
-                         std::string("Unsupported reading stats formatVersion: ") + std::to_string(formatVersion));
+    CPR_VCODEX_LOG_EVENT("RST", std::string("Unsupported reading stats formatVersion: ") +
+                                   std::to_string(formatVersion));
     return false;
   }
 
@@ -1749,6 +1313,14 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
   store.sessionLog.clear();
   store.dirty = missingCurrentArray;
 
+  // FRAGMENTATION FIX: reserve the top-level containers for the actual number
+  // of parsed elements so each vector grows once (contiguously) instead of
+  // reallocating repeatedly in the middle of the heap and fragmenting it.
+  store.books.reserve(doc["books"].size());
+  store.readingDays.reserve(doc["readingDays"].size());
+  store.legacyReadingDays.reserve(doc["legacyReadingDays"].size());
+  store.sessionLog.reserve(doc["sessionLog"].size());
+
   auto appendReadingDays = [](std::vector<ReadingDayStats>& destination, JsonArrayConst source) {
     for (JsonVariantConst value : source) {
       ReadingDayStats day;
@@ -1779,31 +1351,21 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
 
   if (formatVersion >= 4) {
     for (JsonObjectConst sessionObj : doc["sessionLog"].as<JsonArrayConst>()) {
-      const uint32_t dayOrdinal = sessionObj["dayOrdinal"] | static_cast<uint32_t>(0);
-      const uint32_t sessionMs = sessionObj["sessionMs"] | static_cast<uint32_t>(0);
-      if (dayOrdinal == 0 || sessionMs == 0) continue;
-
-      if (store.sessionLog.size() >= ReadingSessionLog::MAX_ENTRIES) {
-        store.dirty = true;
-      }
-      ReadingSessionLog::makeRoomForAppend(store.sessionLog);
-
       ReadingSessionLogEntry session;
-      session.dayOrdinal = dayOrdinal;
-      session.sessionMs = sessionMs;
+      session.dayOrdinal = sessionObj["dayOrdinal"] | static_cast<uint32_t>(0);
+      session.sessionMs = sessionObj["sessionMs"] | static_cast<uint32_t>(0);
       session.bookId = sessionObj["bookId"] | std::string("");
-      if (session.bookId.empty()) {
-        session.path = BookIdentity::normalizePath(sessionObj["path"] | std::string(""));
-      } else if (!sessionObj["path"].isNull()) {
-        store.dirty = true;
+      session.path = BookIdentity::normalizePath(sessionObj["path"] | std::string(""));
+      if (session.dayOrdinal != 0 && session.sessionMs != 0) {
+        store.sessionLog.push_back(session);
       }
-      store.sessionLog.push_back(std::move(session));
     }
   } else {
     store.dirty = true;
   }
 
   JsonArrayConst books = doc["books"].as<JsonArrayConst>();
+  int loadedBookCount = 0;
   for (JsonObjectConst obj : books) {
     ReadingBookStats book;
     book.bookId = obj["bookId"] | std::string("");
@@ -1811,6 +1373,7 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
     if (book.path.empty()) {
       continue;
     }
+    book.knownPaths.reserve(obj["knownPaths"].size());  // avoid realloc churn in the hot path
     for (JsonVariantConst value : obj["knownPaths"].as<JsonArrayConst>()) {
       const std::string knownPath = value | std::string("");
       if (!knownPath.empty()) {
@@ -1830,6 +1393,8 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
     book.lastProgressPercent = obj["lastProgressPercent"] | static_cast<uint8_t>(0);
     book.chapterProgressPercent = obj["chapterProgressPercent"] | static_cast<uint8_t>(0);
     book.completed = obj["completed"] | false;
+    book.avgSecondsPerForwardPage = obj["avgSecondsPerForwardPage"] | static_cast<uint16_t>(0);
+    book.paceSampleCount = obj["paceSampleCount"] | static_cast<uint16_t>(0);
     if (formatVersion >= 2) {
       appendReadingDays(book.readingDays, obj["readingDays"].as<JsonArrayConst>());
     }
@@ -1837,6 +1402,13 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
       store.dirty = true;
     }
     store.books.push_back(std::move(book));
+    ++loadedBookCount;
+    if ((loadedBookCount & 0x5) == 0) {
+      LOG_DBG("HCR-FRAG", "  RST %d/%d books: free=%d maxA=%d frag=%d", loadedBookCount,
+              static_cast<int>(store.books.capacity()), static_cast<int>(ESP.getFreeHeap()),
+              static_cast<int>(ESP.getMaxAllocHeap()),
+              static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+    }
   }
 
   if (formatVersion < 6) {
@@ -1845,6 +1417,9 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
   }
   store.rebuildAggregatedReadingDays();
 
+  // Upstream reconciliation: detect and recover aggregate mismatches without
+  // discarding stored data. Surplus from declared days is forwarded to
+  // legacyReadingDays so it remains visible for manual correction tools.
   if (formatVersion >= 6) {
     auto normalizeDays = [](std::vector<ReadingDayStats>& days) {
       std::sort(days.begin(), days.end(), [](const ReadingDayStats& left, const ReadingDayStats& right) {
@@ -1877,7 +1452,8 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
         aggregateMismatch = true;
       }
       if (declaredDay.readingMs > rebuiltMs) {
-        store.legacyReadingDays.push_back(ReadingDayStats{declaredDay.dayOrdinal, declaredDay.readingMs - rebuiltMs});
+        store.legacyReadingDays.push_back(
+            ReadingDayStats{declaredDay.dayOrdinal, declaredDay.readingMs - rebuiltMs});
       }
     }
 
@@ -1889,24 +1465,13 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
     }
   }
 
+  // Sort sessionLog by day ordinal for consistent iteration order (upstream 1.5.0.3)
   std::stable_sort(store.sessionLog.begin(), store.sessionLog.end(),
                    [](const ReadingSessionLogEntry& left, const ReadingSessionLogEntry& right) {
                      return left.dayOrdinal < right.dayOrdinal;
                    });
   LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
   return true;
-}
-
-bool JsonSettingsIO::loadReadingStats(ReadingStatsStore& store, const char* json) {
-  JsonDocument doc;
-  auto error = deserializeJson(doc, json);
-  if (error || doc.overflowed()) {
-    const char* message = error ? error.c_str() : "document overflow";
-    LOG_ERR("RST", "JSON parse error: %s", message);
-    CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats JSON parse error: ") + message);
-    return false;
-  }
-  return loadReadingStatsDocument(store, doc);
 }
 
 bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const char* path) {
@@ -2050,3 +1615,52 @@ bool JsonSettingsIO::loadAchievementsFromFile(AchievementsStore& store, const ch
 // ---- OpdsServerStore ----
 // Follows the same save/load pattern as WifiCredentialStore above.
 // Passwords are XOR-obfuscated with the device MAC and base64-encoded ("password_obf" key).
+
+bool JsonSettingsIO::saveOpds(const OpdsServerStore& store, const char* path) {
+  JsonDocument doc;
+
+  JsonArray arr = doc["servers"].to<JsonArray>();
+  for (const auto& server : store.getServers()) {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["name"] = server.name;
+    obj["url"] = server.url;
+    obj["username"] = server.username;
+    obj["password_obf"] = obfuscation::obfuscateToBase64(server.password);
+  }
+
+  String json;
+  serializeJson(doc, json);
+  return Storage.writeFile(path, json);
+}
+
+bool JsonSettingsIO::loadOpds(OpdsServerStore& store, const char* json, bool* needsResave) {
+  if (needsResave) *needsResave = false;
+  JsonDocument doc;
+  auto error = deserializeJson(doc, json);
+  if (error) {
+    LOG_ERR("OPS", "JSON parse error: %s", error.c_str());
+    return false;
+  }
+
+  store.servers.clear();
+  JsonArray arr = doc["servers"].as<JsonArray>();
+  for (JsonObject obj : arr) {
+    if (store.servers.size() >= OpdsServerStore::MAX_SERVERS) break;
+    OpdsServer server;
+    server.name = obj["name"] | std::string("");
+    server.url = obj["url"] | std::string("");
+    server.username = obj["username"] | std::string("");
+    // Try the obfuscated key first; fall back to plaintext "password" for
+    // files written before obfuscation was added (or hand-edited JSON).
+    bool ok = false;
+    server.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &ok);
+    if (!ok || server.password.empty()) {
+      server.password = obj["password"] | std::string("");
+      if (!server.password.empty() && needsResave) *needsResave = true;
+    }
+    store.servers.push_back(std::move(server));
+  }
+
+  LOG_DBG("OPS", "Loaded %zu OPDS servers from file", store.servers.size());
+  return true;
+}

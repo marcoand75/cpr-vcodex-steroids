@@ -1,31 +1,24 @@
 #pragma once
 
-#include <string>
-#include <vector>
+#include "../Activity.h"
+#include "util/ButtonNavigator.h"
 
-#include "activities/UiListActivity.h"
-
-// Dictionary manager: two setting rows (definition text size, clear history)
-// followed by one row per installed dictionary; activating a dictionary makes
-// it the active one.
-class DictionaryActivity final : public UiListActivity {
+class DictionaryActivity final : public Activity {
  public:
   explicit DictionaryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("Dictionary", renderer, mappedInput) {}
+      : Activity("Dictionary", renderer, mappedInput) {
+    ButtonNavigator::setMappedInputManager(mappedInput);
+  }
 
   void onEnter() override;
-  void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 
  private:
-  int entryCount = 0;
-  std::vector<std::string> rowValues;
-  std::vector<freeink::ui::ListItem> rowItems;
+  int selectedIndex = 0;
+  ButtonNavigator buttonNavigator;
+  bool orderingMode = false;
 
-  void rebuildRows();
-  void selectIndex(int index);
-
-  int listCount() const override { return static_cast<int>(rowItems.size()); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void drawChrome() override;
+  void selectCurrent();
+  void moveActiveDict(int delta);
 };

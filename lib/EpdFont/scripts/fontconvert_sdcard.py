@@ -40,18 +40,13 @@ INTERVAL_PRESETS = {
     "ascii":       [(0x0020, 0x007E)],
     "latin1":      [(0x0080, 0x00FF)],
     "latin-ext":   [(0x0020, 0x007E), (0x0080, 0x00FF), (0x0100, 0x024F),
-                    (0x02B0, 0x02FF), (0x1E00, 0x1EFF), (0x2000, 0x206F),
-                    (0xFB00, 0xFB06)],
+                    (0x1E00, 0x1EFF), (0x2000, 0x206F), (0xFB00, 0xFB06)],
     "greek":       [(0x0370, 0x03FF), (0x1F00, 0x1FFF)],
     "cyrillic":    [(0x0400, 0x04FF), (0x0500, 0x052F)],
-    "hebrew":      [(0x0590, 0x05FF), (0xFB1D, 0xFB4F)],
-    "arabic":      [(0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),
-                    (0xFB50, 0xFDF9), (0xFE70, 0xFEFF)],
     "georgian":    [(0x10A0, 0x10FF), (0x2D00, 0x2D2F)],
     "armenian":    [(0x0530, 0x058F)],
     "ethiopic":    [(0x1200, 0x137F), (0x1380, 0x139F), (0x2D80, 0x2DDF)],
     "vietnamese":  [(0x01A0, 0x01B0), (0x1EA0, 0x1EF9)],
-    "ipa-chars":   [(0x0250, 0x02AF), (0x02B0, 0x02FF)],
     "punctuation": [(0x2000, 0x206F)],
     "cjk":         [(0x3000, 0x303F), (0x3040, 0x309F), (0x30A0, 0x30FF),
                     (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0xFF00, 0xFFEF)],
@@ -65,9 +60,10 @@ INTERVAL_PRESETS = {
                     (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2500, 0x257F),
                     (0x25A0, 0x25FF), (0x2600, 0x26FF), (0x2700, 0x27BF)],
     # Composite preset for English-language literary fiction including scifi/popsci.
+    # Greek for physics terms, letterlike/math symbols, miscellaneous symbols (♪♫♬), dingbats.
     # Greek for physics terms, math operators, geometric shapes, uncommon
     # dialogue punctuation, CJK quote marks, miscellaneous symbols (♪♫♬), dingbats.
-    "reading":     [(0x0020, 0x024F), (0x02B0, 0x02FF), (0x0300, 0x036F), (0x0370, 0x03FF),
+    "reading":     [(0x0020, 0x024F), (0x0300, 0x036F), (0x0370, 0x03FF),
                     (0x0400, 0x04FF), (0x1E00, 0x1EFF), (0x2000, 0x206F),
                     (0x2070, 0x209F), (0x20A0, 0x20CF), (0x2100, 0x214F),
                     (0x2150, 0x218F),
@@ -196,51 +192,6 @@ STANDARD_LIGATURE_MAP = {
     (0x17F, 0x74):      0xFB05,  # long-s + t
     (0x73, 0x74):       0xFB06,  # st
 }
-
-
-def extract_ligature_glyph_indices_fonttools(font_path):
-    """Map standard ligature codepoints without a cmap entry to their glyph IDs.
-
-    Most fonts use unencoded glyphs such as ``f_f`` for standard ligatures.
-    The reader represents those substitutions with the Unicode compatibility
-    codepoints, so rasterize the GSUB target directly instead of falling back
-    to another font for a codepoint that the primary cmap does not contain.
-    """
-    from fontTools.ttLib import TTFont
-
-    font = TTFont(font_path)
-    cmap = font.getBestCmap() or {}
-    glyph_to_cp = {gname: cp for cp, gname in cmap.items()}
-    glyph_indices = {gname: index for index, gname in enumerate(font.getGlyphOrder())}
-    overrides = {}
-
-    if 'GSUB' in font:
-        gsub = font['GSUB'].table
-        liga_lookup_indices = set()
-        if gsub.FeatureList:
-            for fr in gsub.FeatureList.FeatureRecord:
-                if fr.FeatureTag in ('liga', 'rlig'):
-                    liga_lookup_indices.update(fr.Feature.LookupListIndex)
-
-        for li in liga_lookup_indices:
-            lookup = gsub.LookupList.Lookup[li]
-            for st in lookup.SubTable:
-                actual = st.ExtSubTable if lookup.LookupType == 7 and hasattr(st, 'ExtSubTable') else st
-                if not hasattr(actual, 'ligatures'):
-                    continue
-                for first_glyph, ligature_list in actual.ligatures.items():
-                    if first_glyph not in glyph_to_cp:
-                        continue
-                    for lig in ligature_list:
-                        if any(component not in glyph_to_cp for component in lig.Component):
-                            continue
-                        seq = tuple([glyph_to_cp[first_glyph]] + [glyph_to_cp[component] for component in lig.Component])
-                        lig_cp = STANDARD_LIGATURE_MAP.get(seq)
-                        if lig_cp is not None and lig_cp not in cmap:
-                            overrides[lig_cp] = glyph_indices[lig.LigGlyph]
-
-    font.close()
-    return overrides
 
 
 def _extract_pairpos_subtable(subtable, glyph_to_cp, raw_kern):
@@ -583,7 +534,6 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0,
     # it before set_char_size() would waste work at the default size and risk
     # Invalid_Size_Handle on some fonts.
     face.set_char_size(size << 6, size << 6, 150, 150)
-    ligature_glyph_indices = extract_ligature_glyph_indices_fonttools(fontfile)
     fallback_face = None
     if fallback_fontfile:
         fallback_face = freetype.Face(fallback_fontfile)
@@ -596,15 +546,13 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0,
 
     def load_glyph(code_point):
         glyph_index = face.get_char_index(code_point)
-        if glyph_index == 0:
-            glyph_index = ligature_glyph_indices.get(code_point, 0)
         if glyph_index > 0:
             face.load_glyph(glyph_index, load_flags)
             return face
         if fallback_face:
-            fallback_glyph_index = fallback_face.get_char_index(code_point)
-            if fallback_glyph_index > 0:
-                fallback_face.load_glyph(fallback_glyph_index, load_flags)
+            glyph_index = fallback_face.get_char_index(code_point)
+            if glyph_index > 0:
+                fallback_face.load_glyph(glyph_index, load_flags)
                 return fallback_face
         return None
 
@@ -617,9 +565,9 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0,
     for i_start, i_end in intervals:
         start = i_start
         for code_point in range(i_start, i_end + 1):
-            has_primary = face.get_char_index(code_point) != 0 or code_point in ligature_glyph_indices
-            has_fallback = fallback_face and fallback_face.get_char_index(code_point) != 0
-            if not has_primary and not has_fallback:
+            has_primary_glyph = face.get_char_index(code_point) != 0
+            has_fallback_glyph = fallback_face is not None and fallback_face.get_char_index(code_point) != 0
+            if not has_primary_glyph and not has_fallback_glyph:
                 if start < code_point:
                     validated_intervals.append((start, code_point - 1))
                 start = code_point + 1
@@ -834,7 +782,6 @@ def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
     """Generate a multi-style v4 .cpfont file.
 
     style_fonts: dict of {style_id: fontfile_path} e.g. {0: "Regular.ttf", 2: "Italic.ttf"}
-    fallback_style_fonts: optional dict of {style_id: fallback_fontfile_path}
     """
     MAGIC = b"CPFONT\x00\x00"
     HEADER_SIZE = 32
@@ -845,15 +792,13 @@ def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
 
     # Rasterize each style
     raster_data = {}  # style_id -> StyleRasterData
-    fallback_style_fonts = fallback_style_fonts or {}
     for style_id in sorted(style_fonts.keys()):
         fontfile = style_fonts[style_id]
-        fallback_fontfile = fallback_style_fonts.get(style_id)
         print(f"  Rasterizing style {style_id}...", file=sys.stderr)
         raster_data[style_id] = rasterize_font_style(
             fontfile, size, intervals, style_id=style_id,
             force_autohint=force_autohint, darken_aa=darken_aa,
-            fallback_fontfile=fallback_fontfile)
+            fallback_fontfile=fallback_style_fonts.get(style_id))
 
     # Pack binary sections for each style
     packed_sections = {}  # style_id -> tuple of section bytearrays
@@ -967,13 +912,13 @@ def main():
     parser.add_argument("--bolditalic", dest="font_bolditalic",
                         help="Font file for bold-italic style.")
     parser.add_argument("--fallback-regular", dest="fallback_regular",
-                        help="Fallback font file for regular style.")
+                        help="Fallback font file for missing regular glyphs.")
     parser.add_argument("--fallback-bold", dest="fallback_bold",
-                        help="Fallback font file for bold style.")
+                        help="Fallback font file for missing bold glyphs.")
     parser.add_argument("--fallback-italic", dest="fallback_italic",
-                        help="Fallback font file for italic style.")
+                        help="Fallback font file for missing italic glyphs.")
     parser.add_argument("--fallback-bolditalic", dest="fallback_bolditalic",
-                        help="Fallback font file for bold-italic style.")
+                        help="Fallback font file for missing bold-italic glyphs.")
 
     args = parser.parse_args()
 

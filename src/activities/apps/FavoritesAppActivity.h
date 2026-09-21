@@ -1,26 +1,26 @@
 #pragma once
 
-#include "activities/UiListActivity.h"
+#include "../Activity.h"
+#include "../util/ListInputMapper.h"
 
-// Favorites hub: two fixed rows (browse files to toggle favorites, reorder
-// the favorites list) with the favorite count in the header.
-class FavoritesAppActivity final : public UiListActivity {
-  static constexpr int ACTION_COUNT = 2;
-
+class FavoritesAppActivity final : public Activity {
+  ListInputMapper listInputMapper;
+  int selectedIndex = 0;
   int favoriteCount = 0;
-  // Fixed-capacity row storage; labels are static, built once in onEnter().
-  freeink::ui::ListItem rowItems[ACTION_COUNT]{};
 
   void refreshEntries();
+  void openSelectedEntry();
 
-  int listCount() const override { return ACTION_COUNT; }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void drawChrome() override;
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void releaseNav(void* ctx, int delta);
+  static void continuousNav(void* ctx, int delta);
 
  public:
   explicit FavoritesAppActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("FavoritesApp", renderer, mappedInput) {}
+      : Activity("FavoritesApp", renderer, mappedInput) {}
 
   void onEnter() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 };

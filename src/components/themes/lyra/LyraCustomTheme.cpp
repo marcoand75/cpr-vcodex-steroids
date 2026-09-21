@@ -24,12 +24,11 @@ constexpr int PROGRESS_BAR_HEIGHT = 8;
 constexpr int TITLE_TOP_GAP = 10;
 
 uint8_t getBookProgressPercent(const RecentBook& recentBook) {
-  for (const auto& book : READING_STATS.getBooks()) {
-    if (book.path == recentBook.path) {
-      return book.lastProgressPercent;
-    }
-  }
-  return 0;
+  return READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path);
+}
+
+const ReadingBookStats* getBookStats(const RecentBook& recentBook) {
+  return READING_STATS.getHomeBookStatsForRender(recentBook.bookId, recentBook.path);
 }
 
 void drawMiniProgressBar(GfxRenderer& renderer, const Rect& rect, const uint8_t progressPercent) {
@@ -58,18 +57,17 @@ void LyraCustomTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, cons
         if (coverPath.empty()) {
           hasCover = false;
         } else {
-          const std::string coverBmpPath =
-              UITheme::getCoverThumbPath(coverPath, LyraCustomMetrics::values.homeCoverHeight);
+          const std::string coverBmpPath = UITheme::getCoverThumbPath(coverPath, LyraCustomMetrics::values.homeCoverHeight);
 
-          HalFile file;
+          FsFile file;
           if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
             Bitmap bitmap(file);
             if (bitmap.parseHeaders() == BmpReaderError::Ok) {
               const float coverHeight = static_cast<float>(bitmap.getHeight());
               const float coverWidth = static_cast<float>(bitmap.getWidth());
               const float ratio = coverWidth / coverHeight;
-              const float tileRatio = static_cast<float>(tileWidth - 2 * H_PADDING) /
-                                      static_cast<float>(LyraCustomMetrics::values.homeCoverHeight);
+              const float tileRatio =
+                  static_cast<float>(tileWidth - 2 * H_PADDING) / static_cast<float>(LyraCustomMetrics::values.homeCoverHeight);
               const float cropX = 1.0f - (tileRatio / ratio);
 
               renderer.drawBitmap(bitmap, tileX + H_PADDING, tileY + H_PADDING, tileWidth - 2 * H_PADDING,
@@ -107,7 +105,23 @@ void LyraCustomTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, cons
       const int titleLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
       const int titleBlockHeight = static_cast<int>(titleLines.size()) * titleLineHeight;
       const uint8_t progressPercent = getBookProgressPercent(recentBooks[i]);
-      const std::string progressText = std::to_string(progressPercent) + "%";
+      std::string progressText = std::to_string(progressPercent) + "%";
+      const ReadingBookStats* stats = getBookStats(recentBooks[i]);
+      if (stats != nullptr && !stats->completed && stats->lastProgressPercent >= 5 &&
+          stats->totalReadingMs >= 600000ULL) {
+        const uint64_t estimatedTotalMs =
+            (stats->totalReadingMs * 100ULL + stats->lastProgressPercent - 1) / stats->lastProgressPercent;
+        if (estimatedTotalMs > stats->totalReadingMs) {
+          const uint64_t remainingMs =
+              ((estimatedTotalMs - stats->totalReadingMs + 300000ULL - 1) / 300000ULL) * 300000ULL;
+          const uint64_t totalMinutes = remainingMs / 60000ULL;
+          if (totalMinutes >= 60) {
+            progressText += " ~" + std::to_string(totalMinutes / 60ULL) + "h " + std::to_string(totalMinutes % 60ULL) + "m";
+          } else {
+            progressText += " ~" + std::to_string(totalMinutes) + "m";
+          }
+        }
+      }
       const int progressTextWidth = renderer.getTextWidth(SMALL_FONT_ID, progressText.c_str(), EpdFontFamily::BOLD);
       const int progressRowHeight = std::max(titleLineHeight, PROGRESS_BAR_HEIGHT);
       const int bottomBlockHeight =

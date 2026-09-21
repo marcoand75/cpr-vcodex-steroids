@@ -6,7 +6,6 @@
 #include <algorithm>
 
 #include "AchievementsStore.h"
-#include "CrossPointSettings.h"
 #include "FavoritesStore.h"
 #include "FlashcardsStore.h"
 #include "OpdsServerStore.h"
@@ -38,6 +37,7 @@ std::string getStatsShortcutSubtitle() {
 }
 
 std::string getAchievementsShortcutSubtitle() {
+  ACHIEVEMENTS.ensureLoaded();
   const auto views = ACHIEVEMENTS.buildViews();
   const size_t unlockedCount =
       std::count_if(views.begin(), views.end(), [](const AchievementView& view) { return view.state.unlocked; });
@@ -90,21 +90,11 @@ std::string getFileTransferShortcutSubtitle() {
 }
 }  // namespace
 
-std::string ShortcutUiMetadata::getName(const ShortcutDefinition& definition) {
-  if (definition.id == ShortcutId::SyncDay && SETTINGS.isHardwareRtcAutoDayClockActive()) {
-    return I18N.get(StrId::STR_CLOCK_SYNC_NOW);
-  }
-  return I18N.get(definition.nameId);
-}
-
 std::string ShortcutUiMetadata::getSubtitle(const ShortcutDefinition& definition) {
   switch (definition.id) {
     case ShortcutId::ReadingStats:
       return getStatsShortcutSubtitle();
     case ShortcutId::SyncDay:
-      if (SETTINGS.isHardwareRtcAutoDayClockActive()) {
-        return SETTINGS.clockHasBeenSynced ? std::string(tr(STR_CLOCK_SYNCED)) : std::string(tr(STR_NOT_SET));
-      }
       return getSyncDayShortcutSubtitle();
     case ShortcutId::Achievements:
       return getAchievementsShortcutSubtitle();
@@ -120,6 +110,10 @@ std::string ShortcutUiMetadata::getSubtitle(const ShortcutDefinition& definition
       return getFileTransferShortcutSubtitle();
     case ShortcutId::OpdsBrowser:
       return std::to_string(OPDS_STORE.getCount());
+    case ShortcutId::Wikipedia:
+      return std::string(I18N.get(definition.descriptionId));
+    case ShortcutId::QuickCards:
+      return std::string(I18N.get(definition.descriptionId));
     default:
       return (definition.descriptionId == StrId::STR_NONE_OPT) ? "" : std::string(I18N.get(definition.descriptionId));
   }

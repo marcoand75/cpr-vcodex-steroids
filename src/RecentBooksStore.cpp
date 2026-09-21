@@ -1,4 +1,5 @@
 #include "RecentBooksStore.h"
+#include "StoreManager.h"
 
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -10,8 +11,8 @@
 
 #include <algorithm>
 
-#include "ReadingStatsStore.h"
 #include "util/BookIdentity.h"
+#include "util/BookStoreUtils.h"
 
 namespace {
 constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
@@ -19,103 +20,17 @@ constexpr char RECENT_BOOKS_FILE_BIN[] = "/.crosspoint/recent.bin";
 constexpr char RECENT_BOOKS_FILE_JSON[] = "/.crosspoint/recent.json";
 constexpr char RECENT_BOOKS_FILE_BAK[] = "/.crosspoint/recent.bin.bak";
 constexpr int MAX_RECENT_BOOKS = 10;
-
-std::string fallbackTitleFromPath(const std::string& path) {
-  std::string filename = path;
-  const size_t lastSlash = filename.find_last_of('/');
-  if (lastSlash != std::string::npos) {
-    filename = filename.substr(lastSlash + 1);
-  }
-
-  const size_t dotPos = filename.find_last_of('.');
-  if (dotPos != std::string::npos) {
-    filename = filename.substr(0, dotPos);
-  }
-  return filename;
-}
 }  // namespace
 
 RecentBooksStore RecentBooksStore::instance;
 
 int RecentBooksStore::findBookIndex(const std::string& path, const std::string& bookId) const {
-  const std::string normalizedPath = BookIdentity::normalizePath(path);
-  for (int index = 0; index < static_cast<int>(recentBooks.size()); ++index) {
-    const auto& book = recentBooks[index];
-    if (!bookId.empty() && !book.bookId.empty() && book.bookId == bookId) {
-      return index;
-    }
-    if (!normalizedPath.empty() && book.path == normalizedPath) {
-      return index;
-    }
-  }
-  return -1;
+  return BookStoreUtils::findBookIndex(recentBooks, path, bookId);
 }
 
-void RecentBooksStore::normalizeBook(RecentBook& book) {
-  book.path = BookIdentity::normalizePath(book.path);
-  if (!book.bookId.empty()) {
-    return;
-  }
+void RecentBooksStore::normalizeBook(RecentBook& book) { BookStoreUtils::normalizeBook(book); }
 
-  if (!book.path.empty() && Storage.exists(book.path.c_str())) {
-    book.bookId = BookIdentity::resolveStableBookId(book.path);
-    return;
-  }
-
-  if (const auto* statsBook = READING_STATS.findMatchingBookForPath(book.path, book.title, book.author)) {
-    book.bookId = statsBook->bookId;
-  }
-}
-
-void RecentBooksStore::normalizeBooks() {
-  for (auto& book : recentBooks) {
-    normalizeBook(book);
-  }
-
-  std::vector<RecentBook> normalized;
-  normalized.reserve(recentBooks.size());
-  for (const auto& book : recentBooks) {
-    const int existingIndex = [&normalized, &book]() {
-      for (int index = 0; index < static_cast<int>(normalized.size()); ++index) {
-        const auto& existing = normalized[index];
-        if (!book.bookId.empty() && !existing.bookId.empty() && book.bookId == existing.bookId) {
-          return index;
-        }
-        if (!book.path.empty() && existing.path == book.path) {
-          return index;
-        }
-      }
-      return -1;
-    }();
-
-    if (existingIndex < 0) {
-      normalized.push_back(book);
-      continue;
-    }
-
-    auto& existing = normalized[existingIndex];
-    if (existing.bookId.empty()) {
-      existing.bookId = book.bookId;
-    }
-    if (existing.path.empty() || (!book.path.empty() && Storage.exists(book.path.c_str()))) {
-      existing.path = book.path;
-    }
-    if (existing.title.empty() && !book.title.empty()) {
-      existing.title = book.title;
-    }
-    if (existing.author.empty() && !book.author.empty()) {
-      existing.author = book.author;
-    }
-    if (existing.coverBmpPath.empty() && !book.coverBmpPath.empty()) {
-      existing.coverBmpPath = book.coverBmpPath;
-    }
-  }
-
-  recentBooks = std::move(normalized);
-  if (recentBooks.size() > MAX_RECENT_BOOKS) {
-    recentBooks.resize(MAX_RECENT_BOOKS);
-  }
-}
+void RecentBooksStore::normalizeBooks() { BookStoreUtils::normalizeBooks(recentBooks, true, MAX_RECENT_BOOKS); }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& bookId) {
@@ -170,8 +85,7 @@ bool RecentBooksStore::updateBookPath(const std::string& oldKey, const std::stri
   }
 
   const std::string resolvedBookId =
-      !bookId.empty() ? bookId
-                      : (!normalizedNewPath.empty() ? BookIdentity::resolveStableBookId(normalizedNewPath) : "");
+      !bookId.empty() ? bookId : (!normalizedNewPath.empty() ? BookIdentity::resolveStableBookId(normalizedNewPath) : "");
   const int existingIndex = findBookIndex(oldKey, resolvedBookId);
   if (existingIndex < 0) {
     return false;
@@ -193,22 +107,6 @@ bool RecentBooksStore::updateBookPath(const std::string& oldKey, const std::stri
   }
   saveToFile();
   return true;
-}
-
-void RecentBooksStore::updatePath(const std::string& oldPath, const std::string& newPath,
-                                  const std::string& oldCachePath, const std::string& newCachePath) {
-  const int existingIndex = findBookIndex(oldPath, "");
-  if (existingIndex < 0) {
-    return;
-  }
-
-  std::string coverBmpPath;
-  const RecentBook& existing = recentBooks[existingIndex];
-  if (!oldCachePath.empty() && !existing.coverBmpPath.empty() && existing.coverBmpPath.rfind(oldCachePath, 0) == 0) {
-    coverBmpPath = newCachePath + existing.coverBmpPath.substr(oldCachePath.size());
-  }
-  // updateBookPath keeps the existing title/author/cover when the overrides are empty and persists.
-  updateBookPath(oldPath, newPath, "", "", coverBmpPath, existing.bookId);
 }
 
 bool RecentBooksStore::removeBook(const std::string& key) {
@@ -236,6 +134,11 @@ bool RecentBooksStore::pruneMissing() {
 bool RecentBooksStore::saveToFile() const {
   Storage.mkdir("/.crosspoint");
   return JsonSettingsIO::saveRecentBooks(*this, RECENT_BOOKS_FILE_JSON);
+}
+
+const RecentBook* RecentBooksStore::findBook(const std::string& path) const {
+  const int index = findBookIndex(path, "");
+  return index >= 0 ? &recentBooks[index] : nullptr;
 }
 
 RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
@@ -278,9 +181,23 @@ bool RecentBooksStore::loadFromFile() {
 
   // Try JSON first
   if (Storage.exists(RECENT_BOOKS_FILE_JSON)) {
+    const int startFree = static_cast<int>(ESP.getFreeHeap());
+    const int startMax = static_cast<int>(ESP.getMaxAllocHeap());
     String json = Storage.readFile(RECENT_BOOKS_FILE_JSON);
+    LOG_DBG("HCR-FRAG", "RBS json read: json=%d free=%d->%d maxA=%d->%d frag=%d",
+            static_cast<int>(json.length()), startFree, static_cast<int>(ESP.getFreeHeap()), startMax,
+            static_cast<int>(ESP.getMaxAllocHeap()),
+            static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
     if (!json.isEmpty()) {
-      return JsonSettingsIO::loadRecentBooks(*this, json.c_str());
+      const bool ok = JsonSettingsIO::loadRecentBooks(*this, json.c_str());
+      LOG_DBG("HCR-FRAG", "RBS loadRecentBooks: free=%d maxA=%d frag=%d ok=%d",
+              static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()),
+              static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()), ok ? 1 : 0);
+      if (ok) {
+        loaded_ = true;
+        bumpGeneration();
+      }
+      return ok;
     }
   }
 
@@ -290,6 +207,8 @@ bool RecentBooksStore::loadFromFile() {
       saveToFile();
       Storage.rename(RECENT_BOOKS_FILE_BIN, RECENT_BOOKS_FILE_BAK);
       LOG_DBG("RBS", "Migrated recent.bin to recent.json");
+      loaded_ = true;
+      bumpGeneration();
       return true;
     }
   }
@@ -297,8 +216,14 @@ bool RecentBooksStore::loadFromFile() {
   return false;
 }
 
+bool RecentBooksStore::ensureLoaded() {
+  if (loaded_) return true;
+  loaded_ = loadFromFile();
+  return loaded_;
+}
+
 bool RecentBooksStore::loadFromBinaryFile() {
-  HalFile inputFile;
+  FsFile inputFile;
   if (!Storage.openFileForRead("RBS", RECENT_BOOKS_FILE_BIN, inputFile)) {
     return false;
   }
@@ -327,7 +252,7 @@ bool RecentBooksStore::loadFromBinaryFile() {
       }
 
       if (title.empty()) {
-        title = fallbackTitleFromPath(normalizedPath);
+        title = BookStoreUtils::fallbackTitleFromPath(normalizedPath);
       }
 
       recentBooks.push_back({BookIdentity::resolveStableBookId(normalizedPath), normalizedPath, title, author, ""});

@@ -3,33 +3,8 @@
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <SdCardFont.h>
-#include <Utf8.h>
 
-#include <algorithm>
 #include <cstring>
-
-namespace {
-
-char* appendUtf8Codepoint(char* output, const uint32_t codepoint) {
-  if (codepoint < 0x80) {
-    *output++ = static_cast<char>(codepoint);
-  } else if (codepoint < 0x800) {
-    *output++ = static_cast<char>(0xC0 | (codepoint >> 6));
-    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
-  } else if (codepoint < 0x10000) {
-    *output++ = static_cast<char>(0xE0 | (codepoint >> 12));
-    *output++ = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
-  } else {
-    *output++ = static_cast<char>(0xF0 | (codepoint >> 18));
-    *output++ = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-    *output++ = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
-  }
-  return output;
-}
-
-}  // namespace
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
                                    const std::map<int, SdCardFont*>& sdCardFonts)
@@ -44,18 +19,23 @@ void FontCacheManager::clearCache() {
   }
 }
 
-void FontCacheManager::releaseSdFontCaches() {
-  if (fontDecompressor_) fontDecompressor_->clearCache();
-  for (auto& [id, font] : sdCardFonts_) {
-    font->releaseResidentCaches();
+void FontCacheManager::clearCache(int fontId) {
+  auto it = sdCardFonts_.find(fontId);
+  if (it != sdCardFonts_.end()) {
+    it->second->clearCache();
+    return;
   }
+
+  // Built-in fonts are not in sdCardFonts_; fall back to the global
+  // decompressor cache when we can't target a single font.
+  if (fontDecompressor_) fontDecompressor_->clearCache();
 }
 
-void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask, bool accumulate) {
+void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask) {
   // SD card font prewarm path: prewarm all requested styles in one call
   auto it = sdCardFonts_.find(fontId);
   if (it != sdCardFonts_.end()) {
-    int missed = it->second->prewarm(utf8Text, styleMask, /*metadataOnly=*/false, /*loadKernLig=*/true, accumulate);
+    int missed = it->second->prewarm(utf8Text, styleMask);
     if (missed > 0) {
       LOG_DBG("FCM", "prewarmCache(SD): %d glyph(s) not found (styleMask=0x%02X)", missed, styleMask);
     }
@@ -93,143 +73,78 @@ void FontCacheManager::resetStats() {
 
 bool FontCacheManager::isScanning() const { return scanMode_ == ScanMode::Scanning; }
 
-uint8_t FontCacheManager::resolveScanStyle(int fontId, EpdFontFamily::Style style) const {
-  const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
-
-  const auto sdFont = sdCardFonts_.find(fontId);
-  if (sdFont != sdCardFonts_.end()) return sdFont->second->resolveStyle(baseStyle);
-
-  const auto font = fontMap_.find(fontId);
-  if (font == fontMap_.end()) return baseStyle;
-
-  const EpdFontData* resolvedData = font->second.getData(static_cast<EpdFontFamily::Style>(baseStyle));
-  for (uint8_t candidate = 0; candidate < 4; candidate++) {
-    if (font->second.getData(static_cast<EpdFontFamily::Style>(candidate)) == resolvedData) return candidate;
-  }
-  return baseStyle;
-}
-
 void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
-  if (!text || *text == '\0') return;
-
-  uint8_t fontSlot = scanFontCount_;
-  for (uint8_t i = 0; i < scanFontCount_; i++) {
-    if (scanFontIds_[i] == fontId) {
-      fontSlot = i;
-      break;
-    }
+  scanText_ += text;
+  if (!scanFontIdSet_) {
+    scanFontId_ = fontId;
+    scanFontIdSet_ = true;
   }
-  if (fontSlot == scanFontCount_) {
-    if (scanFontCount_ >= MAX_SCAN_FONTS) return;
-    scanFontIds_[scanFontCount_++] = fontId;
+  const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
+  uint32_t cpCount = 0;
+  while (*p) {
+    if ((*p & 0xC0) != 0x80) cpCount++;
+    p++;
   }
-
-  const uint8_t resolvedStyle = resolveScanStyle(fontId, style);
-  const uint8_t group = fontSlot * 4 + resolvedStyle;
-  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text);
-  while (*cursor) {
-    const uint32_t codepoint = utf8NextCodepoint(&cursor);
-    if (codepoint == 0) break;
-
-    const uint32_t packed = (static_cast<uint32_t>(fontSlot) << SCAN_FONT_SHIFT) |
-                            (static_cast<uint32_t>(resolvedStyle) << SCAN_STYLE_SHIFT) | codepoint;
-    bool found = false;
-    for (uint16_t i = 0; i < scanCodepointCount_; i++) {
-      if (scanCodepoints_[i] == packed) {
-        found = true;
-        break;
-      }
-    }
-    if (found) continue;
-
-    if (scanCodepointCount_ >= MAX_SCAN_CODEPOINTS) {
-      if (!scanOverflowWarned_) {
-        LOG_DBG("FCM", "Scan codepoint cap (%u) reached; excess glyphs will load on demand",
-                static_cast<unsigned>(MAX_SCAN_CODEPOINTS));
-        scanOverflowWarned_ = true;
-      }
-      continue;
-    }
-
-    scanCodepoints_[scanCodepointCount_++] = packed;
-    scanGroupCounts_[group]++;
-  }
+  scanStyleCounts_[baseStyle] += cpCount;
 }
 
 void FontCacheManager::recordStyle(int fontId, EpdFontFamily::Style style) {
-  // Fork: bionic reading renders the word prefix in bold, so the scan pass
-  // must also reserve the bold style group for this font. Register the font
-  // slot; the glyphs themselves are recorded by recordText() for both styles.
-  if (scanMode_ != ScanMode::Scanning) return;
-  for (uint8_t i = 0; i < scanFontCount_; i++) {
-    if (scanFontIds_[i] == fontId) return;
+  if (!scanFontIdSet_) {
+    scanFontId_ = fontId;
+    scanFontIdSet_ = true;
   }
-  if (scanFontCount_ >= MAX_SCAN_FONTS) return;
-  (void)style;
-  scanFontIds_[scanFontCount_++] = fontId;
+  const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
+  scanStyleCounts_[baseStyle] += 1;
 }
 
 // --- PrewarmScope implementation ---
 
-FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
+FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager, bool clearOnDestroy)
+    : manager_(&manager), clearOnDestroy_(clearOnDestroy) {
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
-  manager_->scanCodepointCount_ = 0;
-  manager_->scanFontCount_ = 0;
-  manager_->scanOverflowWarned_ = false;
-  memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
+  manager_->scanText_.clear();
+  manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
+  memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
+  manager_->scanFontIdSet_ = false;
+  manager_->scanFontId_ = 0;
 }
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanCodepointCount_ == 0) return;
+  if (manager_->scanText_.empty() || !manager_->scanFontIdSet_) return;
 
-  std::sort(manager_->scanCodepoints_, manager_->scanCodepoints_ + manager_->scanCodepointCount_);
-
-  uint16_t groupStarts[SCAN_GROUP_COUNT] = {};
-  for (uint8_t group = 1; group < SCAN_GROUP_COUNT; group++) {
-    groupStarts[group] = groupStarts[group - 1] + manager_->scanGroupCounts_[group - 1];
+  // Build style bitmask from all styles that appeared during the scan
+  uint8_t styleMask = 0;
+  for (uint8_t i = 0; i < 4; i++) {
+    if (manager_->scanStyleCounts_[i] > 0) styleMask |= (1 << i);
   }
+  if (styleMask == 0) styleMask = 1;  // default to regular
 
-  // Each packed entry provides four bytes, enough for one UTF-8 codepoint.
-  // Encoding high groups first means a terminator can overwrite only a group
-  // that has already been prewarmed; unread lower groups remain intact.
-  for (int group = SCAN_GROUP_COUNT - 1; group >= 0; group--) {
-    const uint16_t groupCount = manager_->scanGroupCounts_[group];
-    if (groupCount == 0) continue;
+  manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
 
-    const uint16_t groupStart = groupStarts[group];
-    char* const utf8Text = reinterpret_cast<char*>(manager_->scanCodepoints_ + groupStart);
-    char* output = utf8Text;
-    for (uint16_t i = 0; i < groupCount; i++) {
-      const uint32_t codepoint = manager_->scanCodepoints_[groupStart + i] & SCAN_CODEPOINT_MASK;
-      output = appendUtf8Codepoint(output, codepoint);
-    }
-    *output = '\0';
-
-    const uint8_t fontSlot = static_cast<uint8_t>(group) / 4;
-    const uint8_t style = static_cast<uint8_t>(group) & 0x03;
-    // A scan supplies the complete set for this font/style on the current
-    // render; retaining the previous page here only inflates and fragments RAM.
-    manager_->prewarmCache(manager_->scanFontIds_[fontSlot], utf8Text, 1 << style, /*accumulate=*/false);
-  }
-
-  manager_->scanCodepointCount_ = 0;
-  manager_->scanFontCount_ = 0;
-  memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
+  // Free scan string memory
+  manager_->scanText_.clear();
+  manager_->scanText_.shrink_to_fit();
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
-  if (active_) {
-    endScanAndPrewarm();  // no-op if already called
-    manager_->clearCache();
+  if (!active_) return;
+  endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
+  if (clearOnDestroy_) {
+    if (manager_->scanFontIdSet_) {
+      manager_->clearCache(manager_->scanFontId_);
+    } else {
+      manager_->clearCache();
+    }
   }
 }
 
 FontCacheManager::PrewarmScope::PrewarmScope(PrewarmScope&& other) noexcept
-    : manager_(other.manager_), active_(other.active_) {
+    : manager_(other.manager_), active_(other.active_), clearOnDestroy_(other.clearOnDestroy_) {
   other.active_ = false;
 }
 
-FontCacheManager::PrewarmScope FontCacheManager::createPrewarmScope() { return PrewarmScope(*this); }
+FontCacheManager::PrewarmScope FontCacheManager::createPrewarmScope(bool clearOnDestroy) { return PrewarmScope(*this, clearOnDestroy); }

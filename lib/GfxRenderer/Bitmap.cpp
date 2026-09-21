@@ -1,16 +1,20 @@
 #include "Bitmap.h"
 
+#include <Logging.h>
 #include <cstdlib>
 #include <cstring>
+#include <new>
+
+#include "BitmapHelpers.h"
+#include "DitheringConfig.h"
 
 // ============================================================================
-// IMAGE PROCESSING OPTIONS
+// IMAGE PROCESSING OPTIONS (see DitheringConfig.h for dithering selection)
 // ============================================================================
 // Dithering is applied when converting high-color BMPs to the display's native
 // 2-bit (4-level) grayscale. Images whose palette entries all map to native
 // gray levels (0, 85, 170, 255 ±21) are mapped directly without dithering.
 // For cover images, dithering is done in JpegToBmpConverter.cpp instead.
-constexpr bool USE_ATKINSON = true;  // Use Atkinson dithering instead of Floyd-Steinberg
 // ============================================================================
 
 Bitmap::~Bitmap() {
@@ -21,7 +25,7 @@ Bitmap::~Bitmap() {
   delete fsDitherer;
 }
 
-uint16_t Bitmap::readLE16(HalFile& f) {
+uint16_t Bitmap::readLE16(FsFile& f) {
   const int c0 = f.read();
   const int c1 = f.read();
   const auto b0 = static_cast<uint8_t>(c0 < 0 ? 0 : c0);
@@ -29,7 +33,7 @@ uint16_t Bitmap::readLE16(HalFile& f) {
   return static_cast<uint16_t>(b0) | (static_cast<uint16_t>(b1) << 8);
 }
 
-uint32_t Bitmap::readLE32(HalFile& f) {
+uint32_t Bitmap::readLE32(FsFile& f) {
   const int c0 = f.read();
   const int c1 = f.read();
   const int c2 = f.read();
@@ -165,14 +169,32 @@ BmpReaderError Bitmap::parseHeaders() {
   //  - Native palette → direct mapping, no processing needed
   //  - High-color + dithering enabled → error-diffusion dithering (Atkinson or Floyd-Steinberg)
   //  - High-color + dithering disabled → simple quantization (no error diffusion)
+  //
+  // All ditherers are allocated with std::nothrow so an out-of-memory during
+  // cover regeneration never aborts the device (with -fno-exceptions a raw new
+  // would throw std::bad_alloc -> abort). On allocation failure we simply fall
+  // back to simple quantization: a slightly less smooth cover is preferable to
+  // a crash.
   const bool highColor = !nativePalette;
   if (highColor && dithering) {
-    if (USE_ATKINSON) {
+    if (g_imageRenderUseAtkinson) {
       atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width);
-      if (!atkinsonDitherer || !atkinsonDitherer->isValid()) return BmpReaderError::OomRowBuffer;
+      if (atkinsonDitherer && !atkinsonDitherer->valid()) {
+        delete atkinsonDitherer;
+        atkinsonDitherer = nullptr;
+      }
+      if (!atkinsonDitherer) {
+        LOG_DBG("BMP", "OOM: Atkinson ditherer (w=%d) — falling back to simple quantization", width);
+      }
     } else {
       fsDitherer = new (std::nothrow) FloydSteinbergDitherer(width);
-      if (!fsDitherer || !fsDitherer->isValid()) return BmpReaderError::OomRowBuffer;
+      if (fsDitherer && !fsDitherer->valid()) {
+        delete fsDitherer;
+        fsDitherer = nullptr;
+      }
+      if (!fsDitherer) {
+        LOG_DBG("BMP", "OOM: Floyd-Steinberg ditherer (w=%d) — falling back to simple quantization", width);
+      }
     }
   }
 

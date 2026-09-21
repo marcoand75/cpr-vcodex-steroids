@@ -1,0 +1,446 @@
+********************************************************************************
+Obsolete PIO Core v6.1.19 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Processing default (platform: https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip; board: esp32-c3-devkitm-1; framework: arduino)
+--------------------------------------------------------------------------------
+Tool Manager: Installing platformio/tool-scons @ ~4.41101.0
+Unpacking 0% 10% 20% 30% 40% 50% 60% 70% 80% 90% 100%
+Tool Manager: tool-scons@4.41101.0 has been installed!
+Tool Manager: Installing platformio/tool-scons @ ~4.40801.0
+Unpacking 0% 10% 20% 30% 40% 50% 60% 70% 80% 90% 100%
+Tool Manager: tool-scons@4.40801.0 has been installed!
+Verbose mode can be enabled via `-v, --verbose` option
+Language            Code  BCP47  Own   Fallback  Unused  Data (B)
+------------------  ----  -----  ----  --------  ------  --------
+English             EN    en     1255  0         240     27586   
+??????????          BE    be     877   378       148     27834   
+Catal?              CA    ca     898   357       168     24661   
+?e?tina             CS    cs     877   378       148     17418   
+Dansk               DA    da     820   435       114     14334   
+Deutsch             DE    de     891   364       161     16865   
+Espa?ol             ES    es     924   331       194     25077   
+Suomi               FI    fi     820   435       114     15645   
+Fran?ais            FR    fr     877   378       148     17311   
+?????               HE    he     462   793       101     11823   
+Magyar              HU    hu     877   378       148     18287   
+Italiano            IT    it     1208  47        225     23389   
+???????             KK    kk     877   378       148     27902   
+Lietuvi?            LT    lt     877   378       148     16098   
+Nederlands          NL    nl     820   435       114     15083   
+Polski              PL    pl     877   378       148     17188   
+Portugu?s (Brasil)  PT    pt-BR  876   379       148     16938   
+Rom?n?              RO    ro     820   435       114     16227   
+???????             RU    ru     898   357       168     28322   
+Sloven??ina         SI    sl     877   378       148     16344   
+Svenska             SV    sv     897   358       167     16864   
+T?rk?e              TR    tr     878   377       148     17155   
+??????????          UK    uk     879   376       150     27894   
+Ti?ng Vi?t          VI    vi     884   371       155     19258   
+
+  Total: 1255  |  Used in code: 1015  |  Never used: 240
+  Flash: 475,503 B strings (deduped)  +  60,240 B offset tables  =  535,743 B
+
+  Stripping 240 unused string(s) from output.
+
+Code generation complete!
+  Languages: 24
+  String keys: 1015
+CPR-vCodex Steroids release line: 1 (E:\PWA\cpr-vcodex-steroids\artifacts\.release-counter-1-6-0.txt (new base line starts at .1))
+CPR-vCodex Steroids build version: 1.6.0.1.dev37-a4ae01a7
+CPR-vCodex dev counter: 37 (E:\PWA\cpr-vcodex-steroids\artifacts\.dev-counter-1-6-0-r1.txt)
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-c3-devkitm-1.html
+PLATFORM: Espressif 32 (55.3.37) > Espressif ESP32-C3-DevKitM-1
+HARDWARE: ESP32C3 160MHz, 320KB RAM, 16MB Flash
+DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-builtin, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - contrib-piohome @ 3.4.4 
+ - framework-arduinoespressif32 @ 3.3.7 
+ - framework-arduinoespressif32-libs @ 5.5.0+sha.87912cd291 
+ - framework-espidf @ 3.50502.0 (5.5.2) 
+ - tool-cmake @ 4.0.3 
+ - tool-cppcheck @ 2.11.0+230717 
+ - tool-esp-rom-elfs @ 2024.10.11 
+ - tool-esptoolpy @ 5.1.2 
+ - tool-ninja @ 1.13.1 
+ - toolchain-riscv32-esp @ 14.2.0+20251107
+[ComponentManager] Processed 1 ignored libraries
+[ComponentManager] Session completed with 1 changes
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 88 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- BatteryMonitor @ 2.0.0
+|-- InputManager @ 2.0.0
+|-- EInkDisplay @ 2.0.0
+|-- SDCardManager @ 2.0.0
+|-- UsbMassStorage @ 1.0.0
+|-- BoardConfig @ 2.0.0
+|-- XteinkDetect @ 1.0.0
+|-- PowerManager @ 1.0.0
+|-- FrontlightManager @ 1.0.0
+|-- Rtc @ 1.0.0
+|-- Imu @ 1.0.0
+|-- FreeInkUI @ 0.1.0
+|-- Icons @ 1.0.0
+|-- ArduinoJson @ 7.4.2
+|-- QRCode @ 0.0.1
+|-- PNGdec @ 1.1.6
+|-- JPEGDEC @ 1.2.7+sha.8628297
+|-- WebSockets @ 2.7.3
+|-- hal
+|-- I18n
+|-- Logging
+|-- Serialization
+|-- Epub
+|-- FsHelpers
+|-- MemoryBudget
+|-- KOReaderSync
+|-- GfxRenderer
+|-- lua @ 5.4.7
+|-- Xtc
+|-- EpdFont
+|-- FS @ 3.3.7
+|-- SD @ 3.3.7
+|-- ZipFile
+|-- JpegToBmpConverter
+|-- Txt
+|-- WiFi @ 3.3.7
+|-- HTTPClient @ 3.3.7
+|-- Networking @ 3.3.7
+|-- NetworkClientSecure @ 3.3.7
+|-- OpdsParser
+|-- Memory
+|-- Utf8
+|-- ESPmDNS @ 3.3.7
+|-- DNSServer @ 3.3.7
+|-- MiniBidi
+|-- PngToBmpConverter
+|-- SPI @ 3.3.7
+|-- JsonParser
+|-- SdFat @ 2.3.1
+|-- WebServer @ 3.3.7
+*** Applied include path shortening for 255 framework paths ***
+*** Path length reduced from 32113 to ~12571 characters ***
+*** Estimated savings: 19125 characters ***
+Building in release mode
+Retrieved `.pio\build\default\src\activities\apps\LibraryActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\LibraryContextMenuActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\LuaPluginActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ManualDateActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\PluginBrowserActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\QuickCardsActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingDateSelectionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingDayDetailActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingHeatmapActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingProfileActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingStatsActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingStatsDetailActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ReadingStatsExtendedActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ScreenCleanActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ScreenSaverActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ScreenSaverDirActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\ScreenSaverPreviewActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\SleepAppActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\SleepPreviewActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\SyncDayActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\WikipediaActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\util\LibraryCoverHelper.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\util\LibraryDrawHelpers.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\util\LibraryNavigation.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\apps\util\LibraryPageCache.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\boot_sleep\BootActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\boot_sleep\SleepActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\browser\OpdsBookBrowserActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\BookContextMenuActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\BookMetadataActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\CrashActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\FileBrowserActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\HomeActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\home\RecentBooksActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\network\CalibreConnectActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\network\CrossPointWebServerActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\network\NetworkModeSelectionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\network\WifiSelectionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\BookmarksActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\ClippingsActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\DictionaryDefinitionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\DictionaryHistoryActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\DictionarySuggestionsActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\DictionaryWordSelectActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EndOfBookOptions.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EpubReaderActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EpubReaderChapterSelectionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EpubReaderFootnotesActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EpubReaderMenuActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\EpubReaderPercentSelectionActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\KOReaderSyncActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\QrDisplayActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\ReaderActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\ReaderQuickSettingsActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\TxtReaderActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\WikiTxtReaderActivity.cpp.o' from cache
+Retrieved `.pio\build\default\src\activities\reader\XtcReaderActivity.cpp.o' from cache
+Compiling .pio\build\default\src\activities\reader\XtcReaderChapterSelectionActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ButtonActionSelectorActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ButtonRemapActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ClearCacheActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ClockSyncActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\EnumSelectorActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\FontDownloadActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\FontSelectionActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\KOReaderAuthActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\KOReaderProfileEditActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\KOReaderProfileListActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\KOReaderSettingsActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\LanguageSelectActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\OpdsServerListActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\OpdsSettingsActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\OtaUpdateActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ReaderMenuOrderActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ReaderMenuVisibilityActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ReadingStatsImportActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\SdFirmwareUpdateActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\SettingsActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ShortcutLocationActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ShortcutOrderActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\ShortcutVisibilityActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\StatusBarSettingsActivity.cpp.o
+Compiling .pio\build\default\src\activities\settings\TimeZoneSelectActivity.cpp.o
+Compiling .pio\build\default\src\activities\util\BmpViewerActivity.cpp.o
+Compiling .pio\build\default\src\activities\util\ConfirmationActivity.cpp.o
+Compiling .pio\build\default\src\activities\util\FullScreenMessageActivity.cpp.o
+Compiling .pio\build\default\src\activities\util\KeyboardEntryActivity.cpp.o
+Compiling .pio\build\default\src\components\EpubParser.cpp.o
+Compiling .pio\build\default\src\components\LibraryCache.cpp.o
+Compiling .pio\build\default\src\components\LibraryIndex.cpp.o
+Compiling .pio\build\default\src\components\LibraryIndexCache.cpp.o
+In file included from src/components/LibraryIndexCache.cpp:4:
+src/StoreManager.h:60:9: warning: "READING_STATS" redefined
+   60 | #define READING_STATS StoreManager::readingStats()
+      |         ^~~~~~~~~~~~~
+In file included from src/StoreManager.h:3:
+src/ReadingStatsStore.h:402:9: note: this is the location of the previous definition
+  402 | #define READING_STATS ReadingStatsStore::getInstance()
+      |         ^~~~~~~~~~~~~
+src/StoreManager.h:61:9: warning: "RECENT_BOOKS" redefined
+   61 | #define RECENT_BOOKS StoreManager::recentBooks()
+      |         ^~~~~~~~~~~~
+In file included from src/StoreManager.h:4:
+src/RecentBooksStore.h:85:9: note: this is the location of the previous definition
+   85 | #define RECENT_BOOKS RecentBooksStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:62:9: warning: "FAVORITES" redefined
+   62 | #define FAVORITES StoreManager::favorites()
+      |         ^~~~~~~~~
+In file included from src/StoreManager.h:5:
+src/FavoritesStore.h:71:9: note: this is the location of the previous definition
+   71 | #define FAVORITES FavoritesStore::getInstance()
+      |         ^~~~~~~~~
+src/StoreManager.h:63:9: warning: "HIDDEN_BOOKS" redefined
+   63 | #define HIDDEN_BOOKS StoreManager::hiddenBooks()
+      |         ^~~~~~~~~~~~
+In file included from src/StoreManager.h:6:
+src/HiddenBooksStore.h:45:9: note: this is the location of the previous definition
+   45 | #define HIDDEN_BOOKS HiddenBooksStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:64:9: warning: "FLASHCARDS" redefined
+   64 | #define FLASHCARDS StoreManager::flashcards()
+      |         ^~~~~~~~~~
+In file included from src/StoreManager.h:7:
+src/FlashcardsStore.h:138:9: note: this is the location of the previous definition
+  138 | #define FLASHCARDS FlashcardsStore::getInstance()
+      |         ^~~~~~~~~~
+src/StoreManager.h:65:9: warning: "ACHIEVEMENTS" redefined
+   65 | #define ACHIEVEMENTS StoreManager::achievements()
+      |         ^~~~~~~~~~~~
+In file included from src/StoreManager.h:8:
+src/AchievementsStore.h:199:9: note: this is the location of the previous definition
+  199 | #define ACHIEVEMENTS AchievementsStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:66:9: warning: "USER_COLLECTIONS" redefined
+   66 | #define USER_COLLECTIONS StoreManager::userCollections()
+      |         ^~~~~~~~~~~~~~~~
+In file included from src/StoreManager.h:9:
+src/UserCollectionsStore.h:78:9: note: this is the location of the previous definition
+   78 | #define USER_COLLECTIONS UserCollectionsStore::getInstance()
+      |         ^~~~~~~~~~~~~~~~
+Compiling .pio\build\default\src\components\UITheme.cpp.o
+Compiling .pio\build\default\src\components\themes\BaseTheme.cpp.o
+Compiling .pio\build\default\src\components\themes\lyra\LyraCarouselTheme.cpp.o
+Compiling .pio\build\default\src\components\themes\lyra\LyraCustomTheme.cpp.o
+Compiling .pio\build\default\src\components\themes\lyra\LyraMarcoand75Theme.cpp.o
+Compiling .pio\build\default\src\components\themes\lyra\LyraTheme.cpp.o
+Compiling .pio\build\default\src\main.cpp.o
+In file included from src/main.cpp:37:
+src/StoreManager.h:60:9: warning: "READING_STATS" redefined
+   60 | #define READING_STATS StoreManager::readingStats()
+      |         ^~~~~~~~~~~~~
+In file included from src/AchievementsStore.h:10,
+                 from src/main.cpp:26:
+src/ReadingStatsStore.h:402:9: note: this is the location of the previous definition
+  402 | #define READING_STATS ReadingStatsStore::getInstance()
+      |         ^~~~~~~~~~~~~
+src/StoreManager.h:61:9: warning: "RECENT_BOOKS" redefined
+   61 | #define RECENT_BOOKS StoreManager::recentBooks()
+      |         ^~~~~~~~~~~~
+In file included from src/main.cpp:36:
+src/RecentBooksStore.h:85:9: note: this is the location of the previous definition
+   85 | #define RECENT_BOOKS RecentBooksStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:62:9: warning: "FAVORITES" redefined
+   62 | #define FAVORITES StoreManager::favorites()
+      |         ^~~~~~~~~
+In file included from src/main.cpp:29:
+src/FavoritesStore.h:71:9: note: this is the location of the previous definition
+   71 | #define FAVORITES FavoritesStore::getInstance()
+      |         ^~~~~~~~~
+src/StoreManager.h:63:9: warning: "HIDDEN_BOOKS" redefined
+   63 | #define HIDDEN_BOOKS StoreManager::hiddenBooks()
+      |         ^~~~~~~~~~~~
+In file included from src/main.cpp:30:
+src/HiddenBooksStore.h:45:9: note: this is the location of the previous definition
+   45 | #define HIDDEN_BOOKS HiddenBooksStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:64:9: warning: "FLASHCARDS" redefined
+   64 | #define FLASHCARDS StoreManager::flashcards()
+      |         ^~~~~~~~~~
+In file included from src/main.cpp:31:
+src/FlashcardsStore.h:138:9: note: this is the location of the previous definition
+  138 | #define FLASHCARDS FlashcardsStore::getInstance()
+      |         ^~~~~~~~~~
+src/StoreManager.h:65:9: warning: "ACHIEVEMENTS" redefined
+   65 | #define ACHIEVEMENTS StoreManager::achievements()
+      |         ^~~~~~~~~~~~
+src/AchievementsStore.h:199:9: note: this is the location of the previous definition
+  199 | #define ACHIEVEMENTS AchievementsStore::getInstance()
+      |         ^~~~~~~~~~~~
+src/StoreManager.h:66:9: warning: "USER_COLLECTIONS" redefined
+   66 | #define USER_COLLECTIONS StoreManager::userCollections()
+      |         ^~~~~~~~~~~~~~~~
+In file included from src/StoreManager.h:9:
+src/UserCollectionsStore.h:78:9: note: this is the location of the previous definition
+   78 | #define USER_COLLECTIONS UserCollectionsStore::getInstance()
+      |         ^~~~~~~~~~~~~~~~
+Compiling .pio\build\default\src\network\CrossPointWebServer.cpp.o
+Compiling .pio\build\default\src\network\FirmwareFlasher.cpp.o
+Compiling .pio\build\default\src\network\HttpDownloader.cpp.o
+Compiling .pio\build\default\src\network\OtaBootSwitch.cpp.o
+Compiling .pio\build\default\src\network\OtaUpdater.cpp.o
+Compiling .pio\build\default\src\network\WebDAVHandler.cpp.o
+Retrieved `.pio\build\default\src\platform\skip_efuse_blk_check.c.o' from cache
+Compiling .pio\build\default\src\util\BookCacheUtils.cpp.o
+Compiling .pio\build\default\src\util\BookIdentity.cpp.o
+Compiling .pio\build\default\src\util\BootRecovery.cpp.o
+Compiling .pio\build\default\src\util\ButtonNavigator.cpp.o
+Compiling .pio\build\default\src\util\CompletedBookMover.cpp.o
+Compiling .pio\build\default\src\util\CoverRawCache.cpp.o
+Compiling .pio\build\default\src\util\CoverRibbonBaker.cpp.o
+Compiling .pio\build\default\src\util\CprVcodexLogs.cpp.o
+Compiling .pio\build\default\src\util\HeaderDateUtils.cpp.o
+Compiling .pio\build\default\src\util\HtmlToTxt.cpp.o
+Compiling .pio\build\default\src\util\IfFoundFile.cpp.o
+Compiling .pio\build\default\src\util\MarkdownReader.cpp.o
+Compiling .pio\build\default\src\util\NextBookFinder.cpp.o
+Compiling .pio\build\default\src\util\PngSleepRenderer.cpp.o
+Compiling .pio\build\default\src\util\QrUtils.cpp.o
+Compiling .pio\build\default\src\util\ReadingStatsAnalytics.cpp.o
+Compiling .pio\build\default\src\util\ReadingStatsBackupManager.cpp.o
+Compiling .pio\build\default\src\util\ScreenshotUtil.cpp.o
+Compiling .pio\build\default\src\util\SdFatDateTime.cpp.o
+Compiling .pio\build\default\src\util\ShortcutUiMetadata.cpp.o
+Compiling .pio\build\default\src\util\SleepImageUtils.cpp.o
+Compiling .pio\build\default\src\util\SleepScreenCache.cpp.o
+src/util/SleepScreenCache.cpp: In static member function 'static int SleepScreenCache::invalidateAll()':
+src/util/SleepScreenCache.cpp:140:37: warning: 'size_t strnlen(const char*, size_t)' specified bound 126 exceeds source size 25 [-Wstringop-overread]
+  140 |     const size_t prefixLen = strnlen(kCacheDir, sizeof(fullPath) - 2);
+      |                              ~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/util/SleepScreenCache.cpp:14:23: note: source object allocated here
+   14 | static constexpr char kCacheDir[] = "/.crosspoint/sleep_cache";
+      |                       ^~~~~~~~~
+Compiling .pio\build\default\src\util\StringUtils.cpp.o
+Compiling .pio\build\default\src\util\TextOverlay.cpp.o
+Compiling .pio\build\default\src\util\TimeUtils.cpp.o
+Compiling .pio\build\default\src\util\TimeZoneRegistry.cpp.o
+Compiling .pio\build\default\src\util\UrlUtils.cpp.o
+Compiling .pio\build\default\src\util\WiFiUtils.cpp.o
+Compiling .pio\build\default\src\util\WikitextToMarkdown.cpp.o
+Compiling .pio\build\default\src\version.cpp.o
+Retrieved `.pio\build\default\bootloader.bin' from cache
+Retrieved `.pio\build\default\partitions.bin' from cache
+Compiling .pio\build\default\FrameworkArduino\ColorFormat.c.o
+Compiling .pio\build\default\FrameworkArduino\Esp.cpp.o
+Compiling .pio\build\default\FrameworkArduino\FirmwareMSC.cpp.o
+Compiling .pio\build\default\FrameworkArduino\FunctionalInterrupt.cpp.o
+Compiling .pio\build\default\FrameworkArduino\HEXBuilder.cpp.o
+Compiling .pio\build\default\FrameworkArduino\HWCDC.cpp.o
+Compiling .pio\build\default\FrameworkArduino\HardwareSerial.cpp.o
+Compiling .pio\build\default\FrameworkArduino\HashBuilder.cpp.o
+Compiling .pio\build\default\FrameworkArduino\IPAddress.cpp.o
+Compiling .pio\build\default\FrameworkArduino\MD5Builder.cpp.o
+Compiling .pio\build\default\FrameworkArduino\MacAddress.cpp.o
+Compiling .pio\build\default\FrameworkArduino\Print.cpp.o
+Compiling .pio\build\default\FrameworkArduino\Stream.cpp.o
+Compiling .pio\build\default\FrameworkArduino\StreamString.cpp.o
+Compiling .pio\build\default\FrameworkArduino\Tone.cpp.o
+Compiling .pio\build\default\FrameworkArduino\USB.cpp.o
+Compiling .pio\build\default\FrameworkArduino\USBCDC.cpp.o
+Compiling .pio\build\default\FrameworkArduino\USBMSC.cpp.o
+Compiling .pio\build\default\FrameworkArduino\WMath.cpp.o
+Compiling .pio\build\default\FrameworkArduino\WString.cpp.o
+Compiling .pio\build\default\FrameworkArduino\base64.cpp.o
+Compiling .pio\build\default\FrameworkArduino\cbuf.cpp.o
+Compiling .pio\build\default\FrameworkArduino\chip-debug-report.cpp.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-adc.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-bt.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-cpu.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-dac.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-gpio.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-hosted.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-i2c-ng.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-i2c-slave.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-i2c.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-ledc.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-log-wrapper.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-matrix.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-misc.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-periman.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-psram.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-rgb-led.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-rmt.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-sigmadelta.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-spi.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-time.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-timer.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-tinyusb.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-touch-ng.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-touch.c.o
+Compiling .pio\build\default\FrameworkArduino\esp32-hal-uart.c.o
+Compiling .pio\build\default\FrameworkArduino\firmware_msc_fat.c.o
+Compiling .pio\build\default\FrameworkArduino\freertos_stats.cpp.o
+Compiling .pio\build\default\FrameworkArduino\idf_openthread_mpool_wrapper.c.o
+Compiling .pio\build\default\FrameworkArduino\libb64\cdecode.c.o
+Compiling .pio\build\default\FrameworkArduino\libb64\cencode.c.o
+Compiling .pio\build\default\FrameworkArduino\main.cpp.o
+Compiling .pio\build\default\FrameworkArduino\stdlib_noniso.c.o
+Compiling .pio\build\default\FrameworkArduino\wiring_pulse.c.o
+Compiling .pio\build\default\FrameworkArduino\wiring_shift.c.o
+Archiving .pio\build\default\libFrameworkArduino.a
+Indexing .pio\build\default\libFrameworkArduino.a
+Linking .pio\build\default\firmware.elf
+Firmware metrics can not be shown. Set the terminal codepage to "utf-8" or "cp65001" on Windows.
+Retrieving maximum program size .pio\build\default\firmware.elf
+Checking size .pio\build\default\firmware.elf
+Error: The program size (7217905 bytes) is greater than maximum allowed (6553600 bytes)
+*** [checkprogsize] Explicit exit, status 1
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [==        ]  21.4% (used 70092 bytes from 327680 bytes)
+Flash: [==========]  110.1% (used 7217905 bytes from 6553600 bytes)
+
+========================= [FAILED] Took 416.84 seconds =========================
+Environment    Status    Duration
+-------------  --------  ------------
+default        FAILED    00:06:56.836
+==================== 1 failed, 0 succeeded in 00:06:56.836 ====================

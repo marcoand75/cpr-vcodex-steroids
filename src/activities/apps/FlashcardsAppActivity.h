@@ -1,32 +1,28 @@
 #pragma once
 
-#include <string>
+#include "../Activity.h"
+#include "../util/ListInputMapper.h"
 
-#include "activities/UiListActivity.h"
-
-// Flashcards hub: four fixed rows (open a deck, recents, statistics,
-// settings) whose subtitles reflect live counts / settings.
-class FlashcardsAppActivity final : public UiListActivity {
-  static constexpr int ACTION_COUNT = 4;
-
+class FlashcardsAppActivity final : public Activity {
+  ListInputMapper listInputMapper;
+  int selectedIndex = 0;
   int recentCount = 0;
   int deckCount = 0;
-  // Row storage: labels/icons are static, subtitles are refreshed into these
-  // strings by refreshCounts() (no per-render allocation).
-  std::string rowSubtitles[ACTION_COUNT];
-  freeink::ui::ListItem rowItems[ACTION_COUNT]{};
 
   void refreshCounts();
+  void openSelectedEntry();
 
-  int listCount() const override { return ACTION_COUNT; }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void drawChrome() override;
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void releaseNav(void* ctx, int delta);
+  static void continuousNav(void* ctx, int delta);
 
  public:
   explicit FlashcardsAppActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("FlashcardsApp", renderer, mappedInput) {}
+      : Activity("FlashcardsApp", renderer, mappedInput) {}
 
   void onEnter() override;
   void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 };

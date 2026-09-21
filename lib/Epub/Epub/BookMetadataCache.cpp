@@ -6,19 +6,17 @@
 #include <Utf8.h>
 #include <ZipFile.h>
 
-#include <deque>
+#include <limits>
 
 #include "FsHelpers.h"
 
 namespace {
-// v9 (fork): OPF elements accept arbitrary namespace prefixes and ambiguous EPUB 2
-// guide type="text" entries no longer override the real reading start.
-// v10 (upstream): ignore ambiguous guide text references.
-// v11: post-merge bump so caches written by either lineage are rebuilt once.
-constexpr uint8_t BOOK_CACHE_VERSION = 11;
+constexpr uint32_t BOOK_CACHE_MAGIC = 0x425843FF;  // bytes: 0xFF, "CXB"
+constexpr uint8_t BOOK_CACHE_VERSION = 9;          // v9: NFC titles and updated guide start-reference handling
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
+constexpr size_t METADATA_ARENA_SLAB_BYTES = 4096;
 // Buffer size for the buildBookBin streams. 3 buffers x 4KB, transient (freed on
 // return); 4KB = 8 SD sectors per transfer, enough to stop the sector-cache thrash.
 constexpr size_t BUILD_IO_BUFFER_SIZE = 4096;
@@ -70,16 +68,14 @@ BookMetadataCache::TocEntry readTocEntryFrom(F& file) {
 /* ============= WRITING / BUILDING FUNCTIONS ================ */
 
 bool BookMetadataCache::beginWrite() {
+  lowMemoryFailure = false;
   buildMode = true;
   spineCount = 0;
   tocCount = 0;
-  LOG_DBG("BMC", "Entering write mode");
   return true;
 }
 
 bool BookMetadataCache::beginContentOpfPass() {
-  LOG_DBG("BMC", "Beginning content opf pass");
-
   // Open spine file for writing
   if (!Storage.openFileForWrite("BMC", cachePath + tmpSpineBinFile, spineFile)) {
     return false;
@@ -101,8 +97,6 @@ bool BookMetadataCache::endContentOpfPass() {
 }
 
 bool BookMetadataCache::beginTocPass() {
-  LOG_DBG("BMC", "Beginning toc pass");
-
   if (!Storage.openFileForRead("BMC", cachePath + tmpSpineBinFile, spineFile)) {
     return false;
   }
@@ -113,8 +107,17 @@ bool BookMetadataCache::beginTocPass() {
   }
 
   if (spineCount >= LARGE_SPINE_THRESHOLD) {
-    spineHrefIndex.clear();
-    spineHrefIndex.resize(spineCount);
+    spineHrefIndex.resetStorage();
+    spineHrefIndexArena.release();
+    if (!spineHrefIndexArena.init(METADATA_ARENA_SLAB_BYTES) || !spineHrefIndex.resize(spineCount)) {
+      LOG_ERR("BMC", "Failed to allocate spine href index arena for %u spine items", spineCount);
+      lowMemoryFailure = true;
+      spineHrefIndex.resetStorage();
+      spineHrefIndexArena.release();
+      tocFile.close();
+      spineFile.close();
+      return false;
+    }
     spineFile.seek(0);
     for (int i = 0; i < spineCount; i++) {
       auto entry = readSpineEntry(spineFile);
@@ -130,7 +133,6 @@ bool BookMetadataCache::beginTocPass() {
               });
     spineFile.seek(0);
     useSpineHrefIndex = true;
-    LOG_DBG("BMC", "Using fast index for %d spine items", spineCount);
   } else {
     useSpineHrefIndex = false;
   }
@@ -150,8 +152,8 @@ bool BookMetadataCache::endTocPass() {
   tocFile.close();
   spineFile.close();
 
-  spineHrefIndex.clear();
-  spineHrefIndex.shrink_to_fit();
+  spineHrefIndex.resetStorage();
+  spineHrefIndexArena.release();
   useSpineHrefIndex = false;
 
   return flushed;
@@ -164,7 +166,6 @@ bool BookMetadataCache::endWrite() {
   }
 
   buildMode = false;
-  LOG_DBG("BMC", "Wrote %d spine, %d TOC entries", spineCount, tocCount);
   return true;
 }
 
@@ -186,7 +187,14 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     spineFile.close();
     return false;
   }
+  auto closeBuildFiles = [this]() {
+    bookFile.close();
+    spineFile.close();
+    tocFile.close();
+  };
 
+  constexpr uint32_t headerASize = sizeof(BOOK_CACHE_MAGIC) + sizeof(BOOK_CACHE_VERSION) +
+                                   /* LUT Offset */ sizeof(uint32_t) + sizeof(spineCount) + sizeof(tocCount);
   // Buffered streams for the whole build: every access below is sequential per
   // file, but interleaved ACROSS files, which thrashes SdFat's single shared
   // sector cache when unbuffered (one 512B SD transaction per 4-byte pod --
@@ -194,9 +202,6 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::BufferedFileWriter bookOut(bookFile, BUILD_IO_BUFFER_SIZE);
   serialization::BufferedFileReader spineIn(spineFile, BUILD_IO_BUFFER_SIZE);
   serialization::BufferedFileReader tocIn(tocFile, BUILD_IO_BUFFER_SIZE);
-
-  constexpr uint32_t headerASize =
-      sizeof(BOOK_CACHE_VERSION) + /* LUT Offset */ sizeof(uint32_t) + sizeof(spineCount) + sizeof(tocCount);
   const uint32_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
                                 metadata.coverItemHref.size() + metadata.textReferenceHref.size() +
                                 sizeof(uint32_t) * 5;
@@ -204,6 +209,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   const uint32_t lutOffset = headerASize + metadataSize;
 
   // Header A
+  serialization::writePod(bookOut, BOOK_CACHE_MAGIC);
   serialization::writePod(bookOut, BOOK_CACHE_VERSION);
   serialization::writePod(bookOut, lutOffset);
   serialization::writePod(bookOut, spineCount);
@@ -237,8 +243,26 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   // LUTs complete
   // Loop through spines from spine file matching up TOC indexes, calculating cumulative size and writing to book.bin
 
+  Arena metadataArena;
+  if (!metadataArena.init(METADATA_ARENA_SLAB_BYTES)) {
+    LOG_ERR("BMC", "Failed to allocate metadata scratch arena (%u bytes)",
+            static_cast<unsigned>(METADATA_ARENA_SLAB_BYTES));
+    lowMemoryFailure = true;
+    closeBuildFiles();
+    return false;
+  }
+
   // Build spineIndex->tocIndex mapping in one pass (O(n) instead of O(n*m))
-  std::deque<int16_t> spineToTocIndex(spineCount, -1);
+  ArenaVector<int16_t> spineToTocIndex(metadataArena);
+  if (!spineToTocIndex.resize(spineCount)) {
+    LOG_ERR("BMC", "Failed to allocate spine-to-TOC index for %u spine items", spineCount);
+    lowMemoryFailure = true;
+    closeBuildFiles();
+    return false;
+  }
+  for (size_t i = 0; i < spineToTocIndex.size(); ++i) {
+    spineToTocIndex[i] = -1;
+  }
   tocIn.seek(0);
   for (int j = 0; j < tocCount; j++) {
     auto tocEntry = readTocEntryFrom(tocIn);
@@ -254,9 +278,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   if (!zip.open()) {
     LOG_ERR("BMC", "Could not open EPUB zip for size calculations");
     // Explicit close() required: member variables persist beyond function scope
-    bookFile.close();
-    spineFile.close();
-    tocFile.close();
+    closeBuildFiles();
     return false;
   }
   // NOTE: We intentionally skip calling loadAllFileStatSlims() here.
@@ -267,14 +289,18 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   // This is O(n*log(m)) instead of O(n*m) while avoiding memory exhaustion.
   // See: https://github.com/crosspoint-reader/crosspoint-reader/issues/134
 
-  std::deque<uint32_t> spineSizes;
+  ArenaVector<uint32_t> spineSizes(metadataArena);
   bool useBatchSizes = false;
 
   if (spineCount >= LARGE_SPINE_THRESHOLD) {
-    LOG_DBG("BMC", "Using batch size lookup for %d spine items", spineCount);
-
-    std::deque<ZipFile::SizeTarget> targets;
-    targets.resize(spineCount);
+    ArenaVector<ZipFile::SizeTarget> targets(metadataArena);
+    if (!targets.resize(spineCount) || !spineSizes.resize(spineCount)) {
+      LOG_ERR("BMC", "Failed to allocate batch size lookup scratch for %u spine items", spineCount);
+      lowMemoryFailure = true;
+      zip.close();
+      closeBuildFiles();
+      return false;
+    }
 
     spineIn.seek(0);
     for (int i = 0; i < spineCount; i++) {
@@ -292,12 +318,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
       return a.hash < b.hash || (a.hash == b.hash && a.len < b.len);
     });
 
-    spineSizes.resize(spineCount, 0);
-    int matched = zip.fillUncompressedSizes(targets, spineSizes);
-    LOG_DBG("BMC", "Batch lookup matched %d/%d spine items", matched, spineCount);
-
-    targets.clear();
-    targets.shrink_to_fit();
+    int matched = zip.fillUncompressedSizes(targets.data(), targets.size(), spineSizes.data(), spineSizes.size());
 
     useBatchSizes = true;
   }
@@ -335,6 +356,14 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
       }
     }
 
+    constexpr size_t maxStoredCumulativeSize = std::numeric_limits<uint32_t>::max();
+    if (itemSize > maxStoredCumulativeSize || cumSize > maxStoredCumulativeSize - itemSize) {
+      LOG_ERR("BMC", "Spine cumulative size overflow for item %d (cumSize=%u, itemSize=%zu)", i, cumSize, itemSize);
+      zip.close();
+      closeBuildFiles();
+      return false;
+    }
+
     cumSize += itemSize;
     spineEntry.cumulativeSize = cumSize;
 
@@ -354,9 +383,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   const bool written = bookOut.flush();
 
   // Explicit close() required: member variables persist beyond function scope
-  bookFile.close();
-  spineFile.close();
-  tocFile.close();
+  closeBuildFiles();
 
   if (!written) {
     // A short write (card full/removed) would leave a truncated book.bin that
@@ -366,7 +393,6 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     return false;
   }
 
-  LOG_DBG("BMC", "Successfully built book.bin");
   return true;
 }
 
@@ -461,52 +487,59 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
 
 /* ============= READING / LOADING FUNCTIONS ================ */
 
+bool BookMetadataCache::exists(const std::string& cachePath) {
+  return Storage.exists((cachePath + bookBinFile).c_str());
+}
+
 bool BookMetadataCache::load() {
-  if (!Storage.openFileForRead("BMC", cachePath + bookBinFile, bookFile)) {
+  const auto bookBinPath = cachePath + bookBinFile;
+  if (!Storage.openFileForRead("BMC", bookBinPath, bookFile)) {
+    return false;
+  }
+
+  uint32_t magic;
+  if (!serialization::tryReadPod(bookFile, magic)) {
+    LOG_DBG("BMC", "Cache header is truncated");
+    bookFile.close();
+    Storage.remove(bookBinPath.c_str());
+    return false;
+  }
+  if (magic != BOOK_CACHE_MAGIC) {
+    LOG_DBG("BMC", "Cache magic mismatch");
+    bookFile.close();
+    Storage.remove(bookBinPath.c_str());
     return false;
   }
 
   uint8_t version;
-  serialization::readPod(bookFile, version);
+  if (!serialization::tryReadPod(bookFile, version)) {
+    LOG_DBG("BMC", "Cache version is missing");
+    bookFile.close();
+    Storage.remove(bookBinPath.c_str());
+    return false;
+  }
   if (version != BOOK_CACHE_VERSION) {
     LOG_DBG("BMC", "Cache version mismatch: expected %d, got %d", BOOK_CACHE_VERSION, version);
     // Explicit close() required: member variable persists beyond function scope
     bookFile.close();
+    Storage.remove(bookBinPath.c_str());
     return false;
   }
 
-  serialization::readPod(bookFile, lutOffset);
-  serialization::readPod(bookFile, spineCount);
-  serialization::readPod(bookFile, tocCount);
-
-  serialization::readString(bookFile, coreMetadata.title);
-  serialization::readString(bookFile, coreMetadata.author);
-  serialization::readString(bookFile, coreMetadata.language);
-  serialization::readString(bookFile, coreMetadata.coverItemHref);
-  serialization::readString(bookFile, coreMetadata.textReferenceHref);
-
-  // Cache cumulative spine sizes in RAM. The progress bar (every render) and percent
-  // jumps otherwise pay 2 seeks + a heap-allocating SpineEntry read per access. Spine
-  // entries are stored contiguously in index order immediately after the LUTs, so read
-  // them in a single sequential pass.
-  cumulativeSizes.clear();
-  cumulativeSizes.reserve(spineCount);
-  const uint32_t lutSize = (static_cast<uint32_t>(spineCount) + tocCount) * sizeof(uint32_t);
-  bookFile.seek(lutOffset + lutSize);
-  for (uint16_t i = 0; i < spineCount; i++) {
-    cumulativeSizes.push_back(readSpineEntry(bookFile).cumulativeSize);
+  if (!serialization::tryReadPod(bookFile, lutOffset) || !serialization::tryReadPod(bookFile, spineCount) ||
+      !serialization::tryReadPod(bookFile, tocCount) || !serialization::tryReadString(bookFile, coreMetadata.title) ||
+      !serialization::tryReadString(bookFile, coreMetadata.author) ||
+      !serialization::tryReadString(bookFile, coreMetadata.language) ||
+      !serialization::tryReadString(bookFile, coreMetadata.coverItemHref) ||
+      !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref)) {
+    LOG_DBG("BMC", "Cache metadata is truncated");
+    bookFile.close();
+    Storage.remove(bookBinPath.c_str());
+    return false;
   }
 
   loaded = true;
-  LOG_DBG("BMC", "Loaded cache data: %d spine, %d TOC entries", spineCount, tocCount);
   return true;
-}
-
-uint32_t BookMetadataCache::getCumulativeSize(const int index) const {
-  if (index < 0 || index >= static_cast<int>(cumulativeSizes.size())) {
-    return 0;
-  }
-  return cumulativeSizes[index];
 }
 
 BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) {
@@ -526,6 +559,32 @@ BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) 
   serialization::readPod(bookFile, spineEntryPos);
   bookFile.seek(spineEntryPos);
   return readSpineEntry(bookFile);
+}
+
+size_t BookMetadataCache::getSpineCumulativeSize(const int index) {
+  if (!loaded) {
+    LOG_ERR("BMC", "getSpineCumulativeSize called but cache not loaded");
+    return 0;
+  }
+
+  if (index < 0 || index >= static_cast<int>(spineCount)) {
+    LOG_ERR("BMC", "getSpineCumulativeSize index %d out of range", index);
+    return 0;
+  }
+
+  // Seek to spine LUT item, then read only the cumulative size field from the entry.
+  bookFile.seek(lutOffset + sizeof(uint32_t) * index);
+  uint32_t spineEntryPos;
+  serialization::readPod(bookFile, spineEntryPos);
+  bookFile.seek(spineEntryPos);
+
+  uint32_t hrefLen = 0;
+  serialization::readPod(bookFile, hrefLen);
+  bookFile.seekCur(hrefLen);
+
+  uint32_t cumulativeSize = 0;
+  serialization::readPod(bookFile, cumulativeSize);
+  return static_cast<size_t>(cumulativeSize);
 }
 
 BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {

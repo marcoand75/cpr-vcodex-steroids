@@ -1,49 +1,37 @@
 #pragma once
 
-#include <string>
+#include "../Activity.h"
+#include "SilentRestart.h"
+#include "util/ButtonNavigator.h"
+#include "util/PopupUtils.h"
 
-#include "activities/UiListActivity.h"
-
-// Sync Day: five action rows (sync now, set date, Wi-Fi choice, time zone,
-// date format) with live values, a status line and the "how it works" help
-// text underneath. While an NTP sync runs the screen shows a progress note.
-class SyncDayActivity final : public UiListActivity {
-  static constexpr int ACTION_COUNT = 5;
-
+class SyncDayActivity final : public Activity {
   bool wifiConnectedOnEnter = false;
   bool connectedInActivity = false;
   bool syncing = false;
   bool lastSyncSucceeded = false;
   bool lastSyncFailed = false;
-  // Row storage; subtitles/values are refreshed into these strings from
-  // buildScreen() (they track live Wi-Fi state and settings).
-  std::string rowSubtitles[ACTION_COUNT];
-  std::string networkStatus;
-  freeink::ui::ListItem rowItems[ACTION_COUNT]{};
+  SilentRebootTarget returnTarget_ = SilentRebootTarget::Home;
+  ButtonNavigator buttonNavigator;
+  int selectedIndex = 0;
 
-  void refreshRowValues();
-  void openWifiSelection(bool allowAutoConnect);
+  void openWifiSelection();
   void openManualDateSelection();
   void openTimeZoneSelection();
   void syncTime();
-  void showTransientPopup(const char* message, int progress = -1, unsigned long delayMs = 0);
   void createDueReadingStatsBackupWithFeedback();
+  void createSyncDateBackupIfDayChanged(uint32_t previousTimestamp, uint32_t currentTimestamp);
   bool isWifiConnected() const;
   std::string getStatusMessage() const;
 
-  int listCount() const override { return ACTION_COUNT; }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  // Input is ignored while a sync is running.
-  bool handleCustomInput() override { return syncing; }
-  void drawChrome() override;
-
  public:
-  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("SyncDay", renderer, mappedInput) {}
+  explicit SyncDayActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                           SilentRebootTarget returnTarget = SilentRebootTarget::Home)
+      : Activity("SyncDay", renderer, mappedInput), returnTarget_(returnTarget) {}
 
   void onEnter() override;
   void onExit() override;
+  void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return syncing; }
 };

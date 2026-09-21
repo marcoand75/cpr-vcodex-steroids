@@ -6,7 +6,6 @@ class OtaUpdater {
   bool updateAvailable = false;
   std::string latestVersion;
   std::string otaUrl;
-  std::string expectedSha256;
   size_t otaSize = 0;
   size_t processedSize = 0;
   size_t totalSize = 0;
@@ -23,6 +22,7 @@ class OtaUpdater {
     INTERNAL_UPDATE_ERROR,
     OOM_ERROR,
     WRONG_DEVICE_ERROR,
+    ABORTED,
   };
 
   size_t getOtaSize() const { return otaSize; }
@@ -40,5 +40,6 @@ class OtaUpdater {
   bool isUpdateNewer() const;
   const std::string& getLatestVersion() const;
   OtaUpdaterError checkForUpdate();
-  OtaUpdaterError installUpdate(ProgressCallback onProgress = nullptr, void* ctx = nullptr);
+  OtaUpdaterError installUpdate(ProgressCallback onProgress = nullptr, void* ctx = nullptr,
+                                bool* cancelFlag = nullptr);
 };

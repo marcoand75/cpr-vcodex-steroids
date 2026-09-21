@@ -17,12 +17,7 @@ void safeCopy(char* dst, size_t dstSize, const char* src, size_t srcLen) {
 ReleaseJsonParser::ReleaseJsonParser()
     : parser(JsonCallbacks{this, sOnKey, sOnString, sOnNumber, sOnBool, sOnNull, sOnObjectStart, sOnObjectEnd,
                            sOnArrayStart, sOnArrayEnd}) {
-  safeCopy(firmwareAssetName, sizeof(firmwareAssetName), "firmware.bin", sizeof("firmware.bin") - 1);
   reset();
-}
-
-void ReleaseJsonParser::setFirmwareAssetName(const char* name) {
-  safeCopy(firmwareAssetName, sizeof(firmwareAssetName), name, strlen(name));
 }
 
 void ReleaseJsonParser::reset() {
@@ -49,29 +44,42 @@ const char* ReleaseJsonParser::getTagName() const { return tagName; }
 const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
 
-void ReleaseJsonParser::commitAsset() {
-  // CPR-vCodex releases publish tag-named firmware assets. The preferred name is
-  // "<tag>" + the configured asset name with its leading "firmware" stripped:
-  //   "firmware.bin"       -> "<tag>.bin"        (fallback "firmware.bin")
-  //   "firmware-x4pro.bin" -> "<tag>-x4pro.bin"  (fallback "firmware-x4pro.bin")
-  // A tag match always wins; the legacy/upstream name is accepted only while
-  // nothing has been found yet.
-  static constexpr char kFirmwarePrefix[] = "firmware";
-  static constexpr size_t kFirmwarePrefixLen = sizeof(kFirmwarePrefix) - 1;
-  const char* suffix = firmwareAssetName;
-  if (strncmp(suffix, kFirmwarePrefix, kFirmwarePrefixLen) == 0) {
-    suffix += kFirmwarePrefixLen;
-  }
-  char preferredAssetName[sizeof(tagName) + sizeof(firmwareAssetName)];
-  snprintf(preferredAssetName, sizeof(preferredAssetName), "%s%s", tagName, suffix);
+bool endsWith(const char* str, const char* suffix) {
+  const size_t strLen = strlen(str);
+  const size_t suffixLen = strlen(suffix);
+  return strLen >= suffixLen && strcmp(str + strLen - suffixLen, suffix) == 0;
+}
 
-  const bool isPreferredAsset = tagFound && strcmp(currentAssetName, preferredAssetName) == 0;
-  const bool isLegacyAsset = strcmp(currentAssetName, firmwareAssetName) == 0;
-  if (isPreferredAsset || (isLegacyAsset && !firmwareFound)) {
+bool contains(const char* str, const char* sub) { return strstr(str, sub) != nullptr; }
+
+void ReleaseJsonParser::commitAsset() {
+  // Accept any .bin firmware asset published in the release. The exact asset
+  // name no longer has to match "<tag>.bin": this fork publishes assets such as
+  // "1.3.0.35.dev6-2dc61f1c-cpr-vcodex-steroids.bin" while the release tag is
+  // "1.3.0.35-dev6-cpr-vcodex-steroids", so a strict tag match would never
+  // resolve. Prefer a fork-named asset over a generic "firmware.bin" legacy one.
+  const bool isBin = endsWith(currentAssetName, ".bin");
+  if (!isBin) {
+    currentAssetName[0] = '\0';
+    currentAssetUrl[0] = '\0';
+    currentAssetSize = 0;
+    return;
+  }
+
+  const bool isForkAsset = contains(currentAssetName, "cpr-vcodex-steroids");
+  const bool isLegacyAsset = strcmp(currentAssetName, "firmware.bin") == 0;
+
+  if (!firmwareFound) {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;
     firmwareFound = true;
+  } else if (isForkAsset && !contains(firmwareUrl, "cpr-vcodex-steroids")) {
+    // Upgrade a previously accepted generic/firmware.bin asset to the fork asset.
+    memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
+    firmwareSize = currentAssetSize;
   }
+
+  (void)isLegacyAsset;
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;

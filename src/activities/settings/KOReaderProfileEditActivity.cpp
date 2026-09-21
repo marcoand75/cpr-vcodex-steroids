@@ -6,18 +6,18 @@
 
 #include <cstring>
 
-#include "KOReaderAuthActivity.h"
 #include "MappedInputManager.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "KOReaderAuthActivity.h"
 #include "components/UITheme.h"
-
-namespace fui = freeink::ui;
+#include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 
 namespace {
-constexpr StrId FIELD_NAMES[] = {
-    StrId::STR_PROFILE_NAME,      StrId::STR_USERNAME,      StrId::STR_PASSWORD,      StrId::STR_SYNC_SERVER_URL,
-    StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA, StrId::STR_SYNC_BEHAVIOR, StrId::STR_SIGN_UP};
+// Editable fields: Name, Username, Password, Server URL, Document Matching.
+// Existing profiles also show Set as Active and Delete (BASE_ITEMS + 2).
+constexpr int BASE_ITEMS = 8;
 }  // namespace
 
 int KOReaderProfileEditActivity::getMenuItemCount() const {
@@ -25,8 +25,9 @@ int KOReaderProfileEditActivity::getMenuItemCount() const {
 }
 
 void KOReaderProfileEditActivity::onEnter() {
-  UiListActivity::onEnter();
+  Activity::onEnter();
 
+  selectedIndex = 0;
   isNewProfile = (profileIndex < 0);
   showSaveError = false;
 
@@ -43,47 +44,36 @@ void KOReaderProfileEditActivity::onEnter() {
     }
   }
 
-  for (int i = 0; i < MAX_ITEMS; ++i) {
-    fui::ListItem item;
-    if (i < BASE_ITEMS) {
-      item.label = I18N.get(FIELD_NAMES[i]);
+  requestUpdate();
+
+  listInputMapper.setBackHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    self->finish();
+  }, this, false);
+
+  listInputMapper.setConfirmHandler([](void* ctx) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    self->handleSelection();
+  }, this, false);
+
+  auto onNav = [](void* ctx, int delta) {
+    auto* self = static_cast<KOReaderProfileEditActivity*>(ctx);
+    const int menuItems = self->getMenuItemCount();
+    if (delta > 0) {
+      self->selectedIndex = (self->selectedIndex + 1) % menuItems;
     } else {
-      item.label = i == BASE_ITEMS ? tr(STR_SET_ACTIVE_PROFILE) : tr(STR_DELETE_PROFILE);
+      self->selectedIndex = (self->selectedIndex + menuItems - 1) % menuItems;
     }
-    item.actionValue = static_cast<int16_t>(i);
-    rowItems[i] = item;
-  }
-  syncRows();
+    self->requestUpdate();
+  };
+
+  listInputMapper.setNavAll(onNav, this);
 }
 
-// Refresh the value column from editProfile. Assigns into the existing
-// strings; the row structure (labels, count) never changes within a visit
-// except through isNewProfile, which listCount() reads live.
-void KOReaderProfileEditActivity::syncRows() {
-  // The render task reads rowValues mid-build; rewrite them under the lock.
-  RenderLock lock(*this);
-  const bool isActive = !isNewProfile && KOREADER_STORE.getActiveIndex() == profileIndex;
-  rowValues[0] = editProfile.name.empty() ? std::string(tr(STR_NOT_SET)) : editProfile.name;
-  rowValues[1] = editProfile.username.empty() ? std::string(tr(STR_NOT_SET)) : editProfile.username;
-  rowValues[2] = editProfile.password.empty() ? std::string(tr(STR_NOT_SET)) : std::string("******");
-  rowValues[3] = editProfile.serverUrl.empty() ? std::string(tr(STR_DEFAULT_VALUE)) : editProfile.serverUrl;
-  rowValues[4] = editProfile.matchMethod == DocumentMatchMethod::FILENAME ? std::string(tr(STR_FILENAME))
-                                                                          : std::string(tr(STR_BINARY));
-  rowValues[5] = editProfile.sendMetadata ? std::string(tr(STR_STATE_ON)) : std::string(tr(STR_STATE_OFF));
-  rowValues[6] = editProfile.syncBehavior == KOReaderSyncBehavior::SMART ? std::string(tr(STR_SMART_SYNC))
-                                                                         : std::string(tr(STR_ASK_EVERY_TIME));
-  rowValues[7] = editProfile.username.empty() || editProfile.password.empty()
-                     ? std::string("[") + tr(STR_SET_CREDENTIALS_FIRST) + "]"
-                     : std::string();
-  rowValues[8] = isActive ? std::string(tr(STR_ACTIVE_PROFILE_TAG)) : std::string();
-  rowValues[9].clear();
-  for (int i = 0; i < MAX_ITEMS; ++i) {
-    rowItems[i].value = rowValues[i].empty() ? nullptr : rowValues[i].c_str();
-  }
-}
+void KOReaderProfileEditActivity::onExit() { Activity::onExit(); }
 
-const char* KOReaderProfileEditActivity::headerTitle() const {
-  return isNewProfile ? tr(STR_ADD_PROFILE) : tr(STR_EDIT_PROFILE);
+void KOReaderProfileEditActivity::loop() {
+  listInputMapper.loop(mappedInput);
 }
 
 bool KOReaderProfileEditActivity::saveProfile() {
@@ -116,14 +106,7 @@ bool KOReaderProfileEditActivity::saveProfile() {
   return success;
 }
 
-void KOReaderProfileEditActivity::activateIndex(const int index) {
-  // Most rows open a sub-screen or repaint with a new value; a lingering tap
-  // flash would gray an unrelated element.
-  app.clearTapFlash();
-  handleSelection(index);
-}
-
-void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
+void KOReaderProfileEditActivity::handleSelection() {
   // Each field edit is saved immediately so partially configured profiles
   // survive navigation and power-loss scenarios.
   if (selectedIndex == 0) {
@@ -133,7 +116,6 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
         const auto& kb = std::get<KeyboardResult>(result.data);
         editProfile.name = kb.text;
         saveProfile();
-        syncRows();
         requestUpdate();
       }
     };
@@ -147,7 +129,6 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
         const auto& kb = std::get<KeyboardResult>(result.data);
         editProfile.username = kb.text;
         saveProfile();
-        syncRows();
         requestUpdate();
       }
     };
@@ -161,7 +142,6 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
         const auto& kb = std::get<KeyboardResult>(result.data);
         editProfile.password = kb.text;
         saveProfile();
-        syncRows();
         requestUpdate();
       }
     };
@@ -176,7 +156,6 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
         const auto& kb = std::get<KeyboardResult>(result.data);
         editProfile.serverUrl = (kb.text == "https://" || kb.text == "http://") ? "" : kb.text;
         saveProfile();
-        syncRows();
         requestUpdate();
       }
     };
@@ -189,23 +168,19 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
                                   ? DocumentMatchMethod::BINARY
                                   : DocumentMatchMethod::FILENAME;
     saveProfile();
-    syncRows();
     requestUpdate();
   } else if (selectedIndex == 5) {
     editProfile.sendMetadata = !editProfile.sendMetadata;
     saveProfile();
-    syncRows();
     requestUpdate();
   } else if (selectedIndex == 6) {
     editProfile.syncBehavior = editProfile.syncBehavior == KOReaderSyncBehavior::SMART
                                    ? KOReaderSyncBehavior::ASK_EVERY_TIME
                                    : KOReaderSyncBehavior::SMART;
     saveProfile();
-    syncRows();
     requestUpdate();
   } else if (selectedIndex == 7) {
     if (editProfile.username.empty() || editProfile.password.empty() || !saveProfile()) return;
-    syncRows();
     startActivityForResult(
         std::make_unique<KOReaderAuthActivity>(renderer, mappedInput, KOReaderAuthActivity::Mode::SIGN_UP, editProfile),
         [this](const ActivityResult&) { requestUpdate(true); });
@@ -217,7 +192,6 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
     } else {
       showSaveError = false;
     }
-    syncRows();
     requestUpdate();
   } else if (selectedIndex == 9 && !isNewProfile) {
     const std::string profileLabel = editProfile.name.empty() ? editProfile.username : editProfile.name;
@@ -239,42 +213,66 @@ void KOReaderProfileEditActivity::handleSelection(const int selectedIndex) {
   }
 }
 
-void KOReaderProfileEditActivity::buildScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
-
-  // rowItems/rowValues were built by onEnter()/syncRows(); only the live
-  // count (a new profile gains two rows after its first save) is read here.
-  fui::ListProps props;
-  props.items = rowItems;
-  props.count = static_cast<uint16_t>(getMenuItemCount());
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  props.valueInset = 8;
-  props.labelText = screen.theme().smallText;
-  props.labelText.maxLines = 2;
-  syncListViewport(screen, props);
-  screen.list(props);
-}
-
 void KOReaderProfileEditActivity::render(RenderLock&&) {
-  // Same skeleton as UiListActivity::render, plus the save-error popup drawn
-  // over the list (GUI.drawPopup pushes the frame itself).
   renderer.clearScreen();
-  drawChrome();
-  renderUi();
-  for (int pass = 0; nav.consumeRebuildNeeded() && pass < 8; ++pass) {
-    renderer.clearScreen();
-    drawChrome();
-    renderUi();
-  }
-  drawFooter();
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+  const char* header = isNewProfile ? tr(STR_ADD_PROFILE) : tr(STR_EDIT_PROFILE);
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, header);
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
+  const int menuItems = getMenuItemCount();
+  const bool isActive = !isNewProfile && KOREADER_STORE.getActiveIndex() == profileIndex;
+
+  const StrId fieldNames[] = {StrId::STR_PROFILE_NAME,      StrId::STR_USERNAME,      StrId::STR_PASSWORD,
+                              StrId::STR_SYNC_SERVER_URL,   StrId::STR_DOCUMENT_MATCHING,
+                              StrId::STR_SEND_METADATA,     StrId::STR_SYNC_BEHAVIOR, StrId::STR_SIGN_UP};
+
+  GUI.drawList(
+      renderer, Rect{0, contentTop, pageWidth, contentHeight}, menuItems, static_cast<int>(selectedIndex),
+      [this, &fieldNames](int index) {
+        if (index < BASE_ITEMS) {
+          return std::string(I18N.get(fieldNames[index]));
+        }
+        return index == BASE_ITEMS ? std::string(tr(STR_SET_ACTIVE_PROFILE)) : std::string(tr(STR_DELETE_PROFILE));
+      },
+      nullptr, nullptr,
+      [this, isActive](int index) {
+        if (index == 0) {
+          return editProfile.name.empty() ? std::string(tr(STR_NOT_SET)) : editProfile.name;
+        } else if (index == 1) {
+          return editProfile.username.empty() ? std::string(tr(STR_NOT_SET)) : editProfile.username;
+        } else if (index == 2) {
+          return editProfile.password.empty() ? std::string(tr(STR_NOT_SET)) : std::string("******");
+        } else if (index == 3) {
+          return editProfile.serverUrl.empty() ? std::string(tr(STR_DEFAULT_VALUE)) : editProfile.serverUrl;
+        } else if (index == 4) {
+          return editProfile.matchMethod == DocumentMatchMethod::FILENAME ? std::string(tr(STR_FILENAME))
+                                                                          : std::string(tr(STR_BINARY));
+        } else if (index == 5) {
+          return editProfile.sendMetadata ? std::string(tr(STR_STATE_ON)) : std::string(tr(STR_STATE_OFF));
+        } else if (index == 6) {
+          return editProfile.syncBehavior == KOReaderSyncBehavior::SMART ? std::string(tr(STR_SMART_SYNC))
+                                                                          : std::string(tr(STR_ASK_EVERY_TIME));
+        } else if (index == 7) {
+          return editProfile.username.empty() || editProfile.password.empty()
+                     ? std::string("[") + tr(STR_SET_CREDENTIALS_FIRST) + "]"
+                     : std::string();
+        } else if (index == BASE_ITEMS && isActive) {
+          return std::string(tr(STR_ACTIVE_PROFILE_TAG));
+        }
+        return std::string("");
+      },
+      true);
+
+  ListRenderHelper::drawStandardHints(renderer, mappedInput);
+
   if (showSaveError) {
     GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
-    return;
   }
+
   renderer.displayBuffer();
 }

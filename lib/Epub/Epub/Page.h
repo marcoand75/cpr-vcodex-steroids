@@ -9,17 +9,14 @@
 #include <vector>
 
 #include "FootnoteEntry.h"
-#include "PageLink.h"
 #include "blocks/ImageBlock.h"
 #include "blocks/TextBlock.h"
 
-class FontCacheManager;
-
 enum PageElementTag : uint8_t {
   TAG_PageLine = 1,
-  TAG_PageImage = 2,
-  TAG_PageHorizontalRule = 3,
-  TAG_PageTableFragment = 4,
+  TAG_PageImage = 2,  // New tag
+  TAG_PageTableFragment = 3,
+  TAG_PageHorizontalRule = 4,
 };
 
 // represents something that has been added to a page
@@ -29,8 +26,8 @@ class PageElement {
   int16_t yPos;
   explicit PageElement(const int16_t xPos, const int16_t yPos) : xPos(xPos), yPos(yPos) {}
   virtual ~PageElement() = default;
-  virtual void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) = 0;
-  virtual bool serialize(HalFile& file) = 0;
+  virtual void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) = 0;
+  virtual bool serialize(FsFile& file) = 0;
   virtual PageElementTag getTag() const = 0;  // Add type identification
 };
 
@@ -42,24 +39,24 @@ class PageLine final : public PageElement {
   PageLine(std::shared_ptr<TextBlock> block, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), block(std::move(block)) {}
   const std::shared_ptr<TextBlock>& getBlock() const { return block; }
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) override;
-  bool serialize(HalFile& file) override;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageLine; }
-  static std::unique_ptr<PageLine> deserialize(HalFile& file);
+  static std::unique_ptr<PageLine> deserialize(FsFile& file);
 };
 
 // New PageImage class
 class PageImage final : public PageElement {
-  std::shared_ptr<ImageBlock> imageBlock;
+  std::unique_ptr<ImageBlock> imageBlock;
 
  public:
-  PageImage(std::shared_ptr<ImageBlock> block, const int16_t xPos, const int16_t yPos)
+  PageImage(std::unique_ptr<ImageBlock> block, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), imageBlock(std::move(block)) {}
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) override;
-  void renderPlaceholder(GfxRenderer& renderer, int xOffset, int yOffset) const;
-  bool serialize(HalFile& file) override;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  void renderPlaceholder(GfxRenderer& renderer, int xOffset, int yOffset, bool foregroundBlack) const;
+  bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageImage; }
-  static std::unique_ptr<PageImage> deserialize(HalFile& file);
+  static std::unique_ptr<PageImage> deserialize(FsFile& file);
   const ImageBlock& getImageBlock() const { return *imageBlock; }
 };
 
@@ -71,10 +68,10 @@ class PageHorizontalRule final : public PageElement {
   PageHorizontalRule(uint16_t width, uint8_t thickness, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), width(width), thickness(thickness) {}
 
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) override;
-  bool serialize(HalFile& file) override;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageHorizontalRule; }
-  static std::unique_ptr<PageHorizontalRule> deserialize(HalFile& file);
+  static std::unique_ptr<PageHorizontalRule> deserialize(FsFile& file);
 };
 
 struct TableFragmentCell {
@@ -82,8 +79,8 @@ struct TableFragmentCell {
   bool isHeader = false;
   std::vector<std::shared_ptr<TextBlock>> lines;
 
-  bool serialize(HalFile& file) const;
-  static bool deserialize(HalFile& file, TableFragmentCell& outCell);
+  bool serialize(FsFile& file) const;
+  static bool deserialize(FsFile& file, TableFragmentCell& outCell);
 };
 
 struct TableFragmentRow {
@@ -92,8 +89,8 @@ struct TableFragmentRow {
   bool headerSeparator = false;
   std::vector<TableFragmentCell> cells;
 
-  bool serialize(HalFile& file) const;
-  static bool deserialize(HalFile& file, TableFragmentRow& outRow);
+  bool serialize(FsFile& file) const;
+  static bool deserialize(FsFile& file, TableFragmentRow& outRow);
 };
 
 class PageTableFragment final : public PageElement {
@@ -109,7 +106,7 @@ class PageTableFragment final : public PageElement {
 
  public:
   PageTableFragment(uint16_t width, uint8_t columnCount, uint8_t cellPadding, uint16_t lineHeight,
-                    std::vector<TableFragmentRow> rows, const int16_t xPos, const int16_t yPos)
+                    std::vector<TableFragmentRow> rows, int16_t xPos, int16_t yPos)
       : PageElement(xPos, yPos),
         width(width),
         columnCount(columnCount),
@@ -117,77 +114,78 @@ class PageTableFragment final : public PageElement {
         lineHeight(lineHeight),
         rows(std::move(rows)) {}
 
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) override;
-  bool serialize(HalFile& file) override;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) override;
+  bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageTableFragment; }
-  static std::unique_ptr<PageTableFragment> deserialize(HalFile& file);
+  static std::unique_ptr<PageTableFragment> deserialize(FsFile& file);
   uint16_t getHeight() const;
-  void recordFontUsage(FontCacheManager& fontCacheManager, int fontId, uint8_t bionicReadingMode = 0) const;
 };
 
 class Page {
  public:
+  struct PublisherPageMarker {
+    int16_t yPos = 0;
+    char label[16] = {};
+  };
+
   // the list of block index and line numbers on this page
-  // Elements have one owner (the page). unique_ptr avoids a separate shared
-  // control-block allocation per line/image/rule, a major source of EPUB heap
-  // fragmentation on the C3 (adapted from CrossPoint c33a8b0e).
+  // Page elements have one owner: their page. Text blocks remain shared by
+  // PageLine entries when a laid-out block spans multiple lines or pages.
   std::vector<std::unique_ptr<PageElement>> elements;
   std::vector<FootnoteEntry> footnotes;
-  static constexpr uint16_t MAX_FOOTNOTES_PER_PAGE = 16;
-  std::vector<PageLink> links;
-  static constexpr uint16_t MAX_LINKS_PER_PAGE = 32;
+  std::vector<PublisherPageMarker> publisherPageMarkers;
+  static constexpr uint16_t MAX_FOOTNOTES_PER_PAGE = EPUB_MAX_FOOTNOTES_PER_PAGE;
+  static constexpr uint8_t INITIAL_FOOTNOTE_RESERVE = 2;
+  static constexpr uint8_t MAX_PUBLISHER_PAGE_MARKERS_PER_PAGE = 8;
+  static constexpr uint8_t INITIAL_PUBLISHER_PAGE_MARKER_RESERVE = 2;
 
-  // Zero-based visible-codepoint offset where this page starts. Not part of the serialized page
-  // body (it lives in the section's visible-offset LUT); Section::loadPage* fills it in from the
-  // build LUT or the on-disk LUT while the page file is already open, so the reader can persist
-  // progress without a second section-file open per page turn.
-  uint32_t visibleTextOffset = 0;
-
-  void addFootnote(const char* number, const char* href) {
+  void addFootnote(const char* number, const char* href, const uint8_t linkId = 0) {
+    if (linkId != 0 && std::any_of(footnotes.begin(), footnotes.end(),
+                                   [linkId](const FootnoteEntry& entry) { return entry.linkId == linkId; })) {
+      return;
+    }
     if (footnotes.size() >= MAX_FOOTNOTES_PER_PAGE) return;  // Cap per-page footnotes
+    if (footnotes.empty()) {
+      footnotes.reserve(INITIAL_FOOTNOTE_RESERVE);
+    }
     FootnoteEntry entry;
-    strncpy(entry.number, number, sizeof(entry.number) - 1);
+    std::strncpy(entry.number, number, sizeof(entry.number) - 1);
     entry.number[sizeof(entry.number) - 1] = '\0';
-    strncpy(entry.href, href, sizeof(entry.href) - 1);
+    std::strncpy(entry.href, href, sizeof(entry.href) - 1);
     entry.href[sizeof(entry.href) - 1] = '\0';
+    entry.linkId = linkId;
     footnotes.push_back(entry);
   }
 
-  bool addLink(const char* href, int16_t x, int16_t y, int16_t width, int16_t height) {
-    if (!href || width <= 0 || height <= 0 || links.size() >= MAX_LINKS_PER_PAGE) {
-      return false;
+  void addPublisherPageMarker(const char* label, const int yPos) {
+    if (!label || label[0] == '\0' || publisherPageMarkers.size() >= MAX_PUBLISHER_PAGE_MARKERS_PER_PAGE) return;
+    if (publisherPageMarkers.empty()) {
+      publisherPageMarkers.reserve(INITIAL_PUBLISHER_PAGE_MARKER_RESERVE);
     }
-    const size_t hrefLen = strnlen(href, sizeof(PageLink::href));
-    if (hrefLen == 0 || hrefLen == sizeof(PageLink::href)) {
-      return false;
-    }
-    links.emplace_back();
-    auto& link = links.back();
-    memcpy(link.href, href, hrefLen + 1);
-    link.x = x;
-    link.y = y;
-    link.width = width;
-    link.height = height;
-    return true;
+    PublisherPageMarker marker;
+    marker.yPos = static_cast<int16_t>(std::clamp(yPos, static_cast<int>(INT16_MIN), static_cast<int>(INT16_MAX)));
+    std::strncpy(marker.label, label, sizeof(marker.label) - 1);
+    marker.label[sizeof(marker.label) - 1] = '\0';
+    publisherPageMarkers.push_back(marker);
   }
 
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, uint8_t bionicReadingMode = 0) const;
-  void recordFontUsage(FontCacheManager& fontCacheManager, int fontId, uint8_t bionicReadingMode = 0) const;
-  void renderImages(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) const;
+  void renderText(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) const;
+  void renderImages(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool foregroundBlack = true) const;
   void renderWithImagePlaceholders(GfxRenderer& renderer, int fontId, int xOffset, int yOffset,
-                                   uint8_t bionicReadingMode = 0) const;
-  bool serialize(HalFile& file) const;
-  static std::unique_ptr<Page> deserialize(HalFile& file);
+                                   bool foregroundBlack = true) const;
+  bool serialize(FsFile& file) const;
+  static std::unique_ptr<Page> deserialize(FsFile& file);
 
   // Check if page contains any images (used to force full refresh)
   bool hasImages() const {
     return std::any_of(elements.begin(), elements.end(),
-                       [](const std::unique_ptr<PageElement>& el) { return el && el->getTag() == TAG_PageImage; });
+                       [](const std::unique_ptr<PageElement>& el) { return el->getTag() == TAG_PageImage; });
   }
 
   bool hasImagesNeedingDecode() const {
     return std::any_of(elements.begin(), elements.end(), [](const std::unique_ptr<PageElement>& element) {
-      return element && element->getTag() == TAG_PageImage &&
+      return element->getTag() == TAG_PageImage &&
              static_cast<const PageImage&>(*element).getImageBlock().needsDecode();
     });
   }
@@ -198,7 +196,6 @@ class Page {
     bool found = false;
     int16_t minX = INT16_MAX, minY = INT16_MAX, maxX = INT16_MIN, maxY = INT16_MIN;
     for (const auto& el : elements) {
-      if (!el) continue;
       if (el->getTag() == TAG_PageImage) {
         const auto& img = static_cast<const PageImage&>(*el);
         int16_t x = img.xPos;

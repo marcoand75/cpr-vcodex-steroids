@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ArduinoJson.h>
+
 class CrossPointSettings;
 class CrossPointState;
 class WifiCredentialStore;
@@ -7,6 +9,7 @@ class KOReaderCredentialStore;
 struct KOReaderProfile;
 class RecentBooksStore;
 class FavoritesStore;
+class UserCollectionsStore;
 class ReadingStatsStore;
 class AchievementsStore;
 class OpdsServerStore;
@@ -41,14 +44,21 @@ bool loadRecentBooks(RecentBooksStore& store, const char* json);
 bool saveFavorites(const FavoritesStore& store, const char* path);
 bool loadFavorites(FavoritesStore& store, const char* json);
 
+// UserCollectionsStore
+bool saveUserCollections(const UserCollectionsStore& store, const char* path);
+bool loadUserCollections(UserCollectionsStore& store, const char* json);
+
 // ReadingStatsStore
 bool saveReadingStats(const ReadingStatsStore& store, const char* path);
 bool loadReadingStats(ReadingStatsStore& store, const char* json);
+bool loadReadingStatsDocument(ReadingStatsStore& store, const JsonDocument& doc);
 bool loadReadingStatsFromFile(ReadingStatsStore& store, const char* path);
 bool saveAchievements(const AchievementsStore& store, const char* path);
 bool loadAchievements(AchievementsStore& store, const char* json);
 bool loadAchievementsFromFile(AchievementsStore& store, const char* path);
 
 // OpdsServerStore
+bool saveOpds(const OpdsServerStore& store, const char* path);
+bool loadOpds(OpdsServerStore& store, const char* json, bool* needsResave = nullptr);
 
 }  // namespace JsonSettingsIO

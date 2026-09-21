@@ -3,29 +3,26 @@
 #include <string>
 #include <vector>
 
-#include "activities/UiListActivity.h"
+#include "../Activity.h"
+#include "../util/ListInputMapper.h"
 
-// Sleep-image app: a sleep-order row (activate cycles shuffle/sequential)
-// followed by one row per sleep-image directory (activate opens its preview).
-class SleepAppActivity final : public UiListActivity {
+class SleepAppActivity final : public Activity {
+  ListInputMapper listInputMapper;
   std::vector<std::string> directories;
-  std::vector<std::string> rowLabels;
-  std::vector<freeink::ui::ListItem> rowItems;
+  int selectedIndex = 0;
 
   void loadDirectories();
-  void rebuildRows();
-  void openDirectory(int index);
+  void openSelectedDirectory();
 
-  int listCount() const override { return static_cast<int>(rowItems.size()); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void drawChrome() override;
-  void drawFooter() override;
+  static void onBack(void* ctx);
+  static void onConfirm(void* ctx);
+  static void onNav(void* ctx, int delta);
 
  public:
   explicit SleepAppActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("SleepApp", renderer, mappedInput) {}
+      : Activity("SleepApp", renderer, mappedInput) {}
 
   void onEnter() override;
-  void onExit() override;
+  void loop() override;
+  void render(RenderLock&&) override;
 };

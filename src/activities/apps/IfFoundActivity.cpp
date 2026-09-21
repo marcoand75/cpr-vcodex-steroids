@@ -9,6 +9,7 @@
 
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
 #include "util/IfFoundFile.h"
 
@@ -99,20 +100,6 @@ void IfFoundActivity::loop() {
     return;
   }
 
-  // Touch: vertical swipes page through the body text (up = forward).
-  const auto swipe = mappedInput.wasSwipe();
-  if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
-    const int maxScrollOffset = getMaxScrollOffset();
-    const int page = getVisibleBodyLineCount();
-    const int next =
-        std::clamp(scrollOffset + (swipe == MappedInputManager::SwipeDir::Up ? page : -page), 0, maxScrollOffset);
-    if (next != scrollOffset) {
-      scrollOffset = next;
-      requestUpdate();
-    }
-    return;
-  }
-
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right, MappedInputManager::Button::Down}, [this] {
     const int maxScrollOffset = getMaxScrollOffset();
     if (maxScrollOffset <= 0) {
@@ -177,7 +164,6 @@ void IfFoundActivity::render(RenderLock&&) {
                       true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   renderer.displayBuffer();
 }

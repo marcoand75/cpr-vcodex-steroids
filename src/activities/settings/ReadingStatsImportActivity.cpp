@@ -11,24 +11,26 @@
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
-#include "components/UiAppHelpers.h"
+#include "fontIds.h"
+#include "../util/ListRenderHelper.h"
 #include "util/HeaderDateUtils.h"
-
-namespace fui = freeink::ui;
 
 namespace {
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_EXPORTED_FILE[] = "stats_exported";
 constexpr char READING_STATS_EXPORTED_PATH[] = "/exports/stats_exported";
 constexpr char READING_STATS_BACKUP_PREFIX[] = "stats_backup_";
+constexpr char READING_STATS_SYNCDATE_PREFIX[] = "stats_syncdate_";
 
 std::string fileNameFromPath(const std::string& path) {
   const size_t pos = path.find_last_of('/');
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
-bool isReadingStatsBackupName(const char* name) {
-  if (!name || std::strncmp(name, READING_STATS_BACKUP_PREFIX, std::strlen(READING_STATS_BACKUP_PREFIX)) != 0) {
+// Files are named stats_backup_YYYY-MM-DD / stats_syncdate_YYYY-MM-DD with NO
+// extension (content is JSON), so a ".json" suffix would not be listed here.
+bool isValidDateBackupName(const char* prefix, const char* name) {
+  if (!name || std::strncmp(name, prefix, std::strlen(prefix)) != 0) {
     return false;
   }
 
@@ -36,11 +38,20 @@ bool isReadingStatsBackupName(const char* name) {
   unsigned month = 0;
   unsigned day = 0;
   int consumed = 0;
-  if (std::sscanf(name, "stats_backup_%4d-%2u-%2u%n", &year, &month, &day, &consumed) != 3 || name[consumed] != '\0') {
+  if (std::sscanf(name, "%*[^_]_%*[^_]_%4d-%2u-%2u%n", &year, &month, &day, &consumed) != 3 ||
+      name[consumed] != '\0') {
     return false;
   }
 
   return year >= 2024 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+bool isReadingStatsBackupName(const char* name) {
+  return isValidDateBackupName(READING_STATS_BACKUP_PREFIX, name);
+}
+
+bool isSyncDateBackupName(const char* name) {
+  return isValidDateBackupName(READING_STATS_SYNCDATE_PREFIX, name);
 }
 }  // namespace
 
@@ -65,7 +76,7 @@ std::vector<std::string> ReadingStatsImportActivity::getImportPaths() {
       if (std::strcmp(name, READING_STATS_EXPORTED_FILE) == 0) {
         continue;
       }
-      if (isReadingStatsBackupName(name)) {
+      if (isReadingStatsBackupName(name) || isSyncDateBackupName(name)) {
         backupPaths.emplace_back(std::string(READING_STATS_EXPORT_DIR) + "/" + name);
       }
     }
@@ -81,77 +92,91 @@ std::vector<std::string> ReadingStatsImportActivity::getImportPaths() {
   return paths;
 }
 
-// Derives the row cache from importPaths. Called from onEnter(), never from
-// buildScreen().
-void ReadingStatsImportActivity::rebuildRowItems() {
-  rowNames.clear();
-  rowItems.clear();
-  rowNames.reserve(importPaths.size());
-  rowItems.reserve(importPaths.size());
-  for (const auto& path : importPaths) {
-    rowNames.push_back(fileNameFromPath(path));
-  }
-  for (size_t i = 0; i < rowNames.size(); ++i) {
-    fui::ListItem item;
-    item.label = rowNames[i].c_str();
-    item.icon = listIconFor(UIIcon::File);
-    item.actionValue = static_cast<int16_t>(i);
-    rowItems.push_back(item);
-  }
-}
-
 void ReadingStatsImportActivity::onEnter() {
-  UiListActivity::onEnter();
+  Activity::onEnter();
   importPaths = getImportPaths();
-  rebuildRowItems();
+  selectedIndex = 0;
+  requestUpdate();
 }
 
-void ReadingStatsImportActivity::activateIndex(const int index) {
+std::string ReadingStatsImportActivity::getDisplayName(const int index) const {
   if (index < 0 || index >= static_cast<int>(importPaths.size())) {
-    return;
+    return "";
   }
-  app.clearTapFlash();  // the tap leaves this screen
-  setResult(ActivityResult{FilePathResult{importPaths[static_cast<size_t>(index)]}});
-  finish();
+  return fileNameFromPath(importPaths[static_cast<size_t>(index)]);
 }
 
-void ReadingStatsImportActivity::onBackButton() {
-  ActivityResult result;
-  result.isCancelled = true;
-  setResult(std::move(result));
-  finish();
-}
-
-void ReadingStatsImportActivity::drawChrome() {
-  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_IMPORT_READING_STATS), READING_STATS_EXPORT_DIR);
-}
-
-void ReadingStatsImportActivity::buildScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // Content below the header band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
-
+void ReadingStatsImportActivity::finishWithSelection() {
   if (importPaths.empty()) {
-    screen.centeredText(tr(STR_NO_READING_STATS_EXPORT), screen.theme().bodyText);
     return;
   }
 
-  fui::ListProps props;
-  props.items = rowItems.data();
-  props.count = static_cast<uint16_t>(rowItems.size());
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-  props.labelText = screen.theme().smallText;
-  props.labelText.maxLines = 2;
-  syncListViewport(screen, props);
-  screen.list(props);
+  setResult(ActivityResult{FilePathResult{importPaths[selectedIndex]}});
+  finish();
 }
 
-void ReadingStatsImportActivity::drawFooter() {
-  const bool empty = importPaths.empty();
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), empty ? "" : tr(STR_SELECT), empty ? "" : tr(STR_DIR_UP),
-                                            empty ? "" : tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+void ReadingStatsImportActivity::loop() {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    ActivityResult result;
+    result.isCancelled = true;
+    setResult(std::move(result));
+    finish();
+    return;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    finishWithSelection();
+    return;
+  }
+
+  const int itemCount = static_cast<int>(importPaths.size());
+  if (itemCount <= 0) {
+    return;
+  }
+
+  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+  buttonNavigator.onNextRelease([this, itemCount] {
+    selectedIndex = static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectedIndex), itemCount));
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousRelease([this, itemCount] {
+    selectedIndex = static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectedIndex), itemCount));
+    requestUpdate();
+  });
+  buttonNavigator.onNextContinuous([this, itemCount, pageItems] {
+    selectedIndex =
+        static_cast<size_t>(ButtonNavigator::nextPageIndex(static_cast<int>(selectedIndex), itemCount, pageItems));
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousContinuous([this, itemCount, pageItems] {
+    selectedIndex =
+        static_cast<size_t>(ButtonNavigator::previousPageIndex(static_cast<int>(selectedIndex), itemCount, pageItems));
+    requestUpdate();
+  });
+}
+
+void ReadingStatsImportActivity::render(RenderLock&&) {
+  renderer.clearScreen();
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+
+  HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_IMPORT_READING_STATS), READING_STATS_EXPORT_DIR);
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  if (importPaths.empty()) {
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_READING_STATS_EXPORT));
+  } else {
+    GUI.drawList(
+        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(importPaths.size()),
+        static_cast<int>(selectedIndex), [this](int index) { return getDisplayName(index); }, nullptr,
+        [](int) { return UIIcon::File; });
+  }
+
+  const bool hasImports = !importPaths.empty();
+  ListRenderHelper::drawHints(renderer, mappedInput, tr(STR_BACK), hasImports ? tr(STR_SELECT) : "",
+                              hasImports ? tr(STR_DIR_UP) : "", hasImports ? tr(STR_DIR_DOWN) : "");
+  renderer.displayBuffer();
 }

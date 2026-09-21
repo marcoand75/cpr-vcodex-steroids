@@ -14,7 +14,8 @@ class DictionaryDefinitionActivity final : public Activity {
  public:
   DictionaryDefinitionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::shared_ptr<Page> page,
                                std::string headword, std::string definition, bool truncated, int readerFontId,
-                               int definitionFontId, int marginLeft, int marginTop, bool renderPageBackground = true)
+                               int definitionFontId, int marginLeft, int marginTop, bool renderPageBackground = true,
+                               int activeDictIndex = -1, std::string query = "")
       : Activity("DictionaryDefinition", renderer, mappedInput),
         page(std::move(page)),
         headword(std::move(headword)),
@@ -24,7 +25,9 @@ class DictionaryDefinitionActivity final : public Activity {
         definitionFontId(definitionFontId),
         marginLeft(marginLeft),
         marginTop(marginTop),
-        renderPageBackground(renderPageBackground) {}
+        renderPageBackground(renderPageBackground),
+        activeDictIndex(activeDictIndex),
+        query(std::move(query)) {}
 
   void onEnter() override;
   void onExit() override;
@@ -46,10 +49,13 @@ class DictionaryDefinitionActivity final : public Activity {
   int currentPage = 0;
   int linesPerPage = 1;
   int totalPages = 1;
+  int activeDictIndex = -1;
+  std::string query;
 
   Rect overlayRect() const;
   void wrapText();
   void prepareDefinitionFontMetrics();
   int measureDefinitionText(const char* text) const;
   void prewarmVisibleDefinitionText() const;
+  void switchToDictionary(int newDictIndex);
 };

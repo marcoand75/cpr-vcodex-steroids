@@ -4,18 +4,20 @@
 #include <SdCardFontRegistry.h>
 
 #include <atomic>
+#include <string>
 
 class GfxRenderer;
+class SdCardFont;
 
 /// Facade that owns the SD card font registry, manager, and resolver logic.
 /// Hides implementation details behind a single begin() + ensureLoaded() API.
 class SdCardFontSystem {
  public:
   SdCardFontSystem() = default;
+  ~SdCardFontSystem();
   SdCardFontSystem(const SdCardFontSystem&) = delete;
   SdCardFontSystem& operator=(const SdCardFontSystem&) = delete;
-  /// Register the resolver and load a saved SD font selection. Discovery stays
-  /// deferred while the built-in font is selected (fork: saves boot time and heap).
+  /// Discover SD card fonts and load user's saved selection. Call once during setup.
   void begin(GfxRenderer& renderer);
 
   /// Ensure the correct SD font family is loaded for the current settings.
@@ -25,12 +27,19 @@ class SdCardFontSystem {
 
   /// Drop SD-font runtime state before TLS/network operations. ensureLoaded()
   /// re-discovers and reloads the configured font when normal reading resumes.
-  /// Returns true when a font family was loaded (and therefore unloaded).
   bool releaseForNetwork(GfxRenderer& renderer);
 
-  /// Resolve an SD card font ID from family name + reader point size.
+  /// Resolve an SD card font ID from family name + fontSize enum.
   /// Returns 0 if not found. Used by CrossPointSettings::getReaderFontId().
-  int resolveFontId(const char* familyName, uint8_t pointSize) const;
+  int resolveFontId(const char* familyName, uint8_t fontSizeEnum) const;
+
+  /// Best-effort load of an SD CJK family (e.g. SweiSpringCJKtc) so that
+  /// Latin-only UI fonts can fall back to it for non-Latin text anywhere in
+  /// the firmware. Returns the font ID, or 0 when no CJK family is installed.
+  /// Kept alongside the user's configured reader family.
+  /// When utf8Sample is provided the candidate with the best glyph coverage of
+  /// that text is chosen (falls back across every installed CJK family).
+  int ensureCjkFontLoaded(GfxRenderer& renderer, const char* utf8Sample = nullptr);
 
   /// Access the registry (e.g. for settings UI to enumerate available fonts).
   const SdCardFontRegistry& registry() const { return registry_; }
@@ -42,30 +51,40 @@ class SdCardFontSystem {
   /// Thread-safe: can be called from the web server task.
   void markRegistryDirty() { registryDirty_.store(true, std::memory_order_release); }
 
+  /// Generation counter incremented on every load/unload cycle.
+  /// Used to skip redundant ensureLoaded() calls when nothing changed.
+  uint32_t generation() const { return generation_; }
+
+  /// Non-mutating check: would ensureLoaded() actually reload?
+  bool needsReload() const;
+
   /// If the registry is dirty, re-scan the SD card now and clear the flag.
   /// Used by the web UI so uploaded/deleted fonts appear in the list
   /// without waiting for the reader activity to run ensureLoaded().
-  void refreshIfDirty();
+  void refreshIfDirty() {
+    const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acquire);
+    const bool registryWasReleased = registryReleasedForNetwork_.exchange(false, std::memory_order_acquire);
+    if (registryWasDirty || registryWasReleased) {
+      registry_.discover();
+    }
+  }
 
  private:
-  // Discover when the registry has never been loaded (deferred discovery), was
-  // marked dirty, or was released for a network operation. Returns true when a
-  // discovery ran; the optional outputs report why.
-  bool refreshRegistryIfNeeded(bool* wasDirty = nullptr, bool* wasReleased = nullptr);
-
-  // Load the active SD family at the built-in UI point sizes and register each
-  // as a size-matched CJK fallback for the corresponding UI font, so CJK book
-  // titles/list rows render at the same size as the surrounding Latin UI text.
-  // No-op when no SD family is loaded. Safe to call repeatedly (sizes already
-  // loaded are reused).
-  void setupUiFallbacks(GfxRenderer& renderer);
-
   SdCardFontRegistry registry_;
   SdCardFontManager manager_;
   std::atomic<bool> registryDirty_{false};
   std::atomic<bool> registryReleasedForNetwork_{false};
-  std::atomic<bool> registryLoaded_{false};
-};
+  uint32_t generation_ = 0;
+  void bumpGeneration() { ++generation_; }
 
-// Global SD card font system instance (defined in main.cpp).
-extern SdCardFontSystem sdFontSystem;
+  // Optional extra CJK fallback font kept alongside the configured reader family.
+  SdCardFont* cjkFont_ = nullptr;
+  int cjkFontId_ = 0;
+  std::string cjkFamilyName_;
+  uint8_t cjkPointSize_ = 0;
+
+  // Re-register the already-loaded extra CJK font into the renderer after a
+  // manager unload/reload cycle cleared the renderer's SD font table.
+  void reRegisterCjkExtra(GfxRenderer& renderer);
+  void dropCjkExtra(GfxRenderer& renderer);
+};
