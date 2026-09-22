@@ -1,0 +1,4 @@
+# JPEGDEC patch files must keep LF line endings so `git apply` works on
+# Windows checkouts (core.autocrlf converts them to CRLF otherwise, which
+# makes the patches fail against the LF-tracking libdep working tree).
+scripts/jpegdec_patches/*.patch text eol=lf
