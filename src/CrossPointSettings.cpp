@@ -536,7 +536,12 @@ int CrossPointSettings::getReaderFontId() const {
   // in the page render loop) so rendering is correct even before it has run.
   const uint8_t pt =
       snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES), fontPointSize);
+#ifdef OMIT_BOOKERLY
+  // Bookerly is compiled out: the builtin family is always NotoSans.
+  const bool sans = true;
+#else
   const bool sans = (fontFamily == NOTOSANS);
+#endif
   switch (pt) {
     case 10:
       return sans ? NOTOSANS_10_FONT_ID : BOOKERLY_10_FONT_ID;

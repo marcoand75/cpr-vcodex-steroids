@@ -124,6 +124,12 @@ std::vector<std::string> wrapCardBody(GfxRenderer& renderer, const int fontId, c
 }
 
 int builtInReaderFontId(uint8_t family, uint8_t pointSize) {
+#ifdef OMIT_BOOKERLY
+  // Bookerly is compiled out; the NotoSans branch below covers all point sizes.
+  if (family == CrossPointSettings::BOOKERLY) {
+    family = CrossPointSettings::NOTOSANS;
+  }
+#endif
   switch (family) {
     case CrossPointSettings::NOTOSANS:
       switch (pointSize) {

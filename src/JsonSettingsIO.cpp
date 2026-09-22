@@ -525,6 +525,14 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   } else {
     s.fontFamily = rawFontFamily;
   }
+#ifdef OMIT_BOOKERLY
+  // Bookerly is compiled out; fall back to NotoSans so the selected family and
+  // the rendered font stay consistent.
+  if (s.fontFamily == CrossPointSettings::BOOKERLY) {
+    s.fontFamily = CrossPointSettings::NOTOSANS;
+    if (needsResave) *needsResave = true;
+  }
+#endif
   if (fontFamilySchemaVersion < FONT_FAMILY_SCHEMA_VERSION && needsResave) {
     *needsResave = true;
   }

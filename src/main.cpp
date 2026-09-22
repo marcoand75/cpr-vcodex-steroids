@@ -72,13 +72,15 @@ constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
 static bool wakePowerReleasePending = false;
 
 // Fonts
+#ifndef OMIT_BOOKERLY
 EpdFont bookerly14RegularFont(&bookerly_14_regular);
 EpdFont bookerly14BoldFont(&bookerly_14_bold);
 EpdFont bookerly14ItalicFont(&bookerly_14_italic);
 EpdFont bookerly14BoldItalicFont(&bookerly_14_bolditalic);
 EpdFontFamily bookerly14FontFamily(&bookerly14RegularFont, &bookerly14BoldFont, &bookerly14ItalicFont,
                                    &bookerly14BoldItalicFont);
-#ifndef OMIT_FONTS
+#endif  // OMIT_BOOKERLY
+#if !defined(OMIT_FONTS) && !defined(OMIT_BOOKERLY)
 EpdFont bookerly10RegularFont(&bookerly_10_regular);
 EpdFont bookerly10BoldFont(&bookerly_10_bold);
 EpdFont bookerly10ItalicFont(&bookerly_10_italic);
@@ -103,7 +105,9 @@ EpdFont bookerly18ItalicFont(&bookerly_18_italic);
 EpdFont bookerly18BoldItalicFont(&bookerly_18_bolditalic);
 EpdFontFamily bookerly18FontFamily(&bookerly18RegularFont, &bookerly18BoldFont, &bookerly18ItalicFont,
                                    &bookerly18BoldItalicFont);
+#endif  // !OMIT_FONTS && !OMIT_BOOKERLY
 
+#ifndef OMIT_FONTS
 EpdFont notosans10RegularFont(&notosans_10_regular);
 EpdFont notosans10BoldFont(&notosans_10_bold);
 EpdFont notosans10ItalicFont(&notosans_10_italic);
@@ -463,13 +467,17 @@ void setupDisplayAndFonts(bool seamless = false, bool loadReaderResources = true
   }
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
+#ifndef OMIT_BOOKERLY
   renderer.insertFont(BOOKERLY_14_FONT_ID, bookerly14FontFamily);
-#ifndef OMIT_FONTS
+#endif
+#if !defined(OMIT_FONTS) && !defined(OMIT_BOOKERLY)
   renderer.insertFont(BOOKERLY_10_FONT_ID, bookerly10FontFamily);
   renderer.insertFont(BOOKERLY_12_FONT_ID, bookerly12FontFamily);
   renderer.insertFont(BOOKERLY_16_FONT_ID, bookerly16FontFamily);
   renderer.insertFont(BOOKERLY_18_FONT_ID, bookerly18FontFamily);
+#endif  // !OMIT_FONTS && !OMIT_BOOKERLY
 
+#ifndef OMIT_FONTS
   renderer.insertFont(NOTOSANS_10_FONT_ID, notosans10FontFamily);
   renderer.insertFont(NOTOSANS_12_FONT_ID, notosans12FontFamily);
   renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
