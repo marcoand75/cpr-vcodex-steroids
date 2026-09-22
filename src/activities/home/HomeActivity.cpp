@@ -1282,6 +1282,9 @@ void HomeActivity::activateSelection() {
       case ShortcutId::OpdsBrowser:
         onOpdsBrowserOpen();
         break;
+      case ShortcutId::Plugins:
+        activityManager.goToPluginBrowser();
+        break;
     }
   }
 }

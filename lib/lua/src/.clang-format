@@ -1,0 +1,5 @@
+# Vendored Lua 5.4 sources: keep them byte-identical to upstream so the
+# compiler/formatting diffs stay minimal. Disable clang-format here rather
+# than add lib/lua to the CI exclusion list.
+DisableFormat: true
+SortIncludes: Never

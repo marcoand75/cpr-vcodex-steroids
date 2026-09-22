@@ -198,6 +198,9 @@ void AppsActivity::openApp(const int index) {
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();
       return;
+    case ShortcutId::Plugins:
+      activityManager.goToPluginBrowser();
+      return;
   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {

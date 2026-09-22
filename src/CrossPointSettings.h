@@ -492,6 +492,10 @@ class CrossPointSettings {
   uint8_t sleepShortcutOrder = 18;
   uint8_t opdsBrowserShortcut = SHORTCUT_HOME;
   uint8_t opdsBrowserShortcutOrder = 19;
+  // Lua plugin browser shortcut (Steroids-only feature). Defaults to the Apps hub.
+  uint8_t pluginsShortcut = SHORTCUT_APPS;
+  uint8_t pluginsShortcutOrder = 20;
+  uint8_t pluginsShortcutVisible = 1;
   uint8_t browseFilesShortcutVisible = 1;
   // Legacy Stats shortcut visibility retained for settings.json migration to readingStatsShortcut.
   uint8_t statsShortcutVisible = 1;

@@ -199,6 +199,14 @@ constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_OTA = 2;
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN = 3;          // Lua plugin activity
+constexpr uint32_t SILENT_REBOOT_TARGET_PLUGIN_BROWSER = 4;  // plugin browser
+constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 5;            // apps menu
+
+// Plugin launch parameters carried across a silent reboot, snapshotted in setup().
+RTC_NOINIT_ATTR char silentRebootPluginName[32];
+RTC_NOINIT_ATTR bool silentRebootPluginFromApps;
+RTC_NOINIT_ATTR bool silentRebootPluginReturnToBrowser;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -280,6 +288,51 @@ void silentRestartToOta() {
   // once in setup(), so an interrupted boot cannot loop back into the updater.
   silentRebootTarget = SILENT_REBOOT_TARGET_OTA;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToPluginBrowser() {
+  if (deepSleepInProgress) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN_BROWSER;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=plugin browser)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+// Seamless variants: no popup, so the panel holds its frame until the target's
+// first paint. The setup() silent-boot path absorbs held input.
+void silentRestartToHome() {
+  if (deepSleepInProgress) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=home, seamless)");
+  ESP.restart();
+}
+
+void silentRestartToApps() {
+  if (deepSleepInProgress) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_APPS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=apps, seamless)");
+  ESP.restart();
+}
+
+void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
+  if (deepSleepInProgress) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_PLUGIN;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  silentRebootPluginName[0] = '\0';
+  if (pluginName != nullptr) {
+    std::strncpy(silentRebootPluginName, pluginName, sizeof(silentRebootPluginName) - 1);
+    silentRebootPluginName[sizeof(silentRebootPluginName) - 1] = '\0';
+  }
+  silentRebootPluginFromApps = fromApps;
+  silentRebootPluginReturnToBrowser = returnToPluginBrowser;
+  LOG_DBG("MAIN", "Silent restart (target=plugin)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -457,7 +510,17 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_OTA) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_APPS) ? silentRebootTarget : 0;
+  // Snapshot the plugin launch parameters before the RTC token is cleared.
+  char snapshotPluginName[sizeof(silentRebootPluginName)] = {};
+  bool snapshotPluginFromApps = false;
+  bool snapshotPluginReturnToBrowser = false;
+  if (isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN) {
+    std::strncpy(snapshotPluginName, silentRebootPluginName, sizeof(snapshotPluginName) - 1);
+    snapshotPluginFromApps = silentRebootPluginFromApps;
+    snapshotPluginReturnToBrowser = silentRebootPluginReturnToBrowser;
+  }
+  silentRebootPluginName[0] = '\0';
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
@@ -769,6 +832,13 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN_BROWSER) {
+    activityManager.goToPluginBrowser();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_PLUGIN &&
+             snapshotPluginName[0] != '\0') {
+    activityManager.goToPlugin(snapshotPluginName, snapshotPluginFromApps, snapshotPluginReturnToBrowser);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
+    activityManager.goToApps();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale

@@ -14,6 +14,8 @@
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "apps/AppsActivity.h"
+#include "apps/LuaPluginActivity.h"
+#include "apps/PluginBrowserActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
@@ -298,6 +300,24 @@ void ActivityManager::goToUsbDrive() {
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToApps() { replaceActivity(std::make_unique<AppsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser) {
+  replaceActivity(std::make_unique<LuaPluginActivity>(std::string(pluginName), renderer, mappedInput, fromApps,
+                                                      returnToPluginBrowser));
+}
+
+// Launches a plugin WITHOUT a silent reboot: the current activity (Plugin
+// Browser) is pushed onto the stack so a normal popActivity() returns to it.
+// The plugin exits in-process (LuaPluginActivity::onExit() must not restart).
+void ActivityManager::goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser) {
+  pushActivity(std::make_unique<LuaPluginActivity>(std::string(pluginName), renderer, mappedInput,
+                                                   /*launchFromApps=*/false, returnToPluginBrowser,
+                                                   /*launchInProcess=*/true));
+}
+
+void ActivityManager::goToPluginBrowser() {
+  replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));

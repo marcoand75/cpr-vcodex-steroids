@@ -799,6 +799,9 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       clamp(doc["opdsBrowserShortcut"] | s.opdsBrowserShortcut, shortcutLocationCount, s.opdsBrowserShortcut);
   s.opdsBrowserShortcutOrder = clamp(doc["opdsBrowserShortcutOrder"] | s.opdsBrowserShortcutOrder, shortcutOrderCount,
                                      s.opdsBrowserShortcutOrder);
+  s.pluginsShortcut = clamp(doc["pluginsShortcut"] | s.pluginsShortcut, shortcutLocationCount, s.pluginsShortcut);
+  s.pluginsShortcutOrder =
+      clamp(doc["pluginsShortcutOrder"] | s.pluginsShortcutOrder, shortcutOrderCount, s.pluginsShortcutOrder);
 
   s.browseFilesShortcutVisible = clamp(doc["browseFilesShortcutVisible"] | s.browseFilesShortcutVisible,
                                        static_cast<uint8_t>(2), s.browseFilesShortcutVisible);
@@ -838,6 +841,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       clamp(doc["sleepShortcutVisible"] | s.sleepShortcutVisible, static_cast<uint8_t>(2), s.sleepShortcutVisible);
   s.opdsBrowserShortcutVisible = clamp(doc["opdsBrowserShortcutVisible"] | s.opdsBrowserShortcutVisible,
                                        static_cast<uint8_t>(2), s.opdsBrowserShortcutVisible);
+  s.pluginsShortcutVisible = clamp(doc["pluginsShortcutVisible"] | s.pluginsShortcutVisible, static_cast<uint8_t>(2),
+                                   s.pluginsShortcutVisible);
 
   migrateLegacyStatsShortcut(s, doc, needsResave);
   normalizeShortcutOrderSettings(s);
@@ -1150,6 +1155,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["sleepShortcutOrder"] = s.sleepShortcutOrder;
   doc["opdsBrowserShortcut"] = s.opdsBrowserShortcut;
   doc["opdsBrowserShortcutOrder"] = s.opdsBrowserShortcutOrder;
+  doc["pluginsShortcut"] = s.pluginsShortcut;
+  doc["pluginsShortcutOrder"] = s.pluginsShortcutOrder;
   doc["browseFilesShortcutVisible"] = s.browseFilesShortcutVisible;
   doc["syncDayShortcutVisible"] = s.syncDayShortcutVisible;
   doc["settingsShortcutVisible"] = s.settingsShortcutVisible;
@@ -1168,6 +1175,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["screenCleanShortcutVisible"] = s.screenCleanShortcutVisible;
   doc["sleepShortcutVisible"] = s.sleepShortcutVisible;
   doc["opdsBrowserShortcutVisible"] = s.opdsBrowserShortcutVisible;
+  doc["pluginsShortcutVisible"] = s.pluginsShortcutVisible;
 
   return saveJsonDocumentToFile("CPS", path, doc);
 }

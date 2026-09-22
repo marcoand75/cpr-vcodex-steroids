@@ -89,6 +89,9 @@ class ActivityManager {
   void goToUsbDrive();
   void goToSettings();
   void goToApps();
+  void goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);
+  void goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser);
+  void goToPluginBrowser();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();
