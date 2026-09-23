@@ -1642,6 +1642,89 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
   preserveImagePolarity(x, y, renderedWidth, renderedHeight);
 }
 
+void GfxRenderer::drawBitmapFromRaw(const int width, const int height, const bool topDown, const int rowBytes,
+                                    const uint8_t* pixelData, const int x, const int y, const int maxWidth,
+                                    const int maxHeight, const float cropX, const float cropY) const {
+  // Additive Steroids cover-cache path: scaled draw from a 2-bit packed raw
+  // pixel buffer (see LyraMarcoand75Theme). Mirrors the upstream implementation.
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+  if (width <= 0 || height <= 0 || !pixelData) return;
+
+  float scale = 1.0f;
+  bool isScaled = false;
+  int cropPixX = std::floor(width * cropX / 2.0f);
+  int cropPixY = std::floor(height * cropY / 2.0f);
+
+  const float croppedWidth = (1.0f - cropX) * static_cast<float>(width);
+  const float croppedHeight = (1.0f - cropY) * static_cast<float>(height);
+  bool hasTargetBounds = false;
+  float fitScale = 1.0f;
+
+  if (maxWidth > 0 && croppedWidth > 0.0f) {
+    fitScale = static_cast<float>(maxWidth) / croppedWidth;
+    hasTargetBounds = true;
+  }
+
+  if (maxHeight > 0 && croppedHeight > 0.0f) {
+    const float heightScale = static_cast<float>(maxHeight) / croppedHeight;
+    fitScale = hasTargetBounds ? std::min(fitScale, heightScale) : heightScale;
+    hasTargetBounds = true;
+  }
+
+  if (hasTargetBounds && fitScale < 1.0f) {
+    scale = fitScale;
+    isScaled = true;
+  }
+
+  const int outputRowSize = (width + 3) / 4;
+  (void)outputRowSize;
+  for (int bmpY = 0; bmpY < (height - cropPixY); bmpY++) {
+    int screenY = -cropPixY + (topDown ? bmpY : height - 1 - bmpY);
+    if (isScaled) {
+      screenY = std::floor(screenY * scale);
+    }
+    screenY += y;
+    if (screenY >= getScreenHeight()) {
+      break;
+    }
+    if (screenY < 0) {
+      continue;
+    }
+    if (bmpY < cropPixY) {
+      continue;
+    }
+
+    const uint8_t* rowPtr = pixelData + static_cast<size_t>(bmpY) * static_cast<size_t>(rowBytes);
+    for (int bmpX = cropPixX; bmpX < width - cropPixX; bmpX++) {
+      int screenX = bmpX - cropPixX;
+      if (isScaled) {
+        screenX = std::floor(screenX * scale);
+      }
+      screenX += x;
+      if (screenX >= getScreenWidth()) {
+        break;
+      }
+      if (screenX < 0) {
+        continue;
+      }
+
+      const uint8_t val = rowPtr[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+
+      if (renderMode == BW) {
+        if (darkMode) {
+          drawPixelRaw(screenX, screenY, val < 3);
+        } else if (val < 3) {
+          drawPixelRaw(screenX, screenY, true);
+        }
+      } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+        drawPixel(screenX, screenY, false);
+      } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+        drawPixel(screenX, screenY, false);
+      }
+    }
+  }
+}
+
 void GfxRenderer::preserveImagePolarity(const int x, const int y, const int width, const int height) const {
   if (renderMode != BW || !display.isInverted() || _stripActive || !frameBuffer || width <= 0 || height <= 0) {
     return;

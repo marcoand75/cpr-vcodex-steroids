@@ -1839,6 +1839,32 @@ const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::
   return findMatchingBookForPath(path);
 }
 
+uint8_t ReadingStatsStore::getBookProgressForHome(const std::string& bookId, const std::string& path) const {
+  const auto* s = getHomeBookStatsForRender(bookId, path);
+  if (!s) return 0;
+  if (s->completed) return 100;
+  const uint8_t p = s->lastProgressPercent;
+  return p > 100 ? 100 : p;
+}
+
+bool ReadingStatsStore::getBookHomeStats(const std::string& bookId, const std::string& path,
+                                         SummaryJSON::BookBadge& badge) const {
+  const auto* s = getHomeBookStatsForRender(bookId, path);
+  if (!s) return false;
+  badge.completed = s->completed;
+  return true;
+}
+
+GlobalSummary ReadingStatsStore::getGlobalSummary() const {
+  GlobalSummary g;
+  g.todayMs = getTodayReadingMs();
+  g.booksFinished = getBooksFinishedCount();
+  g.streakDays = getCurrentStreakDays();
+  const uint64_t recent30 = getRecentReadingMs(30);
+  g.dailyAverageMs = recent30 > 0 ? recent30 / 30 : 0;
+  return g;
+}
+
 void ReadingStatsStore::markLoadSkippedForRecovery() {
   persistenceSuspended = true;
   skippedSaveLogged = false;

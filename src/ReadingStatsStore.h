@@ -48,6 +48,22 @@ struct ReadingSessionSnapshot {
   uint8_t endProgressPercent = 0;
 };
 
+// Lightweight per-book summary payload used by the Lyra home panels. The full
+// streaming summary.json store is a separate Steroids port; these additive
+// shims answer the same contract from the resident store.
+namespace SummaryJSON {
+struct BookBadge {
+  bool completed = false;
+};
+}  // namespace SummaryJSON
+
+struct GlobalSummary {
+  uint64_t dailyAverageMs = 0;
+  uint64_t todayMs = 0;
+  uint32_t streakDays = 0;
+  uint32_t booksFinished = 0;
+};
+
 class ReadingStatsStore;
 namespace JsonSettingsIO {
 bool saveReadingStats(const ReadingStatsStore& store, const char* path);
@@ -174,6 +190,13 @@ class ReadingStatsStore {
   // path. Additive non-streaming shim over the resident store (the memory-lean
   // summary.json variant is a separate Steroids port).
   const ReadingBookStats* getHomeBookStatsForRender(const std::string& bookId, const std::string& path) const;
+
+  // Additive home-screen helpers used by the Lyra MarcoAnd75 theme. Computed
+  // from the resident store; the memory-lean summary.json variant is a
+  // separate Steroids port.
+  uint8_t getBookProgressForHome(const std::string& bookId, const std::string& path) const;
+  bool getBookHomeStats(const std::string& bookId, const std::string& path, SummaryJSON::BookBadge& badge) const;
+  GlobalSummary getGlobalSummary() const;
 
   const std::vector<ReadingBookStats>& getBooks() const { return books; }
   const std::vector<ReadingDayStats>& getReadingDays() const { return readingDays; }

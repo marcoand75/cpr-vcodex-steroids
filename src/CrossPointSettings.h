@@ -238,6 +238,7 @@ class CrossPointSettings {
     CLASSIC = 3,
     ROUNDEDRAFF = 4,
     LYRA_3_COVERS = 5,
+    LYRA_MARCOAND75 = 6,
     UI_THEME_COUNT
   };
   enum DATE_FORMAT { DATE_DD_MM_YYYY = 0, DATE_MM_DD_YYYY = 1, DATE_YYYY_MM_DD = 2, DATE_FORMAT_COUNT };

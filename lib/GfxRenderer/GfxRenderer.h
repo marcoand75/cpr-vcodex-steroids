@@ -291,6 +291,10 @@ class GfxRenderer {
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+  // Additive: scaled draw of a 2-bit packed raw pixel buffer (Steroids cover
+  // cache path). cropX/cropY are 0..1 and halve the crop on each axis.
+  void drawBitmapFromRaw(int width, int height, bool topDown, int rowBytes, const uint8_t* pixelData, int x, int y,
+                         int maxWidth, int maxHeight, float cropX = 0.0f, float cropY = 0.0f) const;
   // Counter-invert content images in the logical framebuffer so output-level
   // dark mode leaves their original polarity unchanged.
   void preserveImagePolarity(int x, int y, int width, int height) const;
