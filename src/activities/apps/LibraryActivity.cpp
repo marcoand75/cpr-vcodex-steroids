@@ -881,8 +881,11 @@ void LibraryActivity::loop() {
       unsigned long t_count = LibraryPerf::nowMs();
       for (int i = 0; i < gridsPerPage_ && (pageStart + i) < total; ++i) {
         if (pageCache_[i].id == 0) continue;
-        std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[i].path), coverWidth_, coverHeight_);
-        if (!Storage.exists(thumbPath.c_str())) {
+        // Validate the cached cover rather than only checking existence: stale
+        // covers from an older cache version exist on disk but render blank, so
+        // without this check they are never regenerated and the grid shows blank
+        // tiles (no cover, no title). isBookCoverReady removes invalid files.
+        if (!isBookCoverReady(std::string(pageCache_[i].path))) {
           ++coverGen_.total;
         }
       }
@@ -2267,12 +2270,20 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
     if (Storage.openFileForRead("LIB", thumbPath, file)) {
       Bitmap bmp(file);
       if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-        const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
-        const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
-        const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
-        const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
         renderer.fillRoundedRect(x, y, coverWidth_, coverHeight_, COVER_CORNER_RADIUS, Color::White);
-        renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
+        if (bmp.is1Bit()) {
+          // Generated thumbs are 1-bit BMPs. drawBitmap only handles 1-bit when
+          // cropX==cropY==0; with any crop it falls into the 2-bit path and
+          // renders a blank tile (and suppresses the title). Use the 1-bit
+          // path (scales, no crop) so covers always show.
+          renderer.drawBitmap1Bit(bmp, x, y, coverWidth_, coverHeight_);
+        } else {
+          const float bmpRatio = static_cast<float>(bmp.getWidth()) / static_cast<float>(bmp.getHeight());
+          const float tileRatio = static_cast<float>(coverWidth_) / static_cast<float>(coverHeight_);
+          const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
+          const float cropY = (bmpRatio < tileRatio) ? (1.0f - bmpRatio / tileRatio) : 0.0f;
+          renderer.drawBitmap(bmp, x, y, coverWidth_, coverHeight_, cropX, cropY);
+        }
         drawn = true;
       }
       file.close();
