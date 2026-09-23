@@ -1056,6 +1056,18 @@ void loop() {
     }
   }
 
+  // Cycle sleep-screen mode when power button is short-pressed with SLEEP_IMAGE_CYCLE setting.
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP_IMAGE_CYCLE &&
+      mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
+    LOG_DBG("MAIN", "Cycle sleep image triggered");
+    using SLEEP = CrossPointSettings::SLEEP_SCREEN_MODE;
+    auto next = static_cast<CrossPointSettings::SLEEP_SCREEN_MODE>((static_cast<uint8_t>(SETTINGS.sleepScreen) + 1) % CrossPointSettings::SLEEP_SCREEN_MODE_COUNT);
+    SETTINGS.sleepScreen = next;
+    SETTINGS.saveToFile();
+    activityManager.requestUpdate();
+    LOG_DBG("MAIN", "Sleep screen mode cycled to %d", static_cast<uint8_t>(next));
+  }
+
   // Refresh the battery icon when USB is plugged or unplugged.
   // Placed after sleep guards so we never queue a render that won't be processed.
   // Not while reading: there a repaint is a full page re-render (visible

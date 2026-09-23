@@ -193,6 +193,7 @@ class CrossPointSettings {
     TOGGLE_STATUS_BAR = 4,
     FOOTNOTES = 5,
     PWR_CONFIRM = 6,
+    SLEEP_IMAGE_CYCLE = 7,
     SHORT_PWRBTN_COUNT
   };
   enum TILT_PAGE_TURN {

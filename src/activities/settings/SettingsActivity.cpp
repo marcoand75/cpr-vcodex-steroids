@@ -118,9 +118,12 @@ std::vector<StrId> buildShortPwrBtnValues() {
   values[CrossPointSettings::TOGGLE_STATUS_BAR] = StrId::STR_TOGGLE_STATUS_BAR;
   values[CrossPointSettings::FOOTNOTES] = StrId::STR_FOOTNOTES;
   values[CrossPointSettings::PWR_CONFIRM] = StrId::STR_CONFIRM;
-  // "Power = Confirm" only makes sense on touch boards (upstream gates it the
-  // same way); it is the last enum value, so trimming keeps the indices stable.
-  if (!BoardConfig::hasTouch()) values.resize(CrossPointSettings::PWR_CONFIRM);
+  values[CrossPointSettings::SLEEP_IMAGE_CYCLE] = StrId::STR_SLEEP_IMAGE_CYCLE;
+  // "Power = Confirm" only makes sense on touch boards (upstream gates it
+  // the same way); trimming keeps the enum indices stable.
+  if (!BoardConfig::hasTouch()) {
+    values.resize(CrossPointSettings::PWR_CONFIRM);
+  }
   return values;
 }
 
