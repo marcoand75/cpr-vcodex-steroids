@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,8 @@ class FavoritesStore {
   static FavoritesStore instance;
 
   std::vector<FavoriteBook> favoriteBooks;
+  bool loaded_ = false;
+  uint32_t generation_ = 0;
 
   friend bool JsonSettingsIO::saveFavorites(const FavoritesStore&, const char*);
   friend bool JsonSettingsIO::loadFavorites(FavoritesStore&, const char*);
@@ -33,6 +36,13 @@ class FavoritesStore {
   ~FavoritesStore() = default;
 
   static FavoritesStore& getInstance() { return instance; }
+
+  // Additive lazy-loading helpers used by the Library. Behavior is unchanged
+  // for callers that keep loading eagerly at boot; these only avoid repeated
+  // file reads and let the Library detect external changes.
+  uint32_t generation() const { return generation_; }
+  bool needsReload() const { return !loaded_; }
+  void bumpGeneration() { ++generation_; }
 
   bool addBook(const std::string& path, const std::string& title = "", const std::string& author = "",
                const std::string& coverBmpPath = "", const std::string& bookId = "");
@@ -51,6 +61,12 @@ class FavoritesStore {
 
   bool saveToFile() const;
   bool loadFromFile();
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() {
+    loaded_ = false;
+    bumpGeneration();
+  }
   FavoriteBook getDataFromBook(std::string path) const;
 
  private:

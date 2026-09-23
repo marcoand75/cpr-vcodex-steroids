@@ -34,4 +34,11 @@ inline int asciiCaseCmp(const char* a, const char* b) {
  */
 std::string sanitizeFilename(const std::string& name, size_t maxBytes = 100);
 
+/**
+ * Copy `src` into a fixed-size `dest` buffer, always NUL-terminating and never
+ * writing past `destSize`. Safe replacement for the
+ * strncpy(dest, src, size-1); dest[size-1]=0 idiom used by Library code.
+ */
+void copyToFixedBuffer(char* dest, size_t destSize, const std::string& src);
+
 }  // namespace StringUtils

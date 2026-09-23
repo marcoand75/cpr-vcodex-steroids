@@ -14,6 +14,8 @@
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "apps/AppsActivity.h"
+#include "apps/BatchCoverGenerationActivity.h"
+#include "apps/LibraryActivity.h"
 #include "apps/LuaPluginActivity.h"
 #include "apps/PluginBrowserActivity.h"
 #include "boot_sleep/BootActivity.h"
@@ -225,6 +227,12 @@ void ActivityManager::loop() {
           stackActivities.pop_back();
         }
       } else if (pendingAction == PendingAction::Push) {
+        // Notify the current activity that it is going into the background so
+        // it can release temporary memory (library entries, page caches, etc.)
+        // before the new activity takes over. Default implementation is a no-op.
+        if (currentActivity) {
+          currentActivity->freeBackgroundMemory();
+        }
         // Move current activity to stack
         stackActivities.push_back(std::move(currentActivity));
         LOG_DBG("ACT", "Pushed to activity stack, new size = %zu", stackActivities.size());
@@ -317,6 +325,14 @@ void ActivityManager::goToPluginInProcess(const char* pluginName, bool returnToP
 
 void ActivityManager::goToPluginBrowser() {
   replaceActivity(std::make_unique<PluginBrowserActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToLibrary(bool launchFromApps) {
+  replaceActivity(std::make_unique<LibraryActivity>(renderer, mappedInput, launchFromApps));
+}
+
+void ActivityManager::goToBatchCoverGeneration() {
+  replaceActivity(std::make_unique<BatchCoverGenerationActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToFileBrowser(std::string path) {

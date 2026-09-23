@@ -92,6 +92,8 @@ class ActivityManager {
   void goToPlugin(const char* pluginName, bool fromApps, bool returnToPluginBrowser = false);
   void goToPluginInProcess(const char* pluginName, bool returnToPluginBrowser);
   void goToPluginBrowser();
+  void goToLibrary(bool launchFromApps = false);
+  void goToBatchCoverGeneration();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();

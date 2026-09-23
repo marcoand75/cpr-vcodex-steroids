@@ -28,6 +28,7 @@ enum class ShortcutId {
   Sleep,
   OpdsBrowser,
   Plugins,
+  Library,
 };
 
 struct ShortcutDefinition {
@@ -40,8 +41,8 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 18>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 18> definitions = {
+inline const std::array<ShortcutDefinition, 19>& getShortcutDefinitions() {
+  static const std::array<ShortcutDefinition, 19> definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},
@@ -103,6 +104,9 @@ inline const std::array<ShortcutDefinition, 18>& getShortcutDefinitions() {
       ShortcutDefinition{ShortcutId::Plugins, StrId::STR_PLUGINS, StrId::STR_PLUGINS_DESC, UIIcon::Apps,
                          &CrossPointSettings::pluginsShortcut, &CrossPointSettings::pluginsShortcutOrder,
                          &CrossPointSettings::pluginsShortcutVisible},
+      ShortcutDefinition{ShortcutId::Library, StrId::STR_MENU_LIBRARY, StrId::STR_LIBRARY_APP_DESC, UIIcon::Library,
+                         &CrossPointSettings::libraryShortcut, &CrossPointSettings::libraryShortcutOrder,
+                         &CrossPointSettings::libraryShortcutVisible},
   };
 
   return definitions;

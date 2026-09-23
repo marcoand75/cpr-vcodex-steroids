@@ -2,6 +2,9 @@
 
 #include <Utf8.h>
 
+#include <algorithm>
+#include <cstring>
+
 namespace StringUtils {
 
 std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
@@ -41,6 +44,15 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
   }
 
   return result.empty() ? "book" : result;
+}
+
+void copyToFixedBuffer(char* dest, size_t destSize, const std::string& src) {
+  if (destSize == 0) {
+    return;
+  }
+  const size_t copyLen = std::min(src.size(), destSize - 1);
+  std::memcpy(dest, src.c_str(), copyLen);
+  dest[copyLen] = '\0';
 }
 
 }  // namespace StringUtils

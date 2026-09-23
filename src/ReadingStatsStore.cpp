@@ -1818,7 +1818,25 @@ bool ReadingStatsStore::loadFromFile() {
     markLoadSkippedForRecovery();
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats persistence suspended after load failure");
   }
+  loaded_ = loaded;
   return loaded;
+}
+
+bool ReadingStatsStore::ensureLoaded() {
+  if (loaded_) return true;
+  return loadFromFile();
+}
+
+const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::string& bookId,
+                                                                     const std::string& path) const {
+  // Additive non-streaming shim: the Library only needs completion/badge data,
+  // and the resident store already answers that. Kept const so render paths can
+  // call it without mutating the store.
+  if (!bookId.empty()) {
+    if (const auto* byId = findBook(bookId)) return byId;
+  }
+  if (path.empty()) return nullptr;
+  return findMatchingBookForPath(path);
 }
 
 void ReadingStatsStore::markLoadSkippedForRecovery() {
@@ -1828,6 +1846,7 @@ void ReadingStatsStore::markLoadSkippedForRecovery() {
   activeSession = {};
   lastSessionSnapshot = {};
   dirty = false;
+  loaded_ = false;
   invalidateSummaryCache();
 }
 
@@ -1858,6 +1877,7 @@ bool ReadingStatsStore::releaseMemoryForNetwork() {
   lastSessionSnapshot = preservedLastSessionSnapshot;
   sessionSerialCounter = 0;
   invalidateSummaryCache();
+  loaded_ = false;
   dirty = false;
   lastSaveMs = millis();
 

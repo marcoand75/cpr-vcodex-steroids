@@ -32,6 +32,13 @@ class SdCardFontSystem {
   /// Returns 0 if not found. Used by CrossPointSettings::getReaderFontId().
   int resolveFontId(const char* familyName, uint8_t pointSize) const;
 
+  /// Ensure an SD font able to render CJK text is loaded and return its
+  /// registered font ID (0 when no CJK-capable SD family is installed).
+  /// Additive hook used by the Library's text-fallback covers for non-Latin
+  /// titles; `utf8Sample` is accepted for API compatibility and currently
+  /// unused (the configured SD family is probed instead).
+  int ensureCjkFontLoaded(GfxRenderer& renderer, const char* utf8Sample = nullptr);
+
   /// Access the registry (e.g. for settings UI to enumerate available fonts).
   const SdCardFontRegistry& registry() const { return registry_; }
 

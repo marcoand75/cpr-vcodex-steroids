@@ -58,10 +58,14 @@ class Activity {
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
+  /// Release temporary memory that is not needed while this activity is in the
+  /// background (under a reader or another pushed activity). Default: no-op.
+  /// Called by ActivityManager::pushActivity() before the new activity runs.
+  virtual void freeBackgroundMemory() {}
+
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes
   void startActivityForResult(std::unique_ptr<Activity>&& activity, ActivityResultHandler resultHandler);
-
   // Set the result to be passed back to the previous activity when this activity finishes
   void setResult(ActivityResult&& result);
 
@@ -72,4 +76,9 @@ class Activity {
   // TODO: remove this in near future
   void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   void onSelectBook(const std::string& path);
+
+  // Additive accessor used by shared UI helpers (e.g. PopupUtils) that are
+  // given an Activity& and need the renderer without friending every caller.
+  GfxRenderer& getRenderer() { return renderer; }
+  const GfxRenderer& getRenderer() const { return renderer; }
 };

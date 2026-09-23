@@ -516,6 +516,47 @@ class CrossPointSettings {
   uint8_t screenCleanShortcutVisible = 1;
   uint8_t sleepShortcutVisible = 1;
   uint8_t opdsBrowserShortcutVisible = 1;
+
+  // Library (Steroids-only feature).
+  enum LIBRARY_LAYOUT { LIBRARY_LAYOUT_4X4 = 0, LIBRARY_LAYOUT_3X3 = 1, LIBRARY_LAYOUT_2X2 = 2, LIBRARY_LAYOUT_COUNT };
+  enum LIBRARY_FILTER {
+    LIBRARY_FILTER_ALL = 0,
+    LIBRARY_FILTER_FAVOURITES = 1,
+    LIBRARY_FILTER_LATEST_READ = 2,
+    LIBRARY_FILTER_UNREAD = 3,
+    LIBRARY_FILTER_COMPLETED = 4,
+    LIBRARY_FILTER_HIDDEN = 5,
+    LIBRARY_FILTER_COUNT
+  };
+  enum LIBRARY_SORT {
+    LIBRARY_SORT_TITLE_ASC = 0,
+    LIBRARY_SORT_TITLE_DESC = 1,
+    LIBRARY_SORT_AUTHOR_ASC = 2,
+    LIBRARY_SORT_AUTHOR_DESC = 3,
+    LIBRARY_SORT_RECENT = 4,
+    LIBRARY_SORT_PROGRESS = 5,
+    LIBRARY_SORT_COLLECTIONS = 6,
+    LIBRARY_SORT_MIXED = 7,
+    LIBRARY_SORT_COUNT
+  };
+  enum LIBRARY_UPDATE_MODE { LIBRARY_UPDATE_MANUAL = 0, LIBRARY_UPDATE_AUTO = 1, LIBRARY_UPDATE_MODE_COUNT };
+  uint8_t libraryShortcut = SHORTCUT_APPS;
+  uint8_t libraryShortcutOrder = 7;
+  uint8_t libraryShortcutVisible = 1;
+  uint8_t libraryLayout = LIBRARY_LAYOUT_3X3;
+  uint8_t libraryFilter = LIBRARY_FILTER_ALL;
+  uint8_t librarySort = LIBRARY_SORT_TITLE_ASC;
+  uint8_t libraryViewMode = 0;           // 0=flat, 1=collections, 2=mixed
+  int librarySelectorIndex = 0;          // Last selected grid position before leaving library
+  int libraryCollectionIdx = -1;         // Last opened collection index (-1 = none)
+  char libraryCollectionName[64] = "";   // Last opened collection name
+  uint8_t libraryFolderCollections = 0;  // 1 = auto-create collections from folders
+  uint8_t libraryMetadataSeries = 1;     // 1 = include metadata-derived series in collections/mixed views
+  char librarySearchText[64] = "";
+  char libraryRootDir[128] = "/";
+  uint8_t libraryLastCleanupDay = 0;  // day-of-year of last zero-size thumb cleanup
+  uint8_t libraryUpdateMode = LIBRARY_UPDATE_MANUAL;
+
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)

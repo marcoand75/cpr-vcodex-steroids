@@ -1285,6 +1285,9 @@ void HomeActivity::activateSelection() {
       case ShortcutId::Plugins:
         activityManager.goToPluginBrowser();
         break;
+      case ShortcutId::Library:
+        activityManager.goToLibrary(/*launchFromApps=*/false);
+        break;
     }
   }
 }

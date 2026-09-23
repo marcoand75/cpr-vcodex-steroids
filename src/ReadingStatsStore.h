@@ -94,6 +94,8 @@ class ReadingStatsStore {
   mutable bool persistenceSuspended = false;
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
+  // Additive lazy-load flag for the Library; main.cpp still loads at boot.
+  mutable bool loaded_ = false;
 
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
@@ -161,6 +163,17 @@ class ReadingStatsStore {
   const ReadingBookStats* findMatchingBookForPath(const std::string& path, const std::string& title = "",
                                                   const std::string& author = "") const;
   const ReadingSessionSnapshot& getLastSessionSnapshot() const { return lastSessionSnapshot; }
+
+  // Additive lazy-loading helpers used by the Library. `ensureLoaded()` is cheap
+  // once main.cpp has loaded the store at boot.
+  bool isLoaded() const { return loaded_; }
+  bool ensureLoaded();
+  void resetLoaded() { loaded_ = false; }
+
+  // Lightweight per-book completion/badge lookup for the Home/Library render
+  // path. Additive non-streaming shim over the resident store (the memory-lean
+  // summary.json variant is a separate Steroids port).
+  const ReadingBookStats* getHomeBookStatsForRender(const std::string& bookId, const std::string& path) const;
 
   const std::vector<ReadingBookStats>& getBooks() const { return books; }
   const std::vector<ReadingDayStats>& getReadingDays() const { return readingDays; }

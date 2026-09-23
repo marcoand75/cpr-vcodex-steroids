@@ -192,3 +192,28 @@ int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*pointSize*
   // that font's ID. ensureLoaded() must have run for the current settings first.
   return manager_.getFontId(familyName);
 }
+
+int SdCardFontSystem::ensureCjkFontLoaded(GfxRenderer& renderer, const char* /*utf8Sample*/) {
+  // Additive Library hook: make sure the configured SD family is loaded (which
+  // also registers size-matched CJK UI fallbacks) and report its font ID only
+  // when it actually carries CJK glyphs. Returning 0 lets callers fall back to
+  // skipping the non-Latin text rather than rendering missing glyphs.
+  ensureLoaded(renderer);
+  const char* family = SETTINGS.sdFontFamilyName;
+  if (!family || family[0] == '\0') return 0;
+
+  const int id = manager_.getFontId(family);
+  if (id == 0) return 0;
+
+  const auto it = renderer.getFontMap().find(id);
+  if (it == renderer.getFontMap().end()) return 0;
+
+  // One representative codepoint per script: Han, Hiragana, Katakana, Hangul.
+  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+  for (const uint32_t cp : kCjkProbes) {
+    if (it->second.hasCodepoint(cp, EpdFontFamily::REGULAR) || it->second.hasCodepoint(cp, EpdFontFamily::BOLD)) {
+      return id;
+    }
+  }
+  return 0;
+}

@@ -201,6 +201,9 @@ void AppsActivity::openApp(const int index) {
     case ShortcutId::Plugins:
       activityManager.goToPluginBrowser();
       return;
+    case ShortcutId::Library:
+      activityManager.goToLibrary(/*launchFromApps=*/true);
+      return;
   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {
