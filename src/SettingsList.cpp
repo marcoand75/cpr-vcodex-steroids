@@ -304,6 +304,33 @@ std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry) {
                           {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED}, "tiltPageTurn",
                           StrId::STR_CAT_CONTROLS),
 
+        // --- Library ---
+        SettingInfo::Enum(StrId::STR_LIBRARY_LAYOUT, &CrossPointSettings::libraryLayout,
+                          {StrId::STR_LIBRARY_LAYOUT_2X2, StrId::STR_LIBRARY_LAYOUT_3X3, StrId::STR_LIBRARY_LAYOUT_4X4},
+                          "libraryLayout", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Enum(StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
+                          {StrId::STR_LIBRARY_FILTER_ALL, StrId::STR_LIBRARY_FILTER_FAVOURITES,
+                           StrId::STR_LIBRARY_FILTER_LATEST_READ, StrId::STR_LIBRARY_FILTER_UNREAD,
+                           StrId::STR_LIBRARY_FILTER_COMPLETED, StrId::STR_LIBRARY_FILTER_HIDDEN},
+                          "libraryFilter", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Enum(StrId::STR_LIBRARY_SORT, &CrossPointSettings::librarySort,
+                          {StrId::STR_LIBRARY_SORT_TITLE_ASC, StrId::STR_LIBRARY_SORT_TITLE_DESC,
+                           StrId::STR_LIBRARY_SORT_AUTHOR_ASC, StrId::STR_LIBRARY_SORT_AUTHOR_DESC,
+                           StrId::STR_LIBRARY_SORT_RECENT, StrId::STR_LIBRARY_SORT_PROGRESS,
+                           StrId::STR_LIBRARY_SORT_COLLECTIONS, StrId::STR_LIBRARY_SORT_MIXED},
+                          "librarySort", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Enum(StrId::STR_LIBRARY_VIEW_MODE, &CrossPointSettings::libraryViewMode,
+                          {StrId::STR_LIBRARY_VIEW_MODE_FLAT, StrId::STR_LIBRARY_VIEW_MODE_COLLECTIONS,
+                           StrId::STR_LIBRARY_VIEW_MODE_MIXED},
+                          "libraryViewMode", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Enum(StrId::STR_LIBRARY_UPDATE_MODE, &CrossPointSettings::libraryUpdateMode,
+                          {StrId::STR_LIBRARY_UPDATE_MANUAL, StrId::STR_LIBRARY_UPDATE_AUTO},
+                          "libraryUpdateMode", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Toggle(StrId::STR_LIBRARY_FOLDER_COLLECTIONS, &CrossPointSettings::libraryFolderCollections,
+                            "libraryFolderCollections", StrId::STR_CAT_LIBRARY),
+        SettingInfo::Toggle(StrId::STR_LIBRARY_METADATA_SERIES, &CrossPointSettings::libraryMetadataSeries,
+                            "libraryMetadataSeries", StrId::STR_CAT_LIBRARY),
+
         // --- System ---
         SettingInfo::Value(
             StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
