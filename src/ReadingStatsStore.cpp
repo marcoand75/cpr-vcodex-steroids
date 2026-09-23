@@ -1120,6 +1120,10 @@ bool ReadingStatsStore::persistToFile(const char* path) const {
 }
 
 void ReadingStatsStore::rebuildSummaryCache() const {
+  // Ensure the store is loaded before aggregating (lazy-load path when the
+  // boot deferred READING_STATS to free heap on the ESP32-C3).
+  ensureLoadedForRead();
+
   SummaryCache cache;
   cache.referenceDayOrdinal = getReferenceDayOrdinal();
   cache.goalReadingMs = getDailyReadingGoalMs();
@@ -1190,6 +1194,13 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
                                      const std::string& chapterTitle, const uint8_t chapterProgressPercent) {
   if (path.empty()) {
     return;
+  }
+
+  // Load the store before starting a session so the book's existing stats and
+  // the previous session snapshot are available (lazy-load path when the boot
+  // deferred READING_STATS to free heap on the ESP32-C3).
+  if (!loaded_) {
+    ensureLoaded();
   }
 
   if (activeSession.active) {
@@ -1828,10 +1839,11 @@ bool ReadingStatsStore::ensureLoaded() {
 }
 
 const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::string& bookId,
-                                                                     const std::string& path) const {
+                                                                    const std::string& path) const {
   // Additive non-streaming shim: the Library only needs completion/badge data,
   // and the resident store already answers that. Kept const so render paths can
   // call it without mutating the store.
+  ensureLoadedForRead();
   if (!bookId.empty()) {
     if (const auto* byId = findBook(bookId)) return byId;
   }

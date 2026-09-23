@@ -185,6 +185,12 @@ class ReadingStatsStore {
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
   void resetLoaded() { loaded_ = false; }
+  // const-safe lazy load for read getters (used when boot deferred the load).
+  void ensureLoadedForRead() const {
+    if (!loaded_) {
+      const_cast<ReadingStatsStore*>(this)->ensureLoaded();
+    }
+  }
 
   // Lightweight per-book completion/badge lookup for the Home/Library render
   // path. Additive non-streaming shim over the resident store (the memory-lean
