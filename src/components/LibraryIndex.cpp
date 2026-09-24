@@ -795,7 +795,8 @@ static void walkDirs(const char* rootDir, const FileVisitor& onFile, bool yieldB
       for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
       if (lower == "system volume information" || lower == "my clippings.txt" || lower == "my lookups.txt") continue;
       if (isDir && (lower == "crosspoint" || lower == "library" || lower.compare(0, 5, "sleep") == 0 ||
-                    lower == "font" || lower == "fonts" || lower == "dictionaries" || lower == "exports"))
+                    lower == "font" || lower == "fonts" || lower == "dictionaries" || lower == "exports" ||
+                    lower == "logs"))
         continue;
       std::string child = folder;
       if (child.back() != '/') child.push_back('/');
@@ -809,7 +810,9 @@ static void walkDirs(const char* rootDir, const FileVisitor& onFile, bool yieldB
       const std::string_view fn{name};
       if (FsHelpers::hasEpubExtension(fn) || FsHelpers::hasXtcExtension(fn) || FsHelpers::hasTxtExtension(fn) ||
           FsHelpers::hasMarkdownExtension(fn)) {
-        if (std::strcmp(name, "if_found.txt") != 0 && std::strcmp(name, "crash_report.txt") != 0) {
+        if (std::strcmp(name, "if_found.txt") != 0 &&
+            std::strncmp(name, "crash_report_", 13) != 0 &&
+            std::strcmp(name, "crash_report.txt") != 0) {
           onFile(child.c_str(), fsz);
         }
       }

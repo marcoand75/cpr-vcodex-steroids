@@ -110,7 +110,7 @@ void LibraryActivity::deleteBookFile(const std::string& bookPath) {
 
   // 5. Refresh library view with feedback
   PopupUtils::showTransientPopup(*this, tr(STR_UPDATING_LIBRARY));
-  LibraryIndex::scan(renderer, Rect());
+  LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir);
   LibraryIndex::buildIndices();
   applyFilterAndSort();
 }
@@ -398,42 +398,31 @@ void LibraryActivity::scanSd() {
   // Decide whether to perform SD scan based on:
   //   - forceScanOnNextOpen_ (set by "Update & Open" popup)
   //   - libraryUpdateMode == AUTO
-  const bool doScan = forceScanOnNextOpen_ || SETTINGS.libraryUpdateMode == CrossPointSettings::LIBRARY_UPDATE_AUTO;
+  // Decide whether to perform SD scan based on:
+  //   - forceScanOnNextOpen_ (set by "Update & Open" popup)
+  //   - libraryUpdateMode == AUTO
+  //   - forceRebuildOnNextOpen_ (deferred low-heap rebuild must rescan)
+  const bool doScan = forceScanOnNextOpen_ || forceRebuildOnNextOpen_ ||
+                      SETTINGS.libraryUpdateMode == CrossPointSettings::LIBRARY_UPDATE_AUTO;
   const bool forceRebuild = forceScanOnNextOpen_ || forceRebuildOnNextOpen_;
   forceScanOnNextOpen_ = false;
   forceRebuildOnNextOpen_ = false;
 
-  if (forceRebuild && !doScan) {
-    LOG_DBG("LIB", "scanSd: forceRebuild without scan, rebuilding indices heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
-      LOG_ERR("LIB", "scanSd: deferred rebuild skipped, heap still too low maxA=%u", ESP.getMaxAllocHeap());
-    } else {
-      renderer.clearScreen();
-      GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
-      renderer.displayBuffer();
-      {
-        LibraryPerf::ScopedTimer buildTimer("scanSd_forced_rebuild");
-        LibraryIndex::buildCollectionsIndex();
-        LibraryIndex::buildIndices();
-        IndexCacheManager::invalidateMixed();
-        IndexCacheManager::invalidateCollections();
-      }
-      LibraryPerf::logElapsed("scanSd_forced_rebuild_afterBuild", totalTimer.start);
-      clearPageFrameCache();
-      bumpLibEpoch();
-      lastRenderedPage_ = -1;
-      lastRenderedSelectorIndex_ = -1;
-      lastFrameHitPage_ = -1;
-      refreshTotalCountsFromCurrentMode();
-      LOG_DBG("LIB", "scanSd: force rebuild done totalBooks=%d", totalBooks_);
-    }
-  }
-
   if (doScan) {
     int added = 0, removed = 0;
+    // For deferred rebuild show the indexing popup with progress bar,
+    // matching the cold-scan UX from master Steroids.
+    const bool showScanProgress = forceRebuildOnNextOpen_ || !LibraryIndex::exists();
+    Rect popupRect;
+    if (showScanProgress) {
+      renderer.clearScreen();
+      popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
+      GUI.fillPopupProgress(renderer, popupRect, 0);
+      renderer.displayBuffer();
+    }
     {
       LibraryPerf::ScopedTimer scanTimer("scanSd_fast_scan");
-      LibraryIndex::scan(renderer, Rect(), SETTINGS.libraryRootDir, &added, &removed);
+      LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir, &added, &removed);
     }
     LibraryPerf::logElapsed("scanSd_fast_afterScan", totalTimer.start);
     if (added > 0 || removed > 0 || forceRebuild) {
