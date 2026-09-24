@@ -460,6 +460,12 @@ bool ActivityManager::isReaderActivity() const {
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
 
+bool ActivityManager::deferredStoreLoadReady() const {
+  // Only the current activity gates boot store loads. Stacked activities have
+  // already yielded to the foreground one, whose boot work is what matters.
+  return !currentActivity || currentActivity->deferredStoreLoadReady();
+}
+
 ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   if (currentActivity) {
     return currentActivity->getScreenshotInfo();

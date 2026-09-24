@@ -48,6 +48,12 @@ enum class SettingAction {
   Flashcards,
   ScreenClean,
   SleepApp,
+  Screensaver,
+  ScreenSaverDir,
+  ScreenSaverReaderDir,
+  BatchGenerateCovers,
+  ClearCorruptCovers,
+  LibraryMaintenance,
   IfFound,
 };
 

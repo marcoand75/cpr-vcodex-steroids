@@ -14,6 +14,41 @@
 #include "util/BookIdentity.h"
 
 namespace {
+
+bool hasLegacyEpubCoverPath(const std::string& coverBmpPath) {
+  if (coverBmpPath.empty()) {
+    return false;
+  }
+
+  constexpr char EPUB_PREFIX[] = "/.crosspoint/epub_";
+  const size_t prefixLen = sizeof(EPUB_PREFIX) - 1;
+  if (coverBmpPath.size() <= prefixLen || !coverBmpPath.starts_with(EPUB_PREFIX)) {
+    return false;
+  }
+
+  const size_t slashPos = coverBmpPath.find('/', prefixLen);
+  if (slashPos == std::string::npos) {
+    return false;
+  }
+
+  const std::string hashPart = coverBmpPath.substr(prefixLen, slashPos - prefixLen);
+  if (hashPart.empty() || hashPart.size() > 10) {
+    return false;
+  }
+  if (!std::all_of(hashPart.begin(), hashPart.end(),
+                   [](unsigned char c) { return c >= '0' && c <= '9'; })) {
+    return false;
+  }
+  // Only 19+ digit hashes are legacy FNV-1a 64-bit keys. The current upstream
+  // scheme is std::hash on a 32-bit unsigned long: 1..10 digits. Treating
+  // 10-digit hashes as legacy cleared every current cover path on load, which
+  // forced the carousel to re-adopt (and re-log) all covers after each boot.
+  return hashPart.size() > 10;
+}
+
+}  // namespace
+
+namespace {
 constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
 constexpr char RECENT_BOOKS_FILE_BIN[] = "/.crosspoint/recent.bin";
 constexpr char RECENT_BOOKS_FILE_JSON[] = "/.crosspoint/recent.json";
@@ -54,16 +89,26 @@ int RecentBooksStore::findBookIndex(const std::string& path, const std::string& 
 void RecentBooksStore::normalizeBook(RecentBook& book) {
   book.path = BookIdentity::normalizePath(book.path);
   if (!book.bookId.empty()) {
+    // Still strip legacy EPUB cache paths so we do not persist old hashes.
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
     return;
   }
 
   if (!book.path.empty() && Storage.exists(book.path.c_str())) {
     book.bookId = BookIdentity::resolveStableBookId(book.path);
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
     return;
   }
 
   if (const auto* statsBook = READING_STATS.findMatchingBookForPath(book.path, book.title, book.author)) {
     book.bookId = statsBook->bookId;
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
   }
 }
 

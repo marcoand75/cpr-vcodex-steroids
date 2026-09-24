@@ -29,6 +29,7 @@
 #include "util/BookIdentity.h"
 #include "util/CprVcodexLogs.h"
 #include "util/ShortcutRegistry.h"
+#include "util/JsonSettingsIOSteroids.h"
 #include "util/TimeZoneRegistry.h"
 
 namespace {
@@ -40,6 +41,10 @@ constexpr uint8_t LEGACY_FONT_SIZE_SLOT_SCHEMA_VERSION = 2;
 constexpr uint8_t UI_THEME_SCHEMA_VERSION = 3;
 constexpr uint8_t TEXT_DARKNESS_SCHEMA_VERSION = 2;
 constexpr uint8_t FLASHCARD_STUDY_MODE_SCHEMA_VERSION = 2;
+// 1: SLEEP_IMAGE_CYCLE inserted at index 6, moving the touch-only PWR_CONFIRM to
+// the last index (7) so non-touch label lists can keep trimming the tail. Files
+// written before this schema have PWR_CONFIRM at 6 and SLEEP_IMAGE_CYCLE at 7.
+constexpr uint8_t SHORT_PWRBTN_SCHEMA_VERSION = 1;
 constexpr uint8_t LEGACY_LEXEND_FONT_FAMILY = 2;
 constexpr char LEXEND_SD_FAMILY_NAME[] = "Lexend";
 
@@ -362,29 +367,8 @@ uint8_t sleepTimeoutMinutesToLegacyEnum(const uint8_t minutes) {
   if (minutes <= 15) return CrossPointSettings::SLEEP_15_MIN;
   return CrossPointSettings::SLEEP_30_MIN;
 }
-
-void migrateLegacyStatsShortcut(CrossPointSettings& settings, const JsonDocument& doc, bool* needsResave) {
-  const bool hasLegacyStatsShortcut =
-      !doc["statsShortcut"].isNull() || !doc["statsShortcutOrder"].isNull() || !doc["statsShortcutVisible"].isNull();
-  if (!hasLegacyStatsShortcut) {
-    return;
-  }
-
-  const bool legacyVisible = settings.statsShortcutVisible != 0;
-  const auto legacyLocation = static_cast<CrossPointSettings::SHORTCUT_LOCATION>(settings.statsShortcut);
-  if (legacyVisible &&
-      (legacyLocation == CrossPointSettings::SHORTCUT_HOME || legacyLocation == CrossPointSettings::SHORTCUT_APPS)) {
-    settings.readingStatsShortcut = settings.statsShortcut;
-    settings.readingStatsShortcutOrder = settings.statsShortcutOrder;
-    settings.readingStatsShortcutVisible = 1;
-  }
-
-  settings.statsShortcutVisible = 0;
-  if (needsResave) *needsResave = true;
-}
 }  // namespace
 
-// Convert legacy settings.
 void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
   switch (static_cast<CrossPointSettings::STATUS_BAR_MODE>(settings.statusBar)) {
     case CrossPointSettings::NONE:
@@ -617,8 +601,21 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
     if (needsResave) *needsResave = true;
   }
   {
-    const uint8_t rawShortPwrBtn = doc["shortPwrBtn"] | s.shortPwrBtn;
+    const uint8_t shortPwrBtnSchemaVersion = doc["shortPwrBtnSchemaVersion"] | static_cast<uint8_t>(0);
+    uint8_t rawShortPwrBtn = doc["shortPwrBtn"] | s.shortPwrBtn;
     if (rawShortPwrBtn < static_cast<uint8_t>(CrossPointSettings::SHORT_PWRBTN_COUNT)) {
+      // Schema 0 stored the touch-only PWR_CONFIRM at 6 and SLEEP_IMAGE_CYCLE at
+      // 7; schema 1 swaps them. Neither index was reachable on non-touch boards,
+      // so the swap is a no-op there.
+      if (shortPwrBtnSchemaVersion < SHORT_PWRBTN_SCHEMA_VERSION) {
+        if (rawShortPwrBtn == 6) {
+          rawShortPwrBtn = 7;
+          if (needsResave) *needsResave = true;
+        } else if (rawShortPwrBtn == 7) {
+          rawShortPwrBtn = 6;
+          if (needsResave) *needsResave = true;
+        }
+      }
       s.shortPwrBtn = rawShortPwrBtn;
     } else {
       s.shortPwrBtn = CrossPointSettings::IGNORE;
@@ -734,159 +731,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   s.achievementPopups =
       clamp(doc["achievementPopups"] | s.achievementPopups, static_cast<uint8_t>(2), s.achievementPopups);
 
-  const uint8_t shortcutLocationCount = S::SHORTCUT_LOCATION_COUNT;
-  const uint8_t shortcutOrderCount = static_cast<uint8_t>(getShortcutDefinitions().size() + 1);
-  s.appsHubShortcutOrder =
-      clamp(doc["appsHubShortcutOrder"] | s.appsHubShortcutOrder, shortcutOrderCount, s.appsHubShortcutOrder);
-  s.browseFilesShortcut =
-      clamp(doc["browseFilesShortcut"] | s.browseFilesShortcut, shortcutLocationCount, s.browseFilesShortcut);
-  s.browseFilesShortcutOrder = clamp(doc["browseFilesShortcutOrder"] | s.browseFilesShortcutOrder, shortcutOrderCount,
-                                     s.browseFilesShortcutOrder);
-  s.statsShortcut = clamp(doc["statsShortcut"] | s.statsShortcut, shortcutLocationCount, s.statsShortcut);
-  s.statsShortcutOrder =
-      clamp(doc["statsShortcutOrder"] | s.statsShortcutOrder, shortcutOrderCount, s.statsShortcutOrder);
-  s.syncDayShortcut = clamp(doc["syncDayShortcut"] | s.syncDayShortcut, shortcutLocationCount, s.syncDayShortcut);
-  s.syncDayShortcutOrder =
-      clamp(doc["syncDayShortcutOrder"] | s.syncDayShortcutOrder, shortcutOrderCount, s.syncDayShortcutOrder);
-  s.settingsShortcut = clamp(doc["settingsShortcut"] | s.settingsShortcut, shortcutLocationCount, s.settingsShortcut);
-  s.settingsShortcutOrder =
-      clamp(doc["settingsShortcutOrder"] | s.settingsShortcutOrder, shortcutOrderCount, s.settingsShortcutOrder);
-  s.readingStatsShortcut =
-      clamp(doc["readingStatsShortcut"] | s.readingStatsShortcut, shortcutLocationCount, s.readingStatsShortcut);
-  s.readingStatsShortcutOrder = clamp(doc["readingStatsShortcutOrder"] | s.readingStatsShortcutOrder,
-                                      shortcutOrderCount, s.readingStatsShortcutOrder);
-  s.readingHeatmapShortcut =
-      clamp(doc["readingHeatmapShortcut"] | s.readingHeatmapShortcut, shortcutLocationCount, s.readingHeatmapShortcut);
-  s.readingHeatmapShortcutOrder = clamp(doc["readingHeatmapShortcutOrder"] | s.readingHeatmapShortcutOrder,
-                                        shortcutOrderCount, s.readingHeatmapShortcutOrder);
-  s.readingProfileShortcut =
-      clamp(doc["readingProfileShortcut"] | s.readingProfileShortcut, shortcutLocationCount, s.readingProfileShortcut);
-  s.readingProfileShortcutOrder = clamp(doc["readingProfileShortcutOrder"] | s.readingProfileShortcutOrder,
-                                        shortcutOrderCount, s.readingProfileShortcutOrder);
-  s.achievementsShortcut =
-      clamp(doc["achievementsShortcut"] | s.achievementsShortcut, shortcutLocationCount, s.achievementsShortcut);
-  s.achievementsShortcutOrder = clamp(doc["achievementsShortcutOrder"] | s.achievementsShortcutOrder,
-                                      shortcutOrderCount, s.achievementsShortcutOrder);
-  s.ifFoundShortcut = clamp(doc["ifFoundShortcut"] | s.ifFoundShortcut, shortcutLocationCount, s.ifFoundShortcut);
-  s.ifFoundShortcutOrder =
-      clamp(doc["ifFoundShortcutOrder"] | s.ifFoundShortcutOrder, shortcutOrderCount, s.ifFoundShortcutOrder);
-  s.readMeShortcut = clamp(doc["readMeShortcut"] | s.readMeShortcut, shortcutLocationCount, s.readMeShortcut);
-  s.readMeShortcutOrder =
-      clamp(doc["readMeShortcutOrder"] | s.readMeShortcutOrder, shortcutOrderCount, s.readMeShortcutOrder);
-  s.recentBooksShortcut =
-      clamp(doc["recentBooksShortcut"] | s.recentBooksShortcut, shortcutLocationCount, s.recentBooksShortcut);
-  s.recentBooksShortcutOrder = clamp(doc["recentBooksShortcutOrder"] | s.recentBooksShortcutOrder, shortcutOrderCount,
-                                     s.recentBooksShortcutOrder);
-  s.bookmarksShortcut =
-      clamp(doc["bookmarksShortcut"] | s.bookmarksShortcut, shortcutLocationCount, s.bookmarksShortcut);
-  s.bookmarksShortcutOrder =
-      clamp(doc["bookmarksShortcutOrder"] | s.bookmarksShortcutOrder, shortcutOrderCount, s.bookmarksShortcutOrder);
-  s.favoritesShortcut =
-      clamp(doc["favoritesShortcut"] | s.favoritesShortcut, shortcutLocationCount, s.favoritesShortcut);
-  s.favoritesShortcutOrder =
-      clamp(doc["favoritesShortcutOrder"] | s.favoritesShortcutOrder, shortcutOrderCount, s.favoritesShortcutOrder);
-  s.flashcardsShortcut =
-      clamp(doc["flashcardsShortcut"] | s.flashcardsShortcut, shortcutLocationCount, s.flashcardsShortcut);
-  s.flashcardsShortcutOrder =
-      clamp(doc["flashcardsShortcutOrder"] | s.flashcardsShortcutOrder, shortcutOrderCount, s.flashcardsShortcutOrder);
-  s.dictionaryShortcut =
-      clamp(doc["dictionaryShortcut"] | s.dictionaryShortcut, shortcutLocationCount, s.dictionaryShortcut);
-  s.dictionaryShortcutOrder =
-      clamp(doc["dictionaryShortcutOrder"] | s.dictionaryShortcutOrder, shortcutOrderCount, s.dictionaryShortcutOrder);
-  s.fileTransferShortcut =
-      clamp(doc["fileTransferShortcut"] | s.fileTransferShortcut, shortcutLocationCount, s.fileTransferShortcut);
-  s.fileTransferShortcutOrder = clamp(doc["fileTransferShortcutOrder"] | s.fileTransferShortcutOrder,
-                                      shortcutOrderCount, s.fileTransferShortcutOrder);
-  s.screenCleanShortcut =
-      clamp(doc["screenCleanShortcut"] | s.screenCleanShortcut, shortcutLocationCount, s.screenCleanShortcut);
-  s.screenCleanShortcutOrder = clamp(doc["screenCleanShortcutOrder"] | s.screenCleanShortcutOrder, shortcutOrderCount,
-                                     s.screenCleanShortcutOrder);
-  s.sleepShortcut = clamp(doc["sleepShortcut"] | s.sleepShortcut, shortcutLocationCount, s.sleepShortcut);
-  s.sleepShortcutOrder =
-      clamp(doc["sleepShortcutOrder"] | s.sleepShortcutOrder, shortcutOrderCount, s.sleepShortcutOrder);
-  s.opdsBrowserShortcut =
-      clamp(doc["opdsBrowserShortcut"] | s.opdsBrowserShortcut, shortcutLocationCount, s.opdsBrowserShortcut);
-  s.opdsBrowserShortcutOrder = clamp(doc["opdsBrowserShortcutOrder"] | s.opdsBrowserShortcutOrder, shortcutOrderCount,
-                                     s.opdsBrowserShortcutOrder);
-  s.pluginsShortcut = clamp(doc["pluginsShortcut"] | s.pluginsShortcut, shortcutLocationCount, s.pluginsShortcut);
-  s.pluginsShortcutOrder =
-      clamp(doc["pluginsShortcutOrder"] | s.pluginsShortcutOrder, shortcutOrderCount, s.pluginsShortcutOrder);
-
-  s.browseFilesShortcutVisible = clamp(doc["browseFilesShortcutVisible"] | s.browseFilesShortcutVisible,
-                                       static_cast<uint8_t>(2), s.browseFilesShortcutVisible);
-  s.statsShortcutVisible =
-      clamp(doc["statsShortcutVisible"] | s.statsShortcutVisible, static_cast<uint8_t>(2), s.statsShortcutVisible);
-  s.syncDayShortcutVisible = clamp(doc["syncDayShortcutVisible"] | s.syncDayShortcutVisible, static_cast<uint8_t>(2),
-                                   s.syncDayShortcutVisible);
-  s.settingsShortcutVisible = clamp(doc["settingsShortcutVisible"] | s.settingsShortcutVisible, static_cast<uint8_t>(2),
-                                    s.settingsShortcutVisible);
-  s.readingStatsShortcutVisible = clamp(doc["readingStatsShortcutVisible"] | s.readingStatsShortcutVisible,
-                                        static_cast<uint8_t>(2), s.readingStatsShortcutVisible);
-  s.readingHeatmapShortcutVisible = clamp(doc["readingHeatmapShortcutVisible"] | s.readingHeatmapShortcutVisible,
-                                          static_cast<uint8_t>(2), s.readingHeatmapShortcutVisible);
-  s.readingProfileShortcutVisible = clamp(doc["readingProfileShortcutVisible"] | s.readingProfileShortcutVisible,
-                                          static_cast<uint8_t>(2), s.readingProfileShortcutVisible);
-  s.achievementsShortcutVisible = clamp(doc["achievementsShortcutVisible"] | s.achievementsShortcutVisible,
-                                        static_cast<uint8_t>(2), s.achievementsShortcutVisible);
-  s.ifFoundShortcutVisible = clamp(doc["ifFoundShortcutVisible"] | s.ifFoundShortcutVisible, static_cast<uint8_t>(2),
-                                   s.ifFoundShortcutVisible);
-  s.readMeShortcutVisible =
-      clamp(doc["readMeShortcutVisible"] | s.readMeShortcutVisible, static_cast<uint8_t>(2), s.readMeShortcutVisible);
-  s.recentBooksShortcutVisible = clamp(doc["recentBooksShortcutVisible"] | s.recentBooksShortcutVisible,
-                                       static_cast<uint8_t>(2), s.recentBooksShortcutVisible);
-  s.bookmarksShortcutVisible = clamp(doc["bookmarksShortcutVisible"] | s.bookmarksShortcutVisible,
-                                     static_cast<uint8_t>(2), s.bookmarksShortcutVisible);
-  s.favoritesShortcutVisible = clamp(doc["favoritesShortcutVisible"] | s.favoritesShortcutVisible,
-                                     static_cast<uint8_t>(2), s.favoritesShortcutVisible);
-  s.flashcardsShortcutVisible = clamp(doc["flashcardsShortcutVisible"] | s.flashcardsShortcutVisible,
-                                      static_cast<uint8_t>(2), s.flashcardsShortcutVisible);
-  s.dictionaryShortcutVisible = clamp(doc["dictionaryShortcutVisible"] | s.dictionaryShortcutVisible,
-                                      static_cast<uint8_t>(2), s.dictionaryShortcutVisible);
-  s.fileTransferShortcutVisible = clamp(doc["fileTransferShortcutVisible"] | s.fileTransferShortcutVisible,
-                                        static_cast<uint8_t>(2), s.fileTransferShortcutVisible);
-  s.screenCleanShortcutVisible = clamp(doc["screenCleanShortcutVisible"] | s.screenCleanShortcutVisible,
-                                       static_cast<uint8_t>(2), s.screenCleanShortcutVisible);
-  s.sleepShortcutVisible =
-      clamp(doc["sleepShortcutVisible"] | s.sleepShortcutVisible, static_cast<uint8_t>(2), s.sleepShortcutVisible);
-  s.opdsBrowserShortcutVisible = clamp(doc["opdsBrowserShortcutVisible"] | s.opdsBrowserShortcutVisible,
-                                       static_cast<uint8_t>(2), s.opdsBrowserShortcutVisible);
-  s.pluginsShortcutVisible = clamp(doc["pluginsShortcutVisible"] | s.pluginsShortcutVisible, static_cast<uint8_t>(2),
-                                   s.pluginsShortcutVisible);
-
-  // Library (Steroids-only feature).
-  s.libraryShortcut = clamp(doc["libraryShortcut"] | s.libraryShortcut, shortcutLocationCount, s.libraryShortcut);
-  s.libraryShortcutOrder =
-      clamp(doc["libraryShortcutOrder"] | s.libraryShortcutOrder, shortcutOrderCount, s.libraryShortcutOrder);
-  s.libraryShortcutVisible = clamp(doc["libraryShortcutVisible"] | s.libraryShortcutVisible, static_cast<uint8_t>(2),
-                                   s.libraryShortcutVisible);
-  s.libraryLayout = clamp(doc["libraryLayout"] | s.libraryLayout,
-                          static_cast<uint8_t>(CrossPointSettings::LIBRARY_LAYOUT_COUNT - 1), s.libraryLayout);
-  s.libraryFilter = clamp(doc["libraryFilter"] | s.libraryFilter,
-                          static_cast<uint8_t>(CrossPointSettings::LIBRARY_FILTER_COUNT - 1), s.libraryFilter);
-  s.librarySort = clamp(doc["librarySort"] | s.librarySort,
-                        static_cast<uint8_t>(CrossPointSettings::LIBRARY_SORT_COUNT - 1), s.librarySort);
-  s.libraryViewMode = clamp(doc["libraryViewMode"] | s.libraryViewMode, static_cast<uint8_t>(3), s.libraryViewMode);
-  s.libraryUpdateMode =
-      clamp(doc["libraryUpdateMode"] | s.libraryUpdateMode,
-            static_cast<uint8_t>(CrossPointSettings::LIBRARY_UPDATE_MODE_COUNT - 1), s.libraryUpdateMode);
-  s.libraryFolderCollections = clamp(doc["libraryFolderCollections"] | s.libraryFolderCollections,
-                                     static_cast<uint8_t>(2), s.libraryFolderCollections);
-  s.libraryMetadataSeries =
-      clamp(doc["libraryMetadataSeries"] | s.libraryMetadataSeries, static_cast<uint8_t>(2), s.libraryMetadataSeries);
-  s.librarySelectorIndex = doc["librarySelectorIndex"] | s.librarySelectorIndex;
-  s.libraryCollectionIdx = doc["libraryCollectionIdx"] | s.libraryCollectionIdx;
-  loadString("libraryCollectionName", s.libraryCollectionName, sizeof(s.libraryCollectionName));
-  loadString("librarySearchText", s.librarySearchText, sizeof(s.librarySearchText));
-  loadString("libraryRootDir", s.libraryRootDir, sizeof(s.libraryRootDir));
-  s.libraryLastCleanupDay = doc["libraryLastCleanupDay"] | s.libraryLastCleanupDay;
-  s.libraryUpdateMode =
-      clamp(doc["libraryUpdateMode"] | s.libraryUpdateMode,
-            static_cast<uint8_t>(CrossPointSettings::LIBRARY_UPDATE_MODE_COUNT - 1), s.libraryUpdateMode);
-
-  migrateLegacyStatsShortcut(s, doc, needsResave);
-  normalizeShortcutOrderSettings(s);
-  CrossPointSettings::validateFrontButtonMapping(s);
-  s.normalizeDisplayDay();
+  JsonSettingsIOSteroids::loadSteroidsSettings(s, doc, needsResave);
 
   LOG_DBG("CPS", "Settings loaded from file");
   return true;
@@ -1097,6 +942,9 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["longPressChapterSkip"] = s.longPressButtonBehavior == CrossPointSettings::LONG_PRESS_CHAPTER_SKIP;
   doc["longPressMenuFunction"] = s.longPressMenuFunction;
   doc["shortPwrBtn"] = s.shortPwrBtn;
+  doc["shortPwrBtnSchemaVersion"] = SHORT_PWRBTN_SCHEMA_VERSION;
+  // Steroids fork-only settings (own file to keep upstream merges clean).
+  JsonSettingsIOSteroids::saveSteroidsSettings(s, doc);
   doc["pwrBtnFootnoteBack"] = s.pwrBtnFootnoteBack;
   doc["backShortToFileBrowser"] = s.backShortToFileBrowser;
   doc["tiltPageTurn"] = s.tiltPageTurn;
@@ -1157,82 +1005,6 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["sleepDirectory"] = s.sleepDirectory;
   doc["sleepImageOrder"] = s.sleepImageOrder;
   doc["timeZonePreset"] = TimeZoneRegistry::clampPresetIndex(s.timeZonePreset);
-  doc["appsHubShortcutOrder"] = s.appsHubShortcutOrder;
-  doc["browseFilesShortcut"] = s.browseFilesShortcut;
-  doc["browseFilesShortcutOrder"] = s.browseFilesShortcutOrder;
-  doc["syncDayShortcut"] = s.syncDayShortcut;
-  doc["syncDayShortcutOrder"] = s.syncDayShortcutOrder;
-  doc["settingsShortcut"] = s.settingsShortcut;
-  doc["settingsShortcutOrder"] = s.settingsShortcutOrder;
-  doc["readingStatsShortcut"] = s.readingStatsShortcut;
-  doc["readingStatsShortcutOrder"] = s.readingStatsShortcutOrder;
-  doc["readingHeatmapShortcut"] = s.readingHeatmapShortcut;
-  doc["readingHeatmapShortcutOrder"] = s.readingHeatmapShortcutOrder;
-  doc["readingProfileShortcut"] = s.readingProfileShortcut;
-  doc["readingProfileShortcutOrder"] = s.readingProfileShortcutOrder;
-  doc["achievementsShortcut"] = s.achievementsShortcut;
-  doc["achievementsShortcutOrder"] = s.achievementsShortcutOrder;
-  doc["ifFoundShortcut"] = s.ifFoundShortcut;
-  doc["ifFoundShortcutOrder"] = s.ifFoundShortcutOrder;
-  doc["readMeShortcut"] = s.readMeShortcut;
-  doc["readMeShortcutOrder"] = s.readMeShortcutOrder;
-  doc["recentBooksShortcut"] = s.recentBooksShortcut;
-  doc["recentBooksShortcutOrder"] = s.recentBooksShortcutOrder;
-  doc["bookmarksShortcut"] = s.bookmarksShortcut;
-  doc["bookmarksShortcutOrder"] = s.bookmarksShortcutOrder;
-  doc["favoritesShortcut"] = s.favoritesShortcut;
-  doc["favoritesShortcutOrder"] = s.favoritesShortcutOrder;
-  doc["flashcardsShortcut"] = s.flashcardsShortcut;
-  doc["flashcardsShortcutOrder"] = s.flashcardsShortcutOrder;
-  doc["dictionaryShortcut"] = s.dictionaryShortcut;
-  doc["dictionaryShortcutOrder"] = s.dictionaryShortcutOrder;
-  doc["fileTransferShortcut"] = s.fileTransferShortcut;
-  doc["fileTransferShortcutOrder"] = s.fileTransferShortcutOrder;
-  doc["screenCleanShortcut"] = s.screenCleanShortcut;
-  doc["screenCleanShortcutOrder"] = s.screenCleanShortcutOrder;
-  doc["sleepShortcut"] = s.sleepShortcut;
-  doc["sleepShortcutOrder"] = s.sleepShortcutOrder;
-  doc["opdsBrowserShortcut"] = s.opdsBrowserShortcut;
-  doc["opdsBrowserShortcutOrder"] = s.opdsBrowserShortcutOrder;
-  doc["pluginsShortcut"] = s.pluginsShortcut;
-  doc["pluginsShortcutOrder"] = s.pluginsShortcutOrder;
-  doc["browseFilesShortcutVisible"] = s.browseFilesShortcutVisible;
-  doc["syncDayShortcutVisible"] = s.syncDayShortcutVisible;
-  doc["settingsShortcutVisible"] = s.settingsShortcutVisible;
-  doc["readingStatsShortcutVisible"] = s.readingStatsShortcutVisible;
-  doc["readingHeatmapShortcutVisible"] = s.readingHeatmapShortcutVisible;
-  doc["readingProfileShortcutVisible"] = s.readingProfileShortcutVisible;
-  doc["achievementsShortcutVisible"] = s.achievementsShortcutVisible;
-  doc["ifFoundShortcutVisible"] = s.ifFoundShortcutVisible;
-  doc["readMeShortcutVisible"] = s.readMeShortcutVisible;
-  doc["recentBooksShortcutVisible"] = s.recentBooksShortcutVisible;
-  doc["bookmarksShortcutVisible"] = s.bookmarksShortcutVisible;
-  doc["favoritesShortcutVisible"] = s.favoritesShortcutVisible;
-  doc["flashcardsShortcutVisible"] = s.flashcardsShortcutVisible;
-  doc["dictionaryShortcutVisible"] = s.dictionaryShortcutVisible;
-  doc["fileTransferShortcutVisible"] = s.fileTransferShortcutVisible;
-  doc["screenCleanShortcutVisible"] = s.screenCleanShortcutVisible;
-  doc["sleepShortcutVisible"] = s.sleepShortcutVisible;
-  doc["opdsBrowserShortcutVisible"] = s.opdsBrowserShortcutVisible;
-  doc["pluginsShortcutVisible"] = s.pluginsShortcutVisible;
-
-  // Library (Steroids-only feature).
-  doc["libraryShortcut"] = s.libraryShortcut;
-  doc["libraryShortcutOrder"] = s.libraryShortcutOrder;
-  doc["libraryShortcutVisible"] = s.libraryShortcutVisible;
-  doc["libraryLayout"] = s.libraryLayout;
-  doc["libraryFilter"] = s.libraryFilter;
-  doc["librarySort"] = s.librarySort;
-  doc["libraryViewMode"] = s.libraryViewMode;
-  doc["libraryUpdateMode"] = s.libraryUpdateMode;
-  doc["libraryFolderCollections"] = s.libraryFolderCollections;
-  doc["libraryMetadataSeries"] = s.libraryMetadataSeries;
-  doc["librarySelectorIndex"] = s.librarySelectorIndex;
-  doc["libraryCollectionIdx"] = s.libraryCollectionIdx;
-  doc["libraryCollectionName"] = s.libraryCollectionName;
-  doc["librarySearchText"] = s.librarySearchText;
-  doc["libraryRootDir"] = s.libraryRootDir;
-  doc["libraryLastCleanupDay"] = s.libraryLastCleanupDay;
   doc["libraryUpdateMode"] = s.libraryUpdateMode;
 
   return saveJsonDocumentToFile("CPS", path, doc);
@@ -2025,6 +1797,14 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
 }
 
 bool JsonSettingsIO::loadReadingStats(ReadingStatsStore& store, const char* json) {
+  // The document walk builds STL vectors; this firmware compiles with
+  // -fno-exceptions, so a failed vector reallocation aborts instead of
+  // throwing. The stats working set needs ~100 KB of contiguous headroom;
+  // refuse to start below that and let the deferred boot loader retry.
+  if (ESP.getMaxAllocHeap() < 80 * 1024) {
+    LOG_DBG("RST", "Reading stats load skipped, maxA=%u too low", static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return false;
+  }
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error || doc.overflowed()) {
@@ -2040,13 +1820,17 @@ bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const ch
   if (!Storage.exists(path)) {
     return false;
   }
+  if (ESP.getMaxAllocHeap() < 80 * 1024) {
+    LOG_DBG("RST", "Reading stats load skipped, maxA=%u too low", static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return false;
+  }
   JsonDocument doc;
   const bool parsed = loadJsonDocumentFromFile("RST", path, doc);
-  const bool loaded = parsed && !doc.overflowed() && loadReadingStatsDocument(store, doc);
-  if (!loaded) {
+  if (!parsed || doc.overflowed()) {
     CPR_VCODEX_LOG_EVENT("RST", std::string("Failed to load reading stats from ") + path);
+    return false;
   }
-  return loaded;
+  return loadReadingStatsDocument(store, doc);
 }
 
 // ---- AchievementsStore ----
@@ -2160,6 +1944,13 @@ bool JsonSettingsIO::loadAchievements(AchievementsStore& store, const char* json
 
 bool JsonSettingsIO::loadAchievementsFromFile(AchievementsStore& store, const char* path) {
   if (!Storage.exists(path)) {
+    return false;
+  }
+  // Whole-file String plus STL vectors; -fno-exceptions turns a failed
+  // allocation into an abort, so refuse to start on a tight heap and let the
+  // deferred boot loader retry.
+  if (ESP.getMaxAllocHeap() < 32 * 1024) {
+    LOG_DBG("ACH", "Achievements load skipped, maxA=%u too low", static_cast<unsigned>(ESP.getMaxAllocHeap()));
     return false;
   }
   const String json = Storage.readFile(path);

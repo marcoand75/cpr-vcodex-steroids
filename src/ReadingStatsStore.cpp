@@ -14,6 +14,7 @@
 
 #include "CrossPointState.h"
 #include "util/BookIdentity.h"
+#include "util/BootLoadGate.h"
 #include "util/CprVcodexLogs.h"
 #include "util/TimeUtils.h"
 
@@ -32,6 +33,35 @@ constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 uint8_t clampPercent(const uint8_t percent) { return std::min<uint8_t>(percent, 100); }
 
 bool countsForStreak(const ReadingDayStats& day) { return day.readingMs >= getDailyReadingGoalMs(); }
+
+namespace {
+
+bool hasLegacyEpubCoverPath(const std::string& coverBmpPath) {
+  if (coverBmpPath.empty()) {
+    return false;
+  }
+
+  constexpr char EPUB_PREFIX[] = "/.crosspoint/epub_";
+  const size_t prefixLen = sizeof(EPUB_PREFIX) - 1;
+  if (coverBmpPath.size() <= prefixLen || !coverBmpPath.starts_with(EPUB_PREFIX)) {
+    return false;
+  }
+
+  const size_t slashPos = coverBmpPath.find('/', prefixLen);
+  if (slashPos == std::string::npos) {
+    return false;
+  }
+
+  const std::string hashPart = coverBmpPath.substr(prefixLen, slashPos - prefixLen);
+  if (hashPart.empty() || hashPart.size() > 10) {
+    return false;
+  }
+
+  return std::all_of(hashPart.begin(), hashPart.end(),
+                     [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
+}  // namespace
 
 bool textWindowShowsReadingStatsData(const std::string& text) {
   static constexpr const char* DATA_ARRAY_KEYS[] = {
@@ -555,6 +585,9 @@ void ReadingStatsStore::normalizeBook(ReadingBookStats& book) {
   normalizeReadingDays(book.readingDays);
   book.lastProgressPercent = clampPercent(book.lastProgressPercent);
   book.chapterProgressPercent = clampPercent(book.chapterProgressPercent);
+  if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+    book.coverBmpPath.clear();
+  }
 }
 
 void ReadingStatsStore::normalizeBooks() {
@@ -1766,6 +1799,17 @@ bool ReadingStatsStore::saveToFile() const {
 }
 
 bool ReadingStatsStore::loadFromFile() {
+  // Boot ordering + heap guards. Parsing the stats JSON materializes STL
+  // vectors (session log, per-book days) under -fno-exceptions: a failed
+  // reallocation aborts the device. Return "unloaded" instead of letting the
+  // main-load-failure path trigger the internal-backup restore cascade on a
+  // transient low-heap skip. The deferred boot loader retries when the gate
+  // opens (covers done) or the heap recovers.
+  if (!boot_load_gate::ready() || ESP.getMaxAllocHeap() < 80 * 1024) {
+    LOG_DBG("RST", "Reading stats load deferred (gate closed or low heap maxA=%u)",
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return false;
+  }
   const std::string tempPath = std::string(READING_STATS_FILE_JSON) + ".tmp";
   if (!Storage.exists(READING_STATS_FILE_JSON) && Storage.exists(tempPath.c_str())) {
     if (Storage.rename(tempPath.c_str(), READING_STATS_FILE_JSON)) {
@@ -1835,6 +1879,11 @@ bool ReadingStatsStore::loadFromFile() {
 
 bool ReadingStatsStore::ensureLoaded() {
   if (loaded_) return true;
+  // Boot ordering gate: while the foreground activity is doing memory-heavy
+  // boot work (Home cover generation) keep the big stats JSON out of the heap.
+  // The deferred boot loader (or a later lazy read once the gate opens) will
+  // materialize the store.
+  if (!boot_load_gate::ready()) return false;
   return loadFromFile();
 }
 

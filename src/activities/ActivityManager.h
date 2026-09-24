@@ -120,6 +120,9 @@ class ActivityManager {
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
+  // Steroids fork-only: forwards Activity::deferredStoreLoadReady() of the
+  // current activity so boot-time store loads wait for memory-heavy boot work.
+  bool deferredStoreLoadReady() const;
 
   // If immediate is true, the update will be triggered immediately.
   // Otherwise, it will be deferred until the end of the current loop iteration.

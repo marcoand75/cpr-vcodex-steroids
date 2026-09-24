@@ -2,6 +2,7 @@
 
 #include <Bitmap.h>
 #include <Epub.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
@@ -37,13 +38,25 @@
 #include "activities/apps/ReadingHeatmapActivity.h"
 #include "activities/apps/ReadingProfileActivity.h"
 #include "activities/apps/ReadingStatsActivity.h"
+#include "activities/apps/ReadingStatsDetailActivity.h"
+#include "activities/apps/LibraryContextMenuActivity.h"
+#include "activities/apps/ClippingsAppActivity.h"
+#include "activities/apps/QuickCardsActivity.h"
+#include "activities/apps/ScreenSaverActivity.h"
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
+#include "activities/apps/WikipediaActivity.h"
+#include "activities/home/BookContextMenuActivity.h"
 #include "activities/settings/ClockSyncActivity.h"
+#include "activities/apps/util/LibraryCoverHelper.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
+#include "components/themes/lyra/LyraMarcoand75Theme.h"
 #include "fontIds.h"
+#include "util/BookCacheUtils.h"
+#include "util/CoverCachePaths.h"
+#include "util/CoverRawCache.h"
 #include "util/HeaderDateUtils.h"
 #include "util/ShortcutRegistry.h"
 #include "util/ShortcutUiMetadata.h"
@@ -52,6 +65,13 @@ namespace {
 constexpr unsigned long RECENT_BOOK_LONG_PRESS_MS = 1000;
 constexpr int DEFAULT_HOME_SHORTCUT_PAGE_SIZE = 4;
 constexpr int LYRA_HOME_SHORTCUT_PAGE_SIZE = 5;
+// Must match LyraMarcoand75Theme's kFiveCoverCenterW/H (the size its stacked
+// side covers and center cover read).
+constexpr int MARCOAND75_CENTER_COVER_W = 210;
+constexpr int MARCOAND75_CENTER_COVER_H = 340;
+// Must match LyraMarcoand75Theme's kVisibleMenuSlots (7): the theme draws a
+// centred window of at most this many icons and adds scroll arrows beyond it.
+constexpr int MARCOAND75_HOME_SHORTCUT_PAGE_SIZE = 7;
 constexpr const char* CAROUSEL_FRAME_CACHE_DIR = "/.crosspoint/home-carousel-cache";
 constexpr uint32_t FNV1A_OFFSET = 2166136261UL;
 constexpr uint32_t FNV1A_PRIME = 16777619UL;
@@ -92,8 +112,24 @@ void updateHomeBookMetadata(const RecentBook& book) {
 }
 
 bool canLoadHomeCover(const std::string& path) {
-  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
-         FsHelpers::hasMarkdownExtension(path);
+  if (path.empty()) {
+    LOG_DBG("HOME", "canLoadHomeCover: false path=empty");
+    return false;
+  }
+
+  const bool hasExt = FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
+                      FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
+  if (!hasExt) {
+    LOG_DBG("HOME", "canLoadHomeCover: false path=%s unsupported ext", path.c_str());
+    return false;
+  }
+
+  if (!Storage.exists(path.c_str())) {
+    LOG_DBG("HOME", "canLoadHomeCover: false path=%s missing on disk", path.c_str());
+    return false;
+  }
+
+  return true;
 }
 
 bool isValidBmpFile(const std::string& path) {
@@ -113,7 +149,16 @@ bool isValidBmpFile(const std::string& path) {
 }
 
 bool isValidHomeCoverPath(const std::string& coverBmpPath, const int coverHeight) {
-  return isValidBmpFile(UITheme::getCoverThumbPath(coverBmpPath, coverHeight));
+  if (coverBmpPath.empty()) {
+    LOG_DBG("HOME", "isValidHomeCoverPath: false coverBmpPath=empty");
+    return false;
+  }
+  const std::string resolvedPath = UITheme::getCoverThumbPath(coverBmpPath, coverHeight);
+  const bool valid = isValidBmpFile(resolvedPath);
+  if (!valid) {
+    LOG_DBG("HOME", "isValidHomeCoverPath: invalid coverBmpPath=%s resolved=%s", coverBmpPath.c_str(), resolvedPath.c_str());
+  }
+  return valid;
 }
 
 void removeInvalidHomeCoverTarget(const std::string& coverBmpPath, const int coverHeight) {
@@ -125,6 +170,12 @@ void removeInvalidHomeCoverTarget(const std::string& coverBmpPath, const int cov
   if (Storage.exists(resolvedPath.c_str()) && !isValidBmpFile(resolvedPath)) {
     Storage.remove(resolvedPath.c_str());
   }
+}
+
+std::string normalizeCoverBmpPath(const std::string& path) {
+  // Older steroids dev builds stored thumbs with an extra "_fit" suffix that
+  // upstream never had. Map persisted legacy paths back to the upstream names.
+  return cover_cache_paths::migrateLegacyThumbPath(path);
 }
 
 std::string getFavoriteRemovalKey(const FavoriteBook& book) {
@@ -257,7 +308,40 @@ bool showHomeShortcutAccessory(const HomeShortcutEntry& entry) {
 }
 
 bool isLyraCarouselTheme() {
-  return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
+  // Includes BOTH carousel themes (as in Steroids master): this predicate gates
+  // the full-frame SD cache and its invalidation, which the Marcoand75 theme
+  // uses exactly like LyraCarouselTheme — the frame is a rendered framebuffer,
+  // independent of each theme's cover dimensions. Do not narrow it to one
+  // theme or the whole frame cache silently stops working for the other.
+  const auto theme = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
+  return theme == CrossPointSettings::UI_THEME::LYRA_CAROUSEL ||
+         theme == CrossPointSettings::UI_THEME::LYRA_MARCOAND75;
+}
+
+// Home themes whose selection model is "carousel row + shortcut icon band":
+// Left/Right move within the focused row, Up/Down toggle between the carousel
+// row and the icon band below. Same theme set as isLyraCarouselTheme(); kept
+// as a separate predicate because the two concepts (frame cache vs navigation
+// model) must stay independently readable.
+bool isCarouselNavTheme() {
+  const auto theme = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
+  return theme == CrossPointSettings::UI_THEME::LYRA_CAROUSEL ||
+         theme == CrossPointSettings::UI_THEME::LYRA_MARCOAND75;
+}
+
+bool isMarcoand75Theme() {
+  return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_MARCOAND75;
+}
+
+// Center-cover thumbnail size the focused theme actually reads. Must stay in
+// sync with the theme drawing code: LyraMarcoand75 reads 210x340 (its
+// kFiveCoverCenterW/H) and LyraCarousel reads kCenterCoverW/H.
+int getHomeCarouselCenterCoverW() {
+  return isMarcoand75Theme() ? MARCOAND75_CENTER_COVER_W : LyraCarouselTheme::kCenterCoverW;
+}
+
+int getHomeCarouselCenterCoverH() {
+  return isMarcoand75Theme() ? MARCOAND75_CENTER_COVER_H : LyraCarouselTheme::kCenterCoverH;
 }
 
 int wrapBookIndex(int index, int bookCount) {
@@ -287,8 +371,7 @@ uint32_t fnv1aU32(uint32_t hash, const uint32_t value) {
 }
 
 std::string getCarouselCenterThumbPath(const RecentBook& book) {
-  return UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterCoverW,
-                                    LyraCarouselTheme::kCenterCoverH);
+  return UITheme::getCoverThumbPath(book.coverBmpPath, getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH());
 }
 
 std::string getCarouselLegacyThumbPath(const RecentBook& book) {
@@ -296,15 +379,42 @@ std::string getCarouselLegacyThumbPath(const RecentBook& book) {
 }
 
 bool hasCarouselUsableThumb(const RecentBook& book) {
+  // An empty coverBmpPath is NOT "usable": after a crash the store may have
+  // lost the persisted path while the thumb file still exists on SD. Returning
+  // false here lets the round-robin re-process the book, which re-derives the
+  // canonical path (Epub/Xtc/Txt::getThumbBmpPath) and self-heals via the
+  // generateThumbBmp early-return when the file is already there.
   if (book.coverBmpPath.empty()) {
-    return true;
+    return false;
   }
   const std::string centerCoverPath = getCarouselCenterThumbPath(book);
   if (Storage.exists(centerCoverPath.c_str())) {
+    // Marcoand75's stacked side covers reuse the center thumb; a zero-byte
+    // sentinel from a failed generation must not be accepted here or the
+    // theme will try to decode it and show a placeholder forever.
+    if (isMarcoand75Theme()) {
+      return isValidBmpFile(centerCoverPath);
+    }
     return true;
+  }
+  // Marcoand75's stacked side covers only read the center size (210x340); a
+  // legacy full-height thumb is used for the centre only, so it must not be
+  // accepted here or the side covers would never be generated.
+  if (isMarcoand75Theme()) {
+    return false;
   }
   const std::string legacyCoverPath = getCarouselLegacyThumbPath(book);
   return Storage.exists(legacyCoverPath.c_str());
+}
+
+void removeInvalidCarouselCenterTarget(const RecentBook& book) {
+  if (book.coverBmpPath.empty()) {
+    return;
+  }
+  const std::string centerPath = getCarouselCenterThumbPath(book);
+  if (Storage.exists(centerPath.c_str()) && !isValidBmpFile(centerPath)) {
+    Storage.remove(centerPath.c_str());
+  }
 }
 
 uint32_t hashCarouselThumbState(uint32_t hash, const RecentBook& book) {
@@ -331,8 +441,13 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
   return std::min<uint8_t>(stats->lastProgressPercent, 100);
 }
 
-uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int centerIdx, const int screenWidth,
-                              const int screenHeight, const size_t bufferSize, const bool darkMode) {
+// The portion of the frame hash shared by every book index: params plus the
+// full per-book loop (includes the two per-book Storage.exists thumb-state
+// checks). This is the expensive O(N) work. FNV-1a is not commutative, so the
+// prefix must be folded first and centerIdx appended LAST (see
+// getCarouselFrameHash).
+uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const int screenWidth,
+                                    const int screenHeight, const size_t bufferSize, const bool darkMode) {
   uint32_t hash = FNV1A_OFFSET;
   hash = fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
@@ -341,7 +456,6 @@ uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int ce
   hash = fnv1aU32(hash, darkMode ? 1U : 0U);
   hash = fnv1aU32(hash, static_cast<uint32_t>(SETTINGS.homeBookSource));
   hash = fnv1aU32(hash, static_cast<uint32_t>(books.size()));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(centerIdx));
 
   for (const RecentBook& book : books) {
     hash = fnv1aString(hash, book.bookId);
@@ -350,9 +464,39 @@ uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int ce
     hash = fnv1aString(hash, book.author);
     hash = fnv1aString(hash, book.coverBmpPath);
     hash = hashCarouselThumbState(hash, book);
-    hash = fnv1aByte(hash, getCarouselBookProgressPercent(book));
   }
 
+  // NOTE: per-book progress is intentionally excluded from the shared prefix.
+  // Progress changes only affect the frame of the book being read; including
+  // it here would invalidate every cached frame after any reading session.
+  // Global stats (today / goal / streak / finished) are also excluded: they
+  // are cheap overlay panels and must not invalidate cover frames.
+  return hash;
+}
+
+uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int centerIdx, const int screenWidth,
+                              const int screenHeight, const size_t bufferSize, const bool darkMode,
+                              const uint32_t precomputedPrefixHash, const int precomputedPrefixBookCount) {
+  // IMPORTANT: the per-book loop MUST come BEFORE centerIdx. FNV-1a is not
+  // commutative, so this ordering lets the (expensive) per-book prefix be
+  // computed ONCE and reused for every index — O(N^2) -> O(N) SD accesses.
+  // Do NOT move centerIdx ahead of the book loop: it would re-bake the
+  // per-book work into every index and silently break cached-frame keys.
+  // This ordering intentionally invalidates previously cached .bin frames
+  // once; they are regenerated on the first render after the update.
+  //
+  // When precomputedPrefixHash is non-zero and precomputedPrefixBookCount
+  // matches the current book count, the expensive O(N) prefix is skipped and
+  // the cached value is folded with centerIdx directly — a single O(1) combine.
+  const uint32_t prefixHash =
+      (precomputedPrefixHash != 0 && precomputedPrefixBookCount == static_cast<int>(books.size()))
+          ? precomputedPrefixHash
+          : getCarouselFramePrefixHash(books, screenWidth, screenHeight, bufferSize, darkMode);
+  uint32_t hash = fnv1aU32(prefixHash, static_cast<uint32_t>(centerIdx));
+  // Add the current book's progress so the frame hash is sensitive only to
+  // that book's progress (not all books') and reading sessions do not
+  // globally invalidate the frame cache.
+  hash = fnv1aByte(hash, getCarouselBookProgressPercent(books[centerIdx]));
   return hash;
 }
 
@@ -363,9 +507,12 @@ std::string getCarouselFrameCachePathFromHash(const uint32_t hash) {
 }
 
 int getHomeShortcutPageSize() {
-  return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA
-             ? LYRA_HOME_SHORTCUT_PAGE_SIZE
-             : DEFAULT_HOME_SHORTCUT_PAGE_SIZE;
+  const auto theme = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
+  if (theme == CrossPointSettings::UI_THEME::LYRA_MARCOAND75) {
+    return MARCOAND75_HOME_SHORTCUT_PAGE_SIZE;
+  }
+  return theme == CrossPointSettings::UI_THEME::LYRA ? LYRA_HOME_SHORTCUT_PAGE_SIZE
+                                                     : DEFAULT_HOME_SHORTCUT_PAGE_SIZE;
 }
 
 bool shortcutMatchesMenuItem(const HomeShortcutEntry& entry, const HomeMenuItem item) {
@@ -392,7 +539,7 @@ bool shortcutMatchesMenuItem(const HomeShortcutEntry& entry, const HomeMenuItem 
 
 int HomeActivity::getMenuItemCount() const {
   auto entries = getHomeShortcutEntries(hasOpdsServers);
-  if (isLyraCarouselTheme()) {
+  if (isCarouselNavTheme()) {
     entries = buildCarouselEntries(entries);
   }
   return static_cast<int>(recentBooks.size()) + static_cast<int>(entries.size());
@@ -435,9 +582,15 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
       break;
     }
     if (!RecentBooksStore::isMissing(book)) {
-      recentBooks.push_back(book);
+      RecentBook normalized = book;
+      if (!normalized.coverBmpPath.empty()) {
+        normalized.coverBmpPath = normalizeCoverBmpPath(normalized.coverBmpPath);
+      }
+      recentBooks.push_back(normalized);
     }
   }
+  carouselCoverFailures.resize(recentBooks.size(), 0);
+  LOG_DBG("HOME", "loadRecentBooks: loaded %zu/%zu recent books", recentBooks.size(), books.size());
 }
 
 void HomeActivity::reloadHomeBooks(const int maxBooks) {
@@ -461,12 +614,14 @@ bool HomeActivity::needsRecentCoverLoad(const int coverHeight) const {
     }
 
     if (book.coverBmpPath.empty()) {
+      LOG_DBG("HOME", "needsRecentCoverLoad: book=%s missing empty coverBmpPath", book.path.c_str());
       return true;
     }
 
     const bool missingThumb =
-        isLyraCarouselTheme() ? !hasCarouselUsableThumb(book) : !isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+        isCarouselNavTheme() ? !hasCarouselUsableThumb(book) : !isValidHomeCoverPath(book.coverBmpPath, coverHeight);
     if (missingThumb) {
+      LOG_DBG("HOME", "needsRecentCoverLoad: book=%s missing thumb coverBmpPath=%s", book.path.c_str(), book.coverBmpPath.c_str());
       return true;
     }
   }
@@ -475,6 +630,15 @@ bool HomeActivity::needsRecentCoverLoad(const int coverHeight) const {
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
+  // Reclaim rebuildable heap before decoding covers. EPUB cover extraction needs
+  // a ~32 KB contiguous block for zlib's inflate window and the JPEG decoder; on
+  // the ESP32-C3 the SD-font caches otherwise fragment the heap below that, so
+  // inflate init fails and no thumbnail is produced. SD fonts repopulate on
+  // demand, so releasing them here is safe.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->releaseSdFontCaches();
+  }
+  LOG_DBG("HOME", "Cover load heap: %u free, %u max block", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   // The first home render can cache a placeholder while thumbnails are still missing.
   // Drop that cache before generating covers so the next render reads the fresh BMPs.
   coverRendered = false;
@@ -494,48 +658,243 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   };
 
   int progress = 0;
-  for (RecentBook& book : recentBooks) {
-    if (isLyraCarouselTheme() && progress != lastCarouselBookIndex) {
-      progress++;
-      continue;
+  int attempted = 0;
+
+  // Carousel themes: round-robin one book per call so a permanently failing
+  // cover (e.g. corrupt JPEG inside an EPUB) does not block the whole carousel.
+  if (isCarouselNavTheme() && !recentBooks.empty()) {
+    if (carouselCoverFailures.size() != recentBooks.size()) {
+      carouselCoverFailures.resize(recentBooks.size(), 0);
     }
+    if (lastCarouselBookIndex < 0 || lastCarouselBookIndex >= static_cast<int>(recentBooks.size())) {
+      lastCarouselBookIndex = 0;
+    }
+
+    int startIdx = lastCarouselBookIndex;
+    int processedIdx = -1;
+    for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+      int idx = (startIdx + i) % recentBooks.size();
+      const RecentBook& book = recentBooks[idx];
+      if (carouselCoverFailures[idx] >= 2) {
+        continue;
+      }
+      if (hasCarouselUsableThumb(book)) {
+        continue;
+      }
+      processedIdx = idx;
+      break;
+    }
+
+    if (processedIdx < 0) {
+      recentsLoaded = true;
+      recentsLoading = false;
+      if (needsRefresh) {
+        requestUpdate();
+      }
+      return;
+    }
+
+    lastCarouselBookIndex = processedIdx;
+    RecentBook& book = recentBooks[processedIdx];
+
     if (!canLoadHomeCover(book.path)) {
+      LOG_DBG("HOME", "loadRecentCovers: skip book=%s cannot load home cover", book.path.c_str());
+      carouselCoverFailures[processedIdx]++;
+      lastCarouselBookIndex = (processedIdx + 1) % recentBooks.size();
+      recentsLoaded = false;
+      recentsLoading = false;
+      if (needsRefresh) {
+        requestUpdate();
+      }
+      return;
+    }
+
+    carouselCoverLoadAttemptPath = book.path;
+    carouselFramesReady = false;
+    invalidateResidentCarouselFrame();
+    invalidateCarouselFrameHash();
+    updateProgress(10 + processedIdx * (90 / std::max(1, static_cast<int>(recentBooks.size()))));
+    removeInvalidCarouselCenterTarget(book);
+
+    LOG_DBG("HOME", "loadRecentCovers: generating cover for book=%s coverBmpPath=%s", book.path.c_str(), book.coverBmpPath.c_str());
+    bool success = false;
+    if (FsHelpers::hasEpubExtension(book.path)) {
+      Epub epub(book.path, "/.crosspoint");
+      if (epub.load(isCarouselNavTheme(), true)) {
+        if (!epub.getTitle().empty()) {
+          book.title = epub.getTitle();
+        }
+        if (!epub.getAuthor().empty()) {
+          book.author = epub.getAuthor();
+        }
+        book.coverBmpPath = epub.getThumbBmpPath();
+        // generateThumbBmpToPath early-returns (no allocations) when the file
+        // already exists, so it is safe at any heap level: existing thumbs are
+        // re-adopted even after the stats load collapsed maxA.
+        success =
+            epub.generateThumbBmp(getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
+            isValidBmpFile(getCarouselCenterThumbPath(book));
+        if (!success && ESP.getMaxAllocHeap() < 32 * 1024) {
+          // Fresh decode is impossible on this heap; degrade to a title text
+          // cover instead of leaving a permanent placeholder.
+          success = LibraryCoverHelper::writeTextFallbackCover(
+                        renderer, book.path, getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
+                    isValidBmpFile(getCarouselCenterThumbPath(book));
+          LOG_DBG("HOME", "loadRecentCovers: epub fallback book=%s success=%d MaxAlloc=%u", book.path.c_str(),
+                  success ? 1 : 0, static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        }
+        if (!success) {
+          removeInvalidCarouselCenterTarget(book);
+        }
+        LOG_DBG("HOME", "loadRecentCovers: epub book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
+        updateHomeBookMetadata(book);
+        coverRendered = false;
+        needsRefresh = true;
+      }
+    } else if (FsHelpers::hasXtcExtension(book.path)) {
+      Xtc xtc(book.path, "/.crosspoint");
+      if (xtc.load()) {
+        const std::string title = xtc.getTitle();
+        const std::string author = xtc.getAuthor();
+        if (!title.empty()) {
+          book.title = title;
+        }
+        if (!author.empty()) {
+          book.author = author;
+        }
+        book.coverBmpPath = xtc.getThumbBmpPath();
+        // Same early-return rule as EPUB: existing XTC thumbs are re-adopted
+        // with zero allocations even on a collapsed heap.
+        success =
+            xtc.generateThumbBmp(getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
+            isValidBmpFile(getCarouselCenterThumbPath(book));
+        if (!success && ESP.getMaxAllocHeap() < 96 * 1024) {
+          // XTC page decode needs a ~96 KB contiguous buffer the home heap
+          // cannot provide once UI state is resident; degrade to a title text
+          // cover at the canonical thumb path instead of a permanent skip.
+          success = LibraryCoverHelper::writeTextFallbackCover(
+                        renderer, book.path, getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
+                    isValidBmpFile(getCarouselCenterThumbPath(book));
+          LOG_DBG("HOME", "loadRecentCovers: xtc fallback book=%s success=%d MaxAlloc=%u", book.path.c_str(),
+                  success ? 1 : 0, static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        }
+        if (!success) {
+          removeInvalidCarouselCenterTarget(book);
+        }
+        LOG_DBG("HOME", "loadRecentCovers: xtc book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
+        updateHomeBookMetadata(book);
+        coverRendered = false;
+        needsRefresh = true;
+      }
+    } else if (FsHelpers::hasTxtExtension(book.path) || FsHelpers::hasMarkdownExtension(book.path)) {
+      Txt txt(book.path, "/.crosspoint");
+      if (txt.load()) {
+        const std::string title = txt.getTitle();
+        if (!title.empty()) {
+          book.title = title;
+        }
+        book.coverBmpPath = txt.getCoverBmpPath();
+        removeInvalidCarouselCenterTarget(book);
+        if (ESP.getMaxAllocHeap() < 32 * 1024) {
+          LOG_DBG("HOME", "loadRecentCovers: txt skip book=%s MaxAlloc=%u", book.path.c_str(),
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        } else {
+          success = txt.generateCoverBmp() && isValidBmpFile(getCarouselCenterThumbPath(book));
+        }
+        if (!success) {
+          removeInvalidCarouselCenterTarget(book);
+          book.coverBmpPath = "";
+        }
+        LOG_DBG("HOME", "loadRecentCovers: txt book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
+        updateHomeBookMetadata(book);
+        coverRendered = false;
+        needsRefresh = true;
+      }
+    }
+
+    if (!success) {
+      carouselCoverFailures[processedIdx]++;
+    }
+
+    lastCarouselBookIndex = (processedIdx + 1) % recentBooks.size();
+
+    bool allDone = true;
+    for (size_t i = 0; i < recentBooks.size(); ++i) {
+      if (carouselCoverFailures[i] < 2 && !hasCarouselUsableThumb(recentBooks[i])) {
+        allDone = false;
+        break;
+      }
+    }
+
+    recentsLoaded = allDone;
+    recentsLoading = false;
+    if (needsRefresh) {
+      if (isLyraCarouselTheme()) {
+        carouselFramesReady = false;
+        invalidateResidentCarouselFrame();
+        invalidateCarouselFrameHash();
+        preRenderCarouselFrames();
+      }
+      requestUpdate();
+    }
+    return;
+  }
+
+  for (RecentBook& book : recentBooks) {
+    if (!canLoadHomeCover(book.path)) {
+      LOG_DBG("HOME", "loadRecentCovers: skip book=%s cannot load home cover", book.path.c_str());
       progress++;
       continue;
     }
 
     const bool missingThumb =
         book.coverBmpPath.empty() ||
-        (isLyraCarouselTheme() ? !hasCarouselUsableThumb(book) : !isValidHomeCoverPath(book.coverBmpPath, coverHeight));
-    if (missingThumb) {
-      if (isLyraCarouselTheme()) {
-        carouselCoverLoadAttemptPath = book.path;
-        carouselFramesReady = false;
-        invalidateResidentCarouselFrame();
-        invalidateCarouselFrameHash();
-      }
-      updateProgress(10 + progress * (90 / std::max(1, static_cast<int>(recentBooks.size()))));
-      removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
+        (isCarouselNavTheme() ? !hasCarouselUsableThumb(book) : !isValidHomeCoverPath(book.coverBmpPath, coverHeight));
+    if (!missingThumb) {
+      LOG_DBG("HOME", "loadRecentCovers: skip book=%s cover already present=%s", book.path.c_str(), book.coverBmpPath.c_str());
+      progress++;
+      continue;
+    }
 
-      if (FsHelpers::hasEpubExtension(book.path)) {
+    if (isCarouselNavTheme()) {
+      carouselCoverLoadAttemptPath = book.path;
+      carouselFramesReady = false;
+      invalidateResidentCarouselFrame();
+      invalidateCarouselFrameHash();
+    }
+    updateProgress(10 + progress * (90 / std::max(1, static_cast<int>(recentBooks.size()))));
+    if (isCarouselNavTheme()) {
+      removeInvalidCarouselCenterTarget(book);
+    } else {
+      removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
+    }
+
+    LOG_DBG("HOME", "loadRecentCovers: generating cover for book=%s coverBmpPath=%s", book.path.c_str(), book.coverBmpPath.c_str());
+    attempted++;
+    bool success = false;
+    if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
-        if (epub.load(isLyraCarouselTheme(), true)) {
+        if (epub.load(isCarouselNavTheme(), true)) {
           if (!epub.getTitle().empty()) {
             book.title = epub.getTitle();
           }
           if (!epub.getAuthor().empty()) {
             book.author = epub.getAuthor();
           }
-          book.coverBmpPath = epub.getThumbBmpPath();
-          const bool success =
-              isLyraCarouselTheme()
-                  ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) &&
+          book.coverBmpPath = normalizeCoverBmpPath(epub.getThumbBmpPath());
+          // Early-return when the file exists: zero allocations, safe at any
+          // heap level (re-adopts existing thumbs after a stats load).
+          const bool genSuccess =
+              isCarouselNavTheme()
+                  ? epub.generateThumbBmp(getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
                         isValidBmpFile(getCarouselCenterThumbPath(book))
                   : epub.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
-          if (!success && !isLyraCarouselTheme()) {
+          success = genSuccess;
+          if (!success && !isCarouselNavTheme()) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";
           }
+          LOG_DBG("HOME", "loadRecentCovers: epub book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
           updateHomeBookMetadata(book);
           coverRendered = false;
           needsRefresh = true;
@@ -551,16 +910,18 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           if (!author.empty()) {
             book.author = author;
           }
-          book.coverBmpPath = xtc.getThumbBmpPath();
-          const bool success =
-              isLyraCarouselTheme()
-                  ? xtc.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) &&
+          book.coverBmpPath = normalizeCoverBmpPath(xtc.getThumbBmpPath());
+          const bool genSuccess =
+              isCarouselNavTheme()
+                  ? xtc.generateThumbBmp(getHomeCarouselCenterCoverW(), getHomeCarouselCenterCoverH()) &&
                         isValidBmpFile(getCarouselCenterThumbPath(book))
                   : xtc.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
-          if (!success && !isLyraCarouselTheme()) {
+          success = genSuccess;
+          if (!success && !isCarouselNavTheme()) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";
           }
+          LOG_DBG("HOME", "loadRecentCovers: xtc book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
           updateHomeBookMetadata(book);
           coverRendered = false;
           needsRefresh = true;
@@ -572,21 +933,22 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           if (!title.empty()) {
             book.title = title;
           }
-          book.coverBmpPath = txt.getCoverBmpPath();
+          book.coverBmpPath = normalizeCoverBmpPath(txt.getCoverBmpPath());
           removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
-          const bool success = txt.generateCoverBmp() && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+          success = txt.generateCoverBmp() && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
           if (!success) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";
           }
-          updateHomeBookMetadata(book);
-          coverRendered = false;
-          needsRefresh = true;
-        }
-      }
-    }
-    progress++;
+           LOG_DBG("HOME", "loadRecentCovers: txt book=%s success=%d coverBmpPath=%s", book.path.c_str(), success ? 1 : 0, book.coverBmpPath.c_str());
+           updateHomeBookMetadata(book);
+           coverRendered = false;
+           needsRefresh = true;
+         }
+       }
+       progress++;
   }
+  LOG_DBG("HOME", "loadRecentCovers: attempted=%d/%zu covers", attempted, recentBooks.size());
 
   recentsLoaded = true;
   recentsLoading = false;
@@ -602,10 +964,17 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 }
 
 void HomeActivity::scheduleCarouselCoverLoadIfNeeded() {
-  if (!isLyraCarouselTheme() || recentBooks.empty() || lastCarouselBookIndex < 0 ||
+  if (!isCarouselNavTheme() || recentBooks.empty() || lastCarouselBookIndex < 0 ||
       lastCarouselBookIndex >= static_cast<int>(recentBooks.size())) {
     return;
   }
+
+  // Skip permanently failing covers so the carousel does not retry them forever.
+  if (carouselCoverFailures.size() == recentBooks.size() &&
+      carouselCoverFailures[lastCarouselBookIndex] >= 2) {
+    return;
+  }
+
   const RecentBook& book = recentBooks[lastCarouselBookIndex];
   if (book.path != carouselCoverLoadAttemptPath && canLoadHomeCover(book.path) &&
       (book.coverBmpPath.empty() || !hasCarouselUsableThumb(book))) {
@@ -631,11 +1000,38 @@ void HomeActivity::onEnter() {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   reloadHomeBooks(metrics.homeRecentBooksCount);
+  LOG_DBG("HOME", "onEnter: recentBooks=%zu carousel=%d", recentBooks.size(), isCarouselNavTheme() ? 1 : 0);
+
+  if (isLyraCarouselTheme() && !recentBooks.empty()) {
+    // Remove cached frames no longer matching the current book set (stale
+    // hashes, progress changes), then precompute the O(1) hash lookups.
+    pruneCarouselFrameCache();
+
+    // Pre-compute the expensive carousel prefix hash once here so the first
+    // render pass does not pay the per-book SD cost inside the render path.
+    cachedCarouselFramePrefixHash =
+        getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                   renderer.getBufferSize(), renderer.isDarkMode());
+    cachedCarouselFramePrefixValid = true;
+    cachedCarouselFramePrefixBookCount = static_cast<int>(recentBooks.size());
+
+    // Pre-compute every per-book frame hash (prefix + centerIdx + progress) up
+    // front so render-time getCachedCarouselFrameHash() hits are pure O(1)
+    // lookups with no SD/stats work.
+    carouselPerBookHashes.clear();
+    carouselPerBookHashes.reserve(recentBooks.size());
+    for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+      carouselPerBookHashes.push_back(
+          getCarouselFrameHash(recentBooks, i, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                               renderer.getBufferSize(), renderer.isDarkMode(), cachedCarouselFramePrefixHash,
+                               cachedCarouselFramePrefixBookCount));
+    }
+  }
 
   // Land on the shortcut the user came back from (ActivityManager::goHome).
   if (initialMenuItem != HomeMenuItem::NONE) {
     selectorIndex = indexForMenuItem(initialMenuItem);
-    if (isLyraCarouselTheme() && !recentBooks.empty() && selectorIndex >= static_cast<int>(recentBooks.size())) {
+    if (isCarouselNavTheme() && !recentBooks.empty() && selectorIndex >= static_cast<int>(recentBooks.size())) {
       lastCarouselBookIndex = 0;
     }
   }
@@ -648,7 +1044,7 @@ int HomeActivity::indexForMenuItem(const HomeMenuItem item) const {
     return 0;
   }
   auto entries = getHomeShortcutEntries(hasOpdsServers);
-  if (isLyraCarouselTheme()) {
+  if (isCarouselNavTheme()) {
     entries = buildCarouselEntries(entries);
   }
   for (size_t i = 0; i < entries.size(); i++) {
@@ -667,25 +1063,38 @@ void HomeActivity::onExit() {
 
 bool HomeActivity::storeCoverBuffer() {
   if (coverRectW <= 0 || coverRectH <= 0) return false;
-  freeCoverBuffer();
 
   const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
   if (needed == 0) return false;
 
-  coverBuffer = static_cast<uint8_t*>(malloc(needed));
-  if (!coverBuffer) {
-    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
-    return false;
-  }
-  coverBufferSize = needed;
-
-  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize)) {
+  // Reuse an already-allocated buffer if it is large enough. This avoids
+  // freeing a ~40 KB block on every store/restore cycle, which would leave a
+  // hole in the heap that later activities (Library cover generation) need.
+  if (needed > coverBufferSize) {
+    // Only a fresh allocation can fail on a fragmented heap; skip silently so
+    // a failed attempt is not logged on every frame.
+    if (ESP.getMaxAllocHeap() < needed + 4 * 1024) {
+      return false;
+    }
     free(coverBuffer);
-    coverBuffer = nullptr;
-    coverBufferSize = 0;
+    coverBuffer = static_cast<uint8_t*>(malloc(needed));
+    if (!coverBuffer) {
+      coverBufferSize = 0;
+      LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", static_cast<unsigned>(needed));
+      return false;
+    }
+    coverBufferSize = needed;
+  }
+  // coverBufferSize >= needed: we can reuse.
+
+  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, needed)) {
+    // Keep the buffer allocated — a transient copy failure is not a reason
+    // to free it and re-fragment the heap.
+    coverBufferStored = false;
     return false;
   }
 
+  coverBufferStored = true;
   return true;
 }
 
@@ -712,9 +1121,11 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
   const int safeBookIndex = wrapBookIndex(bookIndex, bookCount);
   const size_t bufferSize = renderer.getBufferSize();
   const std::string cachePath = getCarouselFrameCachePathFromHash(getCachedCarouselFrameHash(safeBookIndex));
+  const unsigned long dbgRead0 = millis();
 
   HalFile file;
   if (!Storage.openFileForRead("HCR", cachePath, file)) {
+    LOG_DBG("HCR", "loadCarouselFrameFromStorage: MISS idx=%d (no file)", safeBookIndex);
     return false;
   }
 
@@ -748,6 +1159,8 @@ bool HomeActivity::loadCarouselFrameFromStorage(int bookIndex) {
 
   invalidateResidentCarouselFrame();
   carouselFramesReady = true;
+  LOG_DBG("HCR", "loadCarouselFrameFromStorage: HIT idx=%d (%zu bytes, read=%ums)", safeBookIndex, bufferSize,
+          static_cast<int>(millis() - dbgRead0));
   return true;
 }
 
@@ -790,6 +1203,7 @@ bool HomeActivity::renderCarouselFrame(int bookIndex) {
     return false;
   }
 
+  const unsigned long dbgT0 = millis();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   renderer.clearScreen();
@@ -801,15 +1215,21 @@ bool HomeActivity::renderCarouselFrame(int bookIndex) {
   bool localBufferRestored = false;
   const int bookCount = static_cast<int>(recentBooks.size());
   const int safeBookIndex = wrapBookIndex(bookIndex, bookCount);
-  // setPreRenderIndex sets lastCarouselSelectorIndex so drawRecentBookCover
+  // setPreRenderIndex sets the theme's lastSelectorIndex so drawRecentBookCover
   // picks the correct center book. We pass bookCount (not safeBookIndex) as
   // selectorIndex so inCarouselRow=false and the frame is stored with a thin
   // outline; drawCarouselBorder() overlays the thick selection border at
   // display time only when the carousel row is actually active.
-  LyraCarouselTheme::setPreRenderIndex(safeBookIndex);
+  if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_MARCOAND75) {
+    LyraMarcoand75Theme::setPreRenderIndex(safeBookIndex);
+  } else {
+    LyraCarouselTheme::setPreRenderIndex(safeBookIndex);
+  }
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, bookCount, localCoverRendered, localCoverBufferStored, localBufferRestored,
                           [] { return false; });
+  LOG_DBG("HCR", "renderCarouselFrame: idx=%d drawRecentBookCover=%ums", safeBookIndex,
+          static_cast<int>(millis() - dbgT0));
 
   if (!renderer.getFrameBuffer()) {
     invalidateResidentCarouselFrame();
@@ -818,6 +1238,7 @@ bool HomeActivity::renderCarouselFrame(int bookIndex) {
   invalidateResidentCarouselFrame();
   carouselFramesReady = true;
   saveCarouselFrameToStorage(safeBookIndex);
+  LOG_DBG("HCR", "renderCarouselFrame: idx=%d total=%ums", safeBookIndex, static_cast<int>(millis() - dbgT0));
   return true;
 }
 
@@ -832,6 +1253,7 @@ void HomeActivity::invalidateCarouselFrameHash() {
   cachedCarouselFrameHashIndex = -1;
   cachedCarouselFrameHash = 0;
   cachedCarouselFrameHashValid = false;
+  carouselPerBookHashes.clear();
 }
 
 void HomeActivity::requestFreshHomeRender(const bool immediate) {
@@ -848,13 +1270,85 @@ uint32_t HomeActivity::getCachedCarouselFrameHash(const int bookIndex) {
 
   const int safeBookIndex = wrapBookIndex(bookIndex, static_cast<int>(recentBooks.size()));
   if (!cachedCarouselFrameHashValid || cachedCarouselFrameHashIndex != safeBookIndex) {
-    cachedCarouselFrameHash =
-        getCarouselFrameHash(recentBooks, safeBookIndex, renderer.getScreenWidth(), renderer.getScreenHeight(),
-                             renderer.getBufferSize(), renderer.isDarkMode());
+    if (!carouselPerBookHashes.empty() && safeBookIndex >= 0 &&
+        safeBookIndex < static_cast<int>(carouselPerBookHashes.size()) && cachedCarouselFramePrefixValid &&
+        cachedCarouselFramePrefixBookCount == static_cast<int>(recentBooks.size())) {
+      // Pure O(1) lookup: the per-book hashes were precomputed in onEnter.
+      cachedCarouselFrameHash = carouselPerBookHashes[safeBookIndex];
+    } else {
+      cachedCarouselFrameHash =
+          getCarouselFrameHash(recentBooks, safeBookIndex, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                               renderer.getBufferSize(), renderer.isDarkMode(),
+                               cachedCarouselFramePrefixValid ? cachedCarouselFramePrefixHash : 0,
+                               cachedCarouselFramePrefixValid ? cachedCarouselFramePrefixBookCount : -1);
+    }
     cachedCarouselFrameHashIndex = safeBookIndex;
     cachedCarouselFrameHashValid = true;
   }
   return cachedCarouselFrameHash;
+}
+
+void HomeActivity::pruneCarouselFrameCache() {
+  if (!isLyraCarouselTheme() || recentBooks.empty()) {
+    return;
+  }
+  // Frame hashes fold in the per-book reading progress. With the stats store
+  // still unloaded (boot-order gate), every progress reads as 0 and the prune
+  // would delete frames cached with real progress, forcing a pointless
+  // re-render of every cover on this boot. Skip until the store is materialized.
+  if (!READING_STATS.isLoaded()) {
+    return;
+  }
+
+  const char* cacheDir = CAROUSEL_FRAME_CACHE_DIR;
+  Storage.mkdir(cacheDir);
+
+  // Collect the frame hashes still valid for the current book set. The frame
+  // hash folds in progress/last-read stats, so a frame cached with stale
+  // statistics produces a different hash and is dropped here — bounds cache
+  // growth and guarantees a fresh frame after reading.
+  //
+  // O(N): compute the expensive per-book prefix (thumb-state Storage.exists +
+  // per-book fields for every book) ONCE, then derive each frame key by
+  // hashing the center index. Re-running the whole per-book loop per index
+  // would be O(N^2) SD accesses on startup.
+  const uint32_t prefix =
+      getCarouselFramePrefixHash(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                 renderer.getBufferSize(), renderer.isDarkMode());
+  std::vector<uint32_t> validHashes;
+  validHashes.reserve(recentBooks.size());
+  for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+    uint32_t hash = fnv1aU32(prefix, static_cast<uint32_t>(i));
+    hash = fnv1aByte(hash, getCarouselBookProgressPercent(recentBooks[i]));
+    validHashes.push_back(hash);
+  }
+  std::sort(validHashes.begin(), validHashes.end());
+  invalidateCarouselFrameHash();
+
+  auto d = Storage.open(cacheDir);
+  if (!d || !d.isDirectory()) {
+    return;
+  }
+  d.rewindDirectory();
+  char nb[96];
+  for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+    if (f.isDirectory()) {
+      f.close();
+      continue;
+    }
+    f.getName(nb, sizeof(nb));
+    f.close();
+    const std::string name = nb;
+    if (name.size() < 9 || name.compare(name.size() - 4, 4, ".bin") != 0) {
+      continue;
+    }
+    const uint32_t h = static_cast<uint32_t>(std::strtoul(name.substr(0, 8).c_str(), nullptr, 16));
+    if (!std::binary_search(validHashes.begin(), validHashes.end(), h)) {
+      const std::string full = std::string(cacheDir) + "/" + name;
+      Storage.remove(full.c_str());
+    }
+  }
+  d.close();
 }
 
 void HomeActivity::preRenderCarouselFrames() {
@@ -873,8 +1367,27 @@ void HomeActivity::preRenderCarouselFrames() {
   carouselFramesReady = true;
 }
 
+namespace {
+
+// True while any button edge or hold is pending. Cover generation blocks the
+// main task for seconds per book (EPUB indexing), so it must never run in an
+// iteration where the user is interacting: presses during the block would be
+// dropped and the carousel would feel frozen.
+bool hasPendingInput(const MappedInputManager& input) {
+  using B = MappedInputManager::Button;
+  for (const B button : {B::Left, B::Right, B::Up, B::Down, B::Confirm, B::Back, B::Power}) {
+    if (input.isPressed(button) || input.wasPressed(button) || input.wasReleased(button)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 void HomeActivity::loop() {
-  if (firstRenderDone && !recentsLoaded && !recentsLoading) {
+  const bool coversPending = firstRenderDone && !recentsLoaded && !recentsLoading;
+  if (coversPending && !hasPendingInput(mappedInput)) {
     loadRecentCovers(UITheme::getInstance().getMetrics().homeCoverHeight);
     return;
   }
@@ -884,7 +1397,7 @@ void HomeActivity::loop() {
   const int homeCount = std::max(0, menuCount - recentCount);
   const int shortcutPageSize = getHomeShortcutPageSize();
 
-  if (isLyraCarouselTheme()) {
+  if (isCarouselNavTheme()) {
     // Carousel navigation: Left/Right move within the focused row;
     // Up/Down toggle between the carousel row and the shortcuts row.
     const bool inCarouselRow = recentCount > 0 && selectorIndex < recentCount;
@@ -979,12 +1492,244 @@ void HomeActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (selectorIndex < static_cast<int>(recentBooks.size()) &&
-        mappedInput.getHeldTime() >= RECENT_BOOK_LONG_PRESS_MS) {
-      promptRemoveSelectedBook();
+    if (selectorIndex < static_cast<int>(recentBooks.size())) {
+      if (mappedInput.getHeldTime() >= RECENT_BOOK_LONG_PRESS_MS) {
+        const RecentBook selectedBook = recentBooks[selectorIndex];
+        const int currentSelection = selectorIndex;
+        const bool deleteFromFavorites = homeUsesFavorites();
+        const bool isEpub = FsHelpers::hasEpubExtension(selectedBook.path);
+        const bool isFavorite =
+            deleteFromFavorites || FAVORITES.isFavorite(selectedBook.path);
+
+        SummaryJSON::BookBadge badge;
+        const bool hasBadge = READING_STATS.getBookHomeStats(selectedBook.bookId, selectedBook.path, badge);
+        const bool isCompleted = hasBadge && badge.completed;
+
+        startActivityForResult(
+            std::make_unique<BookContextMenuActivity>(renderer, mappedInput,
+                                                      getRecentBookConfirmationLabel(selectedBook),
+                                                      isFavorite, isCompleted, isEpub),
+            [this, selectedBook, currentSelection, deleteFromFavorites, isCompleted](const ActivityResult& result) {
+              if (isCarouselNavTheme()) {
+                invalidateResidentCarouselFrame();
+              }
+
+              if (result.isCancelled) {
+                if (isCarouselNavTheme()) {
+                  lastCarouselBookIndex = currentSelection;
+                }
+                requestUpdate(true);
+                return;
+              }
+
+              const auto* menuResult = std::get_if<MenuResult>(&result.data);
+              if (!menuResult) {
+                requestUpdate(true);
+                return;
+              }
+
+              const int action = menuResult->action;
+              switch (action) {
+                case static_cast<int>(BookContextMenuActivity::MenuAction::REMOVE_FROM_RECENTS): {
+                  const bool removed = deleteFromFavorites
+                                           ? FAVORITES.removeBook(selectedBook.path)
+                                           : RECENT_BOOKS.removeBook(selectedBook.path);
+                  if (removed) {
+                    const auto& metrics = UITheme::getInstance().getMetrics();
+                    reloadHomeBooks(metrics.homeRecentBooksCount);
+                    if (recentBooks.empty()) {
+                      selectorIndex = 0;
+                    } else if (currentSelection >= static_cast<int>(recentBooks.size())) {
+                      selectorIndex = static_cast<int>(recentBooks.size()) - 1;
+                    } else {
+                      selectorIndex = currentSelection;
+                    }
+                    if (isCarouselNavTheme()) {
+                      lastCarouselBookIndex = selectorIndex < static_cast<int>(recentBooks.size()) ? selectorIndex : 0;
+                      preRenderCarouselFrames();
+                    }
+                  }
+                  break;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::ADD_TO_FAVORITES): {
+                  FAVORITES.toggleBook(selectedBook.path);
+                  break;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::VIEW_STATS): {
+                  activityManager.replaceActivity(
+                      std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, selectedBook.path));
+                  return;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::MARK_READ_UNREAD): {
+                  READING_STATS.beginSession(selectedBook.path, selectedBook.title,
+                                             selectedBook.author, selectedBook.coverBmpPath,
+                                             isCompleted ? 0 : 100);
+                  READING_STATS.endSession();
+                  READING_STATS.saveToFile();
+                  break;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::OPEN_BOOK): {
+                  onSelectBook(selectedBook.path);
+                  return;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::DELETE_CACHE): {
+                  clearBookCache(selectedBook.path);
+                  break;
+                }
+                case static_cast<int>(BookContextMenuActivity::MenuAction::CLEAR_THEME_CACHE): {
+                  invalidateResidentCarouselFrame();
+                  invalidateCarouselFrameHash();
+                  const char* cacheDir = CAROUSEL_FRAME_CACHE_DIR;
+                  Storage.mkdir(cacheDir);
+                  auto d = Storage.open(cacheDir);
+                  if (d && d.isDirectory()) {
+                    d.rewindDirectory();
+                    char nb[96];
+                    for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+                      f.getName(nb, sizeof(nb));
+                      if (!f.isDirectory()) {
+                        std::string full = std::string(cacheDir) + "/" + nb;
+                        f.close();
+                        Storage.remove(full.c_str());
+                      } else {
+                        f.close();
+                      }
+                    }
+                    d.close();
+                  }
+
+                  // Also clear pre-decoded cover raw cache.
+                  Storage.mkdir(CoverRawCache::kDir);
+                  auto rd = Storage.open(CoverRawCache::kDir);
+                  if (rd && rd.isDirectory()) {
+                    rd.rewindDirectory();
+                    char rnb[96];
+                    for (auto f = rd.openNextFile(); f; f = rd.openNextFile()) {
+                      f.getName(rnb, sizeof(rnb));
+                      if (!f.isDirectory()) {
+                        std::string full = std::string(CoverRawCache::kDir) + "/" + rnb;
+                        f.close();
+                        Storage.remove(full.c_str());
+                      } else {
+                        f.close();
+                      }
+                    }
+                    rd.close();
+                  }
+                  break;
+                }
+                default:
+                  break;
+              }
+              requestUpdate(true);
+            });
+        return;
+      }
+
+      onSelectBook(recentBooks[selectorIndex].path);
       return;
     }
-    activateSelection();
+
+    auto homeEntries = getHomeShortcutEntries(hasOpdsServers);
+    if (isCarouselNavTheme()) {
+      homeEntries = buildCarouselEntries(homeEntries);
+    }
+    const int homeIndex = selectorIndex - static_cast<int>(recentBooks.size());
+    if (homeIndex < 0 || homeIndex >= static_cast<int>(homeEntries.size())) {
+      return;
+    }
+
+    const auto& selectedEntry = homeEntries[homeIndex];
+    if (selectedEntry.isAppsHub) {
+      onAppsOpen();
+    } else if (selectedEntry.definition) {
+      // Long-press on the Library shortcut opens the shared maintenance popup
+      // (Scan & Open / Rebuild / Clear corrupt covers). The old Steroids
+      // entry point; the short press still opens the Library directly below.
+      if (selectedEntry.definition->id == ShortcutId::Library &&
+          mappedInput.getHeldTime() >= RECENT_BOOK_LONG_PRESS_MS) {
+        startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 const auto& metrics = UITheme::getInstance().getMetrics();
+                                 reloadHomeBooks(metrics.homeRecentBooksCount);
+                                 requestFreshHomeRender(true);
+                               });
+        return;
+      }
+      switch (selectedEntry.definition->id) {
+        case ShortcutId::BrowseFiles:
+          onFileBrowserOpen();
+          break;
+        case ShortcutId::ReadingStats:
+          onReadingStatsOpen();
+          break;
+        case ShortcutId::SyncDay:
+          onSyncDayOpen();
+          break;
+        case ShortcutId::Settings:
+          activityManager.goToSettings();
+          break;
+        case ShortcutId::ReadingHeatmap:
+          startActivityForResult(std::make_unique<ReadingHeatmapActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::ReadingProfile:
+          startActivityForResult(std::make_unique<ReadingProfileActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Achievements:
+          startActivityForResult(std::make_unique<AchievementsActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::IfFound:
+          startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::RecentBooks:
+          activityManager.goToRecentBooks();
+          break;
+        case ShortcutId::Bookmarks:
+          startActivityForResult(std::make_unique<BookmarksAppActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Favorites:
+          startActivityForResult(std::make_unique<FavoritesAppActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) {
+                                   const auto& metrics = UITheme::getInstance().getMetrics();
+                                   reloadHomeBooks(metrics.homeRecentBooksCount);
+                                   requestFreshHomeRender(true);
+                                 });
+          break;
+        case ShortcutId::Flashcards:
+          startActivityForResult(std::make_unique<FlashcardsAppActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Dictionary:
+          startActivityForResult(std::make_unique<DictionaryActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::FileTransfer:
+          activityManager.goToFileTransfer();
+          break;
+        case ShortcutId::Sleep:
+          startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::OpdsBrowser:
+          onOpdsBrowserOpen();
+          break;
+        case ShortcutId::Plugins:
+          activityManager.goToPluginBrowser();
+          break;
+        case ShortcutId::Library:
+          activityManager.goToLibrary(/*launchFromApps=*/false);
+          break;
+        case ShortcutId::Screensaver:
+          startActivityForResult(std::make_unique<ScreenSaverActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+      }
+    }
   }
 }
 
@@ -1208,7 +1953,7 @@ void HomeActivity::activateSelection() {
   }
 
   auto homeEntries = getHomeShortcutEntries(hasOpdsServers);
-  if (isLyraCarouselTheme()) {
+  if (isCarouselNavTheme()) {
     homeEntries = buildCarouselEntries(homeEntries);
   }
   const int homeIndex = selectorIndex - static_cast<int>(recentBooks.size());
@@ -1288,6 +2033,22 @@ void HomeActivity::activateSelection() {
       case ShortcutId::Library:
         activityManager.goToLibrary(/*launchFromApps=*/false);
         break;
+      case ShortcutId::QuickCards:
+        startActivityForResult(std::make_unique<QuickCardsActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) { requestFreshHomeRender(true); });
+        break;
+      case ShortcutId::Clippings:
+        startActivityForResult(std::make_unique<ClippingsAppActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) { requestFreshHomeRender(true); });
+        break;
+      case ShortcutId::Wikipedia:
+        startActivityForResult(std::make_unique<WikipediaActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) { requestFreshHomeRender(true); });
+        break;
+      case ShortcutId::Screensaver:
+        startActivityForResult(std::make_unique<ScreenSaverActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) { requestFreshHomeRender(true); });
+        break;
     }
   }
 }
@@ -1298,8 +2059,9 @@ void HomeActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const int recentCount = static_cast<int>(recentBooks.size());
   const bool carouselTheme = isLyraCarouselTheme();
+  const bool carouselNav = isCarouselNavTheme();
   const bool wasFirstRenderDone = firstRenderDone;
-  const bool inCarouselRow = carouselTheme && selectorIndex < recentCount;
+  const bool inCarouselRow = carouselNav && selectorIndex < recentCount;
   if (inCarouselRow) {
     lastCarouselBookIndex = selectorIndex;
     scheduleCarouselCoverLoadIfNeeded();
@@ -1353,7 +2115,7 @@ void HomeActivity::render(RenderLock&&) {
   }
 
   auto homeEntries = getHomeShortcutEntries(hasOpdsServers);
-  if (carouselTheme) {
+  if (carouselNav) {
     homeEntries = buildCarouselEntries(homeEntries);
   }
   const int selectedHomeIndex = selectorIndex - static_cast<int>(recentBooks.size());
@@ -1365,7 +2127,7 @@ void HomeActivity::render(RenderLock&&) {
   const int shortcutDisplayCount = static_cast<int>(homeEntries.size());
   const int shortcutPageSize = getHomeShortcutPageSize();
 
-  if (carouselTheme || shortcutDisplayCount <= shortcutPageSize) {
+  if (carouselNav || shortcutDisplayCount <= shortcutPageSize) {
     GUI.drawButtonMenu(
         renderer, shortcutsRect, shortcutDisplayCount, selectedHomeIndex,
         [&homeEntries](const int index) { return getHomeShortcutTitle(homeEntries[index]); },
@@ -1402,7 +2164,7 @@ void HomeActivity::render(RenderLock&&) {
   }
 
   const char* backLabel = recentBooks.empty() ? "" : tr(STR_RESUME);
-  const auto labels = carouselTheme
+  const auto labels = carouselNav
                           ? mappedInput.mapLabels(backLabel, tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT))
                           : mappedInput.mapLabels(backLabel, tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

@@ -46,11 +46,17 @@
 #include "activities/apps/FavoritesAppActivity.h"
 #include "activities/apps/FlashcardsAppActivity.h"
 #include "activities/apps/IfFoundActivity.h"
+#include "activities/apps/LibraryContextMenuActivity.h"
 #include "activities/apps/ReadingHeatmapActivity.h"
 #include "activities/apps/ReadingProfileActivity.h"
 #include "activities/apps/ReadingStatsActivity.h"
 #include "activities/apps/ScreenCleanActivity.h"
+#include "activities/apps/ScreenSaverActivity.h"
+#include "activities/apps/ScreenSaverDirActivity.h"
 #include "activities/apps/SleepAppActivity.h"
+#include "activities/apps/util/LibraryCoverHelper.h"
+#include "activities/util/KeyboardEntryActivity.h"
+#include "util/SleepImageUtils.h"
 #include "activities/apps/SyncDayActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -117,10 +123,11 @@ std::vector<StrId> buildShortPwrBtnValues() {
   values[CrossPointSettings::FORCE_REFRESH] = StrId::STR_FORCE_REFRESH;
   values[CrossPointSettings::TOGGLE_STATUS_BAR] = StrId::STR_TOGGLE_STATUS_BAR;
   values[CrossPointSettings::FOOTNOTES] = StrId::STR_FOOTNOTES;
-  values[CrossPointSettings::PWR_CONFIRM] = StrId::STR_CONFIRM;
   values[CrossPointSettings::SLEEP_IMAGE_CYCLE] = StrId::STR_SLEEP_IMAGE_CYCLE;
+  values[CrossPointSettings::PWR_CONFIRM] = StrId::STR_CONFIRM;
   // "Power = Confirm" only makes sense on touch boards (upstream gates it
-  // the same way); trimming keeps the enum indices stable.
+  // the same way). It is the last enum value, so truncating the label list
+  // drops only that entry and keeps every other stored index stable.
   if (!BoardConfig::hasTouch()) {
     values.resize(CrossPointSettings::PWR_CONFIRM);
   }
@@ -198,6 +205,51 @@ std::vector<SettingInfo> buildDisplaySettings() {
     v.push_back(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake));
   }
 #endif
+  // ---- Steroids fork-only: Screensaver ----
+  v.push_back(SettingInfo::Toggle(StrId::STR_CYCLE_SCREENSAVER_ON_TAP, &CrossPointSettings::cycleScreensaverOnTap));
+  v.push_back(SettingInfo::Section(StrId::STR_SCREENSAVER));
+  v.push_back(SettingInfo::Action(StrId::STR_SCREENSAVER_DIRECTORY, SettingAction::ScreenSaverDir));
+  v.push_back(SettingInfo::Enum(StrId::STR_SCREENSAVER_INTERVAL, &CrossPointSettings::screenSaverInterval,
+                                {StrId::STR_SCREENSAVER_INTERVAL_1M, StrId::STR_SCREENSAVER_INTERVAL_5M,
+                                 StrId::STR_SCREENSAVER_INTERVAL_15M, StrId::STR_SCREENSAVER_INTERVAL_30M,
+                                 StrId::STR_SCREENSAVER_INTERVAL_1H, StrId::STR_SCREENSAVER_INTERVAL_2H,
+                                 StrId::STR_SCREENSAVER_INTERVAL_4H, StrId::STR_SCREENSAVER_INTERVAL_8H}));
+  v.push_back(SettingInfo::Enum(
+      StrId::STR_SCREENSAVER_WAKE_BUTTON, &CrossPointSettings::screenSaverWakeButton,
+      {StrId::STR_SCREENSAVER_WAKE_ANY, StrId::STR_SCREENSAVER_WAKE_BACK, StrId::STR_SCREENSAVER_WAKE_CONFIRM,
+       StrId::STR_SCREENSAVER_WAKE_LEFT, StrId::STR_SCREENSAVER_WAKE_RIGHT, StrId::STR_SCREENSAVER_WAKE_UP,
+       StrId::STR_SCREENSAVER_WAKE_DOWN, StrId::STR_SCREENSAVER_WAKE_POWER, StrId::STR_SCREENSAVER_WAKE_PAGE_BACK,
+       StrId::STR_SCREENSAVER_WAKE_PAGE_FORWARD}));
+  v.push_back(SettingInfo::Section(StrId::STR_SCREENSAVER_READER_SECTION));
+  v.push_back(SettingInfo::Action(StrId::STR_SCREENSAVER_READER_DIR, SettingAction::ScreenSaverReaderDir));
+  v.push_back(SettingInfo::Toggle(StrId::STR_SCREENSAVER_REPLACE_SLEEP, &CrossPointSettings::screenSaverReplaceSleep));
+  v.push_back(SettingInfo::Section(StrId::STR_SCREENSAVER_TEXT_SECTION));
+  v.push_back(
+      SettingInfo::String(StrId::STR_SCREENSAVER_TEXT, SETTINGS.screenSaverText, sizeof(SETTINGS.screenSaverText)));
+  v.push_back(SettingInfo::Enum(StrId::STR_SCREENSAVER_FONT_SIZE_OPT, &CrossPointSettings::screenSaverFontSize,
+                                {StrId::STR_X_SMALL, StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE,
+                                 StrId::STR_X_LARGE}));
+  v.push_back(SettingInfo::Enum(
+      StrId::STR_SCREENSAVER_TEXT_POSITION_OPT, &CrossPointSettings::screenSaverTextPosition,
+      {StrId::STR_SCREENSAVER_TEXT_POS_TOP_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_TOP_RIGHT,
+       StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_LEFT, StrId::STR_SCREENSAVER_TEXT_POS_BOTTOM_RIGHT,
+       StrId::STR_SCREENSAVER_TEXT_POS_CENTER, StrId::STR_SCREENSAVER_TEXT_POS_RANDOM}));
+  v.push_back(SettingInfo::Enum(
+      StrId::STR_SCREENSAVER_TEXT_STYLE_OPT, &CrossPointSettings::screenSaverTextStyle,
+      {StrId::STR_SCREENSAVER_TEXT_WHITE, StrId::STR_SCREENSAVER_TEXT_BLACK, StrId::STR_SCREENSAVER_TEXT_WHITE_OUTLINED,
+       StrId::STR_SCREENSAVER_TEXT_BLACK_OUTLINED}));
+  v.push_back(SettingInfo::Toggle(StrId::STR_SCREENSAVER_SHOW_PANEL, &CrossPointSettings::screenSaverShowPanel));
+  v.push_back(SettingInfo::Enum(StrId::STR_SCREENSAVER_PANEL_COLOR, &CrossPointSettings::screenSaverPanelColor,
+                                {StrId::STR_DARK, StrId::STR_LIGHT}));
+  v.push_back(SettingInfo::Enum(StrId::STR_SCREENSAVER_PANEL_OPACITY, &CrossPointSettings::screenSaverPanelOpacity,
+                                {StrId::STR_SCREENSAVER_OPACITY_25, StrId::STR_SCREENSAVER_OPACITY_50,
+                                 StrId::STR_SCREENSAVER_OPACITY_75, StrId::STR_SCREENSAVER_OPACITY_100}));
+  v.push_back(SettingInfo::Enum(StrId::STR_SCREENSAVER_MIN_BATTERY, &CrossPointSettings::screenSaverMinBattery,
+                                {StrId::STR_SCREENSAVER_BAT_10, StrId::STR_SCREENSAVER_BAT_20,
+                                 StrId::STR_SCREENSAVER_BAT_30, StrId::STR_SCREENSAVER_BAT_40,
+                                 StrId::STR_SCREENSAVER_BAT_50, StrId::STR_SCREENSAVER_BAT_60,
+                                 StrId::STR_SCREENSAVER_BAT_70, StrId::STR_SCREENSAVER_BAT_80,
+                                 StrId::STR_SCREENSAVER_BAT_90}));
   return v;
 }
 
@@ -373,6 +425,7 @@ std::vector<SettingInfo> buildAppSettings() {
   v.push_back(SettingInfo::Action(StrId::STR_FAVORITES, SettingAction::Favorites));
   v.push_back(SettingInfo::Action(StrId::STR_SCREEN_CLEAN, SettingAction::ScreenClean));
   v.push_back(SettingInfo::Action(StrId::STR_SLEEP, SettingAction::SleepApp));
+  v.push_back(SettingInfo::Action(StrId::STR_SCREENSAVER, SettingAction::Screensaver));
   v.push_back(SettingInfo::Action(StrId::STR_IF_FOUND_RETURN_ME, SettingAction::IfFound));
 
   v.push_back(SettingInfo::Section(StrId::STR_FLASHCARDS));
@@ -389,6 +442,31 @@ std::vector<SettingInfo> buildAppSettings() {
   v.push_back(SettingInfo::Action(StrId::STR_SHORTCUT_VISIBILITY, SettingAction::ShortcutVisibility));
   v.push_back(SettingInfo::Action(StrId::STR_ORDER_HOME_SHORTCUTS, SettingAction::OrderHomeShortcuts));
   v.push_back(SettingInfo::Action(StrId::STR_ORDER_APPS_SHORTCUTS, SettingAction::OrderAppsShortcuts));
+
+  v.push_back(SettingInfo::Section(StrId::STR_CAT_LIBRARY));
+  v.push_back(SettingInfo::Enum(StrId::STR_LIBRARY_LAYOUT, &CrossPointSettings::libraryLayout,
+                                {StrId::STR_LIBRARY_LAYOUT_2X2, StrId::STR_LIBRARY_LAYOUT_3X3,
+                                 StrId::STR_LIBRARY_LAYOUT_4X4}));
+  v.push_back(SettingInfo::Enum(
+      StrId::STR_LIBRARY_FILTER, &CrossPointSettings::libraryFilter,
+      {StrId::STR_LIBRARY_FILTER_ALL, StrId::STR_LIBRARY_FILTER_FAVOURITES, StrId::STR_LIBRARY_FILTER_LATEST_READ,
+       StrId::STR_LIBRARY_FILTER_UNREAD, StrId::STR_LIBRARY_FILTER_COMPLETED, StrId::STR_LIBRARY_FILTER_HIDDEN}));
+  v.push_back(SettingInfo::Enum(
+      StrId::STR_LIBRARY_SORT, &CrossPointSettings::librarySort,
+      {StrId::STR_LIBRARY_SORT_TITLE_ASC, StrId::STR_LIBRARY_SORT_TITLE_DESC, StrId::STR_LIBRARY_SORT_AUTHOR_ASC,
+       StrId::STR_LIBRARY_SORT_AUTHOR_DESC, StrId::STR_LIBRARY_SORT_RECENT, StrId::STR_LIBRARY_SORT_PROGRESS,
+       StrId::STR_LIBRARY_SORT_COLLECTIONS, StrId::STR_LIBRARY_SORT_MIXED}));
+  v.push_back(SettingInfo::Enum(StrId::STR_LIBRARY_VIEW_MODE, &CrossPointSettings::libraryViewMode,
+                                {StrId::STR_LIBRARY_VIEW_MODE_FLAT, StrId::STR_LIBRARY_VIEW_MODE_COLLECTIONS,
+                                 StrId::STR_LIBRARY_VIEW_MODE_MIXED}));
+  v.push_back(SettingInfo::Enum(StrId::STR_LIBRARY_UPDATE_MODE, &CrossPointSettings::libraryUpdateMode,
+                                {StrId::STR_LIBRARY_UPDATE_MANUAL, StrId::STR_LIBRARY_UPDATE_AUTO}));
+  v.push_back(SettingInfo::Toggle(StrId::STR_LIBRARY_FOLDER_COLLECTIONS, &CrossPointSettings::libraryFolderCollections));
+  v.push_back(SettingInfo::Toggle(StrId::STR_LIBRARY_METADATA_SERIES, &CrossPointSettings::libraryMetadataSeries));
+  // Steroids fork-only: on-demand cover maintenance (mirrors upstream Steroids).
+  v.push_back(SettingInfo::Action(StrId::STR_LIBRARY_POPUP_MENU, SettingAction::LibraryMaintenance));
+  v.push_back(SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers));
+  v.push_back(SettingInfo::Action(StrId::STR_BATCH_GENERATE_COVERS, SettingAction::BatchGenerateCovers));
   return v;
 }
 
@@ -489,6 +567,27 @@ std::string getActionValueText(const SettingInfo& setting) {
     case SettingAction::SleepApp: {
       const auto* definition = findShortcutDefinition(ShortcutId::Sleep);
       return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+    }
+    case SettingAction::Screensaver: {
+      const auto* definition = findShortcutDefinition(ShortcutId::Screensaver);
+      return definition ? ShortcutUiMetadata::getSubtitle(*definition) : "";
+    }
+    case SettingAction::ScreenSaverDir: {
+      const std::string orderLabel =
+          SETTINGS.screenSaverOrder == CrossPointSettings::SCREENSAVER_SHUFFLE ? tr(STR_SHUFFLE) : tr(STR_SEQUENTIAL);
+      if (SETTINGS.screenSaverDirectory[0] == '\0') {
+        return orderLabel;
+      }
+      return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverDirectory) + " - " + orderLabel;
+    }
+    case SettingAction::ScreenSaverReaderDir: {
+      const std::string orderLabel = SETTINGS.screenSaverReaderOrder == CrossPointSettings::SCREENSAVER_SHUFFLE
+                                         ? tr(STR_SHUFFLE)
+                                         : tr(STR_SEQUENTIAL);
+      if (SETTINGS.screenSaverReaderDir[0] == '\0') {
+        return orderLabel;
+      }
+      return SleepImageUtils::getDirectoryLabel(SETTINGS.screenSaverReaderDir) + " - " + orderLabel;
     }
     case SettingAction::ShortcutLocation:
       return getShortcutLocationSettingValueText();
@@ -808,8 +907,28 @@ void SettingsActivity::toggleCurrentSetting() {
   } else if (setting.type == SettingType::ACTION) {
     runAction(setting);
     return;  // Results will be handled in the result handler, so we can return early here
+  } else if (setting.type == SettingType::STRING && setting.stringMaxLen > 0) {
+    // Steroids fork-only: on-device text entry for char[] settings (e.g. the
+    // screensaver overlay message). The row carries an offset into SETTINGS.
+    char* target = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(&SETTINGS) + setting.stringOffset);
+    const std::string initial(target);
+    startActivityForResult(
+        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, I18N.get(setting.nameId), initial,
+                                                setting.stringMaxLen),
+        [this, target, maxLen = setting.stringMaxLen](const ActivityResult& result) {
+          if (!result.isCancelled) {
+            const auto* kb = std::get_if<KeyboardResult>(&result.data);
+            if (kb != nullptr) {
+              std::strncpy(target, kb->text.c_str(), maxLen - 1);
+              target[maxLen - 1] = '\0';
+              SETTINGS.saveToFile();
+            }
+          }
+          requestUpdate(true);
+        });
+    return;
   } else {
-    return;  // SECTION / STRING rows are not toggled on device
+    return;  // SECTION rows are not toggled on device
   }
 
   afterSettingChanged(setting, previousReadingStatsAutoBackup, sleepScreenChanged, quickResumeTimeoutChanged);
@@ -1050,6 +1169,51 @@ void SettingsActivity::runAction(const SettingInfo& setting) {
     case SettingAction::SleepApp:
       startActivityForResult(std::make_unique<SleepAppActivity>(renderer, mappedInput), resultHandler);
       break;
+    case SettingAction::Screensaver:
+      startActivityForResult(std::make_unique<ScreenSaverActivity>(renderer, mappedInput), resultHandler);
+      break;
+    case SettingAction::ScreenSaverDir:
+      startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, false), resultHandler);
+      break;
+    case SettingAction::ScreenSaverReaderDir:
+      startActivityForResult(std::make_unique<ScreenSaverDirActivity>(renderer, mappedInput, true), resultHandler);
+      break;
+    case SettingAction::BatchGenerateCovers:
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_BATCH_GENERATE_COVERS), ""),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              activityManager.goToBatchCoverGeneration();
+            }
+            requestUpdate(true);
+          });
+      break;
+    case SettingAction::ClearCorruptCovers:
+      startActivityForResult(
+          std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_CLEAR_CORRUPT_COVERS_CONFIRM), ""),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              const int removed = LibraryCoverHelper::deleteCorruptCovers();
+              RenderLock lock(*this);
+              renderer.clearScreen();
+              char msg[64];
+              if (removed > 0) {
+                std::snprintf(msg, sizeof(msg), "%d %s", removed, tr(STR_CORRUPT_COVERS_REMOVED));
+              } else {
+                std::snprintf(msg, sizeof(msg), "%s", tr(STR_NO_CORRUPT_COVERS));
+              }
+              GUI.drawPopup(renderer, msg);
+              renderer.displayBuffer();
+              delay(removed > 0 ? 1500 : 2000);
+            }
+            requestUpdate(true);
+          });
+      break;
+    case SettingAction::LibraryMaintenance:
+      // Opens the shared Library maintenance popup (Scan & Open / Rebuild /
+      // Clear corrupt covers) — same entry point as the Home long-press.
+      startActivityForResult(std::make_unique<LibraryContextMenuActivity>(renderer, mappedInput), resultHandler);
+      break;
     case SettingAction::IfFound:
       startActivityForResult(std::make_unique<IfFoundActivity>(renderer, mappedInput), resultHandler);
       break;
@@ -1132,6 +1296,9 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) const
       return valueBuffer;
     }
     return std::to_string(SETTINGS.*(setting.valuePtr));
+  }
+  if (setting.type == SettingType::STRING && setting.stringMaxLen > 0) {
+    return std::string(reinterpret_cast<const char*>(reinterpret_cast<uintptr_t>(&SETTINGS) + setting.stringOffset));
   }
   if (setting.type == SettingType::ACTION) {
     return getActionValueText(setting);

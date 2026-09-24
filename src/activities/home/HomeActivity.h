@@ -36,9 +36,17 @@ class HomeActivity final : public Activity {
   int cachedCarouselFrameHashIndex = -1;
   uint32_t cachedCarouselFrameHash = 0;
   bool cachedCarouselFrameHashValid = false;
+  // Precomputed frame-hash machinery (ported from Steroids master): the
+  // expensive per-book prefix is folded once per onEnter, and every per-book
+  // frame hash is precomputed so render-time lookups are O(1) with no SD work.
+  uint32_t cachedCarouselFramePrefixHash = 0;
+  bool cachedCarouselFramePrefixValid = false;
+  int cachedCarouselFramePrefixBookCount = 0;
+  std::vector<uint32_t> carouselPerBookHashes;
   std::string carouselCoverLoadAttemptPath;
   bool carouselFramesReady = false;
   std::vector<RecentBook> recentBooks;
+  std::vector<uint8_t> carouselCoverFailures;
   // Menu entry to pre-select on entry (set by ActivityManager::goHome when
   // returning from a sub-screen) and whether the first paint should be a
   // HALF refresh (wake from sleep / home gesture) instead of the default.
@@ -64,6 +72,7 @@ class HomeActivity final : public Activity {
   void requestFreshHomeRender(bool immediate = false);
   uint32_t getCachedCarouselFrameHash(int bookIndex);
   void scheduleCarouselCoverLoadIfNeeded();
+  void pruneCarouselFrameCache();  // remove cached frames no longer matching the current book set
   void loadRecentBooks(int maxBooks);
   void reloadHomeBooks(int maxBooks);
   // Selector index of the Home shortcut matching a HomeMenuItem (0 when absent).
@@ -88,5 +97,9 @@ class HomeActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool isHomeActivity() const override { return true; }
+  // Cover generation runs against the least fragmented heap this device ever
+  // has; keep boot store loads (reading stats, achievements) out of the way
+  // until every pending cover was generated or gave up.
+  bool deferredStoreLoadReady() const override { return recentsLoaded && !recentsLoading; }
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
 };

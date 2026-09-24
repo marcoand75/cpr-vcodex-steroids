@@ -46,6 +46,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "platform/UsbSerialJtagHandoff.h"
+#include "util/BootLoadGate.h"
 #include "util/BootRecovery.h"
 #include "util/ButtonNavigator.h"
 #include "util/CprVcodexLogs.h"
@@ -228,6 +229,9 @@ enum class BootResume : uint8_t {
 // device back up against the user's sleep gesture. Never cleared:
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
+static bool readingStatsDeferredLoaded = false;
+static bool achievementsDeferredLoaded = false;
+static bool skipAchievementsLoad = false;
 
 #if FREEINK_CAP_TOUCH
 static bool finishWifiSessionWithoutRestart() {
@@ -441,6 +445,30 @@ void ensureSdFontLoaded() {
   }
 }
 
+// Free font heap memory for use by other subsystems (e.g. screensaver PNG decoder,
+// EPUB cover extraction). Font caches and decompressor are rebuilt on next access.
+void freeFontMemory() {
+  const int beforeFree = static_cast<int>(ESP.getFreeHeap());
+  const int beforeMaxAlloc = static_cast<int>(ESP.getMaxAllocHeap());
+  fontCacheManager.clearCache();
+  fontDecompressor.deinit();
+  LOG_DBG("FNT", "freeFontMemory: free=%d->%d maxAlloc=%d->%d",
+          beforeFree, static_cast<int>(ESP.getFreeHeap()),
+          beforeMaxAlloc, static_cast<int>(ESP.getMaxAllocHeap()));
+}
+
+// Restore font memory that was freed with freeFontMemory().
+// Reinitialises the decompressor (lazy — pages decompress on demand).
+void restoreFontMemory() {
+  const int beforeFree = static_cast<int>(ESP.getFreeHeap());
+  const int beforeMaxAlloc = static_cast<int>(ESP.getMaxAllocHeap());
+  fontDecompressor.init();
+  fontCacheManager.setFontDecompressor(&fontDecompressor);
+  LOG_DBG("FNT", "restoreFontMemory: free=%d->%d maxAlloc=%d->%d",
+          beforeFree, static_cast<int>(ESP.getFreeHeap()),
+          beforeMaxAlloc, static_cast<int>(ESP.getMaxAllocHeap()));
+}
+
 void setupDisplayAndFonts(bool seamless = false, bool loadReaderResources = true) {
 #if !FREEINK_MCU_C3
   // C3 resolves its controller in HalGPIO::begin() before SPI claims the
@@ -460,6 +488,9 @@ void setupDisplayAndFonts(bool seamless = false, bool loadReaderResources = true
   renderer.setDarkMode(SETTINGS.darkMode);
   activityManager.begin();
   LOG_DBG("MAIN", "Display initialized");
+  LOG_DBG("HCR-FRAG", "fonts pre-begin: free=%d maxA=%d frag=%d", static_cast<int>(ESP.getFreeHeap()),
+          static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
 
   // Initialize font decompressor for compressed reader fonts
   if (!fontDecompressor.init()) {
@@ -492,6 +523,9 @@ void setupDisplayAndFonts(bool seamless = false, bool loadReaderResources = true
   }
 
   LOG_DBG("MAIN", "Fonts setup");
+  LOG_DBG("HCR-FRAG", "fonts SD begin done: free=%d maxA=%d frag=%d", static_cast<int>(ESP.getFreeHeap()),
+          static_cast<int>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
 }
 
 void setup() {
@@ -585,6 +619,14 @@ void setup() {
   BootRecovery::initialize();
 
   const auto logSkip = [](const char* message) { CPR_VCODEX_LOG_EVENT("BOOT", message); };
+  // Boot heap snapshot helper — prints free/MaxAlloc/fragmentation for every
+  // setup phase so a regression against Steroids' 129k free / 104k maxalloc
+  // shows up in the serial log instead of hiding behind the first render.
+  const auto logHeap = [](const char* tag) {
+    LOG_DBG("BOOT", "After %s: free=%u maxA=%u frag=%d", tag, ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+            static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+  };
+  logHeap("HalSystem+BootRecovery");
 
   // Touch boards default the reader menu to the toolbar overlay instead of the
   // full-screen list. Seeded before the load: the loader falls back to the
@@ -606,6 +648,7 @@ void setup() {
                                                      !Storage.exists("/.crosspoint/settings.json.tmp") &&
                                                      !Storage.exists("/.crosspoint/settings.bin"));
   }
+  logHeap("settings");
 
   if (BootRecovery::shouldSkipLanguage()) {
     logSkip("Skipping language load due to recovery mode");
@@ -623,6 +666,7 @@ void setup() {
       }
     }
   }
+  logHeap("language");
 
   if (BootRecovery::shouldSkipKOReader()) {
     logSkip("Skipping KOReader credential load due to recovery mode");
@@ -630,6 +674,7 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::KOReader);
     KOREADER_STORE.loadFromFile();
   }
+  logHeap("koreader");
 
   if (BootRecovery::shouldSkipOPDS()) {
     logSkip("Skipping OPDS store load due to recovery mode");
@@ -637,10 +682,12 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::OPDS);
     OPDS_STORE.loadFromFile();
   }
+  logHeap("opds");
 
   BootRecovery::enterStage(BootRecovery::BootStage::UiTheme);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
+  logHeap("ui-theme");
 
   // Brightness and warmth are always restored. A normal wake starts with the
   // light off unless Restore Light on Wake is enabled; silent maintenance
@@ -697,7 +744,7 @@ void setup() {
   const bool skipRecentBooksLoad = manualSafeBoot || BootRecovery::shouldSkipRecentBooks();
   const bool skipFavoritesLoad = manualSafeBoot || BootRecovery::shouldSkipFavorites();
   const bool skipFlashcardsLoad = manualSafeBoot || BootRecovery::shouldSkipFlashcards();
-  const bool skipAchievementsLoad = manualSafeBoot || BootRecovery::shouldSkipAchievements();
+  skipAchievementsLoad = manualSafeBoot || BootRecovery::shouldSkipAchievements();
   const bool forceHomeBoot = manualSafeBoot || BootRecovery::shouldForceHome();
   const bool otaBoot = isSilentReboot && snapshotTarget == SILENT_REBOOT_TARGET_OTA && !forceHomeBoot &&
                        !recoveryFirmwareMode && !rebootedFromPanic;
@@ -709,6 +756,7 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::State);
     APP_STATE.loadFromFile();
   }
+  logHeap("app-state");
   const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
   const bool isPersistedSleepWake = isSleepWake && !skipStateLoad && !APP_STATE.showBootScreen;
 
@@ -779,12 +827,8 @@ void setup() {
   if (skipReadingStatsLoad) {
     logSkip("Skipping reading stats load due to recovery mode");
     READING_STATS.markLoadSkippedForRecovery();
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
-    if (READING_STATS.loadFromFile()) {
-      READING_STATS.createDueAutoBackup();
-    }
   }
+  logHeap("reading-stats");
 
   if (skipRecentBooksLoad) {
     logSkip("Skipping recent books load due to recovery mode");
@@ -792,6 +836,7 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::RecentBooks);
     RECENT_BOOKS.loadFromFile();
   }
+  logHeap("recent-books");
 
   if (skipFavoritesLoad) {
     logSkip("Skipping favorites load due to recovery mode");
@@ -799,6 +844,7 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::Favorites);
     FAVORITES.loadFromFile();
   }
+  logHeap("favorites");
 
   if (skipFlashcardsLoad) {
     logSkip("Skipping flashcards load due to recovery mode");
@@ -806,12 +852,10 @@ void setup() {
     BootRecovery::enterStage(BootRecovery::BootStage::Flashcards);
     FLASHCARDS.loadFromFile();
   }
+  logHeap("flashcards");
 
   if (skipAchievementsLoad) {
     logSkip("Skipping achievements load due to recovery mode");
-  } else {
-    BootRecovery::enterStage(BootRecovery::BootStage::Achievements);
-    ACHIEVEMENTS.loadFromFile();
   }
 
   if (halClock.isAvailable() && SETTINGS.clockHasBeenSynced) {
@@ -879,6 +923,7 @@ void setup() {
   }
 
   BootRecovery::markBootCompleted();
+  logHeap("route-decision");
 
   if (resume == BootResume::Silent) {
     // Block until the first paint physically completes. refreshDisplay()
@@ -1081,6 +1126,51 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   TimeUtils::tickSystemClockFromRtc();
+
+  // Refresh the boot-load gate from the foreground activity: while Home is
+  // still generating covers (or any other activity does memory-heavy boot
+  // work) store lazy loads must stay off the heap-critical path. Render-task
+  // lazy reads (badges/progress) consult the same gate via
+  // ReadingStatsStore::ensureLoaded().
+  boot_load_gate::setReady(activityManager.deferredStoreLoadReady());
+
+  // Defer reading-stats load until the current activity finished its
+  // memory-heavy boot work (Home: cover generation) AND the largest free heap
+  // block can hold the stats JSON working set (this build is -fno-exceptions:
+  // a failed vector reallocation aborts instead of throwing). The loaders
+  // re-check the heap and return false when it is too tight, so keep the flag
+  // open and retry on later loop iterations.
+  if (!readingStatsDeferredLoaded && activityManager.deferredStoreLoadReady()) {
+    if (BootRecovery::shouldSkipReadingStats()) {
+      readingStatsDeferredLoaded = true;
+      LOG_DBG("BOOT", "Skipping deferred reading stats load due to recovery mode");
+      READING_STATS.markLoadSkippedForRecovery();
+    } else if (ESP.getMaxAllocHeap() >= 80 * 1024) {
+      readingStatsDeferredLoaded = true;
+      BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
+      if (READING_STATS.loadFromFile()) {
+        READING_STATS.createDueAutoBackup();
+      }
+      LOG_DBG("BOOT", "After deferred reading-stats: free=%u maxA=%u frag=%d",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+              static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+    }
+  }
+
+  if (!achievementsDeferredLoaded && readingStatsDeferredLoaded && activityManager.deferredStoreLoadReady()) {
+    if (skipAchievementsLoad) {
+      achievementsDeferredLoaded = true;
+      LOG_DBG("BOOT", "Skipping deferred achievements load due to recovery mode");
+    } else if (ESP.getMaxAllocHeap() >= 32 * 1024) {
+      achievementsDeferredLoaded = true;
+      BootRecovery::enterStage(BootRecovery::BootStage::Achievements);
+      ACHIEVEMENTS.loadFromFile();
+      LOG_DBG("BOOT", "After deferred achievements: free=%u maxA=%u frag=%d",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+              static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
+    }
+  }
+
   const unsigned long activityDuration = millis() - activityStartTime;
 
   const unsigned long loopDuration = millis() - loopStartTime;

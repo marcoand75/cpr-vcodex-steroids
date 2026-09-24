@@ -7,6 +7,7 @@
 #include "I18n.h"
 #include "LibraryActivity.h"
 #include "components/LibraryCache.h"
+#include "components/LibraryIndex.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -113,13 +114,43 @@ void LibraryContextMenuActivity::onConfirm() {
       break;
     }
     case MenuAction::RebuildLibrary: {
-      // Full rebuild: invalidate cache, show popup, then open library.
-      // On next Library launch it will cold-scan from scratch.
-      LibraryCache::invalidate();
+      // Full library index rebuild. The scan walks the whole SD card and can
+      // take tens of seconds on a large library, so:
+      //   1. show a progress popup (the user previously saw nothing);
+      //   2. run the scan here, in the context-menu activity, so the rebuild
+      //      is visible instead of being deferred to the next Library open;
+      //   3. feed the task watchdog every iteration (a long scan otherwise
+      //      triggers a hardware WDT reset — the "system resets after the
+      //      rebuild" symptom);
+      //   4. gate on free heap: a rebuild under a fragmented heap can abort()
+      //      in the streaming sort, so defer to the next Library open instead
+      //      of crashing mid-index.
+      if (ESP.getMaxAllocHeap() < 48 * 1024) {
+        RenderLock lock(*this);
+        renderer.clearScreen();
+        GUI.drawPopup(renderer, tr(STR_LOW_HEAP_REBUILD));
+        renderer.displayBuffer();
+        delay(2500);
+        finish();
+        break;
+      }
+      LibraryIndex::invalidate();
+
+      renderer.clearScreen();
+      Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
+      GUI.fillPopupProgress(renderer, popupRect, 0);
+      renderer.displayBuffer();
+
+      const bool ok = LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
+      if (ok) {
+        LibraryIndex::buildCollectionsIndex();
+        LibraryIndex::buildIndices();
+      }
+
       {
         RenderLock lock(*this);
         renderer.clearScreen();
-        GUI.drawPopup(renderer, tr(STR_REBUILD_LIBRARY_DONE));
+        GUI.drawPopup(renderer, ok ? tr(STR_REBUILD_LIBRARY_DONE) : tr(STR_REBUILD_FAILED));
         renderer.displayBuffer();
         delay(1500);
       }

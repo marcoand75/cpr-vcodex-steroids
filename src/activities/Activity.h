@@ -55,6 +55,14 @@ class Activity {
   virtual bool handleForcedRefresh() { return false; }
   virtual uint8_t getUiTransitionRefreshWeight() const { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
   virtual bool isHomeActivity() const { return false; }
+  // Steroids fork-only: true once the current activity finished its
+  // memory-heavy boot work (Home: cover generation). Heavy store loads
+  // (reading stats, achievements) must wait for it so they cannot collapse the
+  // largest free heap block before covers are generated.
+  virtual bool deferredStoreLoadReady() const { return true; }
+  // Steroids fork-only: marks the ScreenSaver activity so the power-button
+  // state machine can treat its button edges specially.
+  virtual bool isScreenSaverActivity() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

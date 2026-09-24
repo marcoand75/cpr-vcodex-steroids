@@ -38,6 +38,12 @@ const char* getLogDir() { return LOG_DIR; }
 void appendEvent(const char* category, const std::string& message) { appendEvent(category, message.c_str()); }
 
 void appendEvent(const char* category, const char* message) {
+  // These logging paths run from low-heap failure handlers; this build is
+  // -fno-exceptions, so a failed allocation inside the logging path itself
+  // would abort. Never allocate meaningfully on a tight heap.
+  if (ESP.getMaxAllocHeap() < 8 * 1024) {
+    return;
+  }
   ensureLogDir();
 
   HalFile file = Storage.open(EVENTS_FILE, O_WRITE | O_CREAT | O_APPEND);
@@ -59,6 +65,12 @@ void appendEvent(const char* category, const char* message) {
 }
 
 bool writeReport(const char* prefix, const std::string& body, std::string* outPath) {
+  // Same low-heap policy as appendEvent: error reports must degrade, never
+  // abort. The path string alone needs a few hundred bytes; body data is
+  // streamed from the caller's existing buffer.
+  if (ESP.getMaxAllocHeap() < 8 * 1024) {
+    return false;
+  }
   ensureLogDir();
   const std::string path = buildReportPath(prefix && prefix[0] != '\0' ? prefix : "report");
 
