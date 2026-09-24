@@ -1275,7 +1275,7 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
 }
 
 void ReadingStatsStore::noteActivity() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size()) {
+  if (!activeSession.active || activeSession.bookIndex >= books.size() || activeSession.paused) {
     return;
   }
 
@@ -1300,7 +1300,7 @@ void ReadingStatsStore::noteActivity() {
 }
 
 void ReadingStatsStore::tickActiveSession() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size()) {
+  if (!activeSession.active || activeSession.bookIndex >= books.size() || activeSession.paused) {
     return;
   }
 
@@ -1312,10 +1312,15 @@ void ReadingStatsStore::tickActiveSession() {
   noteActivity();
 }
 
+void ReadingStatsStore::pauseSession() {
+  activeSession.paused = true;
+}
+
 void ReadingStatsStore::resumeSession() {
   if (!activeSession.active) {
     return;
   }
+  activeSession.paused = false;
   activeSession.lastInteractionMs = millis();
 }
 
@@ -1929,11 +1934,23 @@ bool ReadingStatsStore::ensureLoaded() {
 }
 
 const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::string& bookId,
-                                                                    const std::string& path) const {
-  // Additive non-streaming shim: the Library only needs completion/badge data,
-  // and the resident store already answers that. Kept const so render paths can
-  // call it without mutating the store.
-  ensureLoadedForRead();
+                                                                     const std::string& path) const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    for (const auto& badge : summary.bookBadges) {
+      if ((!badge.bookId.empty() && badge.bookId == bookId) ||
+          (!badge.path.empty() && badge.path == path)) {
+        static thread_local ReadingBookStats synthesized;
+        synthesized = ReadingBookStats{};
+        synthesized.bookId = badge.bookId;
+        synthesized.path = badge.path;
+        synthesized.completed = badge.completed;
+        synthesized.lastProgressPercent = badge.progressPercent;
+        return &synthesized;
+      }
+    }
+    return nullptr;
+  }
   if (!bookId.empty()) {
     if (const auto* byId = findBook(bookId)) return byId;
   }

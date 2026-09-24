@@ -1699,8 +1699,11 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   self->overflow_[slot].codepoint = codepoint;
   self->overflow_[slot].styleIdx = styleIdx;
 
-  LOG_DBG("SDCF", "Overflow: loaded U+%04X style %u on demand (slot %u/%u)", codepoint, styleIdx, slot,
-          OVERFLOW_CAPACITY);
+  self->overflowLogCount_++;
+  if (self->overflowLogCount_ % 16 == 0) {
+    LOG_DBG("SDCF", "Overflow: loaded U+%04X style %u on demand (slot %u/%u, count=%u)", codepoint, styleIdx,
+            slot, OVERFLOW_CAPACITY, self->overflowLogCount_);
+  }
 
   return &self->overflow_[slot].glyph;
 }

@@ -112,6 +112,7 @@ class ReadingStatsStore {
 
   struct SessionState {
     bool active = false;
+    bool paused = false;
     size_t bookIndex = 0;
     unsigned long lastInteractionMs = 0;
     uint64_t accumulatedMs = 0;
@@ -191,6 +192,7 @@ class ReadingStatsStore {
                     uint8_t chapterProgressPercent = 0);
   void noteActivity();
   void tickActiveSession();
+  void pauseSession();
   void resumeSession();
   void updateProgress(uint8_t progressPercent, bool completed = false, const std::string& chapterTitle = "",
                       uint8_t chapterProgressPercent = 0);

@@ -22,4 +22,5 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool focusReadingEnabled = false;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
 };

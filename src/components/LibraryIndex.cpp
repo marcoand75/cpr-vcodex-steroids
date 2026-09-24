@@ -2097,6 +2097,11 @@ static bool buildBookLookup() {
   Record rec;
   for (int rp = 0; rp < totalRecs; ++rp) {
     if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
+      if (rec.path[0] == '\0') {
+        LOG_DBG("LIB", "buildBookLookup: skip empty-path record id=%u offset=%u", (unsigned)rec.id,
+                (unsigned)(rp * kRecordSize));
+        continue;
+      }
       g_bookLookup.push_back({rec.id, static_cast<uint32_t>(rp * kRecordSize)});
     }
   }

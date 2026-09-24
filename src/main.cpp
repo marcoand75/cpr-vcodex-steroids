@@ -40,6 +40,7 @@
 #include "UiFontSelection.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
@@ -53,6 +54,7 @@
 #include "util/ScreenshotUtil.h"
 #include "util/TimeUtils.h"
 #include "version.h"
+#include "activities/apps/ScreenSaverActivity.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -71,6 +73,11 @@ constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
 // A wake hold must never become an in-app power-button action.  Boot may continue
 // while the button is held; swallow the one release that ends that wake gesture.
 static bool wakePowerReleasePending = false;
+
+// Steroids fork-only: when screenSaverReplaceSleep is active we push a
+// ScreenSaverActivity on top of the reader; once it exits the main loop must
+// re-enter enterDeepSleep() to complete the real deep-sleep sequence.
+static bool screenSaverReplacesSleep = false;
 
 // Fonts
 #ifndef OMIT_BOOKERLY
@@ -346,6 +353,103 @@ void silentRestartToPlugin(const char* pluginName, bool fromApps, bool returnToP
   ESP.restart();
 }
 
+// ---------------------------------------------------------------------------
+// Sleep screensaver cycle on brief power-button tap during deep sleep
+// ---------------------------------------------------------------------------
+namespace {
+// How long a press must be released within to count as a tap (not a wake hold).
+// 200 ms keeps genuine deliberate taps snappy while the 200-400 ms dead zone
+// (200 ms – getPowerButtonDuration()) falls through to the normal wake path.
+constexpr unsigned long SCREENSAVER_TAP_MAX_MS = 200;
+
+// How long we keep the chip awake after drawing the sleep screen so that taps
+// arriving during the e-ink settle window are caught before deep sleep re-arms.
+constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
+}  // namespace
+
+// Returns true if the wake press was a brief tap (released within SCREENSAVER_TAP_MAX_MS).
+// Reads GPIO directly — InputManager debounce takes ~500 ms and would miss short taps.
+static bool detectScreensaverCycleTap() {
+  const unsigned long start = millis();
+  while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW && (millis() - start) < SCREENSAVER_TAP_MAX_MS) {
+    delay(5);
+  }
+  const bool released = digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+  LOG_INF("MAIN", "Cycle tap detect: %s (took %lu ms)", released ? "TAP" : "HELD", millis() - start);
+  return released;
+}
+
+// Poll for power-button taps during the e-ink settle window after the sleep screen is drawn.
+// Returns true if a tap was detected, false on timeout.
+static bool pollForCycleTapDuringSleepEntry() {
+  const auto start = millis();
+  while (millis() - start < POST_SLEEP_SCREEN_SETTLE_MS) {
+    if (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW) {
+      const auto pressStart = millis();
+      while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW &&
+             (millis() - pressStart) < SCREENSAVER_TAP_MAX_MS) {
+        delay(5);
+      }
+      return digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+    }
+    delay(10);
+  }
+  return false;
+}
+
+// ISR flag set on a falling edge while the sleep screen is rendering (chip awake, no main loop).
+static volatile bool sleepEntryTapPending = false;
+
+static void IRAM_ATTR onSleepEntryPowerEdge() { sleepEntryTapPending = true; }
+
+static void armSleepEntryTapIsr() {
+  sleepEntryTapPending = false;
+  attachInterrupt(InputManager::POWER_BUTTON_PIN, onSleepEntryPowerEdge, FALLING);
+}
+
+static void disarmSleepEntryTapIsr() {
+  detachInterrupt(InputManager::POWER_BUTTON_PIN);
+  sleepEntryTapPending = false;
+}
+
+// Returns true if the ISR captured a complete tap (press + release) during the render.
+static bool consumeCompletedSleepEntryTap() {
+  if (!sleepEntryTapPending) return false;
+  if (digitalRead(InputManager::POWER_BUTTON_PIN) != HIGH) return false;
+  sleepEntryTapPending = false;
+  return true;
+}
+
+// Minimal boot path for cycle-screensaver-on-tap.
+// Runs after a brief power-button tap from deep sleep; does NOT do a full UI boot.
+// Loads APP_STATE, inits display+renderer, cycles the sleep image, then re-sleeps.
+[[noreturn]] static void cycleScreensaverThenDeepSleep() {
+  APP_STATE.loadFromFile();
+
+  // Seamless init: the panel already holds the sleep image from before deep sleep.
+  // display.begin(true) skips the full-panel white-reset so the screen doesn't flash
+  // white before the new wallpaper is drawn — identical to the silent-reboot path.
+  display.begin(true);
+  renderer.begin();
+
+  armSleepEntryTapIsr();
+  while (true) {
+    SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+    if (consumeCompletedSleepEntryTap()) continue;
+    if (pollForCycleTapDuringSleepEntry()) continue;
+    break;
+  }
+  disarmSleepEntryTapIsr();
+
+  halTiltSensor.deepSleep();
+  display.deepSleep();
+  LOG_DBG("MAIN", "Screensaver cycled — re-entering deep sleep");
+  powerManager.startDeepSleep(gpio);
+
+  // startDeepSleep() does not return on hardware; spin so [[noreturn]] is satisfied.
+  while (true) { delay(1000); }
+}
+
 bool handleX4ProFrontlightDoubleClick() {
   if (!BoardConfig::isX4Pro() || !gpio.wasReleased(HalGPIO::BTN_POWER)) {
     return false;
@@ -396,6 +500,24 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
+  // If we're waiting for the in-reader screensaver to finish, only proceed once
+  // it has popped. While it is on top we must not fall through to real sleep.
+  if (screenSaverReplacesSleep) {
+    if (activityManager.isCurrentActivity("ScreenSaver")) {
+      return;
+    }
+    // ScreenSaverActivity has already popped; fall through to actual sleep.
+  }
+
+  // If the user enabled "replace sleep with screensaver" while reading, show
+  // the screensaver first; the main loop will re-enter this function once the
+  // screensaver pops so the real deep-sleep sequence can run.
+  if (SETTINGS.screenSaverReplaceSleep && activityManager.isReaderActivity()) {
+    screenSaverReplacesSleep = true;
+    activityManager.pushActivity(std::make_unique<ScreenSaverActivity>(renderer, mappedInputManager, true));
+    return;
+  }
+
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -410,7 +532,28 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
-  activityManager.goToSleep(fromTimeout);
+
+  if (SETTINGS.cycleScreensaverOnTap) {
+    // Arm an ISR before goToSleep() so taps that land during the (blocking)
+    // e-ink render of the sleep screen are not missed.
+    armSleepEntryTapIsr();
+    activityManager.goToSleep(fromTimeout);
+    // Catch any taps that arrived during the render or the settle window.
+    while (true) {
+      if (consumeCompletedSleepEntryTap()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      if (pollForCycleTapDuringSleepEntry()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      break;
+    }
+    disarmSleepEntryTapIsr();
+  } else {
+    activityManager.goToSleep(fromTimeout);
+  }
 
   // Persist only after the sleep screen has been rendered. Serializing state
   // while a reader is still alive fragments the heap immediately before the
@@ -697,12 +840,29 @@ void setup() {
 
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      // With Short Power Button Press = Sleep, a single click wakes on any
-      // device; otherwise the button must still be held (ghost-wake debounce).
-      if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
-        LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
-        Storage.prepareForDeepSleep();
-        powerManager.startDeepSleep(gpio);
+      // If cycle-screensaver-on-tap is enabled, check whether this is a brief tap
+      // before running the normal hold-to-wake verification.
+      if (SETTINGS.cycleScreensaverOnTap) {
+        if (detectScreensaverCycleTap()) {
+          // Brief tap — cycle the screensaver and go back to sleep immediately.
+          // This does not return.
+          cycleScreensaverThenDeepSleep();
+        }
+        // Button held past the tap window (>200 ms): this is a wake intent.
+        // detectScreensaverCycleTap() already waited up to SCREENSAVER_TAP_MAX_MS
+        // polling raw GPIO, so we know the button is currently LOW (still held).
+        // We still run verifyPowerButtonWakeup() so the user must hold for the
+        // configured duration — prevents accidental wakes from presses in the
+        // 200-400 ms dead zone that were not long enough to be intentional.
+        gpio.verifyPowerButtonWakeup();
+      } else {
+        // With Short Power Button Press = Sleep, a single click wakes on any
+        // device; otherwise the button must still be held (ghost-wake debounce).
+        if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
+          LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
+          Storage.prepareForDeepSleep();
+          powerManager.startDeepSleep(gpio);
+        }
       }
       wakePowerReleasePending = true;
       break;
@@ -1125,6 +1285,14 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
+
+  // Steroids fork-only: if the screensaver was pushed as a sleep replacement,
+  // complete the real deep-sleep sequence now that it has popped.
+  if (screenSaverReplacesSleep) {
+    enterDeepSleep(false);
+    return;
+  }
+
   TimeUtils::tickSystemClockFromRtc();
 
   // Refresh the boot-load gate from the foreground activity: while Home is

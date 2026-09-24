@@ -458,6 +458,10 @@ bool ActivityManager::isReaderActivity() const {
          (currentActivity && currentActivity->isReaderActivity());
 }
 
+bool ActivityManager::isCurrentActivity(const char* name) const {
+  return currentActivity && currentActivity->name == name;
+}
+
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
 
 bool ActivityManager::deferredStoreLoadReady() const {

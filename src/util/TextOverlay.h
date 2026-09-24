@@ -38,7 +38,7 @@ struct OverlayConfig {
 };
 
 // Translate CrossPointSettings screenSaverFontSize into a fontId/style pair.
-void resolveFontFromSize(uint8_t size, int& fontId, EpdFontFamily::Style& style);
+  void resolveFontFromSize(GfxRenderer& renderer, uint8_t size, int& fontId, EpdFontFamily::Style& style);
 
 // True if the supplied text should produce any visible overlay. Cheap check
 // (null/empty) used by callers to skip font loading entirely when the user

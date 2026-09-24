@@ -234,6 +234,8 @@ void ScreenSaverActivity::onEnter() {
   PngSleepRenderer::releaseDecoder();
   loadImages();
 
+  READING_STATS.pauseSession();
+
   int batPct = static_cast<int>(powerManager.getBatteryPercentage());
   int minPct = getMinBatteryPercent();
   if (minPct > 0 && batPct < minPct) {
@@ -403,19 +405,9 @@ void ScreenSaverActivity::render(RenderLock&&) {
           static_cast<int>(ESP.getMinFreeHeap()));
   LOG_DBG("SS", "RENDER path=%s", imagePath.c_str());
 
-  // Maximise contiguous heap for image decoding.
-  // Font caches and decompressor hold ~40-48 KB; freeing them before
-  // the image render makes room for the PNG decoder (~38 KB) and
-  // grayscale copy buffers.  They are reloaded on demand for the
-  // text overlay and will be rebuilt by the caller when needed.
-  releaseFontsForScreensaver(renderer);
-
-  LOG_DBG("SS", "RENDER after freeFont: free=%d maxAlloc=%d",
-          static_cast<int>(ESP.getFreeHeap()), static_cast<int>(ESP.getMaxAllocHeap()));
-
-  // Build the overlay config up front. If the user has cleared the text
-  // setting, skip font restoration entirely (the overlay draw will be a no-op)
-  // so we don't waste ~40-48 KB of heap on glyphs we will never use.
+  // Resolve overlay font BEFORE freeing font caches so we can see whether
+  // the chosen id is present in fontMap / sdCardFonts.  The actual glyph
+  // prewarm happens AFTER the release, once heap is contiguous again.
   const char* overlayText = SETTINGS.screenSaverText;
   const bool hasOverlay = text_overlay::shouldDraw(overlayText);
   text_overlay::OverlayConfig overlayCfg;
@@ -426,13 +418,9 @@ void ScreenSaverActivity::render(RenderLock&&) {
   overlayCfg.cachedRandomPosition = &overlayTextPosition_;
 
   if (hasOverlay) {
-    // Re-initialise the decompressor and pre-load the overlay glyphs into its
-    // page buffer NOW, while heap is still ~60 KB contiguous. Doing it after the
-    // image decode would force FontDecompressor::getBitmap() to allocate the hot
-    // group on a fragmented heap (maxAlloc ~10 KB) and abort with std::bad_alloc.
-    // restoreFontMemory() has no counterpart on this branch; prewarmCache()
-    // below loads the overlay glyphs into the shared font cache instead.
-    text_overlay::resolveFontFromSize(SETTINGS.screenSaverFontSize, overlayCfg.fontId, overlayCfg.fontStyle);
+    text_overlay::resolveFontFromSize(renderer, SETTINGS.screenSaverFontSize, overlayCfg.fontId, overlayCfg.fontStyle);
+    LOG_DBG("SS", "Overlay font resolved: id=%d style=%d (size=%u)", overlayCfg.fontId,
+            static_cast<int>(overlayCfg.fontStyle), SETTINGS.screenSaverFontSize);
     const uint8_t styleMask = (overlayCfg.fontStyle == EpdFontFamily::BOLD) ? 0x02 : 0x01;
     if (auto* fcm = renderer.getFontCacheManager()) {
       fcm->prewarmCache(overlayCfg.fontId, overlayText, styleMask);

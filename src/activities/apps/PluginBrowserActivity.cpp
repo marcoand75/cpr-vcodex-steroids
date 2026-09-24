@@ -14,7 +14,11 @@
 #include "SilentRestart.h"
 #include "components/PanelDrawHelper.h"
 #include "components/UITheme.h"
+#include "components/icons/apps_hub.h"
 #include "components/icons/pageview.h"
+#include "components/icons/ClipIcon32.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/wikipediaicon.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
 
@@ -35,6 +39,14 @@ static bool parseRestartHeader(const char* value) {
     return false;
   }
   return true;  // default: fast reboot (also for empty/malformed values)
+}
+
+static const uint8_t* pluginIconForName(const std::string& name) {
+  if (name == "AppsHub") return AppsHubIcon;
+  if (name == "File") return ClipIcon32;
+  if (name == "QuickCards") return QuickCardsIcon;
+  if (name == "Wikipedia") return WikipediaIcon;
+  return nullptr;
 }
 
 void PluginBrowserActivity::scanPlugins() {
@@ -441,10 +453,19 @@ void PluginBrowserActivity::render(RenderLock&&) {
 
       const bool tb = !sel;  // black text on white panel, white on selected black panel
 
+      // Plugin icon (from -- ICON: header), drawn left of the name
+      constexpr int pluginIconSize = 24;
+      const int pluginIconX = textX;
+      const int pluginIconY = py + padTop + (lh12 - pluginIconSize) / 2;
+      if (const uint8_t* icon = pluginIconForName(plugin.icon)) {
+        renderer.drawIcon(icon, pluginIconX, pluginIconY, pluginIconSize, pluginIconSize);
+      }
+
       // Name — bold, truncated to fit (leaves room for the reboot badge)
-      const int nameTW = maxTW - 52;
+      const int nameX = pluginIconX + pluginIconSize + 8;
+      const int nameTW = maxTW - 52 - (pluginIconForName(plugin.icon) ? pluginIconSize + 8 : 0);
       const std::string nameText = renderer.truncatedText(UI_12_FONT_ID, plugin.name.c_str(), nameTW);
-      renderer.drawText(UI_12_FONT_ID, textX, py + padTop, nameText.c_str(), tb, EpdFontFamily::BOLD);
+      renderer.drawText(UI_12_FONT_ID, nameX, py + padTop, nameText.c_str(), tb, EpdFontFamily::BOLD);
 
       // Reboot indicator badge: shared sizing/centering for both states.
       constexpr int badgeW = 30;

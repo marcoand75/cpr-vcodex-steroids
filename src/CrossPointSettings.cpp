@@ -383,9 +383,8 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
   spec.hyphenationEnabled = hyphenationEnabled != 0;
   spec.embeddedStyle = embeddedStyle != 0;
   spec.imageRendering = imageRendering;
-  // Only NORMAL bionic reading changes the layout (bold prefixes are wider);
-  // SUBTLE is a render-time effect and must not invalidate section caches.
   spec.focusReadingEnabled = bionicReading == BIONIC_READING_NORMAL;
+  spec.bionicReadingMode = bionicReading;
   return spec;
 }
 

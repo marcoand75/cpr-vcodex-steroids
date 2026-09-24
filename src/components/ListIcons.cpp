@@ -1,10 +1,24 @@
 #include "components/icons/listIcons.h"
 
+#include <FreeInkUICore.h>
 #include <FreeInkUIIcon.h>
 
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/customListIcons.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/heatmap.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/medal_alt.h"
+#include "components/icons/gps_found.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/flashcardquiz.h"
+#include "components/icons/dictionary2.h"
+#include "components/icons/file_transfer.h"
+#include "components/icons/sleep.h"
+#include "components/icons/library_book.h"
+#include "components/icons/library_new.h"
+#include "components/icons/pageview.h"
 
 // Firmware UIIcon -> FreeInkUI bitmap for list rows (SDK-format icons only;
 // the legacy drawIcon assets use a different bit layout). Two crisp sizes:
@@ -42,6 +56,32 @@ freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
         return freeink::ui::bitmapFromIcon(icon_settings_2_32);
       case UIIcon::Transfer:
         return freeink::ui::bitmapFromIcon(icon_arrow_right_left_32);
+      case UIIcon::ReadingStatsIcon:
+        return {ReadingStatsIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::Heatmap:
+        return {HeatmapReadingIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::FlashcardQuiz:
+        return {FlashcardQuizIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::ReadingProfile:
+        return {ReadingProfileIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::MedalAlt:
+        return {MedalAltIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::GpsFound:
+        return {GpsFoundIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::RecentBooks:
+        return {RecentBooksIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::Dictionary2:
+        return {Dictionary2Icon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::FileTransfer:
+        return {FileTransferIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::SleepMode:
+        return {SleepModeIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::LibraryBook:
+        return {LibraryBookIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::LibraryNew:
+        return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::Pageview:
+        return {PageviewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
       default:
         return {};
     }
@@ -71,6 +111,10 @@ freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
       return freeink::ui::bitmapFromIcon(icon_trophy_24);
     case UIIcon::Heart:
       return freeink::ui::bitmapFromIcon(icon_heart_24);
+    case UIIcon::LibraryBook:
+      return {LibraryBookIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+    case UIIcon::LibraryNew:
+      return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
     default:
       return {};
   }

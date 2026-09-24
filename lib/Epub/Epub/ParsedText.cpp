@@ -499,7 +499,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   }
 
   // Already-bold text should stay fully bold; focus splitting would make its suffix regular later.
-  if (!this->focusReadingEnabled || (baseStyle & EpdFontFamily::BOLD) != 0) {
+  if ((baseStyle & EpdFontFamily::BOLD) != 0 || (!this->focusReadingEnabled && this->bionicReadingMode == 0)) {
     pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, /*focusBoundary=*/0,
               visibleTextOffset);
     if (wordStartsRtl) {
@@ -544,9 +544,11 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         charCount++;
       }
 
-      // Target 45% for 1-bold at 4 chars and 3-bold at 7 chars with floor truncation
-      constexpr size_t FOCUS_READING_PERCENT = 45;
-      size_t targetBoldChars = (charCount * FOCUS_READING_PERCENT) / 100;
+      // Target 43% for normal bionic reading and 30% for subtle.
+      constexpr size_t FOCUS_READING_PERCENT = 43;
+      constexpr size_t SUBTLE_FOCUS_READING_PERCENT = 30;
+      const size_t percent = (bionicReadingMode == 2) ? SUBTLE_FOCUS_READING_PERCENT : FOCUS_READING_PERCENT;
+      size_t targetBoldChars = (charCount * percent) / 100;
       targetBoldChars = std::clamp<size_t>(targetBoldChars, 1, 9);
 
       if (targetBoldChars >= charCount) {

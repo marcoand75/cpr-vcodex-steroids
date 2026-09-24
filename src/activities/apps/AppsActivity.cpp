@@ -7,12 +7,14 @@
 
 #include "AchievementsActivity.h"
 #include "BookmarksAppActivity.h"
+#include "ClippingsAppActivity.h"
 #include "CrossPointSettings.h"
 #include "DictionaryActivity.h"
 #include "FavoritesAppActivity.h"
 #include "FlashcardsAppActivity.h"
 #include "IfFoundActivity.h"
 #include "OpdsServerStore.h"
+#include "QuickCardsActivity.h"
 #include "ReadingHeatmapActivity.h"
 #include "ReadingProfileActivity.h"
 #include "ReadingStatsActivity.h"
@@ -20,6 +22,7 @@
 #include "ScreenSaverActivity.h"
 #include "SleepAppActivity.h"
 #include "SyncDayActivity.h"
+#include "WikipediaActivity.h"
 #include "activities/settings/ClockSyncActivity.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
@@ -195,6 +198,15 @@ void AppsActivity::openApp(const int index) {
       break;
     case ShortcutId::Sleep:
       activity = std::make_unique<SleepAppActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Clippings:
+      activity = std::make_unique<ClippingsAppActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Wikipedia:
+      activity = std::make_unique<WikipediaActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::QuickCards:
+      activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
       break;
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();

@@ -40,6 +40,29 @@
 #include "util/SleepScreenCache.h"
 
 namespace {
+
+// Path for the reader-page framebuffer snapshot used by cycleScreensaverFromDeepSleep()
+// so a transparent sleep PNG can be composited over the last book page without fonts or
+// the EPUB parser being available during the minimal cycle boot.
+constexpr char LAST_READER_PAGE_CACHE_PATH[] = "/.crosspoint/last_reader_page.bin";
+
+bool restoreFramebufferFromCycleCache(GfxRenderer& renderer) {
+  HalFile f;
+  if (!Storage.openFileForRead("SLP", LAST_READER_PAGE_CACHE_PATH, f)) {
+    return false;
+  }
+  uint8_t* buf = renderer.getFrameBuffer();
+  const uint32_t size = renderer.getBufferSize();
+  const int bytesRead = f.read(buf, size);
+  f.close();
+  if (bytesRead != static_cast<int>(size)) {
+    LOG_ERR("SLP", "Cycle cache: short read %d/%u", bytesRead, size);
+    return false;
+  }
+  LOG_DBG("SLP", "Cycle cache: framebuffer restored");
+  return true;
+}
+
 bool canUseSleepCache(const Bitmap& bitmap) {
   return !(bitmap.hasGreyscale() &&
            SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER);
@@ -1193,6 +1216,13 @@ void SleepActivity::onEnter() {
     return;
   }
 
+  // Snapshot the clean reader page before the popup is drawn over it.
+  // cycleScreensaverFromDeepSleep() uses this so transparent sleep PNGs can
+  // composite over the last book page without needing fonts or the EPUB parser.
+  if (APP_STATE.lastSleepFromReader) {
+    snapshotFramebufferForCycle();
+  }
+
   if (APP_STATE.lastSleepFromReader) {
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
     if (!usesCustomSleepImages()) {
@@ -1739,4 +1769,90 @@ void SleepActivity::renderCustomStatsSleepScreen(bool footerOnly) const {
 void SleepActivity::renderBlankSleepScreen() const {
   renderer.clearScreen();
   displaySleepBuffer(renderer);
+}
+
+void SleepActivity::snapshotFramebufferForCycle() {
+  Storage.mkdir("/.crosspoint");
+  HalFile f;
+  if (!Storage.openFileForWrite("SLP", LAST_READER_PAGE_CACHE_PATH, f)) {
+    LOG_ERR("SLP", "Cycle cache: open for write failed");
+    return;
+  }
+  const uint8_t* buf = display.getFrameBuffer();
+  const uint32_t size = display.getBufferSize();
+  const int written = f.write(buf, size);
+  f.close();
+  if (written != static_cast<int>(size)) {
+    LOG_ERR("SLP", "Cycle cache: short write %d/%u", written, size);
+  } else {
+    LOG_DBG("SLP", "Cycle cache: snapshot saved (%u bytes)", size);
+  }
+}
+
+void SleepActivity::cycleScreensaverFromDeepSleep(GfxRenderer& renderer) {
+  CustomSleepImage selected;
+  if (!selectConfiguredCustomSleepImage(selected)) {
+    LOG_INF("SLP", "Cycle skipped: no sleep image available");
+    return;
+  }
+
+  LOG_INF("SLP", "Cycling sleep image to: %s", selected.path.c_str());
+
+  if (selected.isPng) {
+    // Try to use the cached last reader page as the background so transparent
+    // regions of the PNG show book text underneath. Falls back to white if the
+    // cache is missing or unreadable.
+    const int pageWidth = renderer.getScreenWidth();
+    const int pageHeight = renderer.getScreenHeight();
+    if (!restoreFramebufferFromCycleCache(renderer)) {
+      renderer.clearScreen();
+    }
+    if (!PngSleepRenderer::drawTransparentPng(selected.path, renderer, 0, 0, pageWidth, pageHeight)) {
+      LOG_ERR("SLP", "Cycle: PNG decode failed for %s", selected.path.c_str());
+      return;
+    }
+    if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+      renderer.invertScreen();
+    }
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    return;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForRead("SLP", selected.path, file)) {
+    LOG_ERR("SLP", "Cycle: failed to open %s", selected.path.c_str());
+    return;
+  }
+
+  Bitmap bitmap(file, true);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+    LOG_ERR("SLP", "Cycle: failed to parse %s", selected.path.c_str());
+    file.close();
+    return;
+  }
+
+  // Compute placement (same logic as renderBitmapSleepScreen)
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const BitmapPlacement placement = getFullScreenBitmapPlacement(bitmap, pageWidth, pageHeight);
+
+  renderer.clearScreen();
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+
+  if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+    renderer.invertScreen();
+  }
+
+  const bool hasGreyscale = bitmap.hasGreyscale() &&
+                            SETTINGS.sleepScreenCoverFilter ==
+                                CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+  if (hasGreyscale) {
+    renderSleepGrayscaleOverlay(renderer, [&]() {
+      bitmap.rewindToData();
+      renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    });
+  } else {
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  }
+  file.close();
 }

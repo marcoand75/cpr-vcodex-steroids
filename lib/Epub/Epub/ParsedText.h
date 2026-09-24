@@ -61,6 +61,7 @@ class ParsedText {
   bool forceParagraphIndents;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
+  uint8_t bionicReadingMode = 0;  // 0=off, 1=normal, 2=subtle
   bool isNaturalAlign;
   bool hasRtlWord;
   // Cleared after the first layout pass so a paragraph continued across builds
@@ -101,12 +102,14 @@ class ParsedText {
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
                       const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                      const uint8_t bionicReadingMode = 0,
                       const BlockStyle& blockStyle = BlockStyle())
       : blockStyle(blockStyle),
         extraParagraphSpacing(extraParagraphSpacing),
         forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled),
+        bionicReadingMode(bionicReadingMode),
         isNaturalAlign(false),
         hasRtlWord(false) {}
   ~ParsedText() = default;

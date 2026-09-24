@@ -283,7 +283,7 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
   if (cacheDir[0] && !Storage.exists(cacheDir)) Storage.mkdir(cacheDir);
 
   if (FsHelpers::hasEpubExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
+    if (ESP.getMaxAllocHeap() < 24 * 1024) {
       LOG_DBG("LIB", "CovGen: EPUB SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
       return false;
     }
@@ -311,7 +311,7 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
     // XTC thumb generation allocates a contiguous decode buffer; the free-heap
     // check alone is not enough on a fragmented device (MaxAlloc can be far
     // below free), and a failed allocation aborts instead of returning.
-    if (ESP.getFreeHeap() < 20000 || ESP.getMaxAllocHeap() < 32 * 1024) return false;
+    if (ESP.getFreeHeap() < 20000 || ESP.getMaxAllocHeap() < 24 * 1024) return false;
     Xtc xtc(path, "/.crosspoint");
     if (!xtc.load()) return false;
     const bool ok = xtc.generateThumbBmp(coverWidth, coverHeight);
@@ -321,7 +321,7 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
   }
 
   if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
+    if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
     const bool fb = writeTextFallbackCover(renderer, path, coverWidth, coverHeight);
     LOG_DBG("LIB", "CovGen: TXT text cover gen=%d path=%s", fb ? 1 : 0, path.c_str());
     return fb;

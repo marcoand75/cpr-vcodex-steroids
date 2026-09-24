@@ -5,19 +5,78 @@
 #include <string>
 
 #include <HalDisplay.h>
+#include <Logging.h>
 
 namespace text_overlay {
 
-void resolveFontFromSize(uint8_t size, int& fontId, EpdFontFamily::Style& style) {
+void resolveFontFromSize(GfxRenderer& renderer, uint8_t size, int& fontId, EpdFontFamily::Style& style) {
+  const auto& fontMap = renderer.getFontMap();
+  const auto& sdCardFonts = renderer.getSdCardFonts();
+
+  auto hasFont = [&](int id) -> bool {
+    if (fontMap.count(id) > 0) return true;
+    if (sdCardFonts.count(id) > 0) return true;
+    return false;
+  };
+
+  // Default sicuro: UI 10 è sempre registrato in main.cpp indipendentemente
+  // da OMIT_BOOKERLY / OMIT_FONTS.
   fontId = UI_10_FONT_ID;
   style = EpdFontFamily::REGULAR;
+
   switch (static_cast<CrossPointSettings::SCREENSAVER_FONT_SIZE>(size)) {
-    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: fontId = BOOKERLY_10_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_SMALL:    fontId = BOOKERLY_12_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM:   fontId = BOOKERLY_14_FONT_ID; style = EpdFontFamily::REGULAR; break;
-    case CrossPointSettings::SCREENSAVER_FONT_LARGE:    fontId = BOOKERLY_16_FONT_ID; style = EpdFontFamily::BOLD;   break;
-    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE:   fontId = BOOKERLY_18_FONT_ID; style = EpdFontFamily::BOLD;   break;
-    default: break;
+    case CrossPointSettings::SCREENSAVER_FONT_X_SMALL: {
+      // SMALL è NotoSans 8pt, sempre presente; UI10 come ripiego.
+      if (hasFont(SMALL_FONT_ID)) {
+        fontId = SMALL_FONT_ID;
+      }
+      break;
+    }
+    case CrossPointSettings::SCREENSAVER_FONT_SMALL: {
+      // Preferisci NotoSans 12, altrimenti UI12, infine UI10.
+      if (hasFont(NOTOSANS_12_FONT_ID)) {
+        fontId = NOTOSANS_12_FONT_ID;
+      } else if (hasFont(UI_12_FONT_ID)) {
+        fontId = UI_12_FONT_ID;
+      }
+      break;
+    }
+    case CrossPointSettings::SCREENSAVER_FONT_MEDIUM: {
+      // UI12 è la taglia media predefinita nel firmware; UI10 come ripiego.
+      if (hasFont(UI_12_FONT_ID)) {
+        fontId = UI_12_FONT_ID;
+      }
+      break;
+    }
+    case CrossPointSettings::SCREENSAVER_FONT_LARGE: {
+      // Nessun font UI "bold" è garantito nel build di default: usa UI12
+      // e marca BOLD come richiesto dalla codifica delle dimensioni SS.
+      if (hasFont(UI_12_FONT_ID)) {
+        fontId = UI_12_FONT_ID;
+        style = EpdFontFamily::BOLD;
+      }
+      break;
+    }
+    case CrossPointSettings::SCREENSAVER_FONT_X_LARGE: {
+      // Idem Large: UI12 è la taglia massima UI garantita; BOLD codificato.
+      if (hasFont(UI_12_FONT_ID)) {
+        fontId = UI_12_FONT_ID;
+        style = EpdFontFamily::BOLD;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  if (fontId == UI_10_FONT_ID) {
+    LOG_DBG("TXT",
+            "Screensaver font fallback -> UI_10_FONT_ID (requested size=%u, "
+            "style=%u)",
+            size, static_cast<uint8_t>(style));
+  } else {
+    LOG_DBG("TXT", "Screensaver font resolved id=%d style=%d (size=%u)", fontId,
+            static_cast<int>(style), size);
   }
 }
 
