@@ -264,7 +264,9 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
     return false;
   }
 
-  if (Storage.exists(thumbPath.c_str())) {
+  const bool thumbExists = Storage.exists(thumbPath.c_str());
+  LOG_DBG("LIB", "CovGen: thumb exists=%d %s", thumbExists ? 1 : 0, thumbPath.c_str());
+  if (thumbExists) {
     LOG_DBG("LIB", "CovGen: thumb already exists %s", thumbPath.c_str());
     return true;
   }

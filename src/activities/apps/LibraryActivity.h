@@ -150,13 +150,18 @@ class LibraryActivity final : public Activity {
   // render path.
   void refreshSelectedTitleAuthor(int selectorIndex, int total, int pageWidth);
 
- public:
-  // When true, the next LibraryActivity launch will force an SD scan even
-  // in manual update mode. Set by LibraryContextMenuActivity ("Update & Open").
-  static bool forceScanOnNextOpen_;
+  public:
+   // When true, the next LibraryActivity launch will force an SD scan even
+   // in manual update mode. Set by LibraryContextMenuActivity ("Update & Open").
+   static bool forceScanOnNextOpen_;
 
-  explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
-      : Activity("Library", renderer, mappedInput), launchFromApps(launchFromApps) {}
+   // When true, the next LibraryActivity launch will invalidate indices and
+   // rebuild collections + title/author/mixed indices from scratch. Set by
+   // LibraryContextMenuActivity when "Rebuild" is deferred due to low heap.
+   static bool forceRebuildOnNextOpen_;
+
+   explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
+       : Activity("Library", renderer, mappedInput), launchFromApps(launchFromApps) {}
   void onEnter() override;
   void loop() override;
   void onExit() override;

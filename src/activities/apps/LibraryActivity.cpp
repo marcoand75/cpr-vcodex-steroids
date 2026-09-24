@@ -56,6 +56,7 @@
 #include "util/StringUtils.h"
 
 bool LibraryActivity::forceScanOnNextOpen_ = false;
+bool LibraryActivity::forceRebuildOnNextOpen_ = false;
 #include "../util/ListRenderHelper.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/apps/util/LibraryDrawHelpers.h"
@@ -209,6 +210,7 @@ void LibraryActivity::onEnter() {
   LibraryPerf::logElapsed("onEnter_afterScanSd", totalTimer.start);
   IndexCacheManager::loadMixedIndex();
   IndexCacheManager::loadCollectionsIndex();
+  LOG_DBG("LIB", "onEnter: mixedTotal=%d collTotal=%d totalBooks=%d", LibraryIndex::totalMixed(), LibraryIndex::totalCollections(), totalBooks_);
 
   // Restore saved UI state: selector position and opened collection.
   if (SETTINGS.librarySelectorIndex >= 0 && SETTINGS.librarySelectorIndex < totalBooks_) {
@@ -268,6 +270,14 @@ void LibraryActivity::onEnter() {
 
   LOG_DBG("LIB", "onEnter: after scanSd heap=%u maxA=%u total=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           totalBooks_);
+  LOG_DBG("LIB", "onEnter: final selector=%d page=%d/%d view=%d filter=%d sort=%d collIdx=%d collName=%s", selectorIndex_, lastPage_, totalPages_, (int)viewMode_, (int)currentFilter_, (int)currentSort_, currentCollectionIdx_, currentCollectionName_.c_str());
+  LOG_DBG("LIB", "onEnter: pageCache first page paths:");
+  for (int i = 0; i < gridsPerPage_ && i < 12; ++i) {
+    if (pageCache_[i].id == 0) break;
+    const std::string thumb = LibraryIndex::thumbPathFor(pageCache_[i].path, coverWidth_, coverHeight_);
+    LOG_DBG("LIB", "onEnter: slot=%d id=%u path=%s thumb=%s", i, (unsigned)pageCache_[i].id, pageCache_[i].path, thumb.c_str());
+  }
+  LOG_DBG("LIB", "onEnter: heap=%u maxA=%u total=%d", ESP.getFreeHeap(), ESP.getMaxAllocHeap(), totalBooks_);
   requestUpdate();
 }
 
@@ -331,6 +341,7 @@ void LibraryActivity::scanSd() {
   viewModeBeforeSearch_ = viewMode_;
   collectionsMode_ = (viewMode_ == LibraryViewMode::Collections);
   mixedMode_ = (viewMode_ == LibraryViewMode::Mixed);
+  LOG_DBG("LIB", "scanSd: view=%d filter=%d sort=%d collMode=%d mixMode=%d collIdx=%d", (int)viewMode_, (int)currentFilter_, (int)currentSort_, collectionsMode_, mixedMode_, currentCollectionIdx_);
   if (collectionsMode_) {
     currentCollectionIdx_ = -1;
     currentCollectionIsUser_ = false;
@@ -366,12 +377,20 @@ void LibraryActivity::scanSd() {
     lastRenderedSelectorIndex_ = -1;
     lastFrameHitPage_ = -1;
     refreshTotalCountsFromCurrentMode();
+    LOG_DBG("LIB", "scanSd:cold totalBooks=%d grids=%d collMode=%d mixMode=%d", totalBooks_, gridsPerPage_, collectionsMode_, mixedMode_);
     LibraryPerf::logElapsed("scanSd_cold_afterCounts", totalTimer.start);
     {
       LibraryPerf::ScopedTimer refreshTimer("scanSd_cold_refreshPageCache");
       refreshPageCache();
     }
     LibraryPerf::logElapsed("scanSd_cold_end", totalTimer.start);
+    LOG_DBG("LIB", "scanSd:cold pageCache first page paths:");
+    for (int i = 0; i < gridsPerPage_ && i < 12; ++i) {
+      if (pageCache_[i].id == 0) break;
+      const std::string thumb = LibraryIndex::thumbPathFor(pageCache_[i].path, coverWidth_, coverHeight_);
+      LOG_DBG("LIB", "scanSd:cold slot=%d id=%u path=%s thumb=%s", i, (unsigned)pageCache_[i].id, pageCache_[i].path, thumb.c_str());
+    }
+    LOG_DBG("LIB", "scanSd:cold totalBooks=%d grids=%d collMode=%d mixMode=%d", totalBooks_, gridsPerPage_, collectionsMode_, mixedMode_);
     return;
   }
 
@@ -380,8 +399,35 @@ void LibraryActivity::scanSd() {
   //   - forceScanOnNextOpen_ (set by "Update & Open" popup)
   //   - libraryUpdateMode == AUTO
   const bool doScan = forceScanOnNextOpen_ || SETTINGS.libraryUpdateMode == CrossPointSettings::LIBRARY_UPDATE_AUTO;
-  const bool forceRebuild = forceScanOnNextOpen_;
+  const bool forceRebuild = forceScanOnNextOpen_ || forceRebuildOnNextOpen_;
   forceScanOnNextOpen_ = false;
+  forceRebuildOnNextOpen_ = false;
+
+  if (forceRebuild && !doScan) {
+    LOG_DBG("LIB", "scanSd: forceRebuild without scan, rebuilding indices heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    if (ESP.getMaxAllocHeap() < 32 * 1024) {
+      LOG_ERR("LIB", "scanSd: deferred rebuild skipped, heap still too low maxA=%u", ESP.getMaxAllocHeap());
+    } else {
+      renderer.clearScreen();
+      GUI.drawPopup(renderer, tr(STR_UPDATING_LIBRARY));
+      renderer.displayBuffer();
+      {
+        LibraryPerf::ScopedTimer buildTimer("scanSd_forced_rebuild");
+        LibraryIndex::buildCollectionsIndex();
+        LibraryIndex::buildIndices();
+        IndexCacheManager::invalidateMixed();
+        IndexCacheManager::invalidateCollections();
+      }
+      LibraryPerf::logElapsed("scanSd_forced_rebuild_afterBuild", totalTimer.start);
+      clearPageFrameCache();
+      bumpLibEpoch();
+      lastRenderedPage_ = -1;
+      lastRenderedSelectorIndex_ = -1;
+      lastFrameHitPage_ = -1;
+      refreshTotalCountsFromCurrentMode();
+      LOG_DBG("LIB", "scanSd: force rebuild done totalBooks=%d", totalBooks_);
+    }
+  }
 
   if (doScan) {
     int added = 0, removed = 0;
@@ -408,15 +454,22 @@ void LibraryActivity::scanSd() {
       lastRenderedSelectorIndex_ = -1;
       lastFrameHitPage_ = -1;
     }
+    LOG_DBG("LIB", "scanSd:fast added=%d removed=%d totalBooks=%d grids=%d collMode=%d mixMode=%d", added, removed, totalBooks_, gridsPerPage_, collectionsMode_, mixedMode_);
+    LibraryPerf::logElapsed("scanSd_fast_afterCounts", totalTimer.start);
   }
 
   refreshTotalCountsFromCurrentMode();
-  LibraryPerf::logElapsed("scanSd_fast_afterCounts", totalTimer.start);
   {
     LibraryPerf::ScopedTimer refreshTimer("scanSd_fast_refreshPageCache");
     refreshPageCache();
   }
   LibraryPerf::logElapsed("scanSd_fast_end", totalTimer.start);
+  LOG_DBG("LIB", "scanSd:fast pageCache first page paths:");
+  for (int i = 0; i < gridsPerPage_ && i < 12; ++i) {
+    if (pageCache_[i].id == 0) break;
+    const std::string thumb = LibraryIndex::thumbPathFor(pageCache_[i].path, coverWidth_, coverHeight_);
+    LOG_DBG("LIB", "scanSd:fast slot=%d id=%u path=%s thumb=%s", i, (unsigned)pageCache_[i].id, pageCache_[i].path, thumb.c_str());
+  }
   LOG_DBG("LIB", "scanSd: existing index, doScan=%d total=%d collMode=%d mixMode=%d", static_cast<int>(doScan),
           totalBooks_, collectionsMode_, mixedMode_);
 }
@@ -444,6 +497,7 @@ void LibraryActivity::refreshPageCache() {
   // If the page had fewer items than requested, update totalBooks_ and
   // retry on the last available page.
   if (slotCount == 0 && curPage > 0) {
+    LOG_DBG("LIB", "refreshPageCache: empty page, fallback to lastPage");
     LibraryPerf::ScopedTimer fallbackTimer("refreshPageCache_fallbackLastPage");
     refreshTotalCountsFromCurrentMode();
     int lastPage = std::max(0, totalPages_ - 1);
@@ -466,11 +520,17 @@ void LibraryActivity::refreshPageCache() {
   pageTitleCacheKey_ = -1;
   cachedTotalBooks_ = totalBooks_;
   forceRender_ = true;
+  LOG_DBG("LIB", "refreshPageCache: curPage=%d slotCount=%d totalBooks=%d selector=%d", curPage, slotCount, totalBooks_, selectorIndex_);
+  for (int i = 0; i < slotCount; ++i) {
+    const std::string thumb = LibraryIndex::thumbPathFor(pageCache_[i].path, coverWidth_, coverHeight_);
+    LOG_DBG("LIB", "refreshPageCache: slot=%d id=%u path=%s thumb=%s exists=%d", i, (unsigned)pageCache_[i].id, pageCache_[i].path, thumb.c_str(), !thumb.empty() && Storage.exists(thumb.c_str()) ? 1 : 0);
+  }
   // Start cover generation for missing covers on the new page.
   coverGen_.active = true;
   coverGen_.slot = 0;
   coverGen_.done = 0;
   coverGen_.total = 0;
+  LOG_DBG("LIB", "refreshPageCache: done slotCount=%d selectorIndex_=%d", slotCount, selectorIndex_);
 }
 
 void LibraryActivity::refreshTotalCountsFromCurrentMode() {
@@ -909,6 +969,7 @@ void LibraryActivity::loop() {
       unsigned long t_slot = LibraryPerf::nowMs();
       std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
       bool needsGenerate = !Storage.exists(thumbPath.c_str());
+      LOG_DBG("LIB", "CovGen: slot=%d/%d path=%s thumb=%s exists=%d needsGen=%d", slot, coverGen_.total, pageCache_[slot].path, thumbPath.c_str(), !needsGenerate ? 1 : 0, needsGenerate ? 1 : 0);
       if (!needsGenerate) {
         if (isBookCoverReady(pageCache_[slot].path)) {
           ++coverGen_.slot;
@@ -963,7 +1024,7 @@ void LibraryActivity::loop() {
 
     ++coverGen_.slot;
     if (coverGen_.slot >= gridsPerPage_ || (pageStart + coverGen_.slot) >= total) {
-      LOG_DBG("LIB", "CovGen: done %d/%d covers generated", coverGen_.done, coverGen_.total);
+      LOG_DBG("LIB", "CovGen: done %d/%d covers generated pageStart=%d slot=%d total=%d", coverGen_.done, coverGen_.total, pageStart, coverGen_.slot, total);
       coverGen_.active = false;
       coverGen_.slot = 0;
       coverGen_.done = 0;
@@ -1538,6 +1599,7 @@ void LibraryActivity::loop() {
       if (curPage != lastPage_) {
         lastPage_ = curPage;
         LibraryPerf::ScopedTimer navTimer("nav_up_pageTurn");
+        LOG_DBG("LIB", "Nav: UP page=%d->%d selector=%d total=%d", lastPage_, curPage, selectorIndex_, total);
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1565,6 +1627,7 @@ void LibraryActivity::loop() {
       if (curPage != lastPage_) {
         lastPage_ = curPage;
         LibraryPerf::ScopedTimer navTimer("nav_down_pageTurn");
+        LOG_DBG("LIB", "Nav: DOWN page=%d->%d selector=%d total=%d", lastPage_, curPage, selectorIndex_, total);
         forceRender_ = true;
         refreshPageCache();
       }
@@ -1583,6 +1646,7 @@ void LibraryActivity::loop() {
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = prevPage;
       LibraryPerf::ScopedTimer navTimer("nav_left_pageTurn");
+      LOG_DBG("LIB", "Nav: LEFT pageTurn prevPage=%d selector=%d total=%d", prevPage, selectorIndex_, total);
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1606,6 +1670,7 @@ void LibraryActivity::loop() {
       if (selectorIndex_ >= total) selectorIndex_ = 0;
       lastPage_ = nextPage;
       LibraryPerf::ScopedTimer navTimer("nav_right_pageTurn");
+      LOG_DBG("LIB", "Nav: RIGHT pageTurn nextPage=%d selector=%d total=%d", nextPage, selectorIndex_, total);
       forceRender_ = true;
       refreshPageCache();
       requestUpdate();
@@ -1624,6 +1689,7 @@ void LibraryActivity::loop() {
     if (curPage != lastPage_) {
       lastPage_ = curPage;
       LibraryPerf::ScopedTimer navTimer("nav_move_pageTurn");
+      LOG_DBG("LIB", "Nav: MOVE pageTurn page=%d selector=%d total=%d", curPage, selectorIndex_, total);
       forceRender_ = true;
       refreshPageCache();
     }
@@ -2243,6 +2309,7 @@ void LibraryActivity::render(RenderLock&&) {
 
   renderer.displayBuffer();
   LibraryPerf::logElapsed("render_displayBuffer", renderTimer.start);
+  LOG_DBG("LIB", "Render: end selector=%d page=%d total=%d", selectorIndex_, curPageRaw, total);
 }
 
 void LibraryActivity::reloadPageCovers() {
@@ -2264,6 +2331,7 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   const bool isUserCollection = isCollectionTile && pageCache_[i].isCollection;
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth_, coverHeight_);
   const bool hasThumb = !thumbPath.empty() && Storage.exists(thumbPath.c_str());
+  LOG_DBG("LIB", "drawTile: idx=%d path=%s thumb=%s hasThumb=%d collection=%d userColl=%d", i, path.c_str(), thumbPath.c_str(), hasThumb ? 1 : 0, isCollectionTile ? 1 : 0, isUserCollection ? 1 : 0);
 
   if (hasThumb) {
     FsFile file;
@@ -2291,6 +2359,13 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
   }
 
   if (!drawn) {
+    if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
+      LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed path=%s thumb=%s", i, path.c_str(), thumbPath.c_str());
+    } else if (thumbPath.empty()) {
+      LOG_DBG("LIB", "drawTile: idx=%d empty thumbPath path=%s", i, path.c_str());
+    } else {
+      LOG_DBG("LIB", "drawTile: idx=%d thumb missing path=%s thumb=%s", i, path.c_str(), thumbPath.c_str());
+    }
     if (isUserCollection) {
       // User collection placeholder: distinct visual style with folder icon
       const int stackOffset = 4;

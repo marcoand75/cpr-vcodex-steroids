@@ -8,6 +8,7 @@
 #include "LibraryActivity.h"
 #include "components/LibraryCache.h"
 #include "components/LibraryIndex.h"
+#include "components/LibraryIndexCache.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -60,11 +61,17 @@ void LibraryContextMenuActivity::onEnter() {
 }
 
 void LibraryContextMenuActivity::loop() {
-  if (confirmed_) return;
+  if (confirmed_) {
+    LOG_DBG("LIB", "CtxMenu: loop confirmed_=true skip");
+    return;
+  }
 
+  LOG_DBG("LIB", "CtxMenu: loop selectedIndex=%d size=%d", selectedIndex_, (int)items_.size());
   listInputMapper_.loop(mappedInput);
+  LOG_DBG("LIB", "CtxMenu: loop after inputMapper selectedIndex=%d", selectedIndex_);
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Power)) {
+    LOG_DBG("LIB", "CtxMenu: power pressed finish");
     finish();
   }
 
@@ -105,52 +112,54 @@ void LibraryContextMenuActivity::render(RenderLock&&) {
 
 void LibraryContextMenuActivity::onConfirm() {
   confirmed_ = true;
+  LOG_DBG("LIB", "CtxMenu: onConfirm selectedIndex=%d action=%d", selectedIndex_, (int)items_[selectedIndex_].action);
 
   switch (items_[selectedIndex_].action) {
     case MenuAction::ScanAndOpen: {
-      // Force scan even in manual mode, then open library.
+      LOG_DBG("LIB", "CtxMenu: ScanAndOpen");
       LibraryActivity::forceScanOnNextOpen_ = true;
       activityManager.goToLibrary();
       break;
     }
     case MenuAction::RebuildLibrary: {
-      // Full library index rebuild. The scan walks the whole SD card and can
-      // take tens of seconds on a large library, so:
-      //   1. show a progress popup (the user previously saw nothing);
-      //   2. run the scan here, in the context-menu activity, so the rebuild
-      //      is visible instead of being deferred to the next Library open;
-      //   3. feed the task watchdog every iteration (a long scan otherwise
-      //      triggers a hardware WDT reset — the "system resets after the
-      //      rebuild" symptom);
-      //   4. gate on free heap: a rebuild under a fragmented heap can abort()
-      //      in the streaming sort, so defer to the next Library open instead
-      //      of crashing mid-index.
-      if (ESP.getMaxAllocHeap() < 48 * 1024) {
+      LOG_DBG("LIB", "CtxMenu: RebuildLibrary start heap=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      if (ESP.getMaxAllocHeap() < 32 * 1024) {
+        LOG_DBG("LIB", "CtxMenu: RebuildLibrary deferred low-heap maxA=%u", ESP.getMaxAllocHeap());
+        LibraryActivity::forceRebuildOnNextOpen_ = true;
         RenderLock lock(*this);
         renderer.clearScreen();
         GUI.drawPopup(renderer, tr(STR_LOW_HEAP_REBUILD));
         renderer.displayBuffer();
         delay(2500);
-        finish();
+        activityManager.goToLibrary();
         break;
       }
       LibraryIndex::invalidate();
+      LOG_DBG("LIB", "CtxMenu: invalidate done");
 
       renderer.clearScreen();
       Rect popupRect = GUI.drawPopup(renderer, tr(STR_INDEXING));
       GUI.fillPopupProgress(renderer, popupRect, 0);
       renderer.displayBuffer();
 
-      const bool ok = LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
-      if (ok) {
+      const bool scanOk = LibraryIndex::scan(renderer, popupRect, SETTINGS.libraryRootDir);
+      LOG_DBG("LIB", "CtxMenu: scan result=%d", scanOk ? 1 : 0);
+      if (scanOk) {
+        LOG_DBG("LIB", "CtxMenu: buildCollectionsIndex start");
         LibraryIndex::buildCollectionsIndex();
+        LOG_DBG("LIB", "CtxMenu: buildCollectionsIndex done");
+        LOG_DBG("LIB", "CtxMenu: buildIndices start");
         LibraryIndex::buildIndices();
+        LOG_DBG("LIB", "CtxMenu: buildIndices done");
+        IndexCacheManager::invalidateMixed();
+        IndexCacheManager::invalidateCollections();
       }
+      LOG_DBG("LIB", "CtxMenu: rebuild done ok=%d", scanOk ? 1 : 0);
 
       {
         RenderLock lock(*this);
         renderer.clearScreen();
-        GUI.drawPopup(renderer, ok ? tr(STR_REBUILD_LIBRARY_DONE) : tr(STR_REBUILD_FAILED));
+        GUI.drawPopup(renderer, scanOk ? tr(STR_REBUILD_LIBRARY_DONE) : tr(STR_REBUILD_FAILED));
         renderer.displayBuffer();
         delay(1500);
       }

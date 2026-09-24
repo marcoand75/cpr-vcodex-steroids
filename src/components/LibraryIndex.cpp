@@ -651,10 +651,17 @@ bool readIndexRec(HalFile& f, IndexRec& rec) {
 
 bool exists() {
   HalFile f = Storage.open(kDatFile);
-  if (!f) return false;
+  if (!f) {
+    LOG_DBG("LIBIDX", "exists: library.dat missing");
+    return false;
+  }
   const size_t sz = f.size();
   f.close();
-  if (sz < kRecordSize) return false;
+  if (sz < kRecordSize) {
+    LOG_DBG("LIBIDX", "exists: library.dat too small %u", (unsigned)sz);
+    return false;
+  }
+  LOG_DBG("LIBIDX", "exists: library.dat size=%u records=%d", (unsigned)sz, (int)(sz / kRecordSize));
   return true;
 }
 
@@ -911,6 +918,7 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir, int
   if (!incremental) {
     walkDirs(rootDir, [&total](const char*, size_t) { ++total; }, false);
     LOG_DBG("LIB", "Scan: %d candidate files found", total);
+    LOG_DBG("LIB", "Scan: starting walk with total=%d popupRect=%d,%d", total, popupRect.x, popupRect.y);
     emitProgress(renderer, popupRect, 0, total);
     // Dynamic progress interval: ~10 refreshes total regardless of library size
     if (total > 10) kProgressInterval = std::max(1, total / 10);
@@ -1125,8 +1133,19 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir, int
   emitProgress(renderer, popupRect, total, total);
   if (outAdded) *outAdded = added;
   if (outRemoved) *outRemoved = removed;
-  LOG_DBG("LIB", "Scan: added=%d skipped=%d removed=%d total=%d", added, skipped, removed, added + skipped);
-  LOG_DBG("LIB", "Scan: done added=%d skipped=%d removed=%d newScan=%u", added, skipped, removed, newScan.size());
+  LOG_DBG("LIB", "Scan: final added=%d skipped=%d removed=%d newScan=%u", added, skipped, removed, newScan.size());
+  LOG_DBG("LIB", "Scan: done totalBooks=%d", added + skipped);
+  LOG_DBG("LIB", "Scan: final datFile records check...");
+  {
+    HalFile datCheck = Storage.open(kDatFile);
+    if (datCheck) {
+      const int datCount = static_cast<int>(datCheck.size() / kRecordSize);
+      datCheck.close();
+      LOG_DBG("LIB", "Scan: library.dat records=%d", datCount);
+    } else {
+      LOG_ERR("LIB", "Scan: library.dat missing after scan!");
+    }
+  }
   return true;
 }
 
@@ -1181,14 +1200,20 @@ struct ChunkReader {
 };
 
 static bool buildIndexFile(const char* outPath, int (*cmp)(const void*, const void*), bool useAuthorKey) {
+  LOG_DBG("LIB", "IdxBuild: start %s", outPath);
   // Phase 1: read library.dat in chunks, sort each chunk, write chunk_*.tmp
   HalFile dat = Storage.open(kDatFile);
-  if (!dat) return false;
+  if (!dat) {
+    LOG_ERR("LIB", "IdxBuild: cannot open library.dat");
+    return false;
+  }
   const int totalRecs = static_cast<int>(dat.size() / kRecordSize);
   if (totalRecs == 0) {
     dat.close();
+    LOG_ERR("LIB", "IdxBuild: library.dat empty");
     return false;
   }
+  LOG_DBG("LIB", "IdxBuild: totalRecs=%d", totalRecs);
   dat.close();
 
   int chunkCount = 0;
@@ -1242,7 +1267,7 @@ static bool buildIndexFile(const char* outPath, int (*cmp)(const void*, const vo
 
   std::vector<ChunkReader> readers(chunkCount);
 
-  // ... rest of merge remains the same ...
+   LOG_DBG("LIB", "IdxBuild: merge start chunkCount=%d out=%s", chunkCount, outPath);
   for (int i = 0; i < chunkCount; ++i) {
     char tmpPath[96];
     std::snprintf(tmpPath, sizeof(tmpPath), "%s/chunk_%04d.tmp", kTmpDir, i);
@@ -1274,6 +1299,7 @@ static bool buildIndexFile(const char* outPath, int (*cmp)(const void*, const vo
   }
 
   LOG_DBG("LIB", "IdxBuild: merge complete for %s", outPath);
+  LOG_DBG("LIB", "IdxBuild: done %s", outPath);
   return true;
 }
 
@@ -1286,14 +1312,17 @@ bool buildIndices() {
     LOG_ERR("LIB", "BuildIndices: title index failed");
     return false;
   }
+  LOG_DBG("LIB", "BuildIndices: title index OK");
   if (!buildIndexFile(kIdxAuthor, cmpByAuthor, true)) {
     LOG_ERR("LIB", "BuildIndices: author index failed");
     return false;
   }
+  LOG_DBG("LIB", "BuildIndices: author index OK");
   if (!buildMixedIndex(SortMode::TITLE_ASC)) {
     LOG_ERR("LIB", "BuildIndices: mixed index failed");
     return false;
   }
+  LOG_DBG("LIB", "BuildIndices: mixed index OK");
 
   LOG_DBG("LIB", "BuildIndices: done in %lu ms", millis() - t0);
   return true;
@@ -1311,7 +1340,10 @@ bool buildCollectionsIndex() {
   LOG_DBG("LIB", "BuildCollIdx: start");
   invalidateBookLookup();
   HalFile sf = Storage.open(kSeriesDat);
-  if (!sf) return false;
+  if (!sf) {
+    LOG_ERR("LIB", "BuildCollIdx: cannot open %s", kSeriesDat);
+    return false;
+  }
 
   // Handle old 88-byte format: if size is not divisible by 92, delete and rebuild
   const size_t seriesFileSize = sf.size();
@@ -1323,6 +1355,7 @@ bool buildCollectionsIndex() {
   }
 
   const int totalSeries = static_cast<int>(seriesFileSize / sizeof(SeriesRec));
+  LOG_DBG("LIB", "BuildCollIdx: totalSeries=%d", totalSeries);
 
   // Build bookId -> path map from library.dat for folder-fallback scoping
   std::unordered_map<uint32_t, std::string> bookIdToPath;
@@ -1330,12 +1363,17 @@ bool buildCollectionsIndex() {
     HalFile datF = Storage.open(kDatFile);
     if (datF) {
       Record rec;
+      int datRecords = 0;
       while (datF.read(reinterpret_cast<uint8_t*>(&rec), sizeof(Record)) == static_cast<int>(sizeof(Record))) {
         if (!rec.tombstone()) {
           bookIdToPath[rec.id] = rec.path;
         }
+        ++datRecords;
       }
       datF.close();
+      LOG_DBG("LIB", "BuildCollIdx: bookIdToPath built datRecords=%d mapSize=%d", datRecords, (int)bookIdToPath.size());
+    } else {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open library.dat for bookId map");
     }
   }
 
@@ -1344,8 +1382,14 @@ bool buildCollectionsIndex() {
   series.reserve(totalSeries);
   {
     HalFile f = Storage.open(kSeriesDat);
+    if (!f) {
+      LOG_ERR("LIB", "BuildCollIdx: cannot reopen %s", kSeriesDat);
+      return false;
+    }
     SeriesRec sr;
+    int rawSeries = 0;
     while (f.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == static_cast<int>(sizeof(SeriesRec))) {
+      ++rawSeries;
       // Skip tombstoned books
       if (sr.bookId == 0) continue;
       // Verify the book still exists and isn't tombstoned in library.dat
@@ -1354,6 +1398,7 @@ bool buildCollectionsIndex() {
       series.push_back(sr);
     }
     f.close();
+    LOG_DBG("LIB", "BuildCollIdx: series read raw=%d valid=%d", rawSeries, (int)series.size());
   }
 
   // Sort by normalized series name + series index
@@ -1362,16 +1407,21 @@ bool buildCollectionsIndex() {
     if (c != 0) return c < 0;
     return a.seriesIndex < b.seriesIndex;
   });
+  LOG_DBG("LIB", "BuildCollIdx: series sorted count=%d", (int)series.size());
 
   // Write sorted series.dat
   {
     HalFile f = Storage.open(kSeriesDat, O_CREAT | O_WRONLY | O_TRUNC);
-    if (!f) return false;
+    if (!f) {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open %s for write", kSeriesDat);
+      return false;
+    }
     for (const auto& sr : series) {
       f.write(reinterpret_cast<const uint8_t*>(&sr), sizeof(SeriesRec));
     }
     f.close();
   }
+  LOG_DBG("LIB", "BuildCollIdx: sorted series.dat written");
 
   // Build collections index: group metadata-derived series globally by normalized key,
   // group folder-fallback series by exact parent path match.
@@ -1437,6 +1487,7 @@ bool buildCollectionsIndex() {
       i = j;
     }
   }
+  LOG_DBG("LIB", "BuildCollIdx: collections built count=%d", (int)collections.size());
 
   // Load user collections and merge
   std::vector<CollectionIndexRec> userCollections;
@@ -1535,6 +1586,7 @@ bool buildCollectionsIndex() {
             [&](const CollectionIndexRec& a, const CollectionIndexRec& b) {
               return cmpSortKey(sortKeyFor(a), sortKeyFor(b)) < 0;
             });
+  LOG_DBG("LIB", "BuildCollIdx: userCollections sorted count=%d", (int)userCollections.size());
 
   // Merge auto collections and user collections into a single sorted index
   std::vector<CollectionIndexRec> merged;
@@ -1561,32 +1613,36 @@ bool buildCollectionsIndex() {
       }
     }
   }
+  LOG_DBG("LIB", "BuildCollIdx: merged count=%d", (int)merged.size());
 
-  // Write auto series to their respective index files
+  // Classify auto collections into metadata vs folder by reading series.dat flags
   std::vector<CollectionIndexRec> metadataSeries;
   std::vector<CollectionIndexRec> folderCollections;
   for (const auto& ci : collections) {
-    // Determine if this is a folder-fallback series by checking series.dat flags
-    // We need to look up the firstSeriesOffset in series.dat to check flags
+    LOG_DBG("LIB", "BuildCollIdx: classify name=%s bookCount=%d flags=%d firstOffset=%u", ci.collectionName, (int)ci.bookCount, (int)ci.flags, (unsigned)ci.firstSeriesOffset);
     HalFile sf = Storage.open(kSeriesDat);
     if (sf) {
-      sf.seek(ci.firstSeriesOffset);
+      const bool seekOk = sf.seek(ci.firstSeriesOffset);
       SeriesRec sr;
-      if (sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == sizeof(SeriesRec)) {
+      const bool readOk = sf.read(reinterpret_cast<uint8_t*>(&sr), sizeof(SeriesRec)) == sizeof(SeriesRec);
+      sf.close();
+      if (seekOk && readOk) {
         if ((sr.flags & 1) != 0) {
           folderCollections.push_back(ci);
         } else {
           metadataSeries.push_back(ci);
         }
+      } else {
+        metadataSeries.push_back(ci);
       }
-      sf.close();
     } else {
-      // Fallback: assume metadata series
       metadataSeries.push_back(ci);
     }
   }
+  LOG_DBG("LIB", "BuildCollIdx: classified metadata=%d folder=%d", (int)metadataSeries.size(), (int)folderCollections.size());
 
   // Write metadata series index
+  LOG_DBG("LIB", "BuildCollIdx: writing metadata series idx entries=%d", (int)metadataSeries.size());
   if (!metadataSeries.empty() && SETTINGS.libraryMetadataSeries) {
     HalFile outF = Storage.open(kIdxMetadataSeries, O_CREAT | O_WRONLY | O_TRUNC);
     if (outF) {
@@ -1594,12 +1650,17 @@ bool buildCollectionsIndex() {
         outF.write(reinterpret_cast<const uint8_t*>(&ci), sizeof(CollectionIndexRec));
       }
       outF.close();
+      LOG_DBG("LIB", "BuildCollIdx: wrote %s entries=%d", kIdxMetadataSeries, (int)metadataSeries.size());
+    } else {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open %s for write", kIdxMetadataSeries);
     }
   } else {
     Storage.remove(kIdxMetadataSeries);
+    LOG_DBG("LIB", "BuildCollIdx: removed %s", kIdxMetadataSeries);
   }
 
   // Write folder collections index
+  LOG_DBG("LIB", "BuildCollIdx: writing folder collections idx entries=%d", (int)folderCollections.size());
   if (!folderCollections.empty() && SETTINGS.libraryFolderCollections) {
     HalFile outF = Storage.open(kIdxFolderCollections, O_CREAT | O_WRONLY | O_TRUNC);
     if (outF) {
@@ -1607,12 +1668,17 @@ bool buildCollectionsIndex() {
         outF.write(reinterpret_cast<const uint8_t*>(&ci), sizeof(CollectionIndexRec));
       }
       outF.close();
+      LOG_DBG("LIB", "BuildCollIdx: wrote %s entries=%d", kIdxFolderCollections, (int)folderCollections.size());
+    } else {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open %s for write", kIdxFolderCollections);
     }
   } else {
     Storage.remove(kIdxFolderCollections);
+    LOG_DBG("LIB", "BuildCollIdx: removed %s", kIdxFolderCollections);
   }
 
   // Write user collections index
+  LOG_DBG("LIB", "BuildCollIdx: writing user collections idx entries=%d", (int)userCollections.size());
   if (!userCollections.empty()) {
     HalFile outF = Storage.open(kIdxUserCollections, O_CREAT | O_WRONLY | O_TRUNC);
     if (outF) {
@@ -1620,13 +1686,18 @@ bool buildCollectionsIndex() {
         outF.write(reinterpret_cast<const uint8_t*>(&ci), sizeof(CollectionIndexRec));
       }
       outF.close();
+      LOG_DBG("LIB", "BuildCollIdx: wrote %s entries=%d", kIdxUserCollections, (int)userCollections.size());
+    } else {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open %s for write", kIdxUserCollections);
     }
   } else {
     Storage.remove(kIdxUserCollections);
+    LOG_DBG("LIB", "BuildCollIdx: removed %s", kIdxUserCollections);
   }
 
   // Also write legacy idx_collections.bin for backward compatibility
   // This contains all active collections (auto + user) for code paths that still use it
+  LOG_DBG("LIB", "BuildCollIdx: writing legacy collections idx entries=%d", (int)merged.size());
   if (!merged.empty()) {
     HalFile outF = Storage.open(kIdxCollections, O_CREAT | O_WRONLY | O_TRUNC);
     if (outF) {
@@ -1634,14 +1705,24 @@ bool buildCollectionsIndex() {
         outF.write(reinterpret_cast<const uint8_t*>(&ci), sizeof(CollectionIndexRec));
       }
       outF.close();
+      LOG_DBG("LIB", "BuildCollIdx: wrote %s entries=%d", kIdxCollections, (int)merged.size());
+    } else {
+      LOG_ERR("LIB", "BuildCollIdx: cannot open %s for write", kIdxCollections);
     }
   } else {
     Storage.remove(kIdxCollections);
+    LOG_DBG("LIB", "BuildCollIdx: removed %s", kIdxCollections);
   }
 
   LOG_DBG("LIB", "BuildCollIdx: %d metadata + %d folder + %d user = %d total entries", metadataSeries.size(),
           folderCollections.size(), userCollections.size(), merged.size());
+  LOG_DBG("LIB", "BuildCollIdx: metadataSeriesIdx=%d folderIdx=%d userIdx=%d legacyIdx=%d",
+          !metadataSeries.empty() && SETTINGS.libraryMetadataSeries ? 1 : 0,
+          !folderCollections.empty() && SETTINGS.libraryFolderCollections ? 1 : 0,
+          !userCollections.empty() ? 1 : 0,
+          !merged.empty() ? 1 : 0);
   IndexCacheManager::invalidateCollections();
+  LOG_DBG("LIB", "BuildCollIdx: done");
   return true;
 }
 
@@ -1680,21 +1761,29 @@ bool buildMixedIndex(SortMode sortMode) {
     std::sort(collectionBookIds.begin(), collectionBookIds.end());
   }
 
+  LOG_DBG("LIB", "BuildMixedIdx: collection ids sorted size=%d", (int)collectionBookIds.size());
   if (!buildBookLookup()) {
     LOG_ERR("LIB", "BuildMixedIdx: book lookup build failed");
     return false;
   }
+  LOG_DBG("LIB", "BuildMixedIdx: book lookup built");
+  LOG_DBG("LIB", "BuildMixedIdx: book lookup built");
 
   int chunkCount = 0;
   {
     // Phase 1a: standalone books from library.dat
     HalFile dat = Storage.open(kDatFile);
-    if (!dat) return false;
+    if (!dat) {
+      LOG_ERR("LIB", "BuildMixedIdx: cannot open library.dat");
+      return false;
+    }
     const int totalRecs = static_cast<int>(dat.size() / kRecordSize);
     if (totalRecs == 0) {
       dat.close();
+      LOG_ERR("LIB", "BuildMixedIdx: library.dat empty");
       return false;
     }
+    LOG_DBG("LIB", "BuildMixedIdx: totalRecs=%d", totalRecs);
 
     std::vector<IndexRec> chunk;
     chunk.reserve(kChunkRecs);
@@ -1732,6 +1821,7 @@ bool buildMixedIndex(SortMode sortMode) {
     }
     dat.close();
   }
+  LOG_DBG("LIB", "BuildMixedIdx: phase1a done chunkCount=%d", chunkCount);
 
   {
     // Phase 1b: series tiles from separate indices based on settings
@@ -1742,6 +1832,7 @@ bool buildMixedIndex(SortMode sortMode) {
       HalFile uf = Storage.open(kIdxUserCollections);
       if (uf) {
         const int total = static_cast<int>(uf.size() / sizeof(CollectionIndexRec));
+        LOG_DBG("LIB", "BuildMixedIdx: user collections idx count=%d", total);
         CollectionIndexRec ci;
         for (int i = 0; i < total; ++i) {
           if (uf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
@@ -1783,12 +1874,14 @@ bool buildMixedIndex(SortMode sortMode) {
     }
 
     if (!allCollections.empty()) {
+      LOG_DBG("LIB", "BuildMixedIdx: allCollections count=%d", (int)allCollections.size());
       // Build lookup from combined index so mixed index references match kIdxCollections
       std::unordered_map<std::string, int> combinedIndexMap;
       {
         HalFile cf = Storage.open(kIdxCollections);
         if (cf) {
           const int total = static_cast<int>(cf.size() / sizeof(CollectionIndexRec));
+          LOG_DBG("LIB", "BuildMixedIdx: combined collections idx count=%d", total);
           CollectionIndexRec ci;
           for (int i = 0; i < total; ++i) {
             if (cf.read(reinterpret_cast<uint8_t*>(&ci), sizeof(CollectionIndexRec)) == sizeof(CollectionIndexRec)) {
@@ -1888,10 +1981,15 @@ bool buildMixedIndex(SortMode sortMode) {
     LOG_DBG("LIB", "BuildMixedIdx: no entries");
     return false;
   }
+  LOG_DBG("LIB", "BuildMixedIdx: phase1b done chunkCount=%d", chunkCount);
 
   // Phase 2: k-way merge into idx_mixed.bin
   HalFile outF = Storage.open(kIdxMixed, O_CREAT | O_WRONLY | O_TRUNC);
-  if (!outF) return false;
+  if (!outF) {
+    LOG_ERR("LIB", "BuildMixedIdx: cannot open %s", kIdxMixed);
+    return false;
+  }
+  LOG_DBG("LIB", "BuildMixedIdx: merge start chunkCount=%d", chunkCount);
 
   std::vector<ChunkReader> readers(chunkCount);
   for (int i = 0; i < chunkCount; ++i) {
@@ -1900,6 +1998,7 @@ bool buildMixedIndex(SortMode sortMode) {
     readers[i].open(tmpPath);
   }
 
+  int mergedCount = 0;
   while (true) {
     int best = -1;
     for (int i = 0; i < chunkCount; ++i) {
@@ -1915,7 +2014,9 @@ bool buildMixedIndex(SortMode sortMode) {
     if (best < 0) break;
     writeIndexRec(outF, readers[best].cur);
     readers[best].advance();
+    ++mergedCount;
   }
+  LOG_DBG("LIB", "BuildMixedIdx: merge done mergedCount=%d", mergedCount);
 
   outF.close();
   for (int i = 0; i < chunkCount; ++i) readers[i].close();
@@ -1928,6 +2029,17 @@ bool buildMixedIndex(SortMode sortMode) {
   }
 
   LOG_DBG("LIB", "BuildMixedIdx: done in %lu ms, %d chunks", millis() - t0, chunkCount);
+  LOG_DBG("LIB", "BuildMixedIdx: final mixed index entries check...");
+  {
+    HalFile mf = Storage.open(kIdxMixed);
+    if (mf) {
+      const int mixedCount = static_cast<int>(mf.size() / kIndexRecSize);
+      mf.close();
+      LOG_DBG("LIB", "BuildMixedIdx: idx_mixed.bin entries=%d", mixedCount);
+    } else {
+      LOG_ERR("LIB", "BuildMixedIdx: idx_mixed.bin missing!");
+    }
+  }
   if (IndexCacheManager::loadMixedIndex()) {
     LOG_DBG("LIB", "BuildMixedIdx: RAM cache loaded");
   }
@@ -1961,17 +2073,24 @@ static void invalidateBookLookup() {
 }
 
 static bool buildBookLookup() {
+  LOG_DBG("LIB", "buildBookLookup: start");
   HalFile f = Storage.open(kDatFile);
-  if (!f) return false;
+  if (!f) {
+    LOG_ERR("LIB", "buildBookLookup: cannot open library.dat");
+    return false;
+  }
   const size_t datSize = static_cast<size_t>(f.size());
   if (datSize == g_bookDatSize && !g_bookLookup.empty()) {
     f.close();
+    LOG_DBG("LIB", "buildBookLookup: cache hit size=%u", (unsigned)datSize);
     return true;
   }
   g_bookDatSize = datSize;
   const int totalRecs = static_cast<int>(datSize / kRecordSize);
+  LOG_DBG("LIB", "buildBookLookup: totalRecs=%d", totalRecs);
   g_bookLookup.clear();
   g_bookLookup.reserve(totalRecs > 0 ? static_cast<size_t>(totalRecs) : 0);
+  LOG_DBG("LIB", "buildBookLookup: reserved %d", (int)g_bookLookup.capacity());
   Record rec;
   for (int rp = 0; rp < totalRecs; ++rp) {
     if (f.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
@@ -1981,6 +2100,7 @@ static bool buildBookLookup() {
   std::sort(g_bookLookup.begin(), g_bookLookup.end(),
             [](const BookIdOffset& a, const BookIdOffset& b) { return a.id < b.id; });
   f.close();
+  LOG_DBG("LIB", "buildBookLookup: done count=%d", (int)g_bookLookup.size());
   return true;
 }
 
@@ -2899,11 +3019,18 @@ static bool matchesFilter(const Record& rec, FilterMode m) {
 static int walkIndex(const char* idxPath, bool reverse, int skip, int needed, const char* search, FilterMode filter,
                      BookRef* out) {
   HalFile f = Storage.open(idxPath);
-  if (!f) return 0;
+  if (!f) {
+    LOG_ERR("LIBIDX", "walkIndex: cannot open index %s", idxPath);
+    return 0;
+  }
 
   const int total = static_cast<int>(f.size() / kIndexRecSize);
+  LOG_DBG("LIBIDX", "walkIndex: idx=%s total=%d reverse=%d skip=%d needed=%d filter=%d", idxPath, total, reverse ? 1 : 0, skip, needed, (int)filter);
   int collected = 0;
   int skipped = 0;
+  int tombstoned = 0;
+  int filtered = 0;
+  int searched = 0;
   IndexRec ir;
 
   const int start = reverse ? (total - 1) : 0;
@@ -2911,20 +3038,40 @@ static int walkIndex(const char* idxPath, bool reverse, int skip, int needed, co
   const int step = reverse ? -1 : 1;
 
   HalFile df = Storage.open(kDatFile);
+  if (!df) {
+    LOG_ERR("LIBIDX", "walkIndex: cannot open %s", kDatFile);
+    f.close();
+    return 0;
+  }
 
   for (int pos = start; pos != end; pos += step) {
     const uint32_t off = static_cast<uint32_t>(pos) * kIndexRecSize;
-    if (!f.seek(off)) break;
-    if (!readIndexRec(f, ir)) break;
+    if (!f.seek(off)) {
+      LOG_ERR("LIBIDX", "walkIndex: seek failed at pos=%d", pos);
+      break;
+    }
+    if (!readIndexRec(f, ir)) {
+      LOG_ERR("LIBIDX", "walkIndex: readIndexRec failed at pos=%d", pos);
+      break;
+    }
 
     Record rec;
     if (df && df.seek(ir.recordOffset) &&
         df.read(reinterpret_cast<uint8_t*>(&rec), kRecordSize) == static_cast<int>(kRecordSize)) {
-      if (rec.tombstone()) continue;
-      if (!matchesFilter(rec, filter)) continue;
+      if (rec.tombstone()) {
+        ++tombstoned;
+        continue;
+      }
+      if (!matchesFilter(rec, filter)) {
+        ++filtered;
+        continue;
+      }
 
       if (search && search[0]) {
-        if (!substringMatch(rec.title, search) && !substringMatch(rec.author, search)) continue;
+        if (!substringMatch(rec.title, search) && !substringMatch(rec.author, search)) {
+          ++searched;
+          continue;
+        }
       }
 
       if (skipped++ < skip) continue;
@@ -2937,6 +3084,7 @@ static int walkIndex(const char* idxPath, bool reverse, int skip, int needed, co
 
   if (df) df.close();
   f.close();
+  LOG_DBG("LIBIDX", "walkIndex: collected=%d skipped=%d tombstoned=%d filtered=%d searched=%d", collected, skipped, tombstoned, filtered, searched);
   return collected;
 }
 
@@ -3017,7 +3165,12 @@ static int scanFullText(BookRef* out, int page, int pageSize, SortMode sortMode,
 int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode, const char* searchFilter, FilterMode filterMode,
               int coverWidth, int coverHeight) {
   if (!out || pageSize <= 0) return 0;
-  if (!exists()) return 0;
+  if (!exists()) {
+    LOG_DBG("LIBIDX", "queryPage: library.dat missing");
+    return 0;
+  }
+
+  LOG_DBG("LIBIDX", "queryPage: page=%d pageSize=%d sort=%d filter=%d search=%s", page, pageSize, (int)sortMode, (int)filterMode, searchFilter ? searchFilter : "");
 
   if (sortMode == SortMode::COLLECTIONS) {
     return queryCollections(out, page, pageSize, coverWidth, coverHeight);
@@ -3040,15 +3193,21 @@ int queryPage(BookRef* out, int page, int pageSize, SortMode sortMode, const cha
   // Indexed path: walk sorted index sequentially
   const char* idxPath = byAuthor ? kIdxAuthor : kIdxTitle;
   const int skip = page * pageSize;
-  return walkIndex(idxPath, reverse, skip, pageSize, nullptr, filterMode, out);
+  const int count = walkIndex(idxPath, reverse, skip, pageSize, nullptr, filterMode, out);
+  LOG_DBG("LIBIDX", "queryPage: returning count=%d page=%d pageSize=%d idx=%s", count, page, pageSize, idxPath);
+  return count;
 }
 
 int totalBooks() {
   HalFile f = Storage.open(kDatFile);
-  if (!f) return 0;
+  if (!f) {
+    LOG_DBG("LIBIDX", "totalBooks: library.dat missing");
+    return 0;
+  }
   const int raw = static_cast<int>(f.size() / kRecordSize);
   f.close();
   // Count non-tombstone (rough estimate; caller can refine via totalMatching)
+  LOG_DBG("LIBIDX", "totalBooks: rawRecords=%d", raw);
   return raw > 0 ? raw : 0;
 }
 
@@ -3092,6 +3251,7 @@ int totalMatching(const char* searchFilter, FilterMode filterMode) {
 }
 
 void invalidate() {
+  LOG_DBG("LIB", "invalidate: start");
   Storage.remove(kDatFile);
   Storage.remove(kScanFile);
   Storage.remove(kIdxTitle);
