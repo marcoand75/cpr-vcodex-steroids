@@ -3002,14 +3002,18 @@ static bool matchesFilter(const Record& rec, FilterMode m) {
       return false;
     }
     case FilterMode::UNREAD: {
-      READING_STATS.ensureLoaded();
-      const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
-      return !s || s->totalReadingMs == 0;
+      SummaryJSON::BookBadge badge;
+      if (READING_STATS.getBookHomeStats("", rec.path, badge)) {
+        return badge.progressPercent == 0 && !badge.completed;
+      }
+      return true;
     }
     case FilterMode::COMPLETED: {
-      READING_STATS.ensureLoaded();
-      const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
-      return s && s->completed;
+      SummaryJSON::BookBadge badge;
+      if (READING_STATS.getBookHomeStats("", rec.path, badge)) {
+        return badge.completed;
+      }
+      return false;
     }
     case FilterMode::HIDDEN:
       return HIDDEN_BOOKS.isHidden(rec.path);

@@ -24,6 +24,7 @@ constexpr char READING_STATS_BACKUP_FILE_JSON[] = "/.crosspoint/reading_stats.js
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_BACKUP_EXPORT_PREFIX[] = "/exports/stats_backup_";
 constexpr char READING_STATS_BACKUP_EXPORT_FILE_PREFIX[] = "stats_backup_";
+constexpr char READING_STATS_SUMMARY_JSON[] = "/.crosspoint/reading_stats_summary.json";
 constexpr size_t MAX_READING_STATS_AUTO_BACKUPS = 30;
 constexpr unsigned long MAX_READING_GAP_MS = 30UL * 60UL * 1000UL;
 constexpr unsigned long SESSION_HEARTBEAT_MS = 60UL * 1000UL;
@@ -896,6 +897,9 @@ void ReadingStatsStore::invalidateSummaryCache() { summaryCache.valid = false; }
 void ReadingStatsStore::markDirty() {
   dirty = true;
   invalidateSummaryCache();
+  if (loaded_) {
+    saveSummaryJSON();
+  }
 }
 
 bool ReadingStatsStore::prepareInternalBackup() const {
@@ -1598,6 +1602,9 @@ bool ReadingStatsStore::setBookFirstReadDate(const std::string& path, const uint
 }
 
 uint32_t ReadingStatsStore::getBooksFinishedCount() const {
+  if (!loaded_) {
+    return getSummaryJSON().global.booksFinishedCount;
+  }
   if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
@@ -1605,6 +1612,9 @@ uint32_t ReadingStatsStore::getBooksFinishedCount() const {
 }
 
 uint64_t ReadingStatsStore::getTotalReadingMs() const {
+  if (!loaded_) {
+    return getSummaryJSON().global.totalReadingMs;
+  }
   if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
@@ -1612,6 +1622,14 @@ uint64_t ReadingStatsStore::getTotalReadingMs() const {
 }
 
 uint64_t ReadingStatsStore::getTodayReadingMs() const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    if (summary.global.referenceDayOrdinal != 0 &&
+        summary.global.referenceDayOrdinal != getReferenceDayOrdinal()) {
+      return 0;
+    }
+    return summary.global.todayReadingMs;
+  }
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
       summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
@@ -1621,6 +1639,12 @@ uint64_t ReadingStatsStore::getTodayReadingMs() const {
 
 uint64_t ReadingStatsStore::getRecentReadingMs(const uint32_t days) const {
   if (days == 0) {
+    return 0;
+  }
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    if (days <= 7) return summary.global.recent7ReadingMs;
+    if (days <= 30) return summary.global.recent30ReadingMs;
     return 0;
   }
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
@@ -1650,6 +1674,15 @@ uint64_t ReadingStatsStore::getRecentReadingMs(const uint32_t days) const {
 }
 
 uint32_t ReadingStatsStore::getCurrentStreakDays() const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    const uint32_t referenceDayOrdinal = getReferenceDayOrdinal();
+    const uint32_t snapshotDayOrdinal = summary.global.referenceDayOrdinal;
+    if (snapshotDayOrdinal != 0 && snapshotDayOrdinal + 1 < referenceDayOrdinal) {
+      return 0;
+    }
+    return summary.global.currentStreakDays;
+  }
   if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
       summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
@@ -1658,7 +1691,11 @@ uint32_t ReadingStatsStore::getCurrentStreakDays() const {
 }
 
 uint32_t ReadingStatsStore::getMaxStreakDays() const {
-  if (!summaryCache.valid || summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
+  if (!loaded_) {
+    return getSummaryJSON().global.maxStreakDays;
+  }
+  if (!summaryCache.valid || summaryCache.referenceDayOrdinal != getReferenceDayOrdinal() ||
+      summaryCache.goalReadingMs != getDailyReadingGoalMs()) {
     rebuildSummaryCache();
   }
   return summaryCache.maxStreakDays;
@@ -1866,8 +1903,12 @@ bool ReadingStatsStore::loadFromFile() {
   if (!loaded && restoreInternalBackupToMain("main load failure")) {
     loaded = loadMainFile();
   } else if (loaded && !hasAnyStats() && statsFileAppearsToHaveData(READING_STATS_BACKUP_FILE_JSON) &&
-             restoreInternalBackupToMain("empty main file")) {
+              restoreInternalBackupToMain("empty main file")) {
     loaded = loadMainFile();
+  }
+  if (loaded) {
+    saveSummaryJSON();
+    createDueAutoBackup();
   }
   if (!loaded) {
     markLoadSkippedForRecovery();
@@ -1901,6 +1942,16 @@ const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::
 }
 
 uint8_t ReadingStatsStore::getBookProgressForHome(const std::string& bookId, const std::string& path) const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    for (const auto& badge : summary.bookBadges) {
+      if ((!badge.bookId.empty() && badge.bookId == bookId) ||
+          (!badge.path.empty() && badge.path == path)) {
+        return badge.completed ? 100 : badge.progressPercent;
+      }
+    }
+    return 0;
+  }
   const auto* s = getHomeBookStatsForRender(bookId, path);
   if (!s) return 0;
   if (s->completed) return 100;
@@ -1909,7 +1960,18 @@ uint8_t ReadingStatsStore::getBookProgressForHome(const std::string& bookId, con
 }
 
 bool ReadingStatsStore::getBookHomeStats(const std::string& bookId, const std::string& path,
-                                         SummaryJSON::BookBadge& badge) const {
+                                          SummaryJSON::BookBadge& badge) const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    for (const auto& b : summary.bookBadges) {
+      if ((!b.bookId.empty() && b.bookId == bookId) ||
+          (!b.path.empty() && b.path == path)) {
+        badge = b;
+        return true;
+      }
+    }
+    return false;
+  }
   const auto* s = getHomeBookStatsForRender(bookId, path);
   if (!s) return false;
   badge.completed = s->completed;
@@ -1917,6 +1979,16 @@ bool ReadingStatsStore::getBookHomeStats(const std::string& bookId, const std::s
 }
 
 GlobalSummary ReadingStatsStore::getGlobalSummary() const {
+  if (!loaded_) {
+    const auto& summary = getSummaryJSON();
+    GlobalSummary g;
+    g.todayMs = summary.global.todayReadingMs;
+    g.booksFinished = summary.global.booksFinishedCount;
+    g.streakDays = summary.global.currentStreakDays;
+    const uint64_t recent30 = summary.global.recent30ReadingMs;
+    g.dailyAverageMs = recent30 > 0 ? recent30 / 30 : 0;
+    return g;
+  }
   GlobalSummary g;
   g.todayMs = getTodayReadingMs();
   g.booksFinished = getBooksFinishedCount();
@@ -1924,6 +1996,116 @@ GlobalSummary ReadingStatsStore::getGlobalSummary() const {
   const uint64_t recent30 = getRecentReadingMs(30);
   g.dailyAverageMs = recent30 > 0 ? recent30 / 30 : 0;
   return g;
+}
+
+bool ReadingStatsStore::saveSummaryJSON() const {
+  if (!loaded_) return false;
+  SummaryJSON json;
+  json.global.referenceDayOrdinal = getReferenceDayOrdinal();
+  json.global.goalReadingMs = getDailyReadingGoalMs();
+  for (const auto& book : books) {
+    if (book.totalReadingMs == 0 && !book.completed) continue;
+    SummaryJSON::BookBadge badge;
+    badge.bookId = book.bookId;
+    badge.path = book.path;
+    badge.completed = book.completed;
+    badge.progressPercent = book.lastProgressPercent;
+    json.bookBadges.push_back(std::move(badge));
+  }
+  json.global.totalReadingMs = getTotalReadingMs();
+  json.global.todayReadingMs = getTodayReadingMs();
+  json.global.recent7ReadingMs = getRecentReadingMs(7);
+  json.global.recent30ReadingMs = getRecentReadingMs(30);
+  json.global.booksFinishedCount = getBooksFinishedCount();
+  json.global.currentStreakDays = getCurrentStreakDays();
+  json.global.maxStreakDays = getMaxStreakDays();
+  json.global.dailyAverageMs = json.global.recent30ReadingMs > 0 ? json.global.recent30ReadingMs / 30 : 0;
+
+  JsonDocument doc;
+  JsonObject summary = doc["summary"].to<JsonObject>();
+  summary["totalReadingMs"] = json.global.totalReadingMs;
+  summary["todayReadingMs"] = json.global.todayReadingMs;
+  summary["recent7ReadingMs"] = json.global.recent7ReadingMs;
+  summary["recent30ReadingMs"] = json.global.recent30ReadingMs;
+  summary["currentStreakDays"] = json.global.currentStreakDays;
+  summary["maxStreakDays"] = json.global.maxStreakDays;
+  summary["booksFinishedCount"] = json.global.booksFinishedCount;
+  summary["goalReadingMs"] = json.global.goalReadingMs;
+  summary["dailyAverageMs"] = json.global.dailyAverageMs;
+  summary["referenceDayOrdinal"] = json.global.referenceDayOrdinal;
+
+  JsonArray badges = doc["bookBadges"].to<JsonArray>();
+  for (const auto& badge : json.bookBadges) {
+    JsonObject obj = badges.add<JsonObject>();
+    obj["bookId"] = badge.bookId;
+    obj["path"] = badge.path;
+    obj["completed"] = badge.completed;
+    obj["progressPercent"] = badge.progressPercent;
+  }
+
+  String serialized;
+  serializeJson(doc, serialized);
+  const bool saved = Storage.writeFile(READING_STATS_SUMMARY_JSON, serialized);
+  if (saved) {
+    summaryJson = std::move(json);
+    summaryJsonValid_ = true;
+    LOG_DBG("RST", "Saved summary JSON: %u bytes (%zu badges)", serialized.length(), summaryJson.bookBadges.size());
+  }
+  return saved;
+}
+
+bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
+  if (!Storage.exists(READING_STATS_SUMMARY_JSON)) return false;
+  const String json = Storage.readFile(READING_STATS_SUMMARY_JSON);
+  if (json.isEmpty()) return false;
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, json);
+  if (error) return false;
+
+  JsonObject summary = doc["summary"];
+  if (!summary.isNull()) {
+    out.global.totalReadingMs = summary["totalReadingMs"] | 0ULL;
+    out.global.todayReadingMs = summary["todayReadingMs"] | 0ULL;
+    out.global.recent7ReadingMs = summary["recent7ReadingMs"] | 0ULL;
+    out.global.recent30ReadingMs = summary["recent30ReadingMs"] | 0ULL;
+    out.global.currentStreakDays = summary["currentStreakDays"] | 0U;
+    out.global.maxStreakDays = summary["maxStreakDays"] | 0U;
+    out.global.booksFinishedCount = summary["booksFinishedCount"] | 0U;
+    out.global.goalReadingMs = summary["goalReadingMs"] | 0ULL;
+    out.global.dailyAverageMs = summary["dailyAverageMs"] | 0ULL;
+    out.global.referenceDayOrdinal = summary["referenceDayOrdinal"] | 0U;
+  }
+
+  JsonArray badges = doc["bookBadges"];
+  for (JsonObject obj : badges) {
+    SummaryJSON::BookBadge badge;
+    badge.bookId = obj["bookId"] | std::string("");
+    badge.path = obj["path"] | std::string("");
+    badge.completed = obj["completed"] | false;
+    badge.progressPercent = obj["progressPercent"] | 0U;
+    out.bookBadges.push_back(std::move(badge));
+  }
+  return true;
+}
+
+const SummaryJSON& ReadingStatsStore::getSummaryJSON() const {
+  if (!summaryJsonValid_) {
+    summaryJson = SummaryJSON{};
+    summaryJsonValid_ = loadSummaryJSON(summaryJson);
+  }
+  return summaryJson;
+}
+
+void ReadingStatsStore::preloadHomeSummary() {
+  if (summaryJsonValid_) return;
+  if (loadSummaryJSON(summaryJson)) {
+    summaryJsonValid_ = true;
+    return;
+  }
+  if (Storage.exists(READING_STATS_FILE_JSON) && ensureLoaded()) {
+    saveSummaryJSON();
+    releaseMemoryForNetwork();
+  }
 }
 
 void ReadingStatsStore::markLoadSkippedForRecovery() {

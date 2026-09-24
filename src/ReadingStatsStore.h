@@ -48,14 +48,36 @@ struct ReadingSessionSnapshot {
   uint8_t endProgressPercent = 0;
 };
 
-// Lightweight per-book summary payload used by the Lyra home panels. The full
-// streaming summary.json store is a separate Steroids port; these additive
-// shims answer the same contract from the resident store.
-namespace SummaryJSON {
-struct BookBadge {
-  bool completed = false;
+// Lightweight global + per-book snapshot written to summary.json so the Home
+// screen can render the stats panel and carousel progress badges without
+// loading the full reading stats store into RAM.
+struct SummaryJSON {
+  struct Global {
+    uint64_t totalReadingMs = 0;
+    uint64_t todayReadingMs = 0;
+    uint64_t recent7ReadingMs = 0;
+    uint64_t recent30ReadingMs = 0;
+    uint32_t currentStreakDays = 0;
+    uint32_t maxStreakDays = 0;
+    uint32_t booksFinishedCount = 0;
+    uint64_t goalReadingMs = 0;
+    uint64_t dailyAverageMs = 0;
+    uint32_t referenceDayOrdinal = 0;
+  };
+
+  struct BookBadge {
+    std::string bookId;
+    std::string path;
+    uint8_t progressPercent = 0;
+    uint64_t totalReadingMs = 0;
+    uint32_t sessions = 0;
+    uint32_t readingDaysCount = 0;
+    bool completed = false;
+  };
+
+  Global global;
+  std::vector<BookBadge> bookBadges;
 };
-}  // namespace SummaryJSON
 
 struct GlobalSummary {
   uint64_t dailyAverageMs = 0;
@@ -110,8 +132,9 @@ class ReadingStatsStore {
   mutable bool persistenceSuspended = false;
   mutable bool skippedSaveLogged = false;
   mutable bool internalBackupPrepared = false;
-  // Additive lazy-load flag for the Library; main.cpp still loads at boot.
   mutable bool loaded_ = false;
+  mutable SummaryJSON summaryJson;
+  mutable bool summaryJsonValid_ = false;
 
   friend bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
@@ -151,12 +174,17 @@ class ReadingStatsStore {
   bool restoreInternalBackupToMain(const char* reason) const;
   bool maybeCreateAutoBackup(bool force) const;
   bool persistToFile(const char* path) const;
+  bool saveSummaryJSON() const;
+  bool loadSummaryJSON(SummaryJSON& out) const;
+  const SummaryJSON& getSummaryJSON() const;
   static bool isClockValid(uint32_t epochSeconds);
 
  public:
   ~ReadingStatsStore() = default;
 
   static ReadingStatsStore& getInstance() { return instance; }
+
+  void preloadHomeSummary();
 
   void beginSession(const std::string& path, const std::string& title, const std::string& author,
                     const std::string& coverBmpPath, uint8_t progressPercent = 0, const std::string& chapterTitle = "",

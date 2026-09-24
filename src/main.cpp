@@ -1145,13 +1145,11 @@ void loop() {
       readingStatsDeferredLoaded = true;
       LOG_DBG("BOOT", "Skipping deferred reading stats load due to recovery mode");
       READING_STATS.markLoadSkippedForRecovery();
-    } else if (ESP.getMaxAllocHeap() >= 80 * 1024) {
+    } else {
       readingStatsDeferredLoaded = true;
       BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
-      if (READING_STATS.loadFromFile()) {
-        READING_STATS.createDueAutoBackup();
-      }
-      LOG_DBG("BOOT", "After deferred reading-stats: free=%u maxA=%u frag=%d",
+      READING_STATS.preloadHomeSummary();
+      LOG_DBG("BOOT", "After preloadHomeSummary: free=%u maxA=%u frag=%d",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
               static_cast<int>(ESP.getFreeHeap()) - static_cast<int>(ESP.getMaxAllocHeap()));
     }
