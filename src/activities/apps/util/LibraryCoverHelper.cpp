@@ -3,7 +3,6 @@
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <Xtc.h>
-#include <ZipFile.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -18,6 +17,7 @@
 #include "components/LibraryIndex.h"
 #include "fontIds.h"
 #include "util/BookFilter.h"
+#include "util/CoverCachePaths.h"
 #include "util/EpubCoverThumb.h"
 #include "util/FsFileCompat.h"
 
@@ -59,6 +59,50 @@ void LibraryCoverHelper::deleteAllLibraryCovers(int coverWidth, int coverHeight)
     }
     ++pg;
   }
+}
+
+int LibraryCoverHelper::deleteCorruptCovers() {
+  int removed = 0;
+  HalFile root = Storage.open("/.crosspoint");
+  if (!root || !root.isDirectory()) {
+    if (root) root.close();
+    return 0;
+  }
+
+  char name[128];
+  for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+    file.getName(name, sizeof(name));
+    const std::string itemName(name);
+    file.close();
+
+    const bool isCacheDir = itemName.size() > 5 && (itemName.compare(0, 5, "epub_") == 0 ||
+                                                    itemName.compare(0, 4, "xtc_") == 0 ||
+                                                    itemName.compare(0, 4, "txt_") == 0);
+    if (!isCacheDir) continue;
+
+    const std::string dirPath = "/.crosspoint/" + itemName;
+    HalFile dir = Storage.open(dirPath.c_str());
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      continue;
+    }
+
+    char fileName[128];
+    for (auto bmp = dir.openNextFile(); bmp; bmp = dir.openNextFile()) {
+      bmp.getName(fileName, sizeof(fileName));
+      const std::string fname(fileName);
+      const size_t len = fname.size();
+      if (len >= 4 && fname.compare(len - 4, 4, ".bmp") == 0 && bmp.fileSize() == 0) {
+        bmp.close();
+        if (Storage.remove((dirPath + "/" + fname).c_str())) ++removed;
+        continue;
+      }
+      bmp.close();
+    }
+    dir.close();
+  }
+  root.close();
+  return removed;
 }
 
 bool LibraryCoverHelper::writeTextFallbackCover(GfxRenderer& renderer, const std::string& path, int coverWidth,
@@ -214,16 +258,23 @@ bool LibraryCoverHelper::writeTextFallbackCover(GfxRenderer& renderer, const std
 bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::string& path, int coverWidth,
                                            int coverHeight) {
   const std::string thumbPath = LibraryIndex::thumbPathFor(path, coverWidth, coverHeight);
-  if (thumbPath.empty()) return false;
+  LOG_DBG("LIB", "CovGen: path=%s thumbPath=%s", path.c_str(), thumbPath.c_str());
+  if (thumbPath.empty()) {
+    LOG_DBG("LIB", "CovGen: empty thumbPath for %s", path.c_str());
+    return false;
+  }
+
+  if (Storage.exists(thumbPath.c_str())) {
+    LOG_DBG("LIB", "CovGen: thumb already exists %s", thumbPath.c_str());
+    return true;
+  }
 
   char cacheDir[64] = {};
-  if (FsHelpers::hasEpubExtension(path)) {
-    const uint64_t hash = ZipFile::fnvHash64(path.c_str(), path.size());
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/epub_%llu", static_cast<unsigned long long>(hash));
-  } else if (FsHelpers::hasXtcExtension(path)) {
-    const unsigned long long hash = static_cast<unsigned long long>(std::hash<std::string>{}(path));
-    snprintf(cacheDir, sizeof(cacheDir), "/.crosspoint/xtc_%llu", hash);
-  } else if (!FsHelpers::hasTxtExtension(path) && !FsHelpers::hasMarkdownExtension(path)) {
+  if (FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
+      FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    snprintf(cacheDir, sizeof(cacheDir), "%s",
+             cover_cache_paths::cacheDirForBookPath(path).c_str());
+  } else {
     LOG_DBG("LIB", "CovGen: unsupported extension, cover skipped: %s", path.c_str());
     return false;
   }
@@ -255,7 +306,10 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
   }
 
   if (FsHelpers::hasXtcExtension(path)) {
-    if (ESP.getFreeHeap() < 20000) return false;
+    // XTC thumb generation allocates a contiguous decode buffer; the free-heap
+    // check alone is not enough on a fragmented device (MaxAlloc can be far
+    // below free), and a failed allocation aborts instead of returning.
+    if (ESP.getFreeHeap() < 20000 || ESP.getMaxAllocHeap() < 32 * 1024) return false;
     Xtc xtc(path, "/.crosspoint");
     if (!xtc.load()) return false;
     const bool ok = xtc.generateThumbBmp(coverWidth, coverHeight);
@@ -265,7 +319,7 @@ bool LibraryCoverHelper::generatePageCover(GfxRenderer& renderer, const std::str
   }
 
   if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 24 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
+    if (ESP.getMaxAllocHeap() < 32 * 1024 || ESP.getFreeHeap() < 28 * 1024) return false;
     const bool fb = writeTextFallbackCover(renderer, path, coverWidth, coverHeight);
     LOG_DBG("LIB", "CovGen: TXT text cover gen=%d path=%s", fb ? 1 : 0, path.c_str());
     return fb;

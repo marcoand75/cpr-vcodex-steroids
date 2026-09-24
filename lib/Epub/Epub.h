@@ -38,25 +38,25 @@ class Epub {
   bool generateThumbBmpToPath(int width, int height, const std::string& thumbPath) const;
   CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
 
- public:
-  explicit Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
-    // create a cache key based on the filepath
-    cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
-  }
-  ~Epub() = default;
-  std::string& getBasePath() { return contentBasePath; }
-  bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
-  bool clearCache() const;
-  void setupCacheDir() const;
-  const std::string& getCachePath() const;
-  const std::string& getPath() const;
-  const std::string& getTitle() const;
-  const std::string& getAuthor() const;
-  const std::string& getLanguage() const;
-  std::string getCoverBmpPath(bool cropped = false) const;
-  bool generateCoverBmp(bool cropped = false) const;
-  std::string getThumbBmpPath() const;
-  std::string getThumbBmpPath(int height) const;
+  public:
+   explicit Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
+     // create a cache key based on the filepath
+     cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
+   }
+   ~Epub() = default;
+   std::string& getBasePath() { return contentBasePath; }
+   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
+   bool clearCache() const;
+   void setupCacheDir() const;
+   const std::string& getCachePath() const;
+   const std::string& getPath() const;
+   const std::string& getTitle() const;
+   const std::string& getAuthor() const;
+   const std::string& getLanguage() const;
+   std::string getCoverBmpPath(bool cropped = false) const;
+   bool generateCoverBmp(bool cropped = false) const;
+   std::string getThumbBmpPath() const;
+   std::string getThumbBmpPath(int height) const;
   std::string getThumbBmpPath(int width, int height) const;
   bool generateThumbBmp(int height) const;
   bool generateThumbBmp(int width, int height) const;

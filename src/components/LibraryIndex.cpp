@@ -9,6 +9,7 @@
 #include <Xtc.h>
 #include <ZipFile.h>
 #include <esp_task_wdt.h>
+#include <util/CoverCachePaths.h>
 #include <util/LibraryPerfLog.h>
 
 #include <algorithm>
@@ -658,27 +659,14 @@ bool exists() {
 }
 
 // =========================================================================
-// thumbPathFor (legacy, delegate to same logic)
+// thumbPathFor (delegates to the shared upstream-compatible cache paths)
 // =========================================================================
 
 std::string thumbPathFor(const std::string& bookPath, int coverW, int coverH) {
-  char buf[96];
-  if (FsHelpers::hasXtcExtension(bookPath)) {
-    // Xtc caches under std::hash (see Xtc.h), keep the same hash here.
-    const auto hash = static_cast<unsigned long long>(std::hash<std::string>{}(bookPath));
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/xtc_%llu/thumb_%dx%d.bmp", hash, coverW, coverH);
-  } else if (FsHelpers::hasTxtExtension(bookPath) || FsHelpers::hasMarkdownExtension(bookPath)) {
-    const auto hash = static_cast<unsigned long long>(std::hash<std::string>{}(bookPath));
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/txt_%llu/cover.bmp", hash);
-  } else {
-    // EPUB caches under FNV-1a 64-bit (see Epub::cachePathForFilePath). Must match
-    // or the generated thumbnail lives in a different directory than the one the
-    // tile reads — the cover is generated but never displayed.
-    const uint64_t hash = ZipFile::fnvHash64(bookPath.c_str(), bookPath.size());
-    std::snprintf(buf, sizeof(buf), "/.crosspoint/epub_%llu/thumb_%dx%d_fit.bmp", static_cast<unsigned long long>(hash),
-                  coverW, coverH);
-  }
-  return buf;
+  // Cover cache locations live in the steroids CoverCachePaths utility, which
+  // mirrors the upstream Epub/Xtc/Txt constructor naming so library covers and
+  // home-screen covers share the same files.
+  return cover_cache_paths::thumbPathForBookPath(bookPath, coverW, coverH);
 }
 
 // =========================================================================

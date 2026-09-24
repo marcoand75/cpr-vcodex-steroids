@@ -8,59 +8,48 @@
 
 namespace epub_cover_thumb {
 
-namespace {
-// Stream src -> dst so no large buffer is needed (library thumbs are small).
-bool copyFile(const std::string& src, const std::string& dst) {
-  HalFile in;
-  if (!Storage.openFileForRead("LIB", src.c_str(), in)) {
-    return false;
-  }
-  HalFile out;
-  if (!Storage.openFileForWrite("LIB", dst.c_str(), out)) {
-    in.close();
-    return false;
-  }
-  uint8_t buf[512];
-  int n = 0;
-  while ((n = in.read(buf, sizeof(buf))) > 0) {
-    out.write(buf, static_cast<size_t>(n));
-  }
-  in.close();
-  out.close();
-  return true;
-}
-}  // namespace
-
+// With the steroids cover-cache alignment, LibraryIndex::thumbPathFor and
+// Epub::getThumbBmpPath(w, h) point at the exact same upstream file, so there
+// is nothing to mirror anymore. The only extra work kept here is dropping a
+// stale/blank upstream thumbnail first: Epub::generateThumbBmp() early-returns
+// when the file exists, so a zero-byte sentinel from a past failed decode
+// would otherwise be served forever.
 bool generate(Epub& epub, const std::string& bookPath, int width, int height) {
+  (void)bookPath;
   if (width <= 0 || height <= 0) {
     return false;
   }
-  const std::string dst = LibraryIndex::thumbPathFor(bookPath, width, height);
+  const std::string dst = epub.getThumbBmpPath(width, height);
   if (dst.empty()) {
     return false;
   }
   if (Storage.exists(dst.c_str())) {
-    return true;
+    HalFile probe;
+    if (Storage.openFileForRead("LIB", dst.c_str(), probe)) {
+      const bool empty = probe.fileSize() == 0;
+      probe.close();
+      if (!empty) {
+        return true;
+      }
+    } else {
+      return true;
+    }
+    // Zero-byte sentinel from a past failure: drop it so generation re-runs.
+    Storage.remove(dst.c_str());
   }
-  // Public upstream API: generates (and caches) the 1-bit thumbnail at the real
-  // Epub cache path. The Library reads its own path, so mirror the file there.
   if (!epub.generateThumbBmp(width, height)) {
     return false;
   }
-  const std::string src = epub.getThumbBmpPath(width, height);
-  if (!Storage.exists(src.c_str())) {
+  if (!Storage.exists(dst.c_str())) {
     return false;
   }
-  const auto slash = dst.find_last_of('/');
-  if (slash != std::string::npos) {
-    Storage.mkdir(dst.substr(0, slash).c_str());
-  }
-  if (!copyFile(src, dst)) {
-    LOG_ERR("LIB", "Cover thumb copy failed: %s -> %s", src.c_str(), dst.c_str());
-    Storage.remove(dst.c_str());
+  HalFile probe;
+  if (!Storage.openFileForRead("LIB", dst.c_str(), probe)) {
     return false;
   }
-  return true;
+  const bool empty = probe.fileSize() == 0;
+  probe.close();
+  return !empty;
 }
 
 }  // namespace epub_cover_thumb
