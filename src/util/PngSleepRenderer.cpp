@@ -196,7 +196,11 @@ bool ensurePngDecoderHeap(const GfxRenderer& renderer) {
 }  // namespace
 
 bool PngSleepRenderer::drawTransparentPng(const std::string& path, const GfxRenderer& renderer, const int targetX,
-                                          const int targetY, const int targetWidth, const int targetHeight) {
+                                          const int targetY, const int targetWidth, const int targetHeight,
+                                          const char* storagePrefix) {
+  // storagePrefix is accepted for Steroids source-compatibility but unused: this
+  // branch logs with a fixed "SLP" tag and has no per-caller cache namespace.
+  (void)storagePrefix;
   if (targetWidth <= 0 || targetHeight <= 0) {
     return false;
   }

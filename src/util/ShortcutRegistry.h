@@ -29,6 +29,10 @@ enum class ShortcutId {
   OpdsBrowser,
   Plugins,
   Library,
+  Screensaver,
+  QuickCards,
+  Clippings,
+  Wikipedia,
 };
 
 struct ShortcutDefinition {
@@ -41,8 +45,8 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 19>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 19> definitions = {
+inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
+  static const std::array<ShortcutDefinition, 23> definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},
@@ -107,6 +111,22 @@ inline const std::array<ShortcutDefinition, 19>& getShortcutDefinitions() {
       ShortcutDefinition{ShortcutId::Library, StrId::STR_MENU_LIBRARY, StrId::STR_LIBRARY_APP_DESC, UIIcon::Library,
                          &CrossPointSettings::libraryShortcut, &CrossPointSettings::libraryShortcutOrder,
                          &CrossPointSettings::libraryShortcutVisible},
+      ShortcutDefinition{ShortcutId::Screensaver, StrId::STR_SCREENSAVER, StrId::STR_SCREENSAVER_APP_DESC,
+                         UIIcon::ScreenSaver, &CrossPointSettings::screenSaverShortcut,
+                         &CrossPointSettings::screenSaverShortcutOrder,
+                         &CrossPointSettings::screenSaverShortcutVisible},
+      ShortcutDefinition{ShortcutId::QuickCards, StrId::STR_QUICK_CARDS, StrId::STR_QUICK_CARDS_DESC,
+                         UIIcon::QuickCards, &CrossPointSettings::quickCardsShortcut,
+                         &CrossPointSettings::quickCardsShortcutOrder,
+                         &CrossPointSettings::quickCardsShortcutVisible},
+      ShortcutDefinition{ShortcutId::Clippings, StrId::STR_CLIPPINGS, StrId::STR_CLIPPINGS_APP_DESC,
+                         UIIcon::Recent, &CrossPointSettings::clippingsShortcut,
+                         &CrossPointSettings::clippingsShortcutOrder,
+                         &CrossPointSettings::clippingsShortcutVisible},
+      ShortcutDefinition{ShortcutId::Wikipedia, StrId::STR_WIKIPEDIA, StrId::STR_WIKIPEDIA_APP_DESC,
+                         UIIcon::Book, &CrossPointSettings::wikipediaShortcut,
+                         &CrossPointSettings::wikipediaShortcutOrder,
+                         &CrossPointSettings::wikipediaShortcutVisible},
   };
 
   return definitions;

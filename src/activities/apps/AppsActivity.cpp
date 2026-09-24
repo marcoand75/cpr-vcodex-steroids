@@ -17,6 +17,7 @@
 #include "ReadingProfileActivity.h"
 #include "ReadingStatsActivity.h"
 #include "ScreenCleanActivity.h"
+#include "ScreenSaverActivity.h"
 #include "SleepAppActivity.h"
 #include "SyncDayActivity.h"
 #include "activities/settings/ClockSyncActivity.h"
@@ -204,6 +205,9 @@ void AppsActivity::openApp(const int index) {
     case ShortcutId::Library:
       activityManager.goToLibrary(/*launchFromApps=*/true);
       return;
+    case ShortcutId::Screensaver:
+      activity = std::make_unique<ScreenSaverActivity>(renderer, mappedInput);
+      break;
   }
 
   startActivityForResult(std::move(activity), [this](const ActivityResult&) {

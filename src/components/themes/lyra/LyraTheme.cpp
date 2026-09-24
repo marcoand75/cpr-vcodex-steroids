@@ -29,6 +29,7 @@
 #include "components/icons/image24.h"
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
+#include "components/icons/screensaver.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
 #include "components/icons/text.h"
@@ -173,6 +174,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return HeartIcon;
       case UIIcon::Bookmark:
         return BookmarkIcon;
+      case UIIcon::ScreenSaver:
+        return ScreenSaverIcon;
       default:
         return nullptr;
     }

@@ -547,6 +547,7 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
     if (!book.coverBmpPath.empty()) {
       const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kFiveCoverCenterW, kFiveCoverCenterH);
+      LOG_DBG("HOME", "LyraMarcoand75Theme: book=%s thumbPath=%s exists=%d", book.path.c_str(), thumbPath.c_str(), Storage.exists(thumbPath.c_str()) ? 1 : 0);
       if (Storage.exists(thumbPath.c_str())) {
         FsFile file;
         if (Storage.openFileForRead("HOME", thumbPath, file)) {

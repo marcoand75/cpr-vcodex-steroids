@@ -37,19 +37,57 @@ int FavoritesStore::findBookIndex(const std::string& path, const std::string& bo
   return -1;
 }
 
+namespace {
+
+bool hasLegacyEpubCoverPath(const std::string& coverBmpPath) {
+  if (coverBmpPath.empty()) {
+    return false;
+  }
+
+  constexpr char EPUB_PREFIX[] = "/.crosspoint/epub_";
+  const size_t prefixLen = sizeof(EPUB_PREFIX) - 1;
+  if (coverBmpPath.size() <= prefixLen || !coverBmpPath.starts_with(EPUB_PREFIX)) {
+    return false;
+  }
+
+  const size_t slashPos = coverBmpPath.find('/', prefixLen);
+  if (slashPos == std::string::npos) {
+    return false;
+  }
+
+  const std::string hashPart = coverBmpPath.substr(prefixLen, slashPos - prefixLen);
+  if (hashPart.empty() || hashPart.size() > 10) {
+    return false;
+  }
+
+  return std::all_of(hashPart.begin(), hashPart.end(),
+                     [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
+}  // namespace
+
 void FavoritesStore::normalizeBook(FavoriteBook& book) {
   book.path = BookIdentity::normalizePath(book.path);
   if (!book.bookId.empty()) {
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
     return;
   }
 
   if (!book.path.empty() && Storage.exists(book.path.c_str())) {
     book.bookId = BookIdentity::resolveStableBookId(book.path);
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
     return;
   }
 
   if (const auto* statsBook = READING_STATS.findMatchingBookForPath(book.path, book.title, book.author)) {
     book.bookId = statsBook->bookId;
+    if (hasLegacyEpubCoverPath(book.coverBmpPath)) {
+      book.coverBmpPath.clear();
+    }
   }
 }
 

@@ -183,8 +183,13 @@ class CrossPointSettings {
   };
 
   // Short power button press actions. Persisted by index: TOGGLE_STATUS_BAR is
-  // the fork's value 4, upstream's FOOTNOTES / PWR_CONFIRM are appended after it.
-  // Any enum label list (SettingsList, web UI) must follow this order.
+  // the fork's value 4, then upstream's FOOTNOTES, then the fork's
+  // SLEEP_IMAGE_CYCLE. PWR_CONFIRM is touch-only and MUST stay last: the device
+  // and web label lists apply it positionally as "trim the tail on non-touch",
+  // and the model is stored value == label-list index == wrap modulus, so a
+  // hidden entry cannot be a hole in the middle of the list.
+  // Any enum label list (SettingsActivity, SettingsList, web UI) must follow
+  // this order.
   enum SHORT_PWRBTN {
     IGNORE = 0,
     SLEEP = 1,
@@ -192,8 +197,8 @@ class CrossPointSettings {
     FORCE_REFRESH = 3,
     TOGGLE_STATUS_BAR = 4,
     FOOTNOTES = 5,
-    PWR_CONFIRM = 6,
-    SLEEP_IMAGE_CYCLE = 7,
+    SLEEP_IMAGE_CYCLE = 6,
+    PWR_CONFIRM = 7,
     SHORT_PWRBTN_COUNT
   };
   enum TILT_PAGE_TURN {
@@ -299,6 +304,58 @@ class CrossPointSettings {
   enum SHORTCUT_LOCATION { SHORTCUT_HOME = 0, SHORTCUT_APPS = 1, SHORTCUT_LOCATION_COUNT };
   enum HOME_BOOK_SOURCE { HOME_BOOKS_RECENTS = 0, HOME_BOOKS_FAVORITES = 1, HOME_BOOK_SOURCE_COUNT };
   enum SLEEP_IMAGE_ORDER { SLEEP_IMAGE_SHUFFLE = 0, SLEEP_IMAGE_SEQUENTIAL = 1, SLEEP_IMAGE_ORDER_COUNT };
+
+  // ---- Steroids fork-only: Screensaver --------------------------------------
+  // Kept in one marked block (enums + fields) so upstream merges don't collide.
+  enum SCREENSAVER_ORDER { SCREENSAVER_SHUFFLE = 0, SCREENSAVER_SEQUENTIAL = 1, SCREENSAVER_ORDER_COUNT };
+  enum SCREENSAVER_INTERVAL {
+    SCREENSAVER_1_MIN = 0,
+    SCREENSAVER_5_MIN = 1,
+    SCREENSAVER_15_MIN = 2,
+    SCREENSAVER_30_MIN = 3,
+    SCREENSAVER_1_HOUR = 4,
+    SCREENSAVER_2_HOURS = 5,
+    SCREENSAVER_4_HOURS = 6,
+    SCREENSAVER_8_HOURS = 7,
+    SCREENSAVER_INTERVAL_COUNT
+  };
+  enum SCREENSAVER_WAKE_BUTTON {
+    SCREENSAVER_WAKE_ANY = 0,
+    SCREENSAVER_WAKE_BACK = 1,
+    SCREENSAVER_WAKE_CONFIRM = 2,
+    SCREENSAVER_WAKE_LEFT = 3,
+    SCREENSAVER_WAKE_RIGHT = 4,
+    SCREENSAVER_WAKE_UP = 5,
+    SCREENSAVER_WAKE_DOWN = 6,
+    SCREENSAVER_WAKE_POWER = 7,
+    SCREENSAVER_WAKE_PAGE_BACK = 8,
+    SCREENSAVER_WAKE_PAGE_FORWARD = 9,
+    SCREENSAVER_WAKE_BUTTON_COUNT
+  };
+  enum SCREENSAVER_FONT_SIZE {
+    SCREENSAVER_FONT_X_SMALL = 0,
+    SCREENSAVER_FONT_SMALL = 1,
+    SCREENSAVER_FONT_MEDIUM = 2,
+    SCREENSAVER_FONT_LARGE = 3,
+    SCREENSAVER_FONT_X_LARGE = 4,
+    SCREENSAVER_FONT_SIZE_COUNT
+  };
+  enum SCREENSAVER_TEXT_POSITION {
+    SCREENSAVER_TEXT_POS_TOP_LEFT = 0,
+    SCREENSAVER_TEXT_POS_TOP_RIGHT = 1,
+    SCREENSAVER_TEXT_POS_BOTTOM_LEFT = 2,
+    SCREENSAVER_TEXT_POS_BOTTOM_RIGHT = 3,
+    SCREENSAVER_TEXT_POS_CENTER = 4,
+    SCREENSAVER_TEXT_POS_RANDOM = 5,
+    SCREENSAVER_TEXT_POSITION_COUNT
+  };
+  enum SCREENSAVER_TEXT_STYLE {
+    SCREENSAVER_TEXT_WHITE = 0,
+    SCREENSAVER_TEXT_BLACK = 1,
+    SCREENSAVER_TEXT_WHITE_OUTLINED_BLACK = 2,
+    SCREENSAVER_TEXT_BLACK_OUTLINED_WHITE = 3,
+    SCREENSAVER_TEXT_STYLE_COUNT
+  };
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
@@ -444,6 +501,40 @@ class CrossPointSettings {
   uint8_t syncDayReminderStarts = SYNC_DAY_REMINDER_20;
   char sleepDirectory[128] = "";
   uint8_t sleepImageOrder = SLEEP_IMAGE_SHUFFLE;
+
+  // ---- Steroids fork-only: Screensaver settings ----------------------------
+  // General screensaver (idle / launched from the Apps hub).
+  char screenSaverDirectory[128] = "";
+  uint8_t screenSaverOrder = SCREENSAVER_SHUFFLE;
+  uint8_t screenSaverInterval = SCREENSAVER_30_MIN;
+  uint8_t screenSaverWakeButton = SCREENSAVER_WAKE_ANY;
+  char screenSaverText[128] = "";
+  uint8_t screenSaverFontSize = SCREENSAVER_FONT_SMALL;
+  uint8_t screenSaverTextPosition = SCREENSAVER_TEXT_POS_BOTTOM_RIGHT;
+  uint8_t screenSaverTextStyle = SCREENSAVER_TEXT_WHITE_OUTLINED_BLACK;
+  uint8_t screenSaverShowPanel = 0;
+  uint8_t screenSaverPanelColor = 0;    // 0=black, 1=white
+  uint8_t screenSaverPanelOpacity = 3;  // 0=none .. 3=75%
+  uint8_t screenSaverMinBattery = 0;    // 0=10% .. 8=90%
+  uint8_t screenSaverReplaceSleep = 0;  // 1=use screensaver instead of sleep
+  // In-book screensaver (separate folder/order).
+  char screenSaverReaderDir[128] = "";
+  uint8_t screenSaverReaderOrder = SCREENSAVER_SHUFFLE;
+  // Cycle the sleep image on a brief power tap while asleep.
+  uint8_t cycleScreensaverOnTap = 1;
+  // Shortcut registration (mirrors the other fork shortcuts).
+  uint8_t screenSaverShortcut = SHORTCUT_APPS;
+  uint8_t screenSaverShortcutOrder = 21;
+  uint8_t screenSaverShortcutVisible = 1;
+  uint8_t quickCardsShortcut = SHORTCUT_APPS;
+  uint8_t quickCardsShortcutOrder = 22;
+  uint8_t quickCardsShortcutVisible = 1;
+  uint8_t clippingsShortcut = SHORTCUT_APPS;
+  uint8_t clippingsShortcutOrder = 23;
+  uint8_t clippingsShortcutVisible = 1;
+  uint8_t wikipediaShortcut = SHORTCUT_APPS;
+  uint8_t wikipediaShortcutOrder = 24;
+  uint8_t wikipediaShortcutVisible = 1;
   uint8_t timeZonePreset = 0;
   uint8_t dateFormat = DATE_DD_MM_YYYY;
   uint8_t dailyGoalTarget = DAILY_GOAL_30_MIN;

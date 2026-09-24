@@ -164,9 +164,12 @@ std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry) {
     shortPwrBtnValues[CrossPointSettings::FORCE_REFRESH] = StrId::STR_FORCE_REFRESH;
     shortPwrBtnValues[CrossPointSettings::TOGGLE_STATUS_BAR] = StrId::STR_TOGGLE_STATUS_BAR;
     shortPwrBtnValues[CrossPointSettings::FOOTNOTES] = StrId::STR_FOOTNOTES;
+    shortPwrBtnValues[CrossPointSettings::SLEEP_IMAGE_CYCLE] = StrId::STR_SLEEP_IMAGE_CYCLE;
     shortPwrBtnValues[CrossPointSettings::PWR_CONFIRM] = StrId::STR_CONFIRM;
 #if !FREEINK_CAP_TOUCH
     // Power-as-Confirm is touch-board chrome (upstream offers it only there).
+    // It is the last enum value, so dropping the tail keeps the remaining
+    // indices stable.
     shortPwrBtnValues.pop_back();
 #endif
 

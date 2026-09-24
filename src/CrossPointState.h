@@ -98,6 +98,13 @@ class CrossPointState {
   void pushRecentSleep(uint16_t idx);
   void pushRecentOverlaySleep(uint16_t idx);
   uint16_t getMostRecentSleepIndex() const;
+  // ---- Steroids fork-only: screensaver anti-repetition buffer ----
+  static constexpr uint8_t SCREENSAVER_RECENT_COUNT = 12;
+  uint16_t recentScreensaverImages[SCREENSAVER_RECENT_COUNT] = {};
+  uint8_t recentScreensaverPos = 0;
+  uint8_t recentScreensaverFill = 0;
+  bool isRecentScreensaver(uint16_t idx, uint8_t checkCount) const;
+  void pushRecentScreensaver(uint16_t idx);
   void recordUsefulStart(uint8_t reminderThreshold);
   void registerValidTimeSync(uint32_t validTimestamp);
   bool shouldShowSyncDayReminder(uint8_t reminderThreshold) const;

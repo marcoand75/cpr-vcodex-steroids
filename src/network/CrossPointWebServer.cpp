@@ -270,8 +270,12 @@ constexpr StrId OPT_IMAGES[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLA
 constexpr StrId OPT_SIDE_BUTTONS[] = {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV};
 constexpr StrId OPT_LONG_PRESS_BEHAVIOR[] = {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                              StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION};
-constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                                   StrId::STR_TOGGLE_STATUS_BAR};
+// Index == stored CrossPointSettings::SHORT_PWRBTN value. The touch-only
+// PWR_CONFIRM (last enum value) is intentionally omitted: this list has no
+// per-board trim, so offering it here would expose a no-op on non-touch boards.
+constexpr StrId OPT_SHORT_PWR[] = {StrId::STR_IGNORE,        StrId::STR_SLEEP,      StrId::STR_PAGE_TURN,
+                                   StrId::STR_FORCE_REFRESH, StrId::STR_TOGGLE_STATUS_BAR, StrId::STR_FOOTNOTES,
+                                   StrId::STR_SLEEP_IMAGE_CYCLE};
 constexpr StrId OPT_TILT_PAGE_TURN[] = {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED};
 constexpr StrId OPT_DISPLAY_HEADER[] = {StrId::STR_STATE_OFF, StrId::STR_DISPLAY_DATE_ONLY,
                                         StrId::STR_DISPLAY_TIME_ONLY, StrId::STR_DISPLAY_DAY_AND_TIME};

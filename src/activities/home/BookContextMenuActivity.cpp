@@ -48,11 +48,6 @@ std::vector<BookContextMenuActivity::MenuItem> BookContextMenuActivity::buildMen
 
   items.push_back({MenuAction::VIEW_STATS, StrId::STR_READING_STATS, ReadingStatsIcon32, 32, 32});
 
-  // Metadata disponibili solo in homepage mode (in library mode si legge da ZIP)
-  if (!isLibraryMode) {
-    items.push_back({MenuAction::VIEW_METADATA, StrId::STR_VIEW_METADATA, Settings2Icon, 32, 32});
-  }
-
   items.push_back({MenuAction::ADD_TO_FAVORITES,
                    isFavorite ? StrId::STR_REMOVE_FROM_FAVORITES : StrId::STR_ADD_TO_FAVORITES, HeartIcon, 32, 32});
 
