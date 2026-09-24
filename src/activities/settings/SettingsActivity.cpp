@@ -463,6 +463,7 @@ std::vector<SettingInfo> buildAppSettings() {
                                 {StrId::STR_LIBRARY_UPDATE_MANUAL, StrId::STR_LIBRARY_UPDATE_AUTO}));
   v.push_back(SettingInfo::Toggle(StrId::STR_LIBRARY_FOLDER_COLLECTIONS, &CrossPointSettings::libraryFolderCollections));
   v.push_back(SettingInfo::Toggle(StrId::STR_LIBRARY_METADATA_SERIES, &CrossPointSettings::libraryMetadataSeries));
+  v.push_back(SettingInfo::String(StrId::STR_LIBRARY_ROOT_DIR, SETTINGS.libraryRootDir, sizeof(SETTINGS.libraryRootDir)));
   // Steroids fork-only: on-demand cover maintenance (mirrors upstream Steroids).
   v.push_back(SettingInfo::Action(StrId::STR_LIBRARY_POPUP_MENU, SettingAction::LibraryMaintenance));
   v.push_back(SettingInfo::Action(StrId::STR_CLEAR_CORRUPT_COVERS, SettingAction::ClearCorruptCovers));
