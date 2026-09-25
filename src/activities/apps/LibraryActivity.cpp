@@ -996,8 +996,21 @@ void LibraryActivity::loop() {
         unsigned long t_gen = LibraryPerf::nowMs();
         bool generated = false;
         if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
-          ++coverGen_.done;
-          generated = true;
+          // Verify the generated BMP is actually readable (not partial/corrupt).
+          // Without this check a bad flush can leave a corrupt file that
+          // drawTile skips, making the cover invisible until a re-enter.
+          const std::string thumbPath = LibraryIndex::thumbPathFor(std::string(pageCache_[slot].path), coverWidth_, coverHeight_);
+          if (isBookCoverReady(pageCache_[slot].path)) {
+            ++coverGen_.done;
+            generated = true;
+          } else {
+            // Remove corrupt/partial file so the loop regenerates it.
+            if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
+              Storage.remove(thumbPath.c_str());
+            }
+            LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d generated file invalid, removed for retry", (int)slot);
+            generated = false;
+          }
         }
         LOG_DBG("LIB-PERF", "CovGen-slot: slot=%d gen=%lums ok=%d", (int)slot,
                 (unsigned long)(LibraryPerf::nowMs() - t_gen), (int)generated);
@@ -2349,7 +2362,11 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
 
   if (!drawn) {
     if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-      LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed path=%s thumb=%s", i, path.c_str(), thumbPath.c_str());
+      // File exists but BMP parse failed (corrupt/partial). Remove it so the
+      // cover-generation loop detects it missing and regenerates it; without
+      // removal the loop skips regeneration and the placeholder persists.
+      LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed removing=%s thumb=%s", i, thumbPath.c_str(), thumbPath.c_str());
+      Storage.remove(thumbPath.c_str());
     } else if (thumbPath.empty()) {
       LOG_DBG("LIB", "drawTile: idx=%d empty thumbPath path=%s", i, path.c_str());
     } else {
