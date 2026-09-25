@@ -5,6 +5,7 @@ _bcp47: "cs"
 
 STR_CROSSPOINT: "CrossPoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Steroidy"
 STR_BOOTING: "SPUŠTĚNÍ"
 STR_SLEEPING: "SPÁNEK"
 STR_ENTERING_SLEEP: "Vstup do režimu spánku"

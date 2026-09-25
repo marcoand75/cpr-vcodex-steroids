@@ -5,6 +5,7 @@ _bcp47: "es"
 
 STR_CROSSPOINT: "CrossPoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Esteroides"
 STR_BOOTING: "Iniciando..."
 STR_SLEEPING: "Suspendido"
 STR_ENTERING_SLEEP: "Entrando en suspensión"

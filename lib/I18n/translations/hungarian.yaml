@@ -5,6 +5,7 @@ _bcp47: "hu"
 
 STR_CROSSPOINT: "CrossPoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Szteroidok"
 STR_BOOTING: "INDÍTÁS"
 STR_SLEEPING: "ALVÁS"
 STR_ENTERING_SLEEP: "Alvás..."

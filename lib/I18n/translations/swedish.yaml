@@ -5,6 +5,7 @@ _bcp47: "sv"
 
 STR_CROSSPOINT: "Crosspoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Steroider"
 STR_BOOTING: "STARTAR"
 STR_SLEEPING: "VILA"
 STR_ENTERING_SLEEP: "Går i vila"

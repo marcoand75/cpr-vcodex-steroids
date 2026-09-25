@@ -5,6 +5,7 @@ _bcp47: "uk"
 
 STR_CROSSPOINT: "CrossPoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Стероїди"
 STR_BOOTING: "ЗАВАНТАЖЕННЯ"
 STR_SLEEPING: "СПИТЬ"
 STR_ENTERING_SLEEP: "Перехід у режим сну"

@@ -5,6 +5,7 @@ _bcp47: "kk"
 
 STR_CROSSPOINT: "CrossPoint"
 STR_CPR_VCODEX: "CPR-vCodex"
+STR_STEROIDS: "Стероидтер"
 STR_BOOTING: "ЖҮКТЕЛУДЕ"
 STR_SLEEPING: "ҰЙҚЫ РЕЖИМІ"
 STR_ENTERING_SLEEP: "Ұйқы режиміне өту"
