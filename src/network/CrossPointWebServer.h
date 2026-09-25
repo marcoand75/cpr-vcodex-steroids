@@ -5,9 +5,34 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 
+#include <ArduinoJson.h>
+#include <I18n.h>
+
 #include <array>
 #include <memory>
 #include <string>
+#include <vector>
+
+// Forward declarations
+class CrossPointSettings;
+
+// Web settings types (shared with Settings API)
+enum class WebSettingType : uint8_t { Toggle, Enum, Value, String };
+enum class WebDynamicSetting : uint8_t { None, KoUsername, KoPassword, KoServerUrl, KoMatchMethod };
+
+struct WebSettingDef {
+  StrId nameId;
+  StrId category;
+  WebSettingType type;
+  uint8_t CrossPointSettings::* valuePtr;
+  const StrId* options;
+  uint8_t optionCount;
+  uint8_t min;
+  uint8_t max;
+  uint8_t step;
+  WebDynamicSetting dynamic;
+  const char* key;
+};
 
 // Structure to hold file information
 struct FileInfo {
@@ -108,6 +133,11 @@ class CrossPointWebServer {
   void handleGetSettings() const;
   void handlePostSettings();
 
+  // Steroids settings handlers
+  void handleSteroidsSettingsPage() const;
+  void handleGetSteroidsSettings() const;
+  void handlePostSteroidsSettings();
+
   // Wi-Fi credentials handlers
   void handleGetWifiNetworks() const;
   void handlePostWifiNetwork();
@@ -142,4 +172,12 @@ class CrossPointWebServer {
   void handleGetOpdsServers() const;
   void handlePostOpdsServer();
   void handleDeleteOpdsServer();
+
+  // Steroids settings helper functions
+  void addSteroidsSetting(const char* key, StrId nameId, const char* category,
+                          WebSettingType type, int value, const std::vector<const char*>& options,
+                          uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const;
+  void applySteroidsSetting(JsonDocument& doc, const char* key,
+                            uint8_t CrossPointSettings::* valuePtr, uint8_t maxValue,
+                            bool& saveSettings, int& applied);
 };
