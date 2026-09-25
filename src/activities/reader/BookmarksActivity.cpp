@@ -100,7 +100,7 @@ void BookmarksActivity::activateIndex(const int index) {
                                             + " " + std::to_string(bookmark.pageNumber + 1)
                           : bookmark.snippet;
   startActivityForResult(
-      std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body),
+      std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body, tr(STR_OPEN_HIGHLIGHT)),
       [this, bookmark](const ActivityResult& result) {
         if (!result.isCancelled) {
           setResult(BookmarkResult{static_cast<int>(bookmark.spineIndex), bookmark.pageNumber,
@@ -132,7 +132,7 @@ bool BookmarksActivity::handleButtons() {
                                             + " " + std::to_string(bookmark.pageNumber + 1)
                                 : bookmark.snippet;
         startActivityForResult(
-            std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body),
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body, tr(STR_OPEN_HIGHLIGHT)),
             [this, bookmark](const ActivityResult& result) {
               if (!result.isCancelled) {
                 // Confirm: open the book at this highlight.

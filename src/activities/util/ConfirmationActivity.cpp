@@ -6,8 +6,9 @@
 #include "components/UITheme.h"
 
 ConfirmationActivity::ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                           const std::string& heading, const std::string& body)
-    : Activity("Confirmation", renderer, mappedInput), heading(heading), body(body) {}
+                                           const std::string& heading, const std::string& body,
+                                           const std::string& confirmLabel)
+    : Activity("Confirmation", renderer, mappedInput), heading(heading), body(body), confirmLabel(confirmLabel) {}
 
 void ConfirmationActivity::onEnter() {
   Activity::onEnter();
@@ -59,7 +60,7 @@ void ConfirmationActivity::onEnter() {
   }
   if (startY < margin) startY = margin;
 
-  const char* options[] = {I18N.get(StrId::STR_CANCEL), I18N.get(StrId::STR_CONFIRM)};
+  const char* options[] = {I18N.get(StrId::STR_CANCEL), confirmLabel.empty() ? I18N.get(StrId::STR_CONFIRM) : confirmLabel.c_str()};
   confirmPopup.show(safeHeading.c_str(), options, 2, 0, [this](int idx) {
     ActivityResult res;
     res.isCancelled = (idx != 1);

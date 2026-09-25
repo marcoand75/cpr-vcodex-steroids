@@ -12,6 +12,7 @@ class ConfirmationActivity : public Activity {
   // Input data
   std::string heading;
   std::string body;
+  std::string confirmLabel;
 
   const int margin = 20;
   const int spacing = 30;
@@ -27,7 +28,7 @@ class ConfirmationActivity : public Activity {
 
  public:
   ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& heading,
-                       const std::string& body);
+                       const std::string& body, const std::string& confirmLabel = "");
 
   void onEnter() override;
   void loop() override;
