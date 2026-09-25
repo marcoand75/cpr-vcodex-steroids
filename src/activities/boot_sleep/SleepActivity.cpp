@@ -1354,7 +1354,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
 
   renderer.clearScreen();
   renderer.drawIcon(Logo, logoX, logoY, logoWidth, logoHeight);
-  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_STEROIDS), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_CPR_VCODEX_STEROIDS), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, subtitleY, tr(STR_SLEEPING));
 
   if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {

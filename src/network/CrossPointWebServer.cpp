@@ -37,6 +37,7 @@
 #include "html/IfFoundPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/SteroidsSettingsPageHtml.generated.h"
+#include "html/LogoPng.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/IfFoundFile.h"
@@ -541,6 +542,7 @@ void CrossPointWebServer::begin() {
   server->on("/", HTTP_GET, [this] { handleRoot(); });
   server->on("/files", HTTP_GET, [this] { handleFileList(); });
   server->on("/js/jszip.min.js", HTTP_GET, [this] { handleJszip(); });
+  server->on("/logo.png", HTTP_GET, [this] { handleLogo(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
@@ -777,6 +779,12 @@ void CrossPointWebServer::handleJszip() const {
   server->sendHeader("Content-Encoding", "gzip");
   server->send_P(200, "application/javascript", jszip_minJs, jszip_minJsCompressedSize);
   LOG_DBG("WEB", "Served jszip.min.js");
+}
+
+void CrossPointWebServer::handleLogo() const {
+  server->sendHeader("Cache-Control", "public, max-age=86400");
+  server->send_P(200, "image/png", reinterpret_cast<const char*>(LogoPng), LogoPngSize);
+  LOG_DBG("WEB", "Served logo.png (%d bytes)", LogoPngSize);
 }
 
 void CrossPointWebServer::handleNotFound() const {
@@ -1949,6 +1957,17 @@ void CrossPointWebServer::handleGetSettings() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
+  // Pre-resolve category name if filtering
+  const char* categoryName = nullptr;
+  if (requestedCategory >= 0) {
+    for (const auto& s : WEB_SETTINGS) {
+      if (webSettingsCategoryIndex(s.category) == requestedCategory) {
+        categoryName = I18N.get(s.category);
+        break;
+      }
+    }
+  }
+
   bool seenFirst = false;
 
   for (const auto& s : WEB_SETTINGS) {
@@ -1961,73 +1980,80 @@ void CrossPointWebServer::handleGetSettings() const {
       seenFirst = true;
     }
 
-    server->sendContent("{", 1);
-    sendJsonStringField(server.get(), "key", s.key);
-    server->sendContent(",", 1);
-    sendJsonStringField(server.get(), "name", I18N.get(s.nameId));
-    server->sendContent(",", 1);
-    sendJsonStringField(server.get(), "category", I18N.get(s.category));
-    server->sendContent(",", 1);
+    // Build setting JSON in one buffer to minimize sendContent calls
+    char buf[512];
+    int len = 0;
+
+    len += snprintf(buf + len, sizeof(buf) - len, "{\"key\":\"%s\",\"name\":\"", s.key);
+    const char* nameStr = I18N.get(s.nameId);
+    len += snprintf(buf + len, sizeof(buf) - len, "%s", nameStr);
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"category\":\"");
+    const char* catStr = categoryName ? categoryName : I18N.get(s.category);
+    len += snprintf(buf + len, sizeof(buf) - len, "%s", catStr);
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"type\":\"");
 
     bool handled = true;
     switch (s.type) {
       case WebSettingType::Toggle: {
-        sendJsonStringField(server.get(), "type", "toggle");
+        len += snprintf(buf + len, sizeof(buf) - len, "toggle");
         if (s.valuePtr) {
-          server->sendContent(",", 1);
-          sendJsonIntField(server.get(), "value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+          len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*(s.valuePtr)));
         }
         break;
       }
       case WebSettingType::Enum: {
-        sendJsonStringField(server.get(), "type", "enum");
-        server->sendContent(",", 1);
+        len += snprintf(buf + len, sizeof(buf) - len, "enum");
         if (s.valuePtr) {
-          sendJsonIntField(server.get(), "value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+          len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*(s.valuePtr)));
         } else if (s.dynamic == WebDynamicSetting::KoMatchMethod) {
-          sendJsonIntField(server.get(), "value", static_cast<int>(KOREADER_STORE.getMatchMethod()));
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+          len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(KOREADER_STORE.getMatchMethod()));
         } else {
-          sendJsonIntField(server.get(), "value", 0);
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":0");
         }
-        sendRaw(server.get(), ",\"options\":[");
-        bool seenOption = false;
+        len += snprintf(buf + len, sizeof(buf) - len, ",\"options\":[");
         for (uint8_t i = 0; i < s.optionCount; i++) {
-          if (seenOption) {
-            server->sendContent(",", 1);
-          } else {
-            seenOption = true;
+          if (i > 0) {
+            len += snprintf(buf + len, sizeof(buf) - len, ",");
           }
-          sendJsonEscaped(server.get(), I18N.get(s.options[i]));
+          const char* optStr = I18N.get(s.options[i]);
+          // Simple escape: just handle quotes
+          len += snprintf(buf + len, sizeof(buf) - len, "\"");
+          for (const char* p = optStr; *p && len < (int)sizeof(buf) - 4; ++p) {
+            if (*p == '"') {
+              buf[len++] = '\\';
+              buf[len++] = '"';
+            } else if (*p == '\\') {
+              buf[len++] = '\\';
+              buf[len++] = '\\';
+            } else {
+              buf[len++] = *p;
+            }
+          }
+          len += snprintf(buf + len, sizeof(buf) - len, "\"");
         }
-        server->sendContent("]", 1);
+        len += snprintf(buf + len, sizeof(buf) - len, "]");
         break;
       }
       case WebSettingType::Value: {
-        sendJsonStringField(server.get(), "type", "value");
+        len += snprintf(buf + len, sizeof(buf) - len, "value");
         if (s.valuePtr) {
-          server->sendContent(",", 1);
-          sendJsonIntField(server.get(), "value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+          len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*(s.valuePtr)));
         }
-        server->sendContent(",", 1);
-        sendJsonIntField(server.get(), "min", s.min);
-        server->sendContent(",", 1);
-        sendJsonIntField(server.get(), "max", s.max);
-        server->sendContent(",", 1);
-        sendJsonIntField(server.get(), "step", s.step);
+        len += snprintf(buf + len, sizeof(buf) - len, ",\"min\":%d,\"max\":%d,\"step\":%d", s.min, s.max, s.step);
         break;
       }
       case WebSettingType::String: {
-        sendJsonStringField(server.get(), "type", "string");
-        server->sendContent(",", 1);
+        len += snprintf(buf + len, sizeof(buf) - len, "string");
         std::string value;
         switch (s.dynamic) {
           case WebDynamicSetting::KoUsername:
             value = KOREADER_STORE.getUsername();
             break;
           case WebDynamicSetting::KoPassword:
-            // Credentials are write-only in the browser. An empty field is
-            // ignored by the diff-based settings form unless the user enters
-            // a replacement, so the stored password remains unchanged.
             value.clear();
             break;
           case WebDynamicSetting::KoServerUrl:
@@ -2036,10 +2062,33 @@ void CrossPointWebServer::handleGetSettings() const {
           default:
             break;
         }
-        sendJsonStringField(server.get(), "value", value.c_str());
+        len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":\"");
+        // Simple escape for string value
+        for (const char* p = value.c_str(); *p && len < (int)sizeof(buf) - 4; ++p) {
+          if (*p == '"') {
+            buf[len++] = '\\';
+            buf[len++] = '"';
+          } else if (*p == '\\') {
+            buf[len++] = '\\';
+            buf[len++] = '\\';
+          } else if (*p == '\n') {
+            buf[len++] = '\\';
+            buf[len++] = 'n';
+          } else if (*p == '\r') {
+            buf[len++] = '\\';
+            buf[len++] = 'r';
+          } else if (*p == '\t') {
+            buf[len++] = '\\';
+            buf[len++] = 't';
+          } else {
+            buf[len++] = *p;
+          }
+        }
         if (s.dynamic == WebDynamicSetting::KoPassword) {
-          server->sendContent(",\"configured\":", 14);
-          server->sendContent(KOREADER_STORE.getPassword().empty() ? "false" : "true");
+          len += snprintf(buf + len, sizeof(buf) - len, "\",\"configured\":");
+          len += snprintf(buf + len, sizeof(buf) - len, "%s", KOREADER_STORE.getPassword().empty() ? "false" : "true");
+        } else {
+          len += snprintf(buf + len, sizeof(buf) - len, "\"");
         }
         break;
       }
@@ -2049,11 +2098,11 @@ void CrossPointWebServer::handleGetSettings() const {
     }
 
     if (!handled) {
-      server->sendContent("}", 1);
       continue;
     }
 
-    server->sendContent("}", 1);
+    len += snprintf(buf + len, sizeof(buf) - len, "}");
+    server->sendContent(buf, len);
     yield();
     resetTaskWatchdogIfSubscribed();
   }
