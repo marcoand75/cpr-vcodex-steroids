@@ -2362,11 +2362,18 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
 
   if (!drawn) {
     if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-      // File exists but BMP parse failed (corrupt/partial). Remove it so the
-      // cover-generation loop detects it missing and regenerates it; without
-      // removal the loop skips regeneration and the placeholder persists.
-      LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed removing=%s thumb=%s", i, thumbPath.c_str(), thumbPath.c_str());
-      Storage.remove(thumbPath.c_str());
+      // File exists but BMP parse failed. Only remove it when no cover
+      // generation is active; removing during generation deletes the file
+      // descriptor that generatePageCover is writing to, which leaves a
+      // zero-size/ghost file and makes the cover invisible on re-enter.
+      if (!coverGen_.active) {
+        LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed removing=%s thumb=%s", i,
+                thumbPath.c_str(), thumbPath.c_str());
+        Storage.remove(thumbPath.c_str());
+      } else {
+        LOG_DBG("LIB", "drawTile: idx=%d thumb exists but bmp parse failed (gen active) skipping remove thumb=%s",
+                i, thumbPath.c_str());
+      }
     } else if (thumbPath.empty()) {
       LOG_DBG("LIB", "drawTile: idx=%d empty thumbPath path=%s", i, path.c_str());
     } else {
