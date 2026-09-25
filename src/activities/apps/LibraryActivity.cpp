@@ -995,7 +995,13 @@ void LibraryActivity::loop() {
 
         unsigned long t_gen = LibraryPerf::nowMs();
         bool generated = false;
-        if (LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_)) {
+        // Tell the render task a cover file is being written so it does not
+        // probe/remove a partial BMP through pageCoversComplete().
+        coverGenWriting_ = true;
+        const bool genOk =
+            LibraryCoverHelper::generatePageCover(renderer, pageCache_[slot].path, coverWidth_, coverHeight_);
+        coverGenWriting_ = false;
+        if (genOk) {
           // Verify the generated BMP is actually readable (not partial/corrupt).
           // Without this check a bad flush can leave a corrupt file that
           // drawTile skips, making the cover invisible until a re-enter.
@@ -1866,6 +1872,10 @@ uint32_t LibraryActivity::frameSignature() const {
 }
 
 bool LibraryActivity::pageCoversComplete(int pageStart, int pageCount) const {
+  // The main task is mid-write on a cover file: isBookCoverReady() below would
+  // see a partial BMP and remove the file the writer is using. Treat the page
+  // as incomplete so neither frame load nor save touches it.
+  if (coverGenWriting_) return false;
   for (int i = 0; i < pageCount; ++i) {
     const LibraryIndex::BookRef& r = pageCache_[i];
     if (r.id == 0) continue;          // empty slot
@@ -2146,6 +2156,11 @@ void LibraryActivity::render(RenderLock&&) {
   // ---- FULL RENDER --------------------------------------------------------
   forceRender_ = false;
 
+  // Reset the per-render placeholder tracker (see header). pageCoversComplete()
+  // refuses to touch covers while the main task is writing one, so the frame
+  // cache is neither served nor persisted mid-generation.
+  renderSawPlaceholder_ = false;
+
   // Frame-cache fast path: if this page was already fully rendered (all covers
   // present) and nothing grid-affecting changed, restore its frame instead of
   // re-decoding every cover BMP.
@@ -2303,8 +2318,11 @@ void LibraryActivity::render(RenderLock&&) {
   if (popupMode_ != PopupMode::None) popupOverlay_.render(renderer, pageWidth, pageHeight);
 
   // Cache the finished page frame (only when covers are complete) so returning
-  // to this page can skip the per-cover BMP decode.
-  if (total > 0 && popupMode_ == PopupMode::None) {
+  // to this page can skip the per-cover BMP decode. Never persist a frame that
+  // drew a placeholder: the cover can become ready right after the tile was
+  // drawn (generation overlaps this render task), and saving that frame would
+  // make the placeholder stick until the activity is re-entered.
+  if (total > 0 && popupMode_ == PopupMode::None && !renderSawPlaceholder_) {
     const int pgStart = curPageRaw * gridsPerPage_;
     const int pgCount = std::min(gridsPerPage_, total - pgStart);
     savePageFrame(pgStart, pgCount, selectorIndex_);
@@ -2427,7 +2445,10 @@ void LibraryActivity::drawTileContent(int i, int x, int y) const {
         }
       }
     } else {
-      // Book placeholder
+      // Book placeholder. Record that this render drew a placeholder so the
+      // frame cache is not persisted for this page (the cover may become ready
+      // immediately after, and a cached placeholder frame would stick).
+      renderSawPlaceholder_ = true;
       renderer.drawRoundedRect(x, y, coverWidth_, coverHeight_, 1, COVER_CORNER_RADIUS, true);
       renderer.fillRoundedRect(x, y + coverHeight_ / 3, coverWidth_, 2 * coverHeight_ / 3 + 1, COVER_CORNER_RADIUS,
                                false, false, true, true, Color::Black);

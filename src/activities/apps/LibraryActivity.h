@@ -98,6 +98,17 @@ class LibraryActivity final : public Activity {
   };
   CoverGenState coverGen_;
 
+  // Cross-task state shared between the main loop task (cover generation) and
+  // the ActivityManager render task. coverGenWriting_ is true only while the
+  // main task is inside generatePageCover(), so the render task can avoid
+  // touching (or removing) a cover file that is being written.
+  bool coverGenWriting_ = false;
+  // Set by drawTileContent() when a book tile had to fall back to its
+  // placeholder because the cover BMP was missing/incomplete at draw time.
+  // The frame cache must not persist such a frame: the cover may become ready
+  // right after, leaving a placeholder stuck in the cached frame.
+  mutable bool renderSawPlaceholder_ = false;
+
   enum class PopupMode { None, Sort, Filter };
   PopupMode popupMode_ = PopupMode::None;
   LibraryPopupOverlay popupOverlay_;
