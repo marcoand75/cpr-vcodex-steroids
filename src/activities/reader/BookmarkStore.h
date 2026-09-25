@@ -74,7 +74,6 @@ class BookmarkStore {
 
     if (!opened) {
       // Skip binary parse; fall through to .clipping migration.
-      file.close();
       return loadClippingFallback(bookPath);
     }
 
