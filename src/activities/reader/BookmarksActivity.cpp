@@ -120,10 +120,14 @@ bool BookmarksActivity::handleButtons() {
             std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body),
             [this, bookmark](const ActivityResult& result) {
               if (!result.isCancelled) {
+                // Confirm: open the book at this highlight.
                 setResult(BookmarkResult{static_cast<int>(bookmark.spineIndex), bookmark.pageNumber,
                                         bookmark.hasVisibleTextOffset, bookmark.visibleTextOffset});
+                finish();
+              } else {
+                // Cancel/Back: return to the highlight list (stay on screen).
+                requestUpdate();
               }
-              finish();
             });
       }
     }

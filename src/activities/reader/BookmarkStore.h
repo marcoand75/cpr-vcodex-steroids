@@ -54,16 +54,28 @@ class BookmarkStore {
     HalFile file;
     bool loadedLegacyPath = false;
     bool loadedSavPath = false;
-    bool loadedClipping = false;
+    bool opened = false;
     const std::string savPath = storagePath.empty() ? std::string() : (storagePath + ".sav");
     if (!Storage.openFileForRead("BKM", getFilePath(), file)) {
       if (!savPath.empty() && Storage.openFileForRead("BKM", savPath, file)) {
         loadedSavPath = true;
+        opened = true;
       } else if (storagePath == legacyPath || legacyPath.empty() || !Storage.openFileForRead("BKM", legacyPath, file)) {
-        return;
+        // No standard bookmark file (.bin/.sav/legacy): fall through to the
+        // .clipping migration below instead of returning early.
+        opened = false;
       } else {
         loadedLegacyPath = true;
+        opened = true;
       }
+    } else {
+      opened = true;
+    }
+
+    if (!opened) {
+      // Skip binary parse; fall through to .clipping migration.
+      file.close();
+      return loadClippingFallback(bookPath);
     }
 
     if (getFilePath().empty()) {
@@ -167,35 +179,40 @@ class BookmarkStore {
 
     file.close();
 
-    // Migrazione / importazione clipping steroids (ClippingStore v2) -> BookmarkStore v5.
-    // Se il libro ha un .clipping nel percorso standard, importa i clipping come
-    // highlights testuali (snippet = selectedText, visibleTextOffset = absoluteWordStart).
-    if (!bookmarks.empty() && !bookPath.empty() && !loadedClipping) {
-      ClippingStore clippingStore;
-      clippingStore.load(bookPath);
-      if (!clippingStore.isEmpty()) {
-        for (const auto& c : clippingStore.getAll()) {
-          Bookmark bookmark;
-          bookmark.spineIndex = c.spineIndex;
-          bookmark.pageNumber = c.startPage;
-          bookmark.endPageNumber = c.endPage;
-          bookmark.startWordIndex = c.startWordIndex;
-          bookmark.endWordIndex = c.endWordIndex;
-          bookmark.snippet = c.selectedText;
-          bookmark.isTextHighlight = true;
-          bookmark.hasVisibleTextOffset = (c.absoluteWordStart != UINT32_MAX);
-          bookmark.visibleTextOffset = bookmark.hasVisibleTextOffset ? c.absoluteWordStart : 0;
-          bookmarks.push_back(std::move(bookmark));
-        }
-        loadedClipping = true;
-        dirty = true;
-        save();
-      }
-    }
-
     if (loadedLegacyPath && !storagePath.empty()) {
       dirty = true;
       save();
+    }
+  }
+
+  // Fallback quando non esiste un file standard (.bin/.sav/legacy): importa i
+  // clipping steroids (ClippingStore v2) come highlights testuali.
+  void loadClippingFallback(const std::string& bookPath) {
+    if (bookPath.empty() || !bookmarks.empty()) {
+      return;
+    }
+    ClippingStore clippingStore;
+    clippingStore.load(bookPath);
+    if (clippingStore.isEmpty()) {
+      return;
+    }
+    for (const auto& c : clippingStore.getAll()) {
+      Bookmark bookmark;
+      bookmark.spineIndex = c.spineIndex;
+      bookmark.pageNumber = c.startPage;
+      bookmark.endPageNumber = c.endPage;
+      bookmark.startWordIndex = c.startWordIndex;
+      bookmark.endWordIndex = c.endWordIndex;
+      bookmark.snippet = c.selectedText;
+      bookmark.isTextHighlight = true;
+      // NOT hasVisibleTextOffset: the clipping's absoluteWordStart is a
+      // steroids-layout word index, not a vCodex visible-text byte offset, so
+      // mapping it would jump to the wrong page and never match. Leaving the
+      // anchor off makes the reader jump by page and re-match the snippet text
+      // on the page (HighlightTextMatcher), which is font/layout independent.
+      bookmark.hasVisibleTextOffset = false;
+      bookmark.visibleTextOffset = 0;
+      bookmarks.push_back(std::move(bookmark));
     }
   }
 
