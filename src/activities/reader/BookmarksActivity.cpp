@@ -89,13 +89,25 @@ void BookmarksActivity::finishCancelled() {
 
 void BookmarksActivity::activateIndex(const int index) {
   if (index < 0 || index >= listCount()) return;
-  // Opening the bookmark leaves this screen; a lingering flash would gray an
-  // unrelated row when the list next appears.
   app.clearTapFlash();
-  const auto& bookmark = bookmarks[index];
-  setResult(BookmarkResult{static_cast<int>(bookmark.spineIndex), bookmark.pageNumber, bookmark.hasVisibleTextOffset,
-                           bookmark.visibleTextOffset});
-  finish();
+  const auto bookmark = bookmarks[index];
+  std::string heading = bookmark.isTextHighlight ? tr(STR_TEXT_HIGHLIGHT_PREFIX) : tr(STR_PAGE_MARK_PREFIX);
+  std::string body = bookmark.snippet.empty()
+                          ? std::string(bookmark.isTextHighlight ? tr(STR_TEXT_HIGHLIGHT_PREFIX) : tr(STR_PAGE_MARK_PREFIX))
+                                            + " " + std::to_string(bookmark.pageNumber + 1)
+                          : bookmark.snippet;
+  startActivityForResult(
+      std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body),
+      [this, bookmark](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          setResult(BookmarkResult{static_cast<int>(bookmark.spineIndex), bookmark.pageNumber,
+                                  bookmark.hasVisibleTextOffset, bookmark.visibleTextOffset});
+          finish();
+        } else {
+          // Cancel/Back: return to the highlight list (stay on screen).
+          requestUpdate();
+        }
+      });
 }
 
 void BookmarksActivity::onRowLongPress(const int index) {
