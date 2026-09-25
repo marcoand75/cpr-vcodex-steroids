@@ -8,8 +8,8 @@
 #include "version.h"
 
 namespace {
-constexpr int BOOT_LOGO_WIDTH = 174;
-constexpr int BOOT_LOGO_HEIGHT = 24;
+constexpr int BOOT_LOGO_WIDTH = 350;
+constexpr int BOOT_LOGO_HEIGHT = 96;
 constexpr int LOGO_TEXT_GAP = 10;
 constexpr int SUBTITLE_GAP = 25;
 }
@@ -28,9 +28,9 @@ void BootActivity::onEnter() {
   const int titleY = logoY + BOOT_LOGO_HEIGHT + LOGO_TEXT_GAP;
   const int subtitleY = titleY + SUBTITLE_GAP;
 
-  renderer.clearScreen();
+renderer.clearScreen();
   renderer.drawIcon(Logo, logoX, logoY, BOOT_LOGO_WIDTH, BOOT_LOGO_HEIGHT);
-  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_CPR_VCODEX), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_STEROIDS), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, subtitleY, tr(STR_BOOTING));
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, CROSSPOINT_VERSION);
   renderer.displayBuffer();

@@ -1343,8 +1343,8 @@ void SleepActivity::renderDefaultSleepScreen() const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  constexpr int logoWidth = 174;
-  constexpr int logoHeight = 24;
+  constexpr int logoWidth = 350;
+  constexpr int logoHeight = 96;
   constexpr int logoTextGap = 10;
   constexpr int subtitleGap = 25;
   const int logoX = (pageWidth - logoWidth) / 2;
@@ -1354,7 +1354,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
 
   renderer.clearScreen();
   renderer.drawIcon(Logo, logoX, logoY, logoWidth, logoHeight);
-  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_CPR_VCODEX), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, titleY, tr(STR_STEROIDS), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, subtitleY, tr(STR_SLEEPING));
 
   if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
