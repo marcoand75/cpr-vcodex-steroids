@@ -2297,10 +2297,13 @@ void EpubReaderActivity::drawTextHighlights(const Page& page, const int oriented
       if (width <= 0) continue;
 
       if (SETTINGS.bionicReading == CrossPointSettings::BIONIC_READING_OFF) {
-        renderer.fillRectDither(x, y, width, lineHeight, Color::LightGray);
+        // Evidenziazione più marcata: sfondo più scuro (MediumGray invece di LightGray)
+        // con bordo nero attorno alla riga evidenziata per massima visibilità.
+        renderer.fillRectDither(x, y, width, lineHeight, Color::MediumGray);
+        renderer.drawRoundedRect(x - 1, y - 1, width + 2, lineHeight + 2, 1, 2, true);
         renderer.drawText(fontId, x, y, raw + (hasIndent ? 3 : 0), true, drawStyle);
       } else {
-        renderer.drawLine(x, y + lineHeight - 2, x + width, y + lineHeight - 2, true);
+        renderer.drawLine(x, y + lineHeight - 2, x + width, y + lineHeight - 2, 3, true);
       }
     }
   }

@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "util/BookIdentity.h"
+#include "activities/reader/ClippingStore.h"
+#include "activities/reader/ClippingStore.h"
 
 class BookmarkStore {
  public:
@@ -26,7 +28,7 @@ class BookmarkStore {
     uint32_t visibleTextOffset = 0;
   };
 
-  void load(const std::string& cachePath, const std::string& bookId = "") {
+  void load(const std::string& cachePath, const std::string& bookId = "", const std::string& bookPath = "") {
     storagePath.clear();
     legacyPath.clear();
     if (!bookId.empty()) {
@@ -51,11 +53,17 @@ class BookmarkStore {
 
     HalFile file;
     bool loadedLegacyPath = false;
+    bool loadedSavPath = false;
+    bool loadedClipping = false;
+    const std::string savPath = storagePath.empty() ? std::string() : (storagePath + ".sav");
     if (!Storage.openFileForRead("BKM", getFilePath(), file)) {
-      if (storagePath == legacyPath || legacyPath.empty() || !Storage.openFileForRead("BKM", legacyPath, file)) {
+      if (!savPath.empty() && Storage.openFileForRead("BKM", savPath, file)) {
+        loadedSavPath = true;
+      } else if (storagePath == legacyPath || legacyPath.empty() || !Storage.openFileForRead("BKM", legacyPath, file)) {
         return;
+      } else {
+        loadedLegacyPath = true;
       }
-      loadedLegacyPath = true;
     }
 
     if (getFilePath().empty()) {
@@ -158,6 +166,32 @@ class BookmarkStore {
     }
 
     file.close();
+
+    // Migrazione / importazione clipping steroids (ClippingStore v2) -> BookmarkStore v5.
+    // Se il libro ha un .clipping nel percorso standard, importa i clipping come
+    // highlights testuali (snippet = selectedText, visibleTextOffset = absoluteWordStart).
+    if (!bookmarks.empty() && !bookPath.empty() && !loadedClipping) {
+      ClippingStore clippingStore;
+      clippingStore.load(bookPath);
+      if (!clippingStore.isEmpty()) {
+        for (const auto& c : clippingStore.getAll()) {
+          Bookmark bookmark;
+          bookmark.spineIndex = c.spineIndex;
+          bookmark.pageNumber = c.startPage;
+          bookmark.endPageNumber = c.endPage;
+          bookmark.startWordIndex = c.startWordIndex;
+          bookmark.endWordIndex = c.endWordIndex;
+          bookmark.snippet = c.selectedText;
+          bookmark.isTextHighlight = true;
+          bookmark.hasVisibleTextOffset = (c.absoluteWordStart != UINT32_MAX);
+          bookmark.visibleTextOffset = bookmark.hasVisibleTextOffset ? c.absoluteWordStart : 0;
+          bookmarks.push_back(std::move(bookmark));
+        }
+        loadedClipping = true;
+        dirty = true;
+        save();
+      }
+    }
 
     if (loadedLegacyPath && !storagePath.empty()) {
       dirty = true;

@@ -110,7 +110,21 @@ bool BookmarksActivity::handleButtons() {
       if (mappedInput.getHeldTime() >= DELETE_BOOKMARK_HOLD_MS) {
         confirmDeleteBookmark(nav.selected);
       } else {
-        activateIndex(nav.selected);
+        const auto bookmark = bookmarks[nav.selected];
+        std::string heading = bookmark.isTextHighlight ? tr(STR_TEXT_HIGHLIGHT_PREFIX) : tr(STR_PAGE_MARK_PREFIX);
+        std::string body = bookmark.snippet.empty()
+                                ? std::string(bookmark.isTextHighlight ? tr(STR_TEXT_HIGHLIGHT_PREFIX) : tr(STR_PAGE_MARK_PREFIX))
+                                            + " " + std::to_string(bookmark.pageNumber + 1)
+                                : bookmark.snippet;
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading.c_str(), body),
+            [this, bookmark](const ActivityResult& result) {
+              if (!result.isCancelled) {
+                setResult(BookmarkResult{static_cast<int>(bookmark.spineIndex), bookmark.pageNumber,
+                                        bookmark.hasVisibleTextOffset, bookmark.visibleTextOffset});
+              }
+              finish();
+            });
       }
     }
     return true;

@@ -16,7 +16,7 @@ class ConfirmationActivity : public Activity {
   const int margin = 20;
   const int spacing = 30;
   const int fontId = UI_10_FONT_ID;
-  static constexpr int MAX_BODY_LINES = 6;
+  static constexpr int MAX_BODY_LINES = 15;
 
   std::string safeHeading;
   std::vector<std::string> bodyLines;

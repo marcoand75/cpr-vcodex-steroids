@@ -105,7 +105,7 @@ bool loadBookmarksForBook(const std::string& path, const std::string& preferredB
 
   for (const auto& bookId : getBookIdLoadOrder(path, preferredBookId)) {
     BookmarkStore candidateStore;
-    candidateStore.load(cachePath, bookId);
+    candidateStore.load(cachePath, bookId, path);
     if (candidateStore.isEmpty()) {
       continue;
     }
@@ -228,11 +228,10 @@ void BookmarksAppActivity::confirmDeleteBook(const int index) {
       [this, bookId = entry.bookId](const ActivityResult& result) {
         if (!result.isCancelled) {
           clearBookmarksForBook(bookId);
-          closeRouting();
-          RenderLock lock(*this);
-          refreshEntries();
-          nav.follow(listCount());
         }
+        RenderLock lock(*this);
+        refreshEntries();
+        nav.follow(listCount());
         requestUpdate();
       });
 }
