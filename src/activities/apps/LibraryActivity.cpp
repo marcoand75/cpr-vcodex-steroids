@@ -1222,6 +1222,11 @@ void LibraryActivity::loop() {
                   LibraryCoverHelper::deleteLibraryCovers(path, coverWidth_, coverHeight_);
                   bumpLibEpoch();
                   refreshPageCache();
+                  coverGen_.active = false;
+                  coverGen_.pending = true;
+                  coverGen_.slot = 0;
+                  coverGen_.done = 0;
+                  coverGen_.total = 0;
                   forceRender_ = true;
                   requestUpdate();
                   return;
