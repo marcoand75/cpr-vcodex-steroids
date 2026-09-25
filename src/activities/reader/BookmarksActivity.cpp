@@ -59,6 +59,9 @@ void BookmarksActivity::rebuildRowItems() {
     rowLabels.push_back(getItemLabel(static_cast<int>(i)));
     fui::ListItem item;
     item.label = rowLabels.back().c_str();
+    // Use clip icon for highlights, bookmark icon for page marks.
+    item.icon = bookmarks[i].isTextHighlight ? listIconFor(UIIcon::File, 32)
+                                             : listIconFor(UIIcon::Bookmark, 32);
     item.actionValue = static_cast<int16_t>(i);
     rowItems.push_back(item);
   }

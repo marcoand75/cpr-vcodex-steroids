@@ -529,9 +529,6 @@ class CrossPointSettings {
   uint8_t quickCardsShortcut = SHORTCUT_APPS;
   uint8_t quickCardsShortcutOrder = 22;
   uint8_t quickCardsShortcutVisible = 1;
-  uint8_t clippingsShortcut = SHORTCUT_APPS;
-  uint8_t clippingsShortcutOrder = 23;
-  uint8_t clippingsShortcutVisible = 1;
   uint8_t wikipediaShortcut = SHORTCUT_APPS;
   uint8_t wikipediaShortcutOrder = 24;
   uint8_t wikipediaShortcutVisible = 1;

@@ -31,7 +31,6 @@ enum class ShortcutId {
   Library,
   Screensaver,
   QuickCards,
-  Clippings,
   Wikipedia,
 };
 
@@ -119,18 +118,14 @@ inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
                          UIIcon::ScreenSaver, &CrossPointSettings::screenSaverShortcut,
                          &CrossPointSettings::screenSaverShortcutOrder,
                          &CrossPointSettings::screenSaverShortcutVisible},
-      ShortcutDefinition{ShortcutId::QuickCards, StrId::STR_QUICK_CARDS, StrId::STR_QUICK_CARDS_DESC,
-                         UIIcon::QuickCards, &CrossPointSettings::quickCardsShortcut,
-                         &CrossPointSettings::quickCardsShortcutOrder,
-                         &CrossPointSettings::quickCardsShortcutVisible},
-      ShortcutDefinition{ShortcutId::Clippings, StrId::STR_CLIPPINGS, StrId::STR_CLIPPINGS_APP_DESC,
-                         UIIcon::File, &CrossPointSettings::clippingsShortcut,
-                         &CrossPointSettings::clippingsShortcutOrder,
-                         &CrossPointSettings::clippingsShortcutVisible},
+ShortcutDefinition{ShortcutId::QuickCards, StrId::STR_QUICK_CARDS, StrId::STR_QUICK_CARDS_DESC,
+                          UIIcon::QuickCards, &CrossPointSettings::quickCardsShortcut,
+                          &CrossPointSettings::quickCardsShortcutOrder,
+                          &CrossPointSettings::quickCardsShortcutVisible},
       ShortcutDefinition{ShortcutId::Wikipedia, StrId::STR_WIKIPEDIA, StrId::STR_WIKIPEDIA_APP_DESC,
-                         UIIcon::Wikipedia, &CrossPointSettings::wikipediaShortcut,
-                         &CrossPointSettings::wikipediaShortcutOrder,
-                         &CrossPointSettings::wikipediaShortcutVisible},
+                          UIIcon::Wikipedia, &CrossPointSettings::wikipediaShortcut,
+                          &CrossPointSettings::wikipediaShortcutOrder,
+                          &CrossPointSettings::wikipediaShortcutVisible},
   };
 
   return definitions;

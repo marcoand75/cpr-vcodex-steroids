@@ -11,8 +11,6 @@
 #include <vector>
 
 #include "util/BookIdentity.h"
-#include "activities/reader/ClippingStore.h"
-#include "activities/reader/ClippingStore.h"
 
 class BookmarkStore {
  public:
@@ -28,7 +26,7 @@ class BookmarkStore {
     uint32_t visibleTextOffset = 0;
   };
 
-  void load(const std::string& cachePath, const std::string& bookId = "", const std::string& bookPath = "") {
+  void load(const std::string& cachePath, const std::string& bookId = "") {
     storagePath.clear();
     legacyPath.clear();
     if (!bookId.empty()) {
@@ -53,28 +51,13 @@ class BookmarkStore {
 
     HalFile file;
     bool loadedLegacyPath = false;
-    bool loadedSavPath = false;
-    bool opened = false;
-    const std::string savPath = storagePath.empty() ? std::string() : (storagePath + ".sav");
-    if (!Storage.openFileForRead("BKM", getFilePath(), file)) {
-      if (!savPath.empty() && Storage.openFileForRead("BKM", savPath, file)) {
-        loadedSavPath = true;
-        opened = true;
-      } else if (storagePath == legacyPath || legacyPath.empty() || !Storage.openFileForRead("BKM", legacyPath, file)) {
-        // No standard bookmark file (.bin/.sav/legacy): fall through to the
-        // .clipping migration below instead of returning early.
-        opened = false;
+    if (!Storage.openFileForRead("BKM", storagePath.c_str(), file)) {
+      // try legacy path
+      if (!legacyPath.empty() && Storage.openFileForRead("BKM", legacyPath.c_str(), file)) {
+        // ok
       } else {
-        loadedLegacyPath = true;
-        opened = true;
+        return;
       }
-    } else {
-      opened = true;
-    }
-
-    if (!opened) {
-      // Skip binary parse; fall through to .clipping migration.
-      return loadClippingFallback(bookPath);
     }
 
     if (getFilePath().empty()) {
@@ -181,37 +164,6 @@ class BookmarkStore {
     if (loadedLegacyPath && !storagePath.empty()) {
       dirty = true;
       save();
-    }
-  }
-
-  // Fallback quando non esiste un file standard (.bin/.sav/legacy): importa i
-  // clipping steroids (ClippingStore v2) come highlights testuali.
-  void loadClippingFallback(const std::string& bookPath) {
-    if (bookPath.empty() || !bookmarks.empty()) {
-      return;
-    }
-    ClippingStore clippingStore;
-    clippingStore.load(bookPath);
-    if (clippingStore.isEmpty()) {
-      return;
-    }
-    for (const auto& c : clippingStore.getAll()) {
-      Bookmark bookmark;
-      bookmark.spineIndex = c.spineIndex;
-      bookmark.pageNumber = c.startPage;
-      bookmark.endPageNumber = c.endPage;
-      bookmark.startWordIndex = c.startWordIndex;
-      bookmark.endWordIndex = c.endWordIndex;
-      bookmark.snippet = c.selectedText;
-      bookmark.isTextHighlight = true;
-      // NOT hasVisibleTextOffset: the clipping's absoluteWordStart is a
-      // steroids-layout word index, not a vCodex visible-text byte offset, so
-      // mapping it would jump to the wrong page and never match. Leaving the
-      // anchor off makes the reader jump by page and re-match the snippet text
-      // on the page (HighlightTextMatcher), which is font/layout independent.
-      bookmark.hasVisibleTextOffset = false;
-      bookmark.visibleTextOffset = 0;
-      bookmarks.push_back(std::move(bookmark));
     }
   }
 

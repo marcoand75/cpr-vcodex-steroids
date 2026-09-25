@@ -133,10 +133,6 @@ void loadSteroidsSettings(CrossPointSettings& s, const JsonDocument& doc, bool* 
       clampEnum(doc["quickCardsShortcut"] | s.quickCardsShortcut, shortcutLocationCount, s.quickCardsShortcut);
   s.quickCardsShortcutOrder =
       clampEnum(doc["quickCardsShortcutOrder"] | s.quickCardsShortcutOrder, shortcutOrderCount, s.quickCardsShortcutOrder);
-  s.clippingsShortcut =
-      clampEnum(doc["clippingsShortcut"] | s.clippingsShortcut, shortcutLocationCount, s.clippingsShortcut);
-  s.clippingsShortcutOrder =
-      clampEnum(doc["clippingsShortcutOrder"] | s.clippingsShortcutOrder, shortcutOrderCount, s.clippingsShortcutOrder);
   s.wikipediaShortcut =
       clampEnum(doc["wikipediaShortcut"] | s.wikipediaShortcut, shortcutLocationCount, s.wikipediaShortcut);
   s.wikipediaShortcutOrder =
@@ -178,8 +174,6 @@ void loadSteroidsSettings(CrossPointSettings& s, const JsonDocument& doc, bool* 
       clampEnum(doc["opdsBrowserShortcutVisible"] | s.opdsBrowserShortcutVisible, 2, s.opdsBrowserShortcutVisible);
   s.quickCardsShortcutVisible =
       clampEnum(doc["quickCardsShortcutVisible"] | s.quickCardsShortcutVisible, 2, s.quickCardsShortcutVisible);
-  s.clippingsShortcutVisible =
-      clampEnum(doc["clippingsShortcutVisible"] | s.clippingsShortcutVisible, 2, s.clippingsShortcutVisible);
   s.wikipediaShortcutVisible =
       clampEnum(doc["wikipediaShortcutVisible"] | s.wikipediaShortcutVisible, 2, s.wikipediaShortcutVisible);
   s.pluginsShortcutVisible = clampEnum(doc["pluginsShortcutVisible"] | s.pluginsShortcutVisible, 2, s.pluginsShortcutVisible);
@@ -297,8 +291,6 @@ void saveSteroidsSettings(const CrossPointSettings& s, JsonDocument& doc) {
   doc["opdsBrowserShortcutOrder"] = s.opdsBrowserShortcutOrder;
   doc["quickCardsShortcut"] = s.quickCardsShortcut;
   doc["quickCardsShortcutOrder"] = s.quickCardsShortcutOrder;
-  doc["clippingsShortcut"] = s.clippingsShortcut;
-  doc["clippingsShortcutOrder"] = s.clippingsShortcutOrder;
   doc["wikipediaShortcut"] = s.wikipediaShortcut;
   doc["wikipediaShortcutOrder"] = s.wikipediaShortcutOrder;
   doc["pluginsShortcut"] = s.pluginsShortcut;
@@ -323,7 +315,6 @@ void saveSteroidsSettings(const CrossPointSettings& s, JsonDocument& doc) {
   doc["sleepShortcutVisible"] = s.sleepShortcutVisible;
   doc["opdsBrowserShortcutVisible"] = s.opdsBrowserShortcutVisible;
   doc["quickCardsShortcutVisible"] = s.quickCardsShortcutVisible;
-  doc["clippingsShortcutVisible"] = s.clippingsShortcutVisible;
   doc["wikipediaShortcutVisible"] = s.wikipediaShortcutVisible;
   doc["pluginsShortcutVisible"] = s.pluginsShortcutVisible;
 

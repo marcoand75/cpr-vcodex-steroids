@@ -7,7 +7,6 @@
 
 #include "AchievementsActivity.h"
 #include "BookmarksAppActivity.h"
-#include "ClippingsAppActivity.h"
 #include "CrossPointSettings.h"
 #include "DictionaryActivity.h"
 #include "FavoritesAppActivity.h"
@@ -182,31 +181,6 @@ void AppsActivity::openApp(const int index) {
       activity = std::make_unique<BookmarksAppActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Favorites:
-      activity = std::make_unique<FavoritesAppActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::Flashcards:
-      activity = std::make_unique<FlashcardsAppActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::Dictionary:
-      activity = std::make_unique<DictionaryActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::FileTransfer:
-      activityManager.goToFileTransfer();
-      return;
-    case ShortcutId::ScreenClean:
-      activity = std::make_unique<ScreenCleanActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::Sleep:
-      activity = std::make_unique<SleepAppActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::Clippings:
-      activity = std::make_unique<ClippingsAppActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::Wikipedia:
-      activity = std::make_unique<WikipediaActivity>(renderer, mappedInput);
-      break;
-    case ShortcutId::QuickCards:
-      activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
       break;
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();

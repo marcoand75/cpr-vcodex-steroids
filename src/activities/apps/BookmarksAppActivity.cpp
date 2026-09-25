@@ -105,7 +105,7 @@ bool loadBookmarksForBook(const std::string& path, const std::string& preferredB
 
   for (const auto& bookId : getBookIdLoadOrder(path, preferredBookId)) {
     BookmarkStore candidateStore;
-    candidateStore.load(cachePath, bookId, path);
+    candidateStore.load(cachePath, bookId);
     if (candidateStore.isEmpty()) {
       continue;
     }
