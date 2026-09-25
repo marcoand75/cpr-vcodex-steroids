@@ -24,10 +24,10 @@
 #include "version.h"
 
 namespace {
-constexpr char firmwareManifestUrl[] = "https://franssjz.github.io/cpr-vcodex/firmware/manifest.json";
+constexpr char firmwareManifestUrl[] = "https://marcoand75.github.io/cpr-vcodex-steroids/firmware/manifest.json";
 constexpr char firmwareManifestFallbackUrl[] =
-    "https://raw.githubusercontent.com/franssjz/cpr-vcodex/master/docs/firmware/manifest.json";
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/franssjz/cpr-vcodex/releases/latest";
+    "https://raw.githubusercontent.com/marcoand75/cpr-vcodex-steroids/master/docs/firmware/manifest.json";
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/marcoand75/cpr-vcodex-steroids/releases/latest";
 
 struct ParsedVersion {
   int parts[4] = {0, 0, 0, 0};

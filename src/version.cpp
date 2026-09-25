@@ -22,7 +22,7 @@ extern "C" const esp_app_desc_t esp_app_desc __attribute__((section(".rodata_des
 #endif
     .reserv1 = {},
     .version = CPR_BUILD_VERSION_STRING,
-    .project_name = "cpr-vcodex",
+    .project_name = "cpr-vcodex-steroids",
 #ifdef CONFIG_APP_COMPILE_TIME_DATE
     .time = __TIME__,
     .date = __DATE__,

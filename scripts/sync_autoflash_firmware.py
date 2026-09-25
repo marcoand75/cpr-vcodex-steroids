@@ -14,12 +14,12 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REPO = "franssjz/cpr-vcodex"
+DEFAULT_REPO = "marcoand75/cpr-vcodex-steroids"
 # Historic name kept for callers that still import it; it is the C3 slot size.
 APP_PARTITION_SIZE = 6_553_600
 MIN_FIRMWARE_SIZE = 1_000_000
-VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-[0-9A-Za-z._-]*cpr-vcodex\b")
-FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-cpr-vcodex$")
+VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-[0-9A-Za-z._-]*cpr-vcodex-steroids\b")
+FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-cpr-vcodex-steroids$")
 # Release asset URLs retain suffix awareness so old X4 Pro links are not ever
 # rewritten to the C3 image while X4 Pro distribution is withdrawn.
 DOWNLOAD_URL_RE = re.compile(
