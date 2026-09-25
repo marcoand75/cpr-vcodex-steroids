@@ -170,8 +170,8 @@ void TextBlock::recordFontUsage(FontCacheManager& fontCacheManager, const int fo
   for (uint16_t i = 0; i < numWords; i++) {
     const EpdFontFamily::Style style = wordStyle(i);
     fontCacheManager.recordText(wordText(i), fontId, style);
-    if (bionicReadingMode == BIONIC_READING_NORMAL && (style & EpdFontFamily::BOLD) == 0) {
-      fontCacheManager.recordStyle(fontId, static_cast<EpdFontFamily::Style>(style | EpdFontFamily::BOLD));
+    if (bionicReadingMode == BIONIC_READING_NORMAL && (style & EpdFontFamily::BOLD) == 0 && focusPresent) {
+      fontCacheManager.recordText(wordText(i), fontId, static_cast<EpdFontFamily::Style>(style | EpdFontFamily::BOLD));
     }
     if (rubyText(i)[0] != '\0') {
       fontCacheManager.recordText(rubyText(i), fontId, EpdFontFamily::SUP);

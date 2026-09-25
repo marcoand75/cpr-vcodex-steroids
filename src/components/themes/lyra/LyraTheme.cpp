@@ -38,6 +38,42 @@
 #include "components/icons/trophy.h"
 #include "components/icons/trophy24.h"
 #include "components/icons/wifi.h"
+#include "components/icons/search.h"
+#include "components/icons/time_fast.h"
+#include "components/icons/readingstats.h"
+#include "components/icons/heatmap.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/flashcardquiz.h"
+#include "components/icons/sleep.h"
+#include "components/icons/cleanmonitor.h"
+#include "components/icons/lostdevice.h"
+#include "components/icons/opdsbrowser.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/dictionary2.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/medal_alt.h"
+#include "components/icons/gps_found.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/pageview.h"
+#include "components/icons/search_plus.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
+#include "components/icons/library_new.h"
+#include "components/icons/library_book.h"
+#include "components/icons/delete_file.h"
+#include "components/icons/cache_cleaner.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/notification_unread.h"
+#include "components/icons/file_transfer.h"
+#include "components/icons/calibre.h"
+#include "components/icons/calendar_time.h"
+#include "components/icons/apps_hub.h"
+#include "components/icons/wikipediaicon.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/ClipIcon32.h"
+#include "components/icons/rotation.h"
 #include "fontIds.h"
 #include "util/ReadingStatsAnalytics.h"
 
@@ -141,6 +177,78 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Trophy24Icon;
       case UIIcon::Heart:
         return Heart24Icon;
+      case UIIcon::ScreenSaver:
+        return ScreenSaverIcon;
+      case UIIcon::Bookshelf:
+        return BookshelfIcon;
+      case UIIcon::SleepMode:
+        return SleepModeIcon32;
+      case UIIcon::CleanMonitor:
+        return CleanMonitorIcon32;
+      case UIIcon::Heatmap:
+        return HeatmapReadingIcon32;
+      case UIIcon::FlashcardQuiz:
+        return FlashcardQuizIcon32;
+      case UIIcon::ReadingProfile:
+        return ReadingProfileIcon32;
+      case UIIcon::LostDevice:
+        return LostDeviceIcon32;
+      case UIIcon::OpdsBrowser:
+        return OPDSBrowserIcon;
+      case UIIcon::Dictionary:
+        return DictionaryIcon;
+      case UIIcon::GoalsMedal:
+        return GoalsMedalIcon;
+      case UIIcon::ReadingStatsIcon:
+        return ReadingStatsIcon32;
+      case UIIcon::RecentBooks:
+        return RecentBooksIcon32;
+      case UIIcon::Search:
+        return SearchIcon;
+      case UIIcon::Rotation:
+        return RotationIcon;
+      case UIIcon::Pageview:
+        return PageviewIcon;
+      case UIIcon::SearchPlus:
+        return SearchPlusIcon;
+      case UIIcon::SearchMinus:
+        return SearchMinusIcon;
+      case UIIcon::TimeFast:
+        return TimeFastIcon;
+      case UIIcon::SortAsc:
+        return SortAscIcon;
+      case UIIcon::SortDesc:
+        return SortDescIcon;
+      case UIIcon::LibraryNew:
+        return LibraryNewIcon;
+      case UIIcon::GpsFound:
+        return GpsFoundIcon;
+      case UIIcon::MedalAlt:
+        return MedalAltIcon;
+      case UIIcon::Dictionary2:
+        return Dictionary2Icon;
+      case UIIcon::AppsHub:
+        return AppsHubIcon;
+      case UIIcon::CalendarTime:
+        return CalendarTimeIcon;
+      case UIIcon::LibraryBook:
+        return LibraryBookIcon;
+      case UIIcon::DeleteFile:
+        return DeleteFileIcon;
+      case UIIcon::CacheCleaner:
+        return CacheCleanerIcon;
+      case UIIcon::FinishFlag:
+        return FinishFlagIcon;
+      case UIIcon::NotificationUnread:
+        return NotificationUnreadIcon;
+      case UIIcon::FileTransfer:
+        return FileTransferIcon;
+      case UIIcon::Calibre:
+        return CalibreIcon;
+      case UIIcon::Wikipedia:
+        return WikipediaIcon;
+      case UIIcon::QuickCards:
+        return QuickCardsIcon;
       default:
         return nullptr;
     }
@@ -176,6 +284,76 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return BookmarkIcon;
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
+      case UIIcon::Bookshelf:
+        return BookshelfIcon;
+      case UIIcon::SleepMode:
+        return SleepModeIcon32;
+      case UIIcon::CleanMonitor:
+        return CleanMonitorIcon32;
+      case UIIcon::Heatmap:
+        return HeatmapReadingIcon32;
+      case UIIcon::FlashcardQuiz:
+        return FlashcardQuizIcon32;
+      case UIIcon::ReadingProfile:
+        return ReadingProfileIcon32;
+      case UIIcon::LostDevice:
+        return LostDeviceIcon32;
+      case UIIcon::OpdsBrowser:
+        return OPDSBrowserIcon;
+      case UIIcon::Dictionary:
+        return DictionaryIcon;
+      case UIIcon::GoalsMedal:
+        return GoalsMedalIcon;
+      case UIIcon::ReadingStatsIcon:
+        return ReadingStatsIcon32;
+      case UIIcon::RecentBooks:
+        return RecentBooksIcon32;
+      case UIIcon::Search:
+        return SearchIcon;
+      case UIIcon::Rotation:
+        return RotationIcon;
+      case UIIcon::Pageview:
+        return PageviewIcon;
+      case UIIcon::SearchPlus:
+        return SearchPlusIcon;
+      case UIIcon::SearchMinus:
+        return SearchMinusIcon;
+      case UIIcon::TimeFast:
+        return TimeFastIcon;
+      case UIIcon::SortAsc:
+        return SortAscIcon;
+      case UIIcon::SortDesc:
+        return SortDescIcon;
+      case UIIcon::LibraryNew:
+        return LibraryNewIcon;
+      case UIIcon::GpsFound:
+        return GpsFoundIcon;
+      case UIIcon::MedalAlt:
+        return MedalAltIcon;
+      case UIIcon::Dictionary2:
+        return Dictionary2Icon;
+      case UIIcon::AppsHub:
+        return AppsHubIcon;
+      case UIIcon::CalendarTime:
+        return CalendarTimeIcon;
+      case UIIcon::LibraryBook:
+        return LibraryBookIcon;
+      case UIIcon::DeleteFile:
+        return DeleteFileIcon;
+      case UIIcon::CacheCleaner:
+        return CacheCleanerIcon;
+      case UIIcon::FinishFlag:
+        return FinishFlagIcon;
+      case UIIcon::NotificationUnread:
+        return NotificationUnreadIcon;
+      case UIIcon::FileTransfer:
+        return FileTransferIcon;
+      case UIIcon::Calibre:
+        return CalibreIcon;
+      case UIIcon::Wikipedia:
+        return WikipediaIcon;
+      case UIIcon::QuickCards:
+        return QuickCardsIcon;
       default:
         return nullptr;
     }

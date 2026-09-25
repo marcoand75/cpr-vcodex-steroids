@@ -105,7 +105,7 @@ inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
                          &CrossPointSettings::sleepShortcutOrder,
                          &CrossPointSettings::sleepShortcutVisible},
       ShortcutDefinition{ShortcutId::OpdsBrowser, StrId::STR_OPDS_BROWSER, StrId::STR_NONE_OPT,
-                         UIIcon::LibraryBook, &CrossPointSettings::opdsBrowserShortcut,
+                          UIIcon::Library, &CrossPointSettings::opdsBrowserShortcut,
                          &CrossPointSettings::opdsBrowserShortcutOrder,
                          &CrossPointSettings::opdsBrowserShortcutVisible},
       ShortcutDefinition{ShortcutId::Plugins, StrId::STR_PLUGINS, StrId::STR_PLUGINS_DESC, UIIcon::Pageview,

@@ -19,10 +19,74 @@
 #include "components/icons/library_book.h"
 #include "components/icons/library_new.h"
 #include "components/icons/pageview.h"
+#include "components/icons/opdsbrowser.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/cleanmonitor.h"
+#include "components/icons/lostdevice.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/screensaver.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/search_plus.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
+#include "components/icons/notification_unread.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/cache_cleaner.h"
+#include "components/icons/calendar_time.h"
+#include "components/icons/apps_hub.h"
+#include "components/icons/calibre.h"
+#include "components/icons/wikipediaicon.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/ClipIcon32.h"
+#include "components/icons/rotation.h"
+#include "components/icons/search.h"
+#include "components/icons/time_fast.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
+#include "components/icons/delete_file.h"
 
-// Firmware UIIcon -> FreeInkUI bitmap for list rows (SDK-format icons only;
-// the legacy drawIcon assets use a different bit layout). Two crisp sizes:
-// 24 for single-line rows, 32 for label+subtitle rows.
+// Firmware UIIcon -> FreeInkUI bitmap for list rows.
+// The legacy Steroids 32x32 assets are pre-rotated 90° CCW for GfxRenderer::drawIcon;
+// FreeInkUI's list() draws bitmaps without that extra rotation, so we rotate them
+// 90° CW here to present them in their natural orientation.
+namespace {
+const uint8_t* rotateCW32(const uint8_t* src) {
+  static uint8_t cache[12][128];
+  static const uint8_t* sources[12] = {0};
+  static int next = 0;
+
+  for (int i = 0; i < 12; i++) {
+    if (sources[i] == src) return cache[i];
+  }
+
+  uint8_t* dst = cache[next];
+  sources[next] = src;
+  next = (next + 1) % 12;
+
+  memset(dst, 0xFF, 128);
+
+  const int bytesPerRow = 4;
+  for (int y = 0; y < 32; y++) {
+    for (int x = 0; x < 32; x++) {
+      const int srcByte = y * bytesPerRow + (x >> 3);
+      const int srcBit = 7 - (x & 7);
+      const bool ink = (((src[srcByte] >> srcBit) & 1) == 0);
+
+      const int dstX = 31 - y;
+      const int dstY = x;
+      const int dstByte = dstY * bytesPerRow + (dstX >> 3);
+      const int dstBit = 7 - (dstX & 7);
+      if (ink) {
+        dst[dstByte] &= static_cast<uint8_t>(~(1 << dstBit));
+      }
+    }
+  }
+
+  return dst;
+}
+}
+
 freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
   if (size >= 32) {
     switch (icon) {
@@ -35,7 +99,7 @@ freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
       case UIIcon::Book:
         return freeink::ui::bitmapFromIcon(icon_book_32);
       case UIIcon::File:
-        return freeink::ui::bitmapFromIcon(icon_file_32);
+        return {ClipIcon32, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
       case UIIcon::Wifi:
         return freeink::ui::bitmapFromIcon(icon_wifi_32);
       case UIIcon::Library:
@@ -56,32 +120,76 @@ freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
         return freeink::ui::bitmapFromIcon(icon_settings_2_32);
       case UIIcon::Transfer:
         return freeink::ui::bitmapFromIcon(icon_arrow_right_left_32);
-      case UIIcon::ReadingStatsIcon:
-        return {ReadingStatsIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::Heatmap:
-        return {HeatmapReadingIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::FlashcardQuiz:
-        return {FlashcardQuizIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::ReadingProfile:
-        return {ReadingProfileIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::MedalAlt:
-        return {MedalAltIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::GpsFound:
-        return {GpsFoundIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::RecentBooks:
-        return {RecentBooksIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::Dictionary2:
-        return {Dictionary2Icon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::FileTransfer:
-        return {FileTransferIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      case UIIcon::ScreenSaver:
+        return {ScreenSaverIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::Bookshelf:
+        return {BookshelfIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
       case UIIcon::SleepMode:
-        return {SleepModeIcon32, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::LibraryBook:
-        return {LibraryBookIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
-      case UIIcon::LibraryNew:
-        return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+        return {rotateCW32(SleepModeIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::CleanMonitor:
+        return {rotateCW32(CleanMonitorIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::Heatmap:
+        return {rotateCW32(HeatmapReadingIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::FlashcardQuiz:
+        return {rotateCW32(FlashcardQuizIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::ReadingProfile:
+        return {rotateCW32(ReadingProfileIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::LostDevice:
+        return {rotateCW32(LostDeviceIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::OpdsBrowser:
+        return {rotateCW32(OPDSBrowserIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::Dictionary:
+        return {rotateCW32(DictionaryIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::GoalsMedal:
+        return {GoalsMedalIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::ReadingStatsIcon:
+        return {rotateCW32(ReadingStatsIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::RecentBooks:
+        return {rotateCW32(RecentBooksIcon32), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::MedalAlt:
+        return {rotateCW32(MedalAltIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::GpsFound:
+        return {rotateCW32(GpsFoundIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::Search:
+        return {SearchIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::Rotation:
+        return {RotationIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
       case UIIcon::Pageview:
-        return {PageviewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+        return {rotateCW32(PageviewIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::SearchPlus:
+        return {SearchPlusIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::SearchMinus:
+        return {SearchMinusIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::TimeFast:
+        return {TimeFastIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::SortAsc:
+        return {SortAscIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::SortDesc:
+        return {SortDescIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::LibraryNew:
+        return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::Dictionary2:
+        return {Dictionary2Icon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::AppsHub:
+        return {AppsHubIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::CalendarTime:
+        return {CalendarTimeIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::DeleteFile:
+        return {DeleteFileIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::CacheCleaner:
+        return {CacheCleanerIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::FinishFlag:
+        return {FinishFlagIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::NotificationUnread:
+        return {NotificationUnreadIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::FileTransfer:
+        return {FileTransferIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::Calibre:
+        return {CalibreIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
+      case UIIcon::Wikipedia:
+        return {rotateCW32(WikipediaIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
+      case UIIcon::QuickCards:
+        return {rotateCW32(QuickCardsIcon), 32, 32, freeink::ui::BitmapFormat::Mask1, false};
       default:
         return {};
     }
@@ -112,9 +220,9 @@ freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size) {
     case UIIcon::Heart:
       return freeink::ui::bitmapFromIcon(icon_heart_24);
     case UIIcon::LibraryBook:
-      return {LibraryBookIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      return {LibraryBookIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
     case UIIcon::LibraryNew:
-      return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::BW1, true};
+      return {LibraryNewIcon, 32, 32, freeink::ui::BitmapFormat::Mask1, true};
     default:
       return {};
   }

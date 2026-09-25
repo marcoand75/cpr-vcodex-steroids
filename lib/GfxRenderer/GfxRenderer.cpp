@@ -1362,7 +1362,7 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
   const int destX = y;
   const int destY = getScreenWidth() - width - x;
   if (!(darkMode && renderMode == BW)) {
-    display.drawImageTransparent(bitmap, destX, destY, height, width);
+    display.drawImageTransparent(bitmap, destX, destY, height, width, true);
     return;
   }
 

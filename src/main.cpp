@@ -74,11 +74,6 @@ constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
 // while the button is held; swallow the one release that ends that wake gesture.
 static bool wakePowerReleasePending = false;
 
-// Steroids fork-only: when screenSaverReplaceSleep is active we push a
-// ScreenSaverActivity on top of the reader; once it exits the main loop must
-// re-enter enterDeepSleep() to complete the real deep-sleep sequence.
-static bool screenSaverReplacesSleep = false;
-
 // Fonts
 #ifndef OMIT_BOOKERLY
 EpdFont bookerly14RegularFont(&bookerly_14_regular);
@@ -500,24 +495,6 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
-  // If we're waiting for the in-reader screensaver to finish, only proceed once
-  // it has popped. While it is on top we must not fall through to real sleep.
-  if (screenSaverReplacesSleep) {
-    if (activityManager.isCurrentActivity("ScreenSaver")) {
-      return;
-    }
-    // ScreenSaverActivity has already popped; fall through to actual sleep.
-  }
-
-  // If the user enabled "replace sleep with screensaver" while reading, show
-  // the screensaver first; the main loop will re-enter this function once the
-  // screensaver pops so the real deep-sleep sequence can run.
-  if (SETTINGS.screenSaverReplaceSleep && activityManager.isReaderActivity()) {
-    screenSaverReplacesSleep = true;
-    activityManager.pushActivity(std::make_unique<ScreenSaverActivity>(renderer, mappedInputManager, true));
-    return;
-  }
-
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -1246,8 +1223,12 @@ void loop() {
       return;
     }
     LOG_DBG("MAIN", "Power button held %lums, sleeping", gpio.getPowerButtonHeldTime());
-    enterDeepSleep();
-    // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    if (SETTINGS.screenSaverReplaceSleep && activityManager.isReaderActivity()) {
+      activityManager.pushActivity(std::make_unique<ScreenSaverActivity>(renderer, mappedInputManager, true));
+    } else {
+      enterDeepSleep();
+    }
+    powerReleasedSinceWake = false;
     return;
   }
 
@@ -1285,13 +1266,6 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
-
-  // Steroids fork-only: if the screensaver was pushed as a sleep replacement,
-  // complete the real deep-sleep sequence now that it has popped.
-  if (screenSaverReplacesSleep) {
-    enterDeepSleep(false);
-    return;
-  }
 
   TimeUtils::tickSystemClockFromRtc();
 

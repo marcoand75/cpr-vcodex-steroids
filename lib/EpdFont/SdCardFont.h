@@ -284,7 +284,7 @@ class SdCardFont {
   OverflowContext overflowCtx_[MAX_STYLES] = {};
 
   // Shared on-demand overflow buffer (ring buffer of glyphs loaded via glyphMissHandler)
-  static constexpr uint32_t OVERFLOW_CAPACITY = 8;
+  static constexpr uint32_t OVERFLOW_CAPACITY = 16;
   struct OverflowEntry {
     EpdGlyph glyph;
     uint8_t* bitmap = nullptr;
