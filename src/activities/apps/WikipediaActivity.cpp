@@ -16,6 +16,7 @@
 #include <functional> // Aggiunto per std::function usata nelle lambda/callback
 
 #include "CrossPointSettings.h"
+#include "util/WikipediaCacheUtils.h"
 #include "SdCardFontGlobals.h"
 #include "SilentRestart.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -1281,46 +1282,44 @@ bool WikipediaActivity::loadCachedArticle(const std::string& title) {
 void WikipediaActivity::loadCachedPages() {
   cachedPageTitles.clear();
   Storage.mkdir(CACHE_DIR);
-  std::vector<std::string> files;
-  Storage.mkdir(CACHE_DIR);
+
+  // Nuovo formato: directory per articolo (wiki_<hash>/article.md + title.txt).
+  const std::vector<std::string> wikiDirs = WikipediaCacheUtils::listWikiDirectories();
+  for (const std::string& dirPath : wikiDirs) {
+    const std::string label = WikipediaCacheUtils::getDirectoryLabel(dirPath);
+    if (!label.empty()) {
+      cachedPageTitles.push_back(label);
+    }
+  }
+
+  // Fallback legacy: flat .wiki files for backward compatibility.
+  std::vector<std::string> legacyFiles;
   auto d = Storage.open(CACHE_DIR);
   if (d && d.isDirectory()) {
     d.rewindDirectory();
     char nb[128];
     for (auto f = d.openNextFile(); f; f = d.openNextFile()) {
+      if (f.isDirectory()) {
+        f.close();
+        continue;
+      }
       f.getName(nb, sizeof(nb));
-      if (!f.isDirectory()) {
-        files.emplace_back(nb);
+      const std::string name = nb;
+      if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".wiki") == 0) {
+        legacyFiles.emplace_back(name);
       }
       f.close();
     }
     d.close();
   }
-  for (auto& f : files) {
-    std::string name = f.c_str();
-    // New format: per-article directories named wiki_<hash> containing article.md
-    // and a title.txt carrying the real display title. Without title.txt we
-    // cannot show a readable name nor reopen the article, so we skip it.
-    if (name.size() > 5 && name.compare(0, 5, "wiki_") == 0 && Storage.exists((std::string(CACHE_DIR) + "/" + name + "/" + ARTICLE_FILE).c_str())) {
-      const std::string titlePath = std::string(CACHE_DIR) + "/" + name + "/" + TITLE_FILE;
-      const String titleFile = Storage.readFile(titlePath.c_str());
-      if (titleFile.length() > 0) {
-        cachedPageTitles.push_back(std::string(titleFile.c_str(), titleFile.length()));
-      }
+  for (auto& name : legacyFiles) {
+    std::string title = name.substr(0, name.size() - 4);
+    for (char& c : title) {
+      if (c == '_') c = ' ';
     }
+    cachedPageTitles.push_back(title);
   }
-  // Fallback: legacy flat .wiki files for backward compatibility.
-  for (auto& f : files) {
-    std::string name = f.c_str();
-    if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".wiki") == 0) {
-      std::string title = name.substr(0, name.size() - 4);
-      // Sostituito std::replace con ciclo manuale per massima compatibilità di compilazione
-      for (char& c : title) {
-        if (c == '_') c = ' ';
-      }
-      cachedPageTitles.push_back(title);
-    }
-  }
+
   std::sort(cachedPageTitles.begin(), cachedPageTitles.end());
   LOG_DBG("WIKI", "Loaded %zu cached pages", cachedPageTitles.size());
 }
