@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
+#include <FontCacheManager.h>
 #include <HalDisplay.h>
 #include <HalFrontlight.h>
 #include <HalStorage.h>
@@ -814,12 +815,14 @@ bool SettingsActivity::handleButtons() {
 void SettingsActivity::showTransientPopup(const char* message, const int progress, const unsigned long delayMs) {
   requestUpdateAndWait();
 
+  Rect popupRect;
   {
     RenderLock lock(*this);
-    const Rect popupRect = GUI.drawPopup(renderer, message);
+    popupRect = GUI.drawPopup(renderer, message);
     if (progress >= 0) {
       GUI.fillPopupProgress(renderer, popupRect, progress);
     }
+    renderer.displayBuffer();
   }
 
   if (delayMs > 0) {
@@ -1065,33 +1068,55 @@ void SettingsActivity::runAction(const SettingInfo& setting) {
           });
       break;
     case SettingAction::ExportReadingStats: {
+      LOG_DBG("SET", "ExportReadingStats: action start");
       showTransientPopup(tr(STR_EXPORTING), 20, 120);
       Storage.mkdir("/exports");
       const std::string exportPath = getReadingStatsExportPath();
+      LOG_DBG("SET", "ExportReadingStats: path=%s", exportPath.c_str());
+      if (auto* fcm = renderer.getFontCacheManager()) {
+        fcm->releaseSdFontCaches();
+      }
+      LOG_DBG("SET", "ExportReadingStats: heap before export free=%u maxA=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       if (Storage.exists(exportPath.c_str())) {
         Storage.remove(exportPath.c_str());
       }
       const bool exported = READING_STATS.exportToFile(exportPath);
+      LOG_DBG("SET", "ExportReadingStats: result=%d", exported ? 1 : 0);
       showTransientPopup(exported ? tr(STR_EXPORT_DONE) : tr(STR_EXPORT_FAILED), exported ? 100 : -1,
                          exported ? 350 : 700);
       requestUpdate(true);
       break;
     }
     case SettingAction::ImportReadingStats:
+      LOG_DBG("SET", "ImportReadingStats: action start, candidates=%zu",
+              ReadingStatsImportActivity::getImportPaths().size());
       if (ReadingStatsImportActivity::getImportPaths().empty()) {
+        LOG_ERR("SET", "ImportReadingStats: no export files found");
         showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
         requestUpdate(true);
         break;
       }
       startActivityForResult(std::make_unique<ReadingStatsImportActivity>(renderer, mappedInput),
                              [this](const ActivityResult& result) {
+                               LOG_DBG("SET", "ImportReadingStats: picker returned cancelled=%d", result.isCancelled ? 1 : 0);
                                if (!result.isCancelled) {
                                  const auto* path = std::get_if<FilePathResult>(&result.data);
                                  if (path == nullptr || path->path.empty()) {
+                                   LOG_ERR("SET", "ImportReadingStats: no file path in result");
                                    showTransientPopup(tr(STR_IMPORT_FAILED), -1, 700);
                                  } else {
+                                   LOG_DBG("SET", "ImportReadingStats: selected path=%s", path->path.c_str());
                                    showTransientPopup(tr(STR_IMPORTING), 20, 120);
+                                   // Free rebuildable SD-font caches before the JSON parse:
+                                   // the ESP32-C3 heap fragments below the 80 KB import
+                                   // guard and the whole import is otherwise skipped.
+                                   if (auto* fcm = renderer.getFontCacheManager()) {
+                                     fcm->releaseSdFontCaches();
+                                   }
+                                   LOG_DBG("SET", "ImportReadingStats: heap before import free=%u maxA=%u",
+                                           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
                                    const bool imported = READING_STATS.importFromFile(path->path);
+                                   LOG_DBG("SET", "ImportReadingStats: import result=%d", imported ? 1 : 0);
                                    if (imported) {
                                      ACHIEVEMENTS.rebuildProgressFromCurrentStats();
                                    }

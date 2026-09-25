@@ -1745,17 +1745,31 @@ void ReadingStatsStore::reset() {
 
 bool ReadingStatsStore::exportToFile(const std::string& path) const {
   if (path.empty()) {
+    LOG_ERR("RST", "exportToFile: rejected empty path");
+    CPR_VCODEX_LOG_EVENT("RST", "Reading stats export rejected an empty path");
     return false;
   }
-  return JsonSettingsIO::saveReadingStats(*this, path.c_str());
+  LOG_DBG("RST", "exportToFile: begin path=%s books=%zu days=%zu", path.c_str(), books.size(), readingDays.size());
+  const bool saved = JsonSettingsIO::saveReadingStats(*this, path.c_str());
+  if (!saved) {
+    LOG_ERR("RST", "exportToFile: FAILED path=%s", path.c_str());
+    CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats export failed: ") + path);
+    return false;
+  }
+  LOG_DBG("RST", "exportToFile: OK path=%s", path.c_str());
+  CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats export completed: ") + path);
+  return true;
 }
 
 bool ReadingStatsStore::importFromFile(const std::string& path) {
+  LOG_DBG("RST", "importFromFile: begin path=%s", path.c_str());
   if (path.empty()) {
+    LOG_ERR("RST", "importFromFile: rejected empty path");
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats import rejected an empty path");
     return false;
   }
   if (!Storage.exists(path.c_str())) {
+    LOG_ERR("RST", "importFromFile: file not found path=%s", path.c_str());
     CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import file was not found: ") + path);
     return false;
   }
@@ -1787,11 +1801,15 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
   const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, path.c_str());
   if (!loaded) {
+    LOG_ERR("RST", "importFromFile: source rejected path=%s", path.c_str());
     CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import source was rejected: ") + path);
     return false;
   }
+  LOG_DBG("RST", "importFromFile: parsed source books=%zu days=%zu sessions=%zu", books.size(), readingDays.size(),
+          sessionLog.size());
 
   if (!hasAnyStats()) {
+    LOG_ERR("RST", "importFromFile: rejected empty stats after parse");
     CPR_VCODEX_LOG_EVENT("RST", "Rejected empty reading stats import");
     reloadOriginalStats();
     return false;
@@ -1825,6 +1843,9 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
     return false;
   }
 
+  LOG_DBG("RST", "importFromFile: OK books=%zu days=%zu sessions=%zu", books.size(), readingDays.size(),
+          sessionLog.size());
+  CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import completed from: ") + path);
   LOG_DBG("RST", "After stats import: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
   return true;

@@ -99,19 +99,24 @@ struct ThemeMetrics {
   int keyboardTextFieldWidthPercent;
   int keyboardWidthPercent;
 
-  float popupTopOffsetRatio;
-  int popupMarginX;
-  int popupMarginY;
-  int popupFrameThickness;
-  int popupCornerRadius;
-  bool popupTextBold;
-  bool popupTextInverted;
-  int popupTextBaselineOffsetY;
-  int popupProgressBarHeight;
-  bool popupProgressDrawOutline;
-  bool popupProgressClampPercent;
-  bool popupProgressFillInverted;
-  bool popupProgressOutlineInverted;
+  // Popup defaults: every theme must yield a visible popup even when it omits
+  // these fields. Without initializers a designated-initializer theme leaves
+  // them zero, which draws a white box with white text (invisible). The values
+  // below match the classic non-rounded style: black frame, white interior,
+  // black text.
+  float popupTopOffsetRatio = 0.075f;
+  int popupMarginX = 15;
+  int popupMarginY = 15;
+  int popupFrameThickness = 2;
+  int popupCornerRadius = 0;
+  bool popupTextBold = true;
+  bool popupTextInverted = true;
+  int popupTextBaselineOffsetY = -2;
+  int popupProgressBarHeight = 4;
+  bool popupProgressDrawOutline = false;
+  bool popupProgressClampPercent = false;
+  bool popupProgressFillInverted = true;
+  bool popupProgressOutlineInverted = false;
 
   int optionPopupItemSpacing;
   int optionPopupInnerPadding;

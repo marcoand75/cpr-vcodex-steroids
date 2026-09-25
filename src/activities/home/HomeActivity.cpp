@@ -644,21 +644,17 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   coverRendered = false;
   freeCoverBuffer();
 
-  bool showingLoading = false;
-  Rect popupRect;
-  bool needsRefresh = false;
+  // Paint the loading popup before the (multi-second) blocking cover work so the
+  // user sees progress instead of a frozen carousel. render() draws it whenever
+  // recentsLoading is set, and this synchronous repaint pushes it to the panel.
+  coverLoadProgress = 10;
+  requestUpdateAndWait();
 
-  const auto updateProgress = [this, &showingLoading, &popupRect](const int progress) {
-    RenderLock lock(*this);
-    if (!showingLoading) {
-      showingLoading = true;
-      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-    }
-    GUI.fillPopupProgress(renderer, popupRect, progress);
-  };
+  const auto updateProgress = [this](const int progress) { coverLoadProgress = progress; };
 
   int progress = 0;
   int attempted = 0;
+  bool needsRefresh = false;
 
   // Carousel themes: round-robin one book per call so a permanently failing
   // cover (e.g. corrupt JPEG inside an EPUB) does not block the whole carousel.
@@ -816,8 +812,6 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       carouselCoverFailures[processedIdx]++;
     }
 
-    lastCarouselBookIndex = (processedIdx + 1) % recentBooks.size();
-
     bool allDone = true;
     for (size_t i = 0; i < recentBooks.size(); ++i) {
       if (carouselCoverFailures[i] < 2 && !hasCarouselUsableThumb(recentBooks[i])) {
@@ -834,6 +828,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         invalidateResidentCarouselFrame();
         invalidateCarouselFrameHash();
         preRenderCarouselFrames();
+        lastCarouselBookIndex = (processedIdx + 1) % recentBooks.size();
       }
       requestUpdate();
     }
@@ -2169,6 +2164,11 @@ void HomeActivity::render(RenderLock&&) {
                           : mappedInput.mapLabels(backLabel, tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
+  if (recentsLoading) {
+    auto popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    GUI.fillPopupProgress(renderer, popupRect, coverLoadProgress);
+  }
+
   if (cleanInitialRefresh && !firstRenderDone) {
     // Wake / home-gesture entry: one HALF refresh clears the retained frame.
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -2188,9 +2188,6 @@ void HomeActivity::render(RenderLock&&) {
     if (!recentsLoaded || (carouselTheme && recentsLoaded && !carouselFramesReady)) {
       requestUpdate();
     }
-  } else if (!recentsLoaded && !recentsLoading) {
-    recentsLoading = true;
-    loadRecentCovers(metrics.homeCoverHeight);
   }
 }
 

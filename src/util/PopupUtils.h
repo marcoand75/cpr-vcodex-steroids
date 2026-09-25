@@ -21,18 +21,21 @@ namespace PopupUtils {
 // SettingsActivity, ReadingStatsActivity and SyncDayActivity.
 inline void showTransientPopup(Activity& activity, const char* message, int progress = -1, unsigned long delayMs = 0) {
   activity.requestUpdateAndWait();
+
+  Rect popupRect;
   {
     RenderLock lock(activity);
-    const Rect popupRect = GUI.drawPopup(activity.getRenderer(), message);
+    popupRect = GUI.drawPopup(activity.getRenderer(), message);
     if (progress >= 0) {
       GUI.fillPopupProgress(activity.getRenderer(), popupRect, progress);
     }
+    activity.getRenderer().displayBuffer();
   }
+
   if (delayMs > 0) {
     delay(delayMs);
   }
 }
-
 // Show a brief toast-style popup for timer toggle feedback in reader activities.
 inline void showTimerPauseFeedback(GfxRenderer& renderer, bool nowPaused, unsigned long delayMs = 500) {
   GUI.drawPopup(renderer, nowPaused ? tr(STR_READING_TIMER_PAUSED) : tr(STR_READING_TIMER_ACTIVE));

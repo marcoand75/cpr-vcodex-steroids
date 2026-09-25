@@ -947,6 +947,8 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const int textX = x + (w - textWidth) / 2;
   const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
   renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
+  LOG_DBG("POPUP", "drawPopup msg='%s' rect=(%d,%d,%d,%d) textW=%d lineH=%d rounded=%d", message, x, y, w, h,
+          textWidth, textHeight, useRoundedPopup ? 1 : 0);
   renderer.displayBuffer();
   return Rect{x, y, w, h};
 }

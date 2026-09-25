@@ -47,6 +47,7 @@ class HomeActivity final : public Activity {
   bool carouselFramesReady = false;
   std::vector<RecentBook> recentBooks;
   std::vector<uint8_t> carouselCoverFailures;
+  int coverLoadProgress = 0;
   // Menu entry to pre-select on entry (set by ActivityManager::goHome when
   // returning from a sub-screen) and whether the first paint should be a
   // HALF refresh (wake from sleep / home gesture) instead of the default.
