@@ -1821,7 +1821,8 @@ bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const ch
   if (!Storage.exists(path)) {
     return false;
   }
-  if (ESP.getMaxAllocHeap() < 80 * 1024) {
+  // Streaming loader peak ~40KB (single array pass + stream). Lowered from 80KB.
+  if (ESP.getMaxAllocHeap() < 40 * 1024) {
     LOG_DBG("RST", "Reading stats load skipped, maxA=%u too low", static_cast<unsigned>(ESP.getMaxAllocHeap()));
     return false;
   }
