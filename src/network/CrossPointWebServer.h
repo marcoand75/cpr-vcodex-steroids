@@ -116,6 +116,7 @@ class CrossPointWebServer {
   // Request handlers
   void handleRoot() const;
   void handleJszip() const;
+  void handleLogo() const;
   void handleNotFound() const;
   void handleStatus() const;
   void handleFileList() const;
@@ -177,6 +178,9 @@ class CrossPointWebServer {
   void addSteroidsSetting(const char* key, StrId nameId, const char* category,
                           WebSettingType type, int value, const std::vector<const char*>& options,
                           uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const;
+  void addSteroidsSettingBuffered(const char* key, StrId nameId, const char* category,
+                                  WebSettingType type, int value, const std::vector<const char*>& options,
+                                  uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const;
   void applySteroidsSetting(JsonDocument& doc, const char* key,
                             uint8_t CrossPointSettings::* valuePtr, uint8_t maxValue,
                             bool& saveSettings, int& applied);

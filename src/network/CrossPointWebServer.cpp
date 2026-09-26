@@ -783,8 +783,9 @@ void CrossPointWebServer::handleJszip() const {
 
 void CrossPointWebServer::handleLogo() const {
   server->sendHeader("Cache-Control", "public, max-age=86400");
-  server->send_P(200, "image/png", reinterpret_cast<const char*>(LogoPng), LogoPngSize);
-  LOG_DBG("WEB", "Served logo.png (%d bytes)", LogoPngSize);
+  server->sendHeader("Content-Encoding", "gzip");
+  server->send_P(200, "image/png", LogoPng, LogoPngCompressedSize);
+  LOG_DBG("WEB", "Served logo.png (%d bytes compressed)", LogoPngCompressedSize);
 }
 
 void CrossPointWebServer::handleNotFound() const {
@@ -794,6 +795,9 @@ void CrossPointWebServer::handleNotFound() const {
     server->send(204, "text/plain", "");
     return;
   }
+
+  // Log all 404s to debug missing routes
+  LOG_DBG("WEB", "404 Not Found: method=%d uri=%s", server->method(), server->uri().c_str());
 
   // in AP mode, redirect unmatched browser/captive-portal requests to "/" so the OS auto-opens the browser
   // API requests (/api/*) still return 404 so XHR errors surface correctly
@@ -2223,77 +2227,98 @@ void CrossPointWebServer::handlePostSettings() {
 // ---- Steroids Settings API ----
 
 void CrossPointWebServer::handleSteroidsSettingsPage() const {
+  LOG_DBG("WEB", "handleSteroidsSettingsPage called, free=%u", ESP.getFreeHeap());
   sendHtmlContent(server.get(), SteroidsSettingsPageHtml, sizeof(SteroidsSettingsPageHtml));
   LOG_DBG("WEB", "Served steroids settings page");
 }
 
 void CrossPointWebServer::handleGetSteroidsSettings() const {
-  LOG_DBG("WEB", "[MEM] /api/steroids-settings start free=%u min=%u", ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  LOG_DBG("WEB", ">>> handleGetSteroidsSettings CALLED method=%d uri=%s", server->method(), server->uri().c_str());
+  LOG_DBG("WEB", "[API] /api/steroids-settings START free=%u min=%u", ESP.getFreeHeap(), ESP.getMinFreeHeap());
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("[");
+  LOG_DBG("WEB", "[API] Sent opening bracket");
 
+  // Pre-resolve I18N strings once to avoid repeated tr() calls
+  const char* sleepScreenCategory = I18N.get(StrId::STR_SLEEP_SCREEN);
+  const char* libraryCategory = I18N.get(StrId::STR_MENU_LIBRARY);
+  const char* powerButtonCategory = I18N.get(StrId::STR_SHORT_PWR_BTN);
+
+  // Build all steroids settings in one pass with buffered JSON
   bool seenFirst = false;
+  int settingsCount = 0;
 
   // Sleep Screen settings
-  const auto sleepScreenCategory = tr(STR_SLEEP_SCREEN);
-  addSteroidsSetting("sleepScreen", StrId::STR_SLEEP_SCREEN, sleepScreenCategory,
-                     WebSettingType::Enum, SETTINGS.sleepScreen,
-                     {"BLANK", "CUSTOM", "COVER", "COVER_CUSTOM", "READING_DASHBOARD", "COVER_STATS", "COVER_STATS_V2", "CUSTOM_STATS", "CUSTOM_STATS_V2"},
-                     &CrossPointSettings::sleepScreen, seenFirst);
-  addSteroidsSetting("sleepScreenCoverMode", StrId::STR_SLEEP_COVER_MODE, sleepScreenCategory,
-                     WebSettingType::Enum, SETTINGS.sleepScreenCoverMode,
-                     {"FIT", "CROP"},
-                     &CrossPointSettings::sleepScreenCoverMode, seenFirst);
-  addSteroidsSetting("sleepScreenCoverFilter", StrId::STR_SLEEP_COVER_FILTER, sleepScreenCategory,
-                     WebSettingType::Enum, SETTINGS.sleepScreenCoverFilter,
-                     {"NO_FILTER", "INVERTED_BLACK_AND_WHITE", "GRAYSCALE"},
-                     &CrossPointSettings::sleepScreenCoverFilter, seenFirst);
-  addSteroidsSetting("sleepImageOrder", StrId::STR_SCREENSAVER_ORDER, sleepScreenCategory,
-                     WebSettingType::Enum, SETTINGS.sleepImageOrder,
-                     {"SEQUENTIAL", "SHUFFLE"},
-                     &CrossPointSettings::sleepImageOrder, seenFirst);
-  addSteroidsSetting("quickResumeSleepScreen", StrId::STR_QUICK_RESUME, sleepScreenCategory,
-                     WebSettingType::Enum, SETTINGS.quickResumeSleepScreen,
-                     {"QUICK_RESUME_AFTER_TIMEOUT", "QUICK_RESUME_OFF"},
-                     &CrossPointSettings::quickResumeSleepScreen, seenFirst);
+  addSteroidsSettingBuffered("sleepScreen", StrId::STR_SLEEP_SCREEN, sleepScreenCategory,
+                             WebSettingType::Enum, SETTINGS.sleepScreen,
+                             {"BLANK", "CUSTOM", "COVER", "COVER_CUSTOM", "READING_DASHBOARD", "COVER_STATS", "COVER_STATS_V2", "CUSTOM_STATS", "CUSTOM_STATS_V2"},
+                             &CrossPointSettings::sleepScreen, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("sleepScreenCoverMode", StrId::STR_SLEEP_COVER_MODE, sleepScreenCategory,
+                             WebSettingType::Enum, SETTINGS.sleepScreenCoverMode,
+                             {"FIT", "CROP"},
+                             &CrossPointSettings::sleepScreenCoverMode, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("sleepScreenCoverFilter", StrId::STR_SLEEP_COVER_FILTER, sleepScreenCategory,
+                             WebSettingType::Enum, SETTINGS.sleepScreenCoverFilter,
+                             {"NO_FILTER", "INVERTED_BLACK_AND_WHITE", "GRAYSCALE"},
+                             &CrossPointSettings::sleepScreenCoverFilter, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("sleepImageOrder", StrId::STR_SCREENSAVER_ORDER, sleepScreenCategory,
+                             WebSettingType::Enum, SETTINGS.sleepImageOrder,
+                             {"SEQUENTIAL", "SHUFFLE"},
+                             &CrossPointSettings::sleepImageOrder, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("quickResumeSleepScreen", StrId::STR_QUICK_RESUME, sleepScreenCategory,
+                             WebSettingType::Enum, SETTINGS.quickResumeSleepScreen,
+                             {"QUICK_RESUME_AFTER_TIMEOUT", "QUICK_RESUME_OFF"},
+                             &CrossPointSettings::quickResumeSleepScreen, seenFirst);
+  settingsCount++;
 
   // Library settings
-  const auto libraryCategory = tr(STR_MENU_LIBRARY);
-  addSteroidsSetting("libraryLayout", StrId::STR_LIBRARY_LAYOUT, libraryCategory,
-                     WebSettingType::Enum, SETTINGS.libraryLayout,
-                     {"4X4", "3X3", "2X2"},
-                     &CrossPointSettings::libraryLayout, seenFirst);
-  addSteroidsSetting("libraryFilter", StrId::STR_LIBRARY_FILTER, libraryCategory,
-                     WebSettingType::Enum, SETTINGS.libraryFilter,
-                     {"ALL", "FAVOURITES", "LATEST_READ", "UNREAD", "COMPLETED", "HIDDEN"},
-                     &CrossPointSettings::libraryFilter, seenFirst);
-  addSteroidsSetting("librarySort", StrId::STR_LIBRARY_SORT, libraryCategory,
-                     WebSettingType::Enum, SETTINGS.librarySort,
-                     {"TITLE_ASC", "TITLE_DESC", "AUTHOR_ASC", "AUTHOR_DESC", "RECENT", "PROGRESS", "COLLECTIONS", "MIXED"},
-                     &CrossPointSettings::librarySort, seenFirst);
-  addSteroidsSetting("libraryViewMode", StrId::STR_LIBRARY_VIEW_MODE, libraryCategory,
-                     WebSettingType::Enum, SETTINGS.libraryViewMode,
-                     {"FLAT", "COLLECTIONS", "MIXED", "AUTO"},
-                     &CrossPointSettings::libraryViewMode, seenFirst);
-  addSteroidsSetting("libraryUpdateMode", StrId::STR_LIBRARY_UPDATE_MODE, libraryCategory,
-                     WebSettingType::Enum, SETTINGS.libraryUpdateMode,
-                     {"MANUAL", "AUTO"},
-                     &CrossPointSettings::libraryUpdateMode, seenFirst);
-  addSteroidsSetting("libraryFolderCollections", StrId::STR_LIBRARY_FOLDER_COLLECTIONS, libraryCategory,
-                     WebSettingType::Toggle, SETTINGS.libraryFolderCollections,
-                     {}, &CrossPointSettings::libraryFolderCollections, seenFirst);
+  addSteroidsSettingBuffered("libraryLayout", StrId::STR_LIBRARY_LAYOUT, libraryCategory,
+                             WebSettingType::Enum, SETTINGS.libraryLayout,
+                             {"4X4", "3X3", "2X2"},
+                             &CrossPointSettings::libraryLayout, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("libraryFilter", StrId::STR_LIBRARY_FILTER, libraryCategory,
+                             WebSettingType::Enum, SETTINGS.libraryFilter,
+                             {"ALL", "FAVOURITES", "LATEST_READ", "UNREAD", "COMPLETED", "HIDDEN"},
+                             &CrossPointSettings::libraryFilter, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("librarySort", StrId::STR_LIBRARY_SORT, libraryCategory,
+                             WebSettingType::Enum, SETTINGS.librarySort,
+                             {"TITLE_ASC", "TITLE_DESC", "AUTHOR_ASC", "AUTHOR_DESC", "RECENT", "PROGRESS", "COLLECTIONS", "MIXED"},
+                             &CrossPointSettings::librarySort, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("libraryViewMode", StrId::STR_LIBRARY_VIEW_MODE, libraryCategory,
+                             WebSettingType::Enum, SETTINGS.libraryViewMode,
+                             {"FLAT", "COLLECTIONS", "MIXED", "AUTO"},
+                             &CrossPointSettings::libraryViewMode, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("libraryUpdateMode", StrId::STR_LIBRARY_UPDATE_MODE, libraryCategory,
+                             WebSettingType::Enum, SETTINGS.libraryUpdateMode,
+                             {"MANUAL", "AUTO"},
+                             &CrossPointSettings::libraryUpdateMode, seenFirst);
+  settingsCount++;
+  addSteroidsSettingBuffered("libraryFolderCollections", StrId::STR_LIBRARY_FOLDER_COLLECTIONS, libraryCategory,
+                             WebSettingType::Toggle, SETTINGS.libraryFolderCollections,
+                             {}, &CrossPointSettings::libraryFolderCollections, seenFirst);
+  settingsCount++;
 
   // Power Button settings
-  const auto powerButtonCategory = tr(STR_SHORT_PWR_BTN);
-  addSteroidsSetting("shortPwrBtn", StrId::STR_SHORT_PWR_BTN, powerButtonCategory,
-                     WebSettingType::Enum, SETTINGS.shortPwrBtn,
-                     {"IGNORE", "SLEEP", "PAGE_TURN", "FORCE_REFRESH", "TOGGLE_STATUS_BAR", "FOOTNOTES", "SLEEP_IMAGE_CYCLE", "PWR_CONFIRM"},
-                     &CrossPointSettings::shortPwrBtn, seenFirst);
+  addSteroidsSettingBuffered("shortPwrBtn", StrId::STR_SHORT_PWR_BTN, powerButtonCategory,
+                             WebSettingType::Enum, SETTINGS.shortPwrBtn,
+                             {"IGNORE", "SLEEP", "PAGE_TURN", "FORCE_REFRESH", "TOGGLE_STATUS_BAR", "FOOTNOTES", "SLEEP_IMAGE_CYCLE", "PWR_CONFIRM"},
+                             &CrossPointSettings::shortPwrBtn, seenFirst);
+  settingsCount++;
 
+  LOG_DBG("WEB", "[API] All settings written, count=%d", settingsCount);
   server->sendContent("]");
-  LOG_DBG("WEB", "[MEM] /api/steroids-settings end free=%u min=%u", ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  server->sendContent("");
+  LOG_DBG("WEB", "[API] /api/steroids-settings END free=%u min=%u count=%d", ESP.getFreeHeap(), ESP.getMinFreeHeap(), settingsCount);
 }
 
 void CrossPointWebServer::handlePostSteroidsSettings() {
@@ -2340,46 +2365,70 @@ void CrossPointWebServer::handlePostSteroidsSettings() {
 }
 
 // Helper functions for steroids settings
-void CrossPointWebServer::addSteroidsSetting(const char* key, StrId nameId, const char* category,
-                                             WebSettingType type, int value, const std::vector<const char*>& options,
-                                             uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const {
+void CrossPointWebServer::addSteroidsSettingBuffered(const char* key, StrId nameId, const char* category,
+                                                     WebSettingType type, int value, const std::vector<const char*>& options,
+                                                     uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const {
   if (seenFirst) server->sendContent(",", 1);
   seenFirst = true;
 
-  server->sendContent("{", 1);
-  sendJsonStringField(server.get(), "key", key);
-  server->sendContent(",", 1);
-  sendJsonStringField(server.get(), "name", I18N.get(nameId));
-  server->sendContent(",", 1);
-  sendJsonStringField(server.get(), "category", category);
-  server->sendContent(",", 1);
-  sendJsonStringField(server.get(), "type", type == WebSettingType::Toggle ? "toggle" : (type == WebSettingType::Enum ? "enum" : (type == WebSettingType::Value ? "value" : "string")));
-  server->sendContent(",", 1);
+  // Build setting JSON in one buffer to minimize sendContent calls
+  char buf[512];
+  int len = 0;
+
+  len += snprintf(buf + len, sizeof(buf) - len, "{\"key\":\"%s\",\"name\":\"", key);
+  const char* nameStr = I18N.get(nameId);
+  len += snprintf(buf + len, sizeof(buf) - len, "%s", nameStr);
+  len += snprintf(buf + len, sizeof(buf) - len, "\",\"category\":\"%s\",\"type\":\"", category);
 
   if (type == WebSettingType::Toggle) {
-    server->sendContent("\"value\":", 9);
-    server->sendContent(value ? "true" : "false", value ? 4 : 5);
+    len += snprintf(buf + len, sizeof(buf) - len, "toggle");
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+    len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*valuePtr));
   } else if (type == WebSettingType::Enum) {
-    server->sendContent("\"value\":", 9);
-    server->sendContent(String(value).c_str(), String(value).length());
-    server->sendContent(",", 1);
-    server->sendContent("\"options\":[", 10);
+    len += snprintf(buf + len, sizeof(buf) - len, "enum");
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+    len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*valuePtr));
+    len += snprintf(buf + len, sizeof(buf) - len, ",\"options\":[");
     for (size_t i = 0; i < options.size(); ++i) {
-      if (i > 0) server->sendContent(",", 1);
-      sendJsonStringField(server.get(), "", options[i]);
+      if (i > 0) {
+        len += snprintf(buf + len, sizeof(buf) - len, ",");
+      }
+      const char* optStr = options[i];
+      // Simple escape for options
+      len += snprintf(buf + len, sizeof(buf) - len, "\"");
+      for (const char* p = optStr; *p && len < (int)sizeof(buf) - 4; ++p) {
+        if (*p == '"') {
+          buf[len++] = '\\';
+          buf[len++] = '"';
+        } else if (*p == '\\') {
+          buf[len++] = '\\';
+          buf[len++] = '\\';
+        } else {
+          buf[len++] = *p;
+        }
+      }
+      len += snprintf(buf + len, sizeof(buf) - len, "\"");
     }
-    server->sendContent("]", 1);
+    len += snprintf(buf + len, sizeof(buf) - len, "]");
   } else if (type == WebSettingType::Value) {
-    server->sendContent("\"value\":", 9);
-    server->sendContent(String(value).c_str(), String(value).length());
-    server->sendContent(",", 1);
-    server->sendContent("\"min\":0,\"max\":255,\"step\":1", 25);
+    len += snprintf(buf + len, sizeof(buf) - len, "value");
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":");
+    len += snprintf(buf + len, sizeof(buf) - len, "%d", static_cast<int>(SETTINGS.*valuePtr));
+    len += snprintf(buf + len, sizeof(buf) - len, ",\"min\":0,\"max\":255,\"step\":1");
   } else if (type == WebSettingType::String) {
-    server->sendContent("\"value\":", 9);
-    sendJsonStringField(server.get(), "", "");
+    len += snprintf(buf + len, sizeof(buf) - len, "string");
+    len += snprintf(buf + len, sizeof(buf) - len, "\",\"value\":\"\"");
   }
 
-  server->sendContent("}", 1);
+  len += snprintf(buf + len, sizeof(buf) - len, "}");
+  server->sendContent(buf, len);
+}
+
+void CrossPointWebServer::addSteroidsSetting(const char* key, StrId nameId, const char* category,
+                                             WebSettingType type, int value, const std::vector<const char*>& options,
+                                             uint8_t CrossPointSettings::* valuePtr, bool& seenFirst) const {
+  // Legacy function - now uses buffered version
+  addSteroidsSettingBuffered(key, nameId, category, type, value, options, valuePtr, seenFirst);
 }
 
 void CrossPointWebServer::applySteroidsSetting(JsonDocument& doc, const char* key,
