@@ -783,9 +783,8 @@ void CrossPointWebServer::handleJszip() const {
 
 void CrossPointWebServer::handleLogo() const {
   server->sendHeader("Cache-Control", "public, max-age=86400");
-  server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "image/png", LogoPng, LogoPngCompressedSize);
-  LOG_DBG("WEB", "Served logo.png (%d bytes compressed)", LogoPngCompressedSize);
+  server->send_P(200, PSTR("image/png"), reinterpret_cast<PGM_P>(LogoPng), LogoPngSize);
+  LOG_DBG("WEB", "Served logo.png (%d bytes)", LogoPngSize);
 }
 
 void CrossPointWebServer::handleNotFound() const {
