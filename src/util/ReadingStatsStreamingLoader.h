@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstddef>
 
+#include "ReadingStatsStore.h"
+
 // Custom utility for streaming reading_stats.json load.
 // Keeps upstream JsonSettingsIO.cpp changes minimal; this file is
 // steroids-specific and safe to drop during upstream merge.
