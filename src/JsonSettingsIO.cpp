@@ -30,6 +30,7 @@
 #include "util/CprVcodexLogs.h"
 #include "util/ShortcutRegistry.h"
 #include "util/JsonSettingsIOSteroids.h"
+#include "util/ReadingStatsStreamingLoader.h"
 #include "util/TimeZoneRegistry.h"
 
 namespace {
@@ -1824,13 +1825,8 @@ bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const ch
     LOG_DBG("RST", "Reading stats load skipped, maxA=%u too low", static_cast<unsigned>(ESP.getMaxAllocHeap()));
     return false;
   }
-  JsonDocument doc;
-  const bool parsed = loadJsonDocumentFromFile("RST", path, doc);
-  if (!parsed || doc.overflowed()) {
-    CPR_VCODEX_LOG_EVENT("RST", std::string("Failed to load reading stats from ") + path);
-    return false;
-  }
-  return loadReadingStatsDocument(store, doc);
+  // Custom streaming loader (minimizes monolithic DynamicJsonDocument RAM use).
+  return ReadingStatsStreamingLoader::loadFromFileStreaming("RST", path, store, loadReadingStatsDocument);
 }
 
 // ---- AchievementsStore ----
