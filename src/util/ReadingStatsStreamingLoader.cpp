@@ -2,37 +2,53 @@
 
 #include <ArduinoJson.h>
 #include <HalStorage.h>
+#include <Stream.h>
 #include <Logging.h>
 
 #include "ReadingStatsStore.h"
 
 namespace ReadingStatsStreamingLoader {
 
+class HalFileStream : public Stream {
+ public:
+  explicit HalFileStream(HalFile& file) : file_(file) {}
+  int available() override { return file_.available() + (peekedByte_ >= 0 ? 1 : 0); }
+  int read() override {
+    if (peekedByte_ >= 0) {
+      int b = peekedByte_;
+      peekedByte_ = -1;
+      return b;
+    }
+    return file_.read();
+  }
+  int peek() override {
+    if (peekedByte_ < 0) peekedByte_ = file_.read();
+    return peekedByte_;
+  }
+  void flush() override { file_.flush(); }
+  size_t write(uint8_t value) override { return file_.write(value); }
+ private:
+  HalFile& file_;
+  int peekedByte_ = -1;
+};
+
 bool loadFromFileStreaming(const char* moduleName, const char* path,
                             ReadingStatsStore& store,
                             bool (*loadDocument)(ReadingStatsStore&, const JsonDocument&)) {
-  // Custom streaming loader for reading_stats.json.
-  // Uses ArduinoJson v7 filter-based multi-pass deserialization so
-  // no single 80 KB DynamicJsonDocument is allocated in RAM.
-  // Keeps upstream JsonSettingsIO changes minimal (only this call site).
-
   HalFile file;
   if (!Storage.openFileForRead(moduleName, path, file)) {
     return false;
   }
-
-  // For minimal-change strategy, we reuse the existing loadReadingStatsDocument
-  // by feeding it a filtered document built from a stream pass. Each pass
-  // reads only the target array key, limiting memory to that array's size.
-  // This avoids a full monolithic document.
+  HalFileStream stream(file);
+  JsonDocument doc;
+  auto error = deserializeJson(doc, stream);
   file.close();
-
-  // Note: full multi-pass filter implementation can be expanded here by
-  // opening the file once per array (readingDays, legacyReadingDays,
-  // sessionLog, books) with a StaticJsonDocument filter, then calling
-  // loadDocument for the reconstructed partial document. For now, the
-  // file structure and loadDocument contract are preserved.
-  return false;
+  if (error || doc.overflowed()) {
+    const char* msg = error ? error.c_str() : "overflow";
+    LOG_ERR("RST", "Streaming load parse error (%s) for %s: %s", moduleName, path, msg);
+    return false;
+  }
+  return loadDocument(store, doc);
 }
 
 }  // namespace ReadingStatsStreamingLoader
