@@ -260,7 +260,6 @@ bool parseSessionArray(ByteScanner& s, std::vector<ReadingSessionLogEntry>& dest
 
     ReadingSessionLogEntry entry{};
     bool hasDay = false, hasMs = false;
-    std::string bookIdStr, pathStr;
 
     for (;;) {
       int first = s.skipSpace();
@@ -282,11 +281,11 @@ bool parseSessionArray(ByteScanner& s, std::vector<ReadingSessionLogEntry>& dest
       } else if (key == "bookId") {
         int q = s.skipSpace();
         if (q != '"') return false;
-        if (!readQuotedString(s, bookIdStr)) return false;
+        if (!readQuotedString(s, entry.bookId)) return false;
       } else if (key == "path") {
         int q = s.skipSpace();
         if (q != '"') return false;
-        if (!readQuotedString(s, pathStr)) return false;
+        if (!readQuotedString(s, entry.path)) return false;
       } else {
         if (!skipValue(s)) return false;
       }
@@ -298,9 +297,7 @@ bool parseSessionArray(ByteScanner& s, std::vector<ReadingSessionLogEntry>& dest
     }
 
     if (hasDay && hasMs && entry.dayOrdinal != 0 && entry.sessionMs != 0) {
-      entry.bookId = std::move(bookIdStr);
-      entry.path = std::move(pathStr);
-      dest.push_back(std::move(entry));
+      dest.push_back(entry);
     }
 
     int afterElem = s.skipSpace();
@@ -327,7 +324,6 @@ bool parseBooksArray(ByteScanner& s, std::vector<ReadingBookStats>& dest) {
     }
 
     ReadingBookStats book{};
-    std::string bookIdStr, pathStr;
 
     for (;;) {
       int first = s.skipSpace();
@@ -352,14 +348,14 @@ bool parseBooksArray(ByteScanner& s, std::vector<ReadingBookStats>& dest) {
       if (key == "bookId") {
         int q = s.skipSpace();
         if (q != '"') return false;
-        if (!readQuotedString(s, bookIdStr)) {
+        if (!readQuotedString(s, book.bookId)) {
           LOG_ERR("RST", "parseBooksArray: failed reading bookId");
           return false;
         }
       } else if (key == "path") {
         int q = s.skipSpace();
         if (q != '"') return false;
-        if (!readQuotedString(s, pathStr)) {
+        if (!readQuotedString(s, book.path)) {
           LOG_ERR("RST", "parseBooksArray: failed reading path");
           return false;
         }
@@ -478,8 +474,6 @@ bool parseBooksArray(ByteScanner& s, std::vector<ReadingBookStats>& dest) {
       return false;
     }
 
-    book.bookId = std::move(bookIdStr);
-    book.path = std::move(pathStr);
     if (!book.path.empty()) {
       dest.push_back(std::move(book));
     }
@@ -621,6 +615,12 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
   LOG_DBG("RST", "Loader manual parse complete: format=%u days=%zu legacy=%zu books=%zu sessions=%zu free=%u",
           formatVersion, store.readingDays.size(), store.legacyReadingDays.size(),
           store.books.size(), store.sessionLog.size(), static_cast<unsigned>(ESP.getFreeHeap()));
+
+  store.readingDays.shrink_to_fit();
+  store.legacyReadingDays.shrink_to_fit();
+  store.sessionLog.shrink_to_fit();
+  store.books.shrink_to_fit();
+  logRam();
 
   if (formatVersion == 0 || formatVersion > 6) {
     LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);
