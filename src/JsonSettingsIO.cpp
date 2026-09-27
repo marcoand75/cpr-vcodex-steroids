@@ -1827,7 +1827,7 @@ bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore& store, const ch
     return false;
   }
   // Custom streaming loader (minimizes monolithic DynamicJsonDocument RAM use).
-  return ReadingStatsStreamingLoader::loadFromFileStreaming("RST", path, store, loadReadingStatsDocument);
+  return ReadingStatsStreamingLoader::loadFromFileStreaming("RST", path, store);
 }
 
 // ---- AchievementsStore ----

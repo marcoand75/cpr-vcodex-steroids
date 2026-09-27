@@ -16,7 +16,6 @@
 namespace ReadingStatsStreamingLoader {
 
 bool loadFromFileStreaming(const char* moduleName, const char* path,
-                            ReadingStatsStore& store,
-                            bool (*loadDocument)(ReadingStatsStore&, const JsonDocument&));
+                           ReadingStatsStore& store);
 
 }  // namespace ReadingStatsStreamingLoader

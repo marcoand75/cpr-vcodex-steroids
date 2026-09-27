@@ -94,12 +94,7 @@ bool loadReadingStatsFromFile(ReadingStatsStore& store, const char* path);
 bool loadReadingStatsDocument(ReadingStatsStore& store, const JsonDocument& doc);
 }  // namespace JsonSettingsIO
 namespace ReadingStatsStreamingLoader {
-bool applyParsedStatsToStore(ReadingStatsStore& store,
-                             uint32_t formatVersion,
-                             std::vector<ReadingDayStats> tempReadingDays,
-                             std::vector<ReadingDayStats> tempLegacyReadingDays,
-                             std::vector<ReadingSessionLogEntry> tempSessionLog,
-                             std::vector<ReadingBookStats> tempBooks);
+bool loadFromFileStreaming(const char* moduleName, const char* path, ReadingStatsStore& store);
 }
 
 class ReadingStatsStore {
@@ -149,7 +144,7 @@ class ReadingStatsStore {
   friend bool JsonSettingsIO::loadReadingStats(ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStatsFromFile(ReadingStatsStore&, const char*);
   friend bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore&, const JsonDocument&);
-  friend bool ReadingStatsStreamingLoader::applyParsedStatsToStore(ReadingStatsStore&, uint32_t, std::vector<ReadingDayStats>, std::vector<ReadingDayStats>, std::vector<ReadingSessionLogEntry>, std::vector<ReadingBookStats>);
+  friend bool ReadingStatsStreamingLoader::loadFromFileStreaming(const char*, const char*, ReadingStatsStore&);
 
   size_t findBookIndexByPath(const std::string& path) const;
   size_t findBookIndexByBookId(const std::string& bookId) const;

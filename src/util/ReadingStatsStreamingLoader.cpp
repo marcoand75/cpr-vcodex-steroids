@@ -178,7 +178,7 @@ bool readUint64(ByteScanner& s, uint64_t& out) {
   }
 }
 
-// Array of strings → dest
+// Array of strings -> dest
 bool parseStringArray(ByteScanner& s, std::vector<std::string>& dest) {
   int c = s.skipSpace();
   if (c != '[') return false;
@@ -495,39 +495,154 @@ bool parseBooksArray(ByteScanner& s, std::vector<ReadingBookStats>& dest) {
 
 } // anonymous namespace
 
-// Directly apply parsed vectors to the store, bypassing JsonDocument entirely.
-// This preserves the upstream loadReadingStatsDocument behavior while avoiding
-// a large heap allocation after the incremental parse.
-bool applyParsedStatsToStore(ReadingStatsStore& store,
-                             uint32_t formatVersion,
-                             std::vector<ReadingDayStats> tempReadingDays,
-                             std::vector<ReadingDayStats> tempLegacyReadingDays,
-                             std::vector<ReadingSessionLogEntry> tempSessionLog,
-                             std::vector<ReadingBookStats> tempBooks) {
-  if (formatVersion == 0 || formatVersion > 6) {
-    LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);
+bool loadFromFileStreaming(const char* moduleName, const char* path,
+                           ReadingStatsStore& store) {
+  HalFile file;
+  if (!Storage.openFileForRead(moduleName, path, file)) {
+    LOG_ERR("RST", "Loader open failed: %s", path);
     return false;
   }
 
+  ByteScanner s;
+  s.file = &file;
+
+  auto logRam = [&]() {
+    LOG_DBG("RST", "Loader RAM: free=%u largest=%u",
+            static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT)));
+  };
+  logRam();
+
+  int rootC = s.skipSpace();
+  if (rootC != '{') {
+    file.close();
+    LOG_ERR("RST", "Loader root not object (got %d) for %s", rootC, path);
+    return false;
+  }
+
+  // Populate store vectors directly during parsing to avoid temporary copies.
   store.books.clear();
   store.legacyReadingDays.clear();
   store.readingDays.clear();
   store.sessionLog.clear();
   store.dirty = false;
 
-  auto appendReadingDays = [](std::vector<ReadingDayStats>& destination,
-                              std::vector<ReadingDayStats> source) {
-    for (auto& day : source) {
-      if (day.dayOrdinal != 0) {
-        destination.push_back(std::move(day));
+  bool hasFormatVersion = false;
+  uint32_t formatVersion = 1;
+  bool foundDataArray = false;
+
+  for (;;) {
+    int firstKey = s.skipSpace();
+    if (firstKey == '}') break;
+    if (firstKey != '"') {
+      file.close();
+      LOG_ERR("RST", "Loader invalid root token: %d (expected key)", firstKey);
+      return false;
+    }
+
+    std::string keyStr;
+    if (!readQuotedString(s, keyStr)) {
+      file.close();
+      return false;
+    }
+
+    int colonC = s.skipSpace();
+    if (colonC != ':') {
+      file.close();
+      return false;
+    }
+
+    int valFirst = s.skipSpace();
+    if (valFirst < 0) {
+      file.close();
+      return false;
+    }
+    s.unget(valFirst);
+
+    if (keyStr == "formatVersion") {
+      uint32_t v = 0;
+      if (!readUint32(s, v)) {
+        file.close();
+        LOG_ERR("RST", "Loader invalid formatVersion");
+        return false;
+      }
+      formatVersion = v;
+      hasFormatVersion = true;
+    } else if (keyStr == "readingDays") {
+      foundDataArray = true;
+      if (!parseReadingDayArray(s, store.readingDays)) {
+        file.close();
+        LOG_ERR("RST", "Loader parseReadingDayArray failed");
+        return false;
+      }
+    } else if (keyStr == "legacyReadingDays") {
+      foundDataArray = true;
+      if (!parseReadingDayArray(s, store.legacyReadingDays)) {
+        file.close();
+        LOG_ERR("RST", "Loader parseLegacyReadingDayArray failed");
+        return false;
+      }
+    } else if (keyStr == "sessionLog") {
+      foundDataArray = true;
+      if (!parseSessionArray(s, store.sessionLog)) {
+        file.close();
+        LOG_ERR("RST", "Loader parseSessionArray failed");
+        return false;
+      }
+    } else if (keyStr == "books") {
+      foundDataArray = true;
+      if (!parseBooksArray(s, store.books)) {
+        file.close();
+        LOG_ERR("RST", "Loader parseBooksArray failed");
+        return false;
+      }
+    } else {
+      if (!skipValue(s)) {
+        file.close();
+        LOG_ERR("RST", "Loader skipValue failed for key=%s", keyStr.c_str());
+        return false;
       }
     }
-  };
 
-  appendReadingDays(store.readingDays, std::move(tempReadingDays));
-  std::vector<ReadingDayStats> declaredReadingDays = store.readingDays;
+    int afterVal = s.skipSpace();
+    if (afterVal == ',') continue;
+    if (afterVal == '}') break;
+    if (afterVal < 0) {
+      file.close();
+      return false;
+    }
+    file.close();
+    LOG_ERR("RST", "Loader unexpected token after value: %d", afterVal);
+    return false;
+  }
+
+  file.close();
+  logRam();
+  LOG_DBG("RST", "Loader manual parse complete: format=%u days=%zu legacy=%zu books=%zu sessions=%zu free=%u",
+          formatVersion, store.readingDays.size(), store.legacyReadingDays.size(),
+          store.books.size(), store.sessionLog.size(), static_cast<unsigned>(ESP.getFreeHeap()));
+
+  if (formatVersion == 0 || formatVersion > 6) {
+    LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);
+    return false;
+  }
+  if (!foundDataArray) {
+    LOG_ERR("RST", "Loader no recognized data arrays found");
+    return false;
+  }
+
+  // Post-processing: replicate loadReadingStatsDocument logic directly on store.
+  static constexpr const char* ARRAY_KEYS[] = {"readingDays", "legacyReadingDays", "sessionLog", "books"};
+  bool missingCurrentArray = false;
+  for (const char* key : ARRAY_KEYS) {
+    if (key == std::string("readingDays") && store.readingDays.empty()) missingCurrentArray = true;
+    if (key == std::string("legacyReadingDays") && store.legacyReadingDays.empty()) missingCurrentArray = true;
+    if (key == std::string("sessionLog") && store.sessionLog.empty()) missingCurrentArray = true;
+    if (key == std::string("books") && store.books.empty()) missingCurrentArray = true;
+  }
+  store.dirty = missingCurrentArray;
+
   if (formatVersion >= 2) {
-    appendReadingDays(store.legacyReadingDays, std::move(tempLegacyReadingDays));
     if (formatVersion < 6 && store.legacyReadingDays.empty()) {
       store.legacyReadingDays = store.readingDays;
     }
@@ -536,27 +651,19 @@ bool applyParsedStatsToStore(ReadingStatsStore& store,
   }
 
   if (formatVersion >= 4) {
-    for (auto& entry : tempSessionLog) {
-      if (entry.dayOrdinal == 0 || entry.sessionMs == 0) continue;
-
-      if (store.sessionLog.size() >= ReadingSessionLog::MAX_ENTRIES) {
-        store.dirty = true;
-      }
-      ReadingSessionLog::makeRoomForAppend(store.sessionLog);
-      store.sessionLog.push_back(std::move(entry));
+    if (store.sessionLog.size() > ReadingSessionLog::MAX_ENTRIES) {
+      store.sessionLog.erase(store.sessionLog.begin(),
+                             store.sessionLog.begin() + static_cast<std::ptrdiff_t>(store.sessionLog.size() - ReadingSessionLog::MAX_ENTRIES));
+      store.dirty = true;
     }
   } else {
     store.dirty = true;
   }
 
-  for (auto& book : tempBooks) {
-    if (book.path.empty()) {
-      continue;
-    }
+  for (auto& book : store.books) {
     if (formatVersion < 3 || book.bookId.empty()) {
       store.dirty = true;
     }
-    store.books.push_back(std::move(book));
   }
 
   if (formatVersion < 6) {
@@ -566,6 +673,7 @@ bool applyParsedStatsToStore(ReadingStatsStore& store,
   store.rebuildAggregatedReadingDays();
 
   if (formatVersion >= 6) {
+    std::vector<ReadingDayStats> declaredReadingDays = store.readingDays;
     auto normalizeDays = [](std::vector<ReadingDayStats>& days) {
       std::sort(days.begin(), days.end(), [](const ReadingDayStats& left, const ReadingDayStats& right) {
         return left.dayOrdinal < right.dayOrdinal;
@@ -613,154 +721,6 @@ bool applyParsedStatsToStore(ReadingStatsStore& store,
                    });
   LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
   return true;
-}
-
-bool loadFromFileStreaming(const char* moduleName, const char* path,
-                           ReadingStatsStore& store,
-                           bool (*loadDocument)(ReadingStatsStore&, const JsonDocument&)) {
-  HalFile file;
-  if (!Storage.openFileForRead(moduleName, path, file)) {
-    LOG_ERR("RST", "Loader open failed: %s", path);
-    return false;
-  }
-
-  ByteScanner s;
-  s.file = &file;
-
-  auto logRam = [&]() {
-    LOG_DBG("RST", "Loader RAM: free=%u largest=%u",
-            static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT)));
-  };
-  logRam();
-
-  int rootC = s.skipSpace();
-  if (rootC != '{') {
-    file.close();
-    LOG_ERR("RST", "Loader root not object (got %d) for %s", rootC, path);
-    return false;
-  }
-
-  std::vector<ReadingDayStats> tempReadingDays;
-  std::vector<ReadingDayStats> tempLegacyDays;
-  std::vector<ReadingBookStats> tempBooks;
-  std::vector<ReadingSessionLogEntry> tempSessionLog;
-
-  bool hasFormatVersion = false;
-  uint32_t formatVersion = 1;
-  bool foundDataArray = false;
-
-  for (;;) {
-    int firstKey = s.skipSpace();
-    if (firstKey == '}') break;
-    if (firstKey != '"') {
-      file.close();
-      LOG_ERR("RST", "Loader invalid root token: %d (expected key)", firstKey);
-      return false;
-    }
-
-    std::string keyStr;
-    if (!readQuotedString(s, keyStr)) {
-      file.close();
-      return false;
-    }
-
-    int colonC = s.skipSpace();
-    if (colonC != ':') {
-      file.close();
-      return false;
-    }
-
-    // Always put back the first non-space of the value so parsers / skipValue start clean
-    int valFirst = s.skipSpace();
-    if (valFirst < 0) {
-      file.close();
-      return false;
-    }
-    s.unget(valFirst);
-
-    if (keyStr == "formatVersion") {
-      uint32_t v = 0;
-      if (!readUint32(s, v)) {
-        file.close();
-        LOG_ERR("RST", "Loader invalid formatVersion");
-        return false;
-      }
-      formatVersion = v;
-      hasFormatVersion = true;
-    } else if (keyStr == "readingDays") {
-      foundDataArray = true;
-      if (!parseReadingDayArray(s, tempReadingDays)) {
-        file.close();
-        LOG_ERR("RST", "Loader parseReadingDayArray failed");
-        return false;
-      }
-    } else if (keyStr == "legacyReadingDays") {
-      foundDataArray = true;
-      if (!parseReadingDayArray(s, tempLegacyDays)) {
-        file.close();
-        LOG_ERR("RST", "Loader parseLegacyReadingDayArray failed");
-        return false;
-      }
-    } else if (keyStr == "sessionLog") {
-      foundDataArray = true;
-      if (!parseSessionArray(s, tempSessionLog)) {
-        file.close();
-        LOG_ERR("RST", "Loader parseSessionArray failed");
-        return false;
-      }
-    } else if (keyStr == "books") {
-      foundDataArray = true;
-      if (!parseBooksArray(s, tempBooks)) {
-        file.close();
-        LOG_ERR("RST", "Loader parseBooksArray failed");
-        return false;
-      }
-    } else {
-      if (!skipValue(s)) {
-        file.close();
-        LOG_ERR("RST", "Loader skipValue failed for key=%s", keyStr.c_str());
-        return false;
-      }
-    }
-
-    int afterVal = s.skipSpace();
-    if (afterVal == ',') continue;
-    if (afterVal == '}') break;
-    if (afterVal < 0) {
-      file.close();
-      return false;
-    }
-    // Unexpected token → strict fail (no silent unget loop)
-    file.close();
-    LOG_ERR("RST", "Loader unexpected token after value: %d", afterVal);
-    return false;
-  }
-
-  file.close();
-  logRam();
-  LOG_DBG("RST", "Loader manual parse complete: format=%u days=%zu legacy=%zu books=%zu sessions=%zu free=%u",
-          formatVersion, tempReadingDays.size(), tempLegacyDays.size(),
-          tempBooks.size(), tempSessionLog.size(), static_cast<unsigned>(ESP.getFreeHeap()));
-
-  if (formatVersion == 0 || formatVersion > 6) {
-    LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);
-    return false;
-  }
-  if (!foundDataArray) {
-    LOG_ERR("RST", "Loader no recognized data arrays found");
-    return false;
-  }
-
-  const bool result = applyParsedStatsToStore(store, formatVersion,
-                                              std::move(tempReadingDays),
-                                              std::move(tempLegacyDays),
-                                              std::move(tempSessionLog),
-                                              std::move(tempBooks));
-  logRam();
-  LOG_DBG("RST", "Loader apply result=%s free=%u",
-          result ? "OK" : "FAIL", static_cast<unsigned>(ESP.getFreeHeap()));
-  return result;
 }
 
 } // namespace ReadingStatsStreamingLoader
