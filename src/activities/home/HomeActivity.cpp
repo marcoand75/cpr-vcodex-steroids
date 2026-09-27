@@ -427,17 +427,14 @@ uint32_t hashCarouselThumbState(uint32_t hash, const RecentBook& book) {
 }
 
 uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
-  const ReadingBookStats* stats = nullptr;
-  if (!recentBook.bookId.empty()) {
-    stats = READING_STATS.findBook(recentBook.bookId);
+  // getBookHomeStats resolves from the resident store when loaded and from
+  // summary.json badges otherwise — it never forces the 50+ KB store load, so
+  // the frame hash stays stable across boots regardless of store state.
+  SummaryJSON::BookBadge badge;
+  if (READING_STATS.getBookHomeStats(recentBook.bookId, recentBook.path, badge)) {
+    return std::min<uint8_t>(badge.progressPercent, 100);
   }
-  if (stats == nullptr) {
-    stats = READING_STATS.findBook(recentBook.path);
-  }
-  if (stats == nullptr) {
-    return 0;
-  }
-  return std::min<uint8_t>(stats->lastProgressPercent, 100);
+  return 0;
 }
 
 // The portion of the frame hash shared by every book index: params plus the

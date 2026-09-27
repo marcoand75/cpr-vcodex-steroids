@@ -8,6 +8,11 @@
 struct ReadingSessionLogEntry {
   uint32_t dayOrdinal = 0;
   uint32_t sessionMs = 0;
+  // Memory interning: when >= 0 the session identity (bookId/path) is resolved
+  // through ReadingStatsStore::books[bookIndex] and the strings below stay
+  // empty (SSO, zero heap). When < 0 (orphan: book removed or unmatched
+  // identity) bookId/path hold the standalone identity.
+  int16_t bookIndex = -1;
   std::string bookId;
   std::string path;
 };

@@ -117,6 +117,16 @@ class ReadingStatsStore {
     bool active = false;
     bool paused = false;
     size_t bookIndex = 0;
+    // Detached session: the store is not materialized (deferred load). The
+    // session accumulates in RAM and ends as one fixed 32-byte record in the
+    // binary journal (/.crosspoint/reading_sessions.jrn); records merge into
+    // the store at the next full load. The ~50 KB store never materializes
+    // inside the reader.
+    bool detached = false;
+    std::string detachedBookId;
+    std::string detachedPath;
+    uint8_t detachedProgress = 0;
+    bool detachedCompleted = false;
     unsigned long lastInteractionMs = 0;
     uint64_t accumulatedMs = 0;
     uint8_t startProgressPercent = 0;
@@ -165,7 +175,16 @@ class ReadingStatsStore {
   uint32_t getReferenceDayOrdinal() const;
   void updateBookReadTimestamp(ReadingBookStats& book, uint32_t preferredTimestamp);
   void recordReadingTime(ReadingBookStats& book, uint32_t epochSeconds, uint64_t readingMs);
-  void appendSessionLogEntry(uint32_t dayOrdinal, uint32_t sessionMs, const ReadingBookStats& book);
+  void appendSessionLogEntry(uint32_t dayOrdinal, uint32_t sessionMs, size_t bookIndex);
+  void appendSessionToJournal(uint32_t dayOrdinal, uint32_t sessionMs, const std::string& bookId,
+                              uint8_t progressPercent, bool completed) const;
+  // Session identity interning: resolve entries pointing at books[bookIndex]
+  // and free their duplicate strings; used after JSON loads and book merges.
+  void internSessionLogIdentities();
+  // Fill outBookId/outPath with the session's identity, resolving interned
+  // indexes against the current books array.
+  void resolveSessionIdentity(const ReadingSessionLogEntry& session, std::string& outBookId,
+                              std::string& outPath) const;
   bool convertLegacyReadingDaysToUnassigned();
   void rebuildAggregatedReadingDays();
   bool removeIgnoredBooks();
@@ -219,6 +238,14 @@ class ReadingStatsStore {
   bool isLoaded() const { return loaded_; }
   bool ensureLoaded();
   void resetLoaded() { loaded_ = false; }
+
+  // Binary session journal (fixed 32-byte records, O_APPEND):
+  // [u32 dayOrdinal][u32 sessionMs][u8 progress][u8 flags][u8 bookId[16]][u16 pad]
+  // Detached sessions append here without the store; records merge into the
+  // store and the journal is removed at the next full load.
+  static constexpr size_t JOURNAL_RECORD_BYTES = 32;
+  bool hasPendingJournalSessions() const;
+  void mergeSessionJournal();
   // const-safe lazy load for read getters (used when boot deferred the load).
   void ensureLoadedForRead() const {
     if (!loaded_) {

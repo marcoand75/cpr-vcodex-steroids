@@ -1290,6 +1290,10 @@ void loop() {
     } else {
       readingStatsDeferredLoaded = true;
       BootRecovery::enterStage(BootRecovery::BootStage::ReadingStats);
+      // Summary only: the 50+ KB store stays OUT of RAM during normal reading.
+      // Home panels read the streamed summary.json; reading sessions with the
+      // store unloaded go to the binary journal (reading_sessions.jrn) and are
+      // merged at the next full load (stats screen, import, web editor).
       READING_STATS.preloadHomeSummary();
       LOG_DBG("BOOT", "After preloadHomeSummary: free=%u maxA=%u frag=%d",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap(),

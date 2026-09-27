@@ -656,15 +656,17 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     return true;
   };
 
+  // Data-panel geometry is shared by both render paths (fresh frame and
+  // restored-from-cache frame) so the panel can always be redrawn last.
+  const int panelX = rect.x + 8;
+  const int panelW = rect.width - 16;
+  const int dotsY = centerCoverTop + kFiveCoverCenterH + 2;  // +8 - 6 = +2
+  constexpr int carouselGap = 14;
+
   if (!coverRendered) {
     marcoand75LastSelectorIndex = centerIdx;
 
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
-    const int panelX = rect.x + 8;
-    const int panelW = rect.width - 16;
-    const int dotsY = centerCoverTop + kFiveCoverCenterH + 2;  // +8 - 6 = +2
-    constexpr int carouselGap = 14;
-
     const int panelTopY = rect.y + kCoverTopPad + 6;
     const int panelBotY = dotsY + kDotSize + 14;
     const int panelH = panelBotY - panelTopY;
@@ -775,8 +777,6 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       dotX += kDotSize + kDotGap;
     }
 
-    const int panelY = dotsY + kDotSize + carouselGap + 6;
-    drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, panelY, panelW);
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
   }
@@ -787,6 +787,18 @@ void LyraMarcoand75Theme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     renderer.drawRoundedRect(centerX - 3, centerCoverTop - 3, kFiveCoverCenterW + 6, kFiveCoverCenterH + 6, 2,
                              kCornerRadius + 2, false);
   }
+
+  // The data panel ALWAYS draws on top of the frame, whether the frame was
+  // freshly rendered or restored from the carousel cache. The cache bakes the
+  // panel pixels as they were when the frame was written, so restoring it
+  // without a redraw froze today/streak/finished until the theme cache was
+  // cleared manually. Covers are the expensive part and stay cached; the panel
+  // is cheap text.
+  const int dataPanelY = dotsY + kDotSize + carouselGap + 6;
+  const int dataPanelClearTop = dataPanelY - 4;
+  const int dataPanelClearH = std::max(0, (rect.y + rect.height) - dataPanelClearTop);
+  renderer.fillRect(panelX + 2, dataPanelClearTop, panelW - 8, dataPanelClearH, false);
+  drawDataPanel(renderer, recentBooks[centerIdx], inCarouselRow, panelX, dataPanelY, panelW);
 }
 
 void LyraMarcoand75Theme::drawCarouselBorder(GfxRenderer& renderer, Rect rect, bool inCarouselRow) const {

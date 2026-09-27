@@ -1500,13 +1500,18 @@ bool JsonSettingsIO::saveReadingStats(const ReadingStatsStore& store, const char
     writer.value(session.dayOrdinal);
     writer.literal(",\"sessionMs\":");
     writer.value(session.sessionMs);
-    if (!session.bookId.empty()) {
+    // Interned sessions resolve identity through the books array; orphans
+    // carry their standalone strings.
+    std::string sessionBookId;
+    std::string sessionPath;
+    store.resolveSessionIdentity(session, sessionBookId, sessionPath);
+    if (!sessionBookId.empty()) {
       writer.literal(",\"bookId\":");
-      writer.value(session.bookId);
+      writer.value(sessionBookId);
     }
-    if (!session.path.empty()) {
+    if (!sessionPath.empty()) {
       writer.literal(",\"path\":");
-      writer.value(session.path);
+      writer.value(sessionPath);
     }
     writer.literal("}");
   }
@@ -1738,6 +1743,10 @@ bool JsonSettingsIO::loadReadingStatsDocument(ReadingStatsStore& store, const Js
     }
     store.books.push_back(std::move(book));
   }
+
+  // Intern session identities now that every book record is available: entries
+  // matching a book switch to index-based identity and release their strings.
+  store.internSessionLogIdentities();
 
   if (formatVersion < 6) {
     store.convertLegacyReadingDaysToUnassigned();

@@ -17,32 +17,42 @@ namespace ReadingStatsStreamingLoader {
 
 namespace {
 
-// Byte-level scanner over HalFile. Keeps RAM minimal: reads 1 byte at a time,
-// no full-file buffer, no DynamicJsonDocument for parsing.
+// Declarable streamer budget: the MAXIMUM RAM (bytes) the JSON stream reader
+// may allocate for its internal buffer. Raise for fewer SD syscalls, lower to
+// trade speed for RAM. All parsing stays O(1) in memory around this buffer.
+constexpr size_t kReadStreamBytes = 1024;
+
+// Byte-level scanner over HalFile backed by a fixed ring-free read buffer.
+// No full-file buffer, no DynamicJsonDocument for parsing: the whole 51 KB
+// JSON parses within ~kReadStreamBytes of streamer RAM plus the target store.
 struct ByteScanner {
   HalFile* file = nullptr;
-  char byte = 0;
-  bool hasByte = false;
+  char buf[kReadStreamBytes];
+  size_t pos = 0;
+  size_t len = 0;
 
-  int readByte() {
-    char b[1];
-    int r = file->read(b, 1);
-    return (r > 0) ? static_cast<unsigned char>(b[0]) : -1;
+  int refill() {
+    pos = 0;
+    len = file->read(reinterpret_cast<uint8_t*>(buf), kReadStreamBytes);
+    return static_cast<int>(len);
   }
 
   int next() {
-    if (hasByte) {
-      hasByte = false;
-      int c = static_cast<unsigned char>(byte);
-      byte = 0;
-      return c;
+    if (pos >= len) {
+      if (refill() <= 0) {
+        return -1;
+      }
     }
-    return readByte();
+    return static_cast<unsigned char>(buf[pos++]);
   }
 
+  // Only called right after next() returned a byte, so pos > 0 and the byte
+  // is still inside the buffer.
   void unget(int c) {
-    hasByte = true;
-    byte = static_cast<char>(c);
+    if (pos > 0) {
+      --pos;
+      buf[pos] = static_cast<char>(c);
+    }
   }
 
   int skipSpace() {
@@ -249,62 +259,52 @@ bool parseReadingDayArray(ByteScanner& s, std::vector<ReadingDayStats>& dest) {
   return true;
 }
 
-// Array of session log entries
-bool parseSessionArray(ByteScanner& s, std::vector<ReadingSessionLogEntry>& dest) {
-  int c = s.skipSpace();
-  if (c != '[') return false;
+// Parses a single session-log object into entry. The opening '{' is expected
+// to be already consumed by the caller. Returns false on syntax error;
+// valid=false when the entry lacks a usable dayOrdinal/sessionMs.
+// Identity resolution happens in loadFromFileStreaming (store friend), keeping
+// this helper free of private-access constraints.
+bool parseSessionObject(ByteScanner& s, ReadingSessionLogEntry& entry, bool& valid) {
+  entry = ReadingSessionLogEntry{};
+  valid = false;
+  bool hasDay = false, hasMs = false;
+
   for (;;) {
-    int after = s.skipSpace();
-    if (after == ']') break;
-    if (after != '{') return false;
+    int first = s.skipSpace();
+    if (first == '}') break;
+    if (first != '"') return false;
 
-    ReadingSessionLogEntry entry{};
-    bool hasDay = false, hasMs = false;
+    std::string key;
+    if (!readQuotedString(s, key)) return false;
 
-    for (;;) {
-      int first = s.skipSpace();
-      if (first == '}') break;
-      if (first != '"') return false;
+    int colonC = s.skipSpace();
+    if (colonC != ':') return false;
 
-      std::string key;
-      if (!readQuotedString(s, key)) return false;
-
-      int colonC = s.skipSpace();
-      if (colonC != ':') return false;
-
-      if (key == "dayOrdinal") {
-        hasDay = true;
-        if (!readUint32(s, entry.dayOrdinal)) return false;
-      } else if (key == "sessionMs") {
-        hasMs = true;
-        if (!readUint32(s, entry.sessionMs)) return false;
-      } else if (key == "bookId") {
-        int q = s.skipSpace();
-        if (q != '"') return false;
-        if (!readQuotedString(s, entry.bookId)) return false;
-      } else if (key == "path") {
-        int q = s.skipSpace();
-        if (q != '"') return false;
-        if (!readQuotedString(s, entry.path)) return false;
-      } else {
-        if (!skipValue(s)) return false;
-      }
-
-      int afterVal = s.skipSpace();
-      if (afterVal == ',') continue;
-      if (afterVal == '}') break;
-      return false;
+    if (key == "dayOrdinal") {
+      hasDay = true;
+      if (!readUint32(s, entry.dayOrdinal)) return false;
+    } else if (key == "sessionMs") {
+      hasMs = true;
+      if (!readUint32(s, entry.sessionMs)) return false;
+    } else if (key == "bookId") {
+      int q = s.skipSpace();
+      if (q != '"') return false;
+      if (!readQuotedString(s, entry.bookId)) return false;
+    } else if (key == "path") {
+      int q = s.skipSpace();
+      if (q != '"') return false;
+      if (!readQuotedString(s, entry.path)) return false;
+    } else {
+      if (!skipValue(s)) return false;
     }
 
-    if (hasDay && hasMs && entry.dayOrdinal != 0 && entry.sessionMs != 0) {
-      dest.push_back(entry);
-    }
-
-    int afterElem = s.skipSpace();
-    if (afterElem == ',') continue;
-    if (afterElem == ']') break;
+    int afterVal = s.skipSpace();
+    if (afterVal == ',') continue;
+    if (afterVal == '}') break;
     return false;
   }
+
+  valid = hasDay && hasMs && entry.dayOrdinal != 0 && entry.sessionMs != 0;
   return true;
 }
 
@@ -507,6 +507,14 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
   };
   logRam();
 
+  // Bounded one-shot reserves sized from the file. Done while the heap is at
+  // its cleanest so vector growth never needs a reallocation copy mid-parse
+  // (a failed reallocation aborts under -fno-exceptions).
+  const size_t fileSizeBytes = file.size();
+  const size_t booksEstimate = std::min<size_t>(48, std::max<size_t>(8, fileSizeBytes / 1400));
+  const size_t daysEstimate = std::min<size_t>(512, std::max<size_t>(16, fileSizeBytes / 650));
+  const size_t sessionsEstimate = std::min<size_t>(160, std::max<size_t>(16, fileSizeBytes / 400));
+
   int rootC = s.skipSpace();
   if (rootC != '{') {
     file.close();
@@ -519,12 +527,18 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
   store.legacyReadingDays.clear();
   store.readingDays.clear();
   store.sessionLog.clear();
+  store.books.reserve(booksEstimate);
+  store.readingDays.reserve(daysEstimate);
+  store.legacyReadingDays.reserve(std::max<size_t>(8, daysEstimate / 4));
+  store.sessionLog.reserve(sessionsEstimate);
   store.dirty = false;
 
   bool hasFormatVersion = false;
   uint32_t formatVersion = 1;
   bool foundDataArray = false;
 
+  // Pass 1: parse everything except sessionLog (books must be known before
+  // session identities can be interned).
   for (;;) {
     int firstKey = s.skipSpace();
     if (firstKey == '}') break;
@@ -578,9 +592,10 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
       }
     } else if (keyStr == "sessionLog") {
       foundDataArray = true;
-      if (!parseSessionArray(s, store.sessionLog)) {
+      // Deferred to pass 2, once books are in the store.
+      if (!skipValue(s)) {
         file.close();
-        LOG_ERR("RST", "Loader parseSessionArray failed");
+        LOG_ERR("RST", "Loader skipValue failed for key=sessionLog");
         return false;
       }
     } else if (keyStr == "books") {
@@ -612,15 +627,126 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
 
   file.close();
   logRam();
+
+  // Pass 2: parse sessionLog only, resolving identities against the books
+  // parsed in pass 1. Entries matching a book carry no strings at all.
+  HalFile sessionFile;
+  if (!Storage.openFileForRead(moduleName, path, sessionFile)) {
+    LOG_ERR("RST", "Loader pass2 open failed: %s", path);
+    return false;
+  }
+  ByteScanner s2;
+  s2.file = &sessionFile;
+
+  int root2 = s2.skipSpace();
+  if (root2 != '{') {
+    sessionFile.close();
+    LOG_ERR("RST", "Loader pass2 root not object (got %d)", root2);
+    return false;
+  }
+
+  for (;;) {
+    int firstKey = s2.skipSpace();
+    if (firstKey == '}') break;
+    if (firstKey != '"') {
+      sessionFile.close();
+      LOG_ERR("RST", "Loader pass2 invalid root token: %d", firstKey);
+      return false;
+    }
+
+    std::string keyStr;
+    if (!readQuotedString(s2, keyStr)) {
+      sessionFile.close();
+      return false;
+    }
+
+    int colonC = s2.skipSpace();
+    if (colonC != ':') {
+      sessionFile.close();
+      return false;
+    }
+
+    int valFirst = s2.skipSpace();
+    if (valFirst < 0) {
+      sessionFile.close();
+      return false;
+    }
+    s2.unget(valFirst);
+
+    if (keyStr == "sessionLog") {
+      foundDataArray = true;
+      int c = s2.skipSpace();
+      if (c != '[') {
+        sessionFile.close();
+        LOG_ERR("RST", "Loader pass2 sessionLog expected '[', got %d", c);
+        return false;
+      }
+      for (;;) {
+        int after = s2.skipSpace();
+        if (after == ']') break;
+        if (after != '{') {
+          sessionFile.close();
+          LOG_ERR("RST", "Loader pass2 sessionLog expected '{', got %d", after);
+          return false;
+        }
+        ReadingSessionLogEntry entry{};
+        bool valid = false;
+        if (!parseSessionObject(s2, entry, valid)) {
+          sessionFile.close();
+          LOG_ERR("RST", "Loader pass2 session entry parse failed");
+          return false;
+        }
+        if (valid) {
+          // Intern identity against pass-1 books; orphans keep their strings.
+          size_t bookIdx = store.books.size();
+          if (!entry.bookId.empty()) {
+            bookIdx = store.findBookIndexByBookId(entry.bookId);
+          }
+          if (bookIdx >= store.books.size() && !entry.path.empty()) {
+            bookIdx = store.findBookIndexByPath(entry.path);
+          }
+          if (bookIdx < store.books.size()) {
+            entry.bookIndex = static_cast<int16_t>(bookIdx);
+            std::string().swap(entry.bookId);
+            std::string().swap(entry.path);
+          } else {
+            entry.bookIndex = -1;
+          }
+          ReadingSessionLog::makeRoomForAppend(store.sessionLog);
+          store.sessionLog.push_back(std::move(entry));
+        }
+        int afterElem = s2.skipSpace();
+        if (afterElem == ',') continue;
+        if (afterElem == ']') break;
+        sessionFile.close();
+        LOG_ERR("RST", "Loader pass2 expected ',' or ']' between sessions, got %d", afterElem);
+        return false;
+      }
+    } else {
+      if (!skipValue(s2)) {
+        sessionFile.close();
+        LOG_ERR("RST", "Loader pass2 skipValue failed for key=%s", keyStr.c_str());
+        return false;
+      }
+    }
+
+    int afterVal = s2.skipSpace();
+    if (afterVal == ',') continue;
+    if (afterVal == '}') break;
+    if (afterVal < 0) {
+      sessionFile.close();
+      return false;
+    }
+    sessionFile.close();
+    LOG_ERR("RST", "Loader pass2 unexpected token after value: %d", afterVal);
+    return false;
+  }
+
+  sessionFile.close();
+  logRam();
   LOG_DBG("RST", "Loader manual parse complete: format=%u days=%zu legacy=%zu books=%zu sessions=%zu free=%u",
           formatVersion, store.readingDays.size(), store.legacyReadingDays.size(),
           store.books.size(), store.sessionLog.size(), static_cast<unsigned>(ESP.getFreeHeap()));
-
-  store.readingDays.shrink_to_fit();
-  store.legacyReadingDays.shrink_to_fit();
-  store.sessionLog.shrink_to_fit();
-  store.books.shrink_to_fit();
-  logRam();
 
   if (formatVersion == 0 || formatVersion > 6) {
     LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);

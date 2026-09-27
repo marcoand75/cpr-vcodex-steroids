@@ -21,6 +21,7 @@
 namespace {
 constexpr char READING_STATS_FILE_JSON[] = "/.crosspoint/reading_stats.json";
 constexpr char READING_STATS_BACKUP_FILE_JSON[] = "/.crosspoint/reading_stats.json.bak";
+constexpr char READING_STATS_JOURNAL_FILE[] = "/.crosspoint/reading_sessions.jrn";
 constexpr char READING_STATS_EXPORT_DIR[] = "/exports";
 constexpr char READING_STATS_BACKUP_EXPORT_PREFIX[] = "/exports/stats_backup_";
 constexpr char READING_STATS_BACKUP_EXPORT_FILE_PREFIX[] = "stats_backup_";
@@ -419,7 +420,7 @@ bool containsReadingDay(const std::vector<ReadingDayStats>& days, const uint32_t
 }
 
 bool sessionHasBookIdentity(const ReadingSessionLogEntry& session) {
-  return !session.bookId.empty() || !session.path.empty();
+  return session.bookIndex >= 0 || !session.bookId.empty() || !session.path.empty();
 }
 
 bool sessionMatchesBook(const ReadingSessionLogEntry& session, const ReadingBookStats& book) {
@@ -602,6 +603,14 @@ void ReadingStatsStore::normalizeBooks() {
       if (!books[primaryIndex].bookId.empty() && books[primaryIndex].bookId == books[duplicateIndex].bookId) {
         mergeBookInto(books[primaryIndex], books[duplicateIndex]);
         books.erase(books.begin() + static_cast<std::ptrdiff_t>(duplicateIndex));
+        // Re-point interned sessions onto the merged primary record.
+        for (auto& session : sessionLog) {
+          if (session.bookIndex == static_cast<int16_t>(duplicateIndex)) {
+            session.bookIndex = static_cast<int16_t>(primaryIndex);
+          } else if (session.bookIndex > static_cast<int16_t>(duplicateIndex)) {
+            session.bookIndex--;
+          }
+        }
         continue;
       }
       ++duplicateIndex;
@@ -787,6 +796,16 @@ void ReadingStatsStore::touchBook(const size_t index) {
       activeSession.bookIndex++;
     }
   }
+
+  // The move-to-front rotation shifts indexes in [0, index): re-point interned
+  // sessions so their identity resolution follows the same mapping.
+  for (auto& session : sessionLog) {
+    if (session.bookIndex == static_cast<int16_t>(index)) {
+      session.bookIndex = 0;
+    } else if (session.bookIndex >= 0 && session.bookIndex < static_cast<int16_t>(index)) {
+      session.bookIndex++;
+    }
+  }
 }
 
 bool ReadingStatsStore::isClockValid(const uint32_t epochSeconds) { return TimeUtils::isClockValid(epochSeconds); }
@@ -804,8 +823,8 @@ void ReadingStatsStore::recordReadingTime(ReadingBookStats& book, const uint32_t
 }
 
 void ReadingStatsStore::appendSessionLogEntry(const uint32_t dayOrdinal, const uint32_t sessionMs,
-                                              const ReadingBookStats& book) {
-  if (dayOrdinal == 0 || sessionMs == 0) {
+                                              const size_t bookIndex) {
+  if (dayOrdinal == 0 || sessionMs == 0 || bookIndex >= books.size()) {
     return;
   }
 
@@ -814,11 +833,170 @@ void ReadingStatsStore::appendSessionLogEntry(const uint32_t dayOrdinal, const u
   ReadingSessionLogEntry entry;
   entry.dayOrdinal = dayOrdinal;
   entry.sessionMs = sessionMs;
-  entry.bookId = book.bookId;
-  if (entry.bookId.empty()) {
-    entry.path = book.path;
-  }
+  // Identity is interned: resolved through books[bookIndex] at read/save time.
+  entry.bookIndex = static_cast<int16_t>(bookIndex);
   sessionLog.push_back(std::move(entry));
+}
+
+void ReadingStatsStore::appendSessionToJournal(const uint32_t dayOrdinal, const uint32_t sessionMs,
+                                               const std::string& bookId, const uint8_t progressPercent,
+                                               const bool completed) const {
+  Storage.mkdir("/.crosspoint");
+  // O_APPEND: create if missing, always write at EOF, never truncate.
+  HalFile file = Storage.open(READING_STATS_JOURNAL_FILE, O_WRITE | O_CREAT | O_APPEND);
+  if (!file) {
+    LOG_ERR("RST", "Journal append open failed");
+    return;
+  }
+  uint8_t record[JOURNAL_RECORD_BYTES] = {0};
+  const auto putU32 = [&record](const size_t offset, const uint32_t value) {
+    record[offset] = static_cast<uint8_t>(value & 0xFF);
+    record[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    record[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+    record[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+  };
+  putU32(0, dayOrdinal);
+  putU32(4, sessionMs);
+  record[8] = progressPercent;
+  record[9] = completed ? 1 : 0;
+  const size_t idBytes = std::min<size_t>(bookId.size(), 16);
+  std::memcpy(record + 10, bookId.data(), idBytes);
+  // bytes 26..31 stay zero (reserved/pad)
+  const size_t written = file.write(record, sizeof(record));
+  file.close();
+  if (written != sizeof(record)) {
+    LOG_ERR("RST", "Journal append short write (%u/%u)", static_cast<unsigned>(written),
+            static_cast<unsigned>(sizeof(record)));
+    return;
+  }
+  LOG_DBG("RST", "Journal session appended: day=%u ms=%u progress=%u", dayOrdinal, sessionMs, progressPercent);
+}
+
+bool ReadingStatsStore::hasPendingJournalSessions() const {
+  return Storage.exists(READING_STATS_JOURNAL_FILE);
+}
+
+void ReadingStatsStore::mergeSessionJournal() {
+  if (!Storage.exists(READING_STATS_JOURNAL_FILE)) {
+    return;
+  }
+  if (!loaded_) {
+    // The store is not materialized: keep the journal for the next load.
+    return;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForRead("RST", READING_STATS_JOURNAL_FILE, file)) {
+    LOG_ERR("RST", "Journal merge open failed");
+    return;
+  }
+
+  size_t mergedCount = 0;
+  uint8_t record[JOURNAL_RECORD_BYTES];
+  for (;;) {
+    const int got = file.read(record, sizeof(record));
+    if (got != static_cast<int>(sizeof(record))) {
+      break;
+    }
+    const uint32_t dayOrdinal =
+        static_cast<uint32_t>(record[0]) | (static_cast<uint32_t>(record[1]) << 8) |
+        (static_cast<uint32_t>(record[2]) << 16) | (static_cast<uint32_t>(record[3]) << 24);
+    const uint32_t sessionMs =
+        static_cast<uint32_t>(record[4]) | (static_cast<uint32_t>(record[5]) << 8) |
+        (static_cast<uint32_t>(record[6]) << 16) | (static_cast<uint32_t>(record[7]) << 24);
+    const uint8_t progressPercent = record[8];
+    const bool completed = record[9] != 0;
+    char idBuf[17] = {0};
+    std::memcpy(idBuf, record + 10, 16);
+    std::string bookId(idBuf);
+
+    if (dayOrdinal == 0 || sessionMs < MIN_SESSION_READING_MS || bookId.empty()) {
+      continue;
+    }
+
+    size_t index = findBookIndexByBookId(bookId);
+    if (index >= books.size()) {
+      // Unknown book: create a stub identified by bookId only; the next full
+      // beginSession unifies it with the real record via normalizeBooks().
+      index = getOrCreateBookIndex("", "", "", "", bookId);
+      if (index >= books.size()) {
+        continue;
+      }
+    }
+
+    ReadingBookStats& book = books[index];
+    book.totalReadingMs += sessionMs;
+    book.sessions++;
+    book.lastSessionMs = sessionMs;
+    if (progressPercent > book.lastProgressPercent) {
+      book.lastProgressPercent = progressPercent;
+    }
+    if (completed && !book.completed) {
+      book.completed = true;
+    }
+    addReadingToDays(book.readingDays, dayOrdinal, sessionMs);
+    appendSessionLogEntry(dayOrdinal, sessionMs, index);
+    ++mergedCount;
+  }
+  file.close();
+
+  if (mergedCount == 0) {
+    Storage.remove(READING_STATS_JOURNAL_FILE);
+    return;
+  }
+
+  rebuildAggregatedReadingDays();
+  Storage.remove(READING_STATS_JOURNAL_FILE);
+  markDirty();
+  saveToFile();
+  LOG_DBG("RST", "Merged %u journal sessions into the store", static_cast<unsigned>(mergedCount));
+}
+
+void ReadingStatsStore::resolveSessionIdentity(const ReadingSessionLogEntry& session, std::string& outBookId,
+                                               std::string& outPath) const {
+  if (session.bookIndex >= 0 && static_cast<size_t>(session.bookIndex) < books.size()) {
+    outBookId = books[static_cast<size_t>(session.bookIndex)].bookId;
+    outPath = books[static_cast<size_t>(session.bookIndex)].path;
+    return;
+  }
+  outBookId = session.bookId;
+  outPath = session.path;
+}
+
+void ReadingStatsStore::internSessionLogIdentities() {
+  for (auto& session : sessionLog) {
+    if (session.bookIndex >= 0) {
+      if (static_cast<size_t>(session.bookIndex) >= books.size()) {
+        // Book disappeared (merge/erase): fall back to the stored identity.
+        session.bookIndex = -1;
+      } else {
+        // Re-point to the current identity and release duplicate strings.
+        const ReadingBookStats& book = books[static_cast<size_t>(session.bookIndex)];
+        if (session.bookId != book.bookId || session.path != book.path) {
+          session.bookId.clear();
+          session.bookId.shrink_to_fit();
+          session.path.clear();
+          session.path.shrink_to_fit();
+        }
+      }
+      continue;
+    }
+
+    size_t index = books.size();
+    if (!session.bookId.empty()) {
+      index = findBookIndexByBookId(session.bookId);
+    }
+    if (index >= books.size() && !session.path.empty()) {
+      index = findBookIndexByPath(session.path);
+    }
+    if (index < books.size()) {
+      session.bookIndex = static_cast<int16_t>(index);
+      session.bookId.clear();
+      session.bookId.shrink_to_fit();
+      session.path.clear();
+      session.path.shrink_to_fit();
+    }
+  }
 }
 
 bool ReadingStatsStore::convertLegacyReadingDaysToUnassigned() {
@@ -870,8 +1048,20 @@ bool ReadingStatsStore::convertLegacyReadingDaysToUnassigned() {
 }
 
 void ReadingStatsStore::rebuildAggregatedReadingDays() {
-  readingDays = legacyReadingDays;
+  if (legacyReadingDays.empty()) {
+    readingDays.clear();
+  } else {
+    readingDays = legacyReadingDays;
+  }
   normalizeReadingDays(readingDays);
+
+  size_t totalBookDays = 0;
+  for (const auto& book : books) {
+    totalBookDays += book.readingDays.size();
+  }
+  if (totalBookDays > readingDays.capacity() - readingDays.size()) {
+    readingDays.reserve(readingDays.size() + totalBookDays);
+  }
 
   for (const auto& book : books) {
     for (const auto& day : book.readingDays) {
@@ -882,10 +1072,51 @@ void ReadingStatsStore::rebuildAggregatedReadingDays() {
 
 bool ReadingStatsStore::removeIgnoredBooks() {
   const size_t originalCount = books.size();
-  books.erase(std::remove_if(books.begin(), books.end(),
-                             [](const ReadingBookStats& book) { return shouldIgnorePath(book.path); }),
-              books.end());
-  return books.size() != originalCount;
+
+  // Pre-compute which books are removed so interned sessions can materialize
+  // their identity strings before those records are destroyed.
+  std::vector<bool> removed(originalCount, false);
+  bool anyRemoved = false;
+  for (size_t i = 0; i < originalCount; ++i) {
+    removed[i] = shouldIgnorePath(books[i].path);
+    anyRemoved = anyRemoved || removed[i];
+  }
+  if (!anyRemoved) {
+    return false;
+  }
+
+  for (auto& session : sessionLog) {
+    if (session.bookIndex >= 0) {
+      const size_t idx = static_cast<size_t>(session.bookIndex);
+      if (idx < originalCount && removed[idx]) {
+        // Keep the session as an orphan carrying its own identity strings.
+        session.bookId = books[idx].bookId;
+        session.path = books[idx].path;
+        session.bookIndex = -1;
+      }
+    }
+  }
+
+  std::vector<int16_t> remap(originalCount, -1);
+  size_t writeIndex = 0;
+  for (size_t readIndex = 0; readIndex < originalCount; ++readIndex) {
+    if (removed[readIndex]) {
+      continue;
+    }
+    if (writeIndex != readIndex) {
+      books[writeIndex] = std::move(books[readIndex]);
+    }
+    remap[readIndex] = static_cast<int16_t>(writeIndex);
+    ++writeIndex;
+  }
+  books.resize(writeIndex);
+
+  for (auto& session : sessionLog) {
+    if (session.bookIndex >= 0) {
+      session.bookIndex = remap[static_cast<size_t>(session.bookIndex)];
+    }
+  }
+  return true;
 }
 
 bool ReadingStatsStore::hasAnyStats() const {
@@ -1151,6 +1382,7 @@ bool ReadingStatsStore::persistToFile(const char* path) const {
         refreshInternalBackupFromMain();
       }
       maybeCreateAutoBackup(false);
+      // Summary JSON is kept in sync by saveSummaryJSON() calls in markDirty().
     }
   }
   return saved;
@@ -1239,6 +1471,29 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
   if (!loaded_) {
     ensureLoaded();
   }
+  if (!loaded_) {
+    // Detached session: record to the binary journal without materializing the
+    // ~50 KB store. With the epub and font caches resident there is no heap
+    // headroom for the store inside the reader (an allocation failure aborts
+    // under -fno-exceptions). Records merge at the next full load.
+    if (shouldIgnorePath(path)) {
+      activeSession = {};
+      lastSessionSnapshot = {};
+      return;
+    }
+    activeSession = {};
+    activeSession.active = true;
+    activeSession.detached = true;
+    activeSession.detachedBookId = BookIdentity::resolveStableBookId(path);
+    activeSession.detachedPath = path;
+    activeSession.detachedProgress = clampPercent(progressPercent);
+    activeSession.startProgressPercent = activeSession.detachedProgress;
+    activeSession.startCompleted = progressPercent >= 100;
+    activeSession.lastInteractionMs = millis();
+    activeSession.accumulatedMs = 0;
+    LOG_DBG("RST", "Detached session started (store deferred): %s", path.c_str());
+    return;
+  }
 
   if (activeSession.active) {
     endSession();
@@ -1275,13 +1530,27 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
 }
 
 void ReadingStatsStore::noteActivity() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size() || activeSession.paused) {
+  if (!activeSession.active || activeSession.paused) {
     return;
   }
 
   const unsigned long nowMs = millis();
   const unsigned long elapsedMs = nowMs - activeSession.lastInteractionMs;
   const unsigned long creditedMs = std::min(elapsedMs, MAX_READING_GAP_MS);
+
+  if (activeSession.detached) {
+    // Detached sessions only accumulate; the journal record is written at
+    // endSession().
+    if (creditedMs > 0) {
+      activeSession.accumulatedMs += creditedMs;
+    }
+    activeSession.lastInteractionMs = nowMs;
+    return;
+  }
+
+  if (activeSession.bookIndex >= books.size()) {
+    return;
+  }
 
   if (creditedMs > 0) {
     auto& book = books[activeSession.bookIndex];
@@ -1300,7 +1569,10 @@ void ReadingStatsStore::noteActivity() {
 }
 
 void ReadingStatsStore::tickActiveSession() {
-  if (!activeSession.active || activeSession.bookIndex >= books.size() || activeSession.paused) {
+  if (!activeSession.active || activeSession.paused) {
+    return;
+  }
+  if (!activeSession.detached && activeSession.bookIndex >= books.size()) {
     return;
   }
 
@@ -1326,7 +1598,23 @@ void ReadingStatsStore::resumeSession() {
 
 void ReadingStatsStore::updateProgress(const uint8_t progressPercent, const bool completed,
                                        const std::string& chapterTitle, const uint8_t chapterProgressPercent) {
-  if (!activeSession.active || activeSession.bookIndex >= books.size()) {
+  if (!activeSession.active) {
+    return;
+  }
+
+  if (activeSession.detached) {
+    // Detached sessions only keep the latest progress for the journal record.
+    const uint8_t clamped = clampPercent(progressPercent);
+    if (clamped >= activeSession.detachedProgress) {
+      activeSession.detachedProgress = clamped;
+    }
+    if (completed || clamped >= 100) {
+      activeSession.detachedCompleted = true;
+    }
+    return;
+  }
+
+  if (activeSession.bookIndex >= books.size()) {
     return;
   }
 
@@ -1462,6 +1750,12 @@ bool ReadingStatsStore::removeBook(const std::string& path) {
   const auto oldSessionLogSize = sessionLog.size();
   sessionLog.erase(std::remove_if(sessionLog.begin(), sessionLog.end(),
                                   [&](const ReadingSessionLogEntry& session) {
+                                    if (session.bookIndex >= 0) {
+                                      if (session.bookIndex == static_cast<int16_t>(removedIndex)) {
+                                        return true;
+                                      }
+                                      return false;
+                                    }
                                     if (sessionMatchesBook(session, removedBook)) {
                                       return true;
                                     }
@@ -1470,6 +1764,13 @@ bool ReadingStatsStore::removeBook(const std::string& path) {
                                            !containsReadingDay(readingDays, session.dayOrdinal);
                                   }),
                    sessionLog.end());
+
+  // Re-point interned sessions after the index shift caused by books.erase().
+  for (auto& session : sessionLog) {
+    if (session.bookIndex > static_cast<int16_t>(removedIndex)) {
+      session.bookIndex--;
+    }
+  }
 
   if ((!removedBook.bookId.empty() && lastSessionSnapshot.bookId == removedBook.bookId) ||
       lastSessionSnapshot.path == removedBook.path ||
@@ -1486,6 +1787,36 @@ bool ReadingStatsStore::removeBook(const std::string& path) {
 }
 
 void ReadingStatsStore::endSession() {
+  if (activeSession.detached) {
+    noteActivity();
+    const bool countedSession = activeSession.accumulatedMs >= MIN_SESSION_READING_MS;
+    const uint32_t sessionMs = (activeSession.accumulatedMs > static_cast<uint64_t>(UINT32_MAX))
+                                   ? UINT32_MAX
+                                   : static_cast<uint32_t>(activeSession.accumulatedMs);
+    const uint32_t sessionTimestamp = TimeUtils::getAuthoritativeTimestamp();
+    const uint32_t dayOrdinal =
+        isClockValid(sessionTimestamp) ? TimeUtils::getLocalDayOrdinal(sessionTimestamp) : 0;
+    if (countedSession && dayOrdinal != 0) {
+      appendSessionToJournal(dayOrdinal, sessionMs, activeSession.detachedBookId, activeSession.detachedProgress,
+                             activeSession.detachedCompleted);
+      // markDirty()/saveToFile() must NOT run here: the store is not
+      // materialized. The record merges at the next full load.
+    }
+
+    lastSessionSnapshot.valid = true;
+    lastSessionSnapshot.serial = ++sessionSerialCounter;
+    lastSessionSnapshot.bookId = activeSession.detachedBookId;
+    lastSessionSnapshot.path = activeSession.detachedPath;
+    lastSessionSnapshot.sessionMs = sessionMs;
+    lastSessionSnapshot.counted = countedSession;
+    lastSessionSnapshot.completedThisSession = !activeSession.startCompleted && activeSession.detachedCompleted;
+    lastSessionSnapshot.startProgressPercent = activeSession.startProgressPercent;
+    lastSessionSnapshot.endProgressPercent = activeSession.detachedProgress;
+
+    activeSession = {};
+    return;
+  }
+
   if (!activeSession.active || activeSession.bookIndex >= books.size()) {
     lastSessionSnapshot = {};
     activeSession = {};
@@ -1504,7 +1835,7 @@ void ReadingStatsStore::endSession() {
     book.lastSessionMs = sessionMs;
     const uint32_t sessionTimestamp = getReferenceTimestamp(TimeUtils::getAuthoritativeTimestamp(), book.lastReadAt);
     if (isClockValid(sessionTimestamp)) {
-      appendSessionLogEntry(TimeUtils::getLocalDayOrdinal(sessionTimestamp), sessionMs, book);
+      appendSessionLogEntry(TimeUtils::getLocalDayOrdinal(sessionTimestamp), sessionMs, activeSession.bookIndex);
     }
     markDirty();
   }
@@ -1799,10 +2130,25 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
 
   LOG_DBG("RST", "Before stats import: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
+
+  // The import replaces the resident store entirely: flush pending changes and
+  // free its ~50 KB working set first so the streaming parse gets the largest
+  // heap block available (the 40 KB maxAlloc guard in the loader otherwise
+  // rejects the import on a squeezed heap).
+  if (loaded_ || activeSession.active) {
+    if (activeSession.active) {
+      endSession();
+    }
+    releaseMemoryForNetwork();
+  }
+
   const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, path.c_str());
   if (!loaded) {
     LOG_ERR("RST", "importFromFile: source rejected path=%s", path.c_str());
     CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import source was rejected: ") + path);
+    // The loader cleared and partially repopulated the resident store before
+    // failing; restore the in-memory state from the main file.
+    reloadOriginalStats();
     return false;
   }
   LOG_DBG("RST", "importFromFile: parsed source books=%zu days=%zu sessions=%zu", books.size(), readingDays.size(),
@@ -1829,6 +2175,10 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
   }
   removeIgnoredBooks();
   rebuildAggregatedReadingDays();
+  // Merge any reading sessions that accumulated in the binary journal while
+  // the store was unloaded (e.g. a detached reading session right before the
+  // import) into the freshly imported data.
+  mergeSessionJournal();
   const uint32_t latestKnownTimestamp = getLatestKnownTimestamp();
   if (!isClockValid(APP_STATE.lastKnownValidTimestamp) && isClockValid(latestKnownTimestamp)) {
     APP_STATE.lastKnownValidTimestamp = latestKnownTimestamp;
@@ -1866,29 +2216,29 @@ bool ReadingStatsStore::loadFromFile() {
   // vectors (session log, per-book days) under -fno-exceptions: a failed
   // reallocation aborts the device. Return "unloaded" instead of letting the
   // main-load-failure path trigger the internal-backup restore cascade on a
-  // transient low-heap skip. The deferred boot loader retries when the gate
-  // opens (covers done) or the heap recovers.
+  // transient low-heap skip. The deferred boot loader (or a later lazy read once the gate opens) will
+  // materialize the store.
   if (!boot_load_gate::ready() || ESP.getMaxAllocHeap() < 80 * 1024) {
     LOG_DBG("RST", "Reading stats load deferred (gate closed or low heap maxA=%u)",
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
     return false;
   }
-  const std::string tempPath = std::string(READING_STATS_FILE_JSON) + ".tmp";
-  if (!Storage.exists(READING_STATS_FILE_JSON) && Storage.exists(tempPath.c_str())) {
-    if (Storage.rename(tempPath.c_str(), READING_STATS_FILE_JSON)) {
+  const std::string jsonTempPath = std::string(READING_STATS_FILE_JSON) + ".tmp";
+  if (!Storage.exists(READING_STATS_FILE_JSON) && Storage.exists(jsonTempPath.c_str())) {
+    if (Storage.rename(jsonTempPath.c_str(), READING_STATS_FILE_JSON)) {
       LOG_DBG("RST", "Recovered reading_stats.json from interrupted temp file");
     }
   }
 
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
-    restoreInternalBackupToMain("missing main file");
-  }
-
-  if (!Storage.exists(READING_STATS_FILE_JSON)) {
-    return false;
-  }
-
   auto loadMainFile = [this]() -> bool {
+    if (!Storage.exists(READING_STATS_FILE_JSON)) {
+      restoreInternalBackupToMain("missing main file");
+    }
+
+    if (!Storage.exists(READING_STATS_FILE_JSON)) {
+      return false;
+    }
+
     const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, READING_STATS_FILE_JSON);
     if (!loaded) {
       return false;
@@ -1933,6 +2283,9 @@ bool ReadingStatsStore::loadFromFile() {
     loaded = loadMainFile();
   }
   if (loaded) {
+    // Merge detached journal sessions first so the regenerated summary and
+    // the persisted JSON include them.
+    mergeSessionJournal();
     saveSummaryJSON();
     createDueAutoBackup();
   }
