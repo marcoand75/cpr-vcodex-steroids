@@ -632,15 +632,7 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
   }
 
   // Post-processing: replicate loadReadingStatsDocument logic directly on store.
-  static constexpr const char* ARRAY_KEYS[] = {"readingDays", "legacyReadingDays", "sessionLog", "books"};
-  bool missingCurrentArray = false;
-  for (const char* key : ARRAY_KEYS) {
-    if (key == std::string("readingDays") && store.readingDays.empty()) missingCurrentArray = true;
-    if (key == std::string("legacyReadingDays") && store.legacyReadingDays.empty()) missingCurrentArray = true;
-    if (key == std::string("sessionLog") && store.sessionLog.empty()) missingCurrentArray = true;
-    if (key == std::string("books") && store.books.empty()) missingCurrentArray = true;
-  }
-  store.dirty = missingCurrentArray;
+  store.dirty = store.readingDays.empty() || store.legacyReadingDays.empty() || store.sessionLog.empty() || store.books.empty();
 
   if (formatVersion >= 2) {
     if (formatVersion < 6 && store.legacyReadingDays.empty()) {
@@ -715,11 +707,12 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
     }
   }
 
-  std::stable_sort(store.sessionLog.begin(), store.sessionLog.end(),
-                   [](const ReadingSessionLogEntry& left, const ReadingSessionLogEntry& right) {
-                     return left.dayOrdinal < right.dayOrdinal;
-                   });
+  std::sort(store.sessionLog.begin(), store.sessionLog.end(),
+            [](const ReadingSessionLogEntry& left, const ReadingSessionLogEntry& right) {
+              return left.dayOrdinal < right.dayOrdinal;
+            });
   LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
+  store.invalidateSummaryCache();
   return true;
 }
 
