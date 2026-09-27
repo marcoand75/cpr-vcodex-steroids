@@ -804,6 +804,10 @@ bool SettingsActivity::handleButtons() {
       requestUpdate();
     } else {
       SETTINGS.saveToFile();
+      // Standardized fast-restart exit: leaving Settings reboots and lands on
+      // Home with a clean heap.
+      exitWithFastRestart();
+      // Fallback only when the plan is disabled at runtime.
       onGoHome();
     }
     return true;

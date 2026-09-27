@@ -45,6 +45,22 @@ class LuaPluginActivity final : public Activity {
   LuaPluginActivity(const std::string& pluginName, GfxRenderer& renderer, MappedInputManager& input,
                     bool launchFromApps, bool returnToPluginBrowser = false, bool launchInProcess = false);
 
+  // Standardized fast-restart exit: the Lua VM fragments the heap heavily, so
+  // the plugin exit reboots and lands on its caller (plugin browser, Apps, or
+  // Home). In-process plugins ("-- RESTART: no") keep the plain pop exit.
+  ExitRestartPlan exitRestartPlan() const override {
+    if (launchInProcess_) return {};
+    RestartLanding landing = RestartLanding::Home;
+    if (returnToPluginBrowser_) {
+      landing = RestartLanding::PluginBrowser;
+    } else if (launchFromApps_) {
+      landing = RestartLanding::Apps;
+    }
+    // Preserve the historical popup behavior per destination: the plugin
+    // browser exit draws "Loading...", Apps/Home exits are seamless.
+    return {true, landing, /*seamless=*/!returnToPluginBrowser_};
+  }
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

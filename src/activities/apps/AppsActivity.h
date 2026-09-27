@@ -23,7 +23,13 @@ class AppsActivity final : public UiListActivity {
   int listCount() const override { return static_cast<int>(appShortcuts.size()); }
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
-  void onBackButton() override { onGoHome(); }
+  // Standardized fast-restart exit: leaving the apps hub reboots and lands on
+  // Home with a clean heap (falls through to the plain pop when the plan is
+  // disabled at runtime).
+  void onBackButton() override {
+    exitWithFastRestart();
+    onGoHome();
+  }
   void drawChrome() override;
   void drawFooter() override;
 
@@ -35,4 +41,9 @@ class AppsActivity final : public UiListActivity {
 
   void onEnter() override;
   void onExit() override;
+
+  // Standardized fast-restart exit policy (see onBackButton()).
+  ExitRestartPlan exitRestartPlan() const override {
+    return {true, RestartLanding::Home, /*seamless=*/true};
+  }
 };

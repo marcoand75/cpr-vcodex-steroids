@@ -107,6 +107,12 @@ class WikipediaActivity final : public Activity {
   explicit WikipediaActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
       : Activity("Wikipedia", renderer, mappedInput), launchFromApps(launchFromApps) {}
 
+  // Standardized fast-restart exit: Wikipedia sessions fragment the heap
+  // (HTTPS + article cache); the root back-press always reboots to Home.
+  ExitRestartPlan exitRestartPlan() const override {
+    return {true, RestartLanding::Home, /*seamless=*/true};
+  }
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

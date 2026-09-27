@@ -173,6 +173,14 @@ class LibraryActivity final : public Activity {
 
    explicit LibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool launchFromApps = false)
        : Activity("Library", renderer, mappedInput), launchFromApps(launchFromApps) {}
+
+  // Standardized fast-restart exit: Library browsing fragments the heap
+  // heavily (frame cache, thumbnails, book-index vectors), so the root exit
+  // reboots and lands on the activity's launch origin (Apps or Home).
+  ExitRestartPlan exitRestartPlan() const override {
+    return {true, launchFromApps ? RestartLanding::Apps : RestartLanding::Home, /*seamless=*/true};
+  }
+
   void onEnter() override;
   void loop() override;
   void onExit() override;

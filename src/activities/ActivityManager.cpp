@@ -444,6 +444,19 @@ void ActivityManager::popActivity() {
   pendingAction = PendingAction::Pop;
 }
 
+void ActivityManager::exitWithFastRestart() {
+  if (currentActivity) {
+    const ExitRestartPlan plan = currentActivity->exitRestartPlan();
+    if (plan.enabled) {
+      silentRestartTo(plan.landing, plan.seamless);
+      // Unreachable once the reboot starts (ESP.restart()).
+    }
+  }
+  // Plan disabled (or no current activity): plain fallback to Home — the
+  // legacy exit destination for the callers of this helper.
+  goHome();
+}
+
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }

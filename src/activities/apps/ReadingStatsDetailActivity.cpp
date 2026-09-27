@@ -527,6 +527,9 @@ void ReadingStatsDetailActivity::openStatsActions() {
         guardChildReturn();
         if (const auto* menu = std::get_if<MenuResult>(&result.data);
             menu != nullptr && menu->action == BookStatsActionsActivity::RESULT_RESET_BOOK_STATS) {
+          // From the post-reading summary this is the final return: standardized
+          // fast restart to Home (plain pop when the plan is disabled).
+          exitWithFastRestart();
           finish();
           return;
         }
@@ -550,6 +553,9 @@ void ReadingStatsDetailActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    // Post-reading summary: standardized fast-restart exit to Home (falls
+    // through to the plain pop when the plan is disabled at runtime).
+    exitWithFastRestart();
     finish();
     return;
   }

@@ -97,7 +97,9 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
   } else {
-    activityManager.goHome();
+    // Standardized fast-restart exit: finishing a book reboots and lands on
+    // Home with a clean heap.
+    activityManager.exitWithFastRestart();
   }
 }
 }  // namespace

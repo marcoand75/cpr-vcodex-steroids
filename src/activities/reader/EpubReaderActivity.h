@@ -264,6 +264,11 @@ class EpubReaderActivity final : public Activity {
                               std::optional<uint32_t> initialBookmarkVisibleTextOffset = std::nullopt,
                               bool allowFastInitialRefresh = false);
   ~EpubReaderActivity() override;
+
+  // Standardized fast-restart exit: finishing a book reboots and lands on Home
+  // with a clean heap (see exitReaderToHomeOrStats).
+  ExitRestartPlan exitRestartPlan() const override { return {true, RestartLanding::Home, /*seamless=*/true}; }
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

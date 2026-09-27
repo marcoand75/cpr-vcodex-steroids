@@ -302,12 +302,7 @@ void LuaPluginActivity::onExit() {
     return;
   }
 
-  // Silent restart to the caller (preserves clean heap state)
-  if (returnToPluginBrowser_) {
-    silentRestartToPluginBrowser();
-  } else if (launchFromApps_) {
-    silentRestartToApps();
-  } else {
-    silentRestartToHome();
-  }
+  // Silent restart to the caller (preserves clean heap state); the landing
+  // and popup policy come from the standardized exitRestartPlan() override.
+  exitWithFastRestart();
 }

@@ -1113,12 +1113,9 @@ void LibraryActivity::loop() {
       // book index vectors). A full ESP.restart gives the system a clean slate.
       LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)", ESP.getFreeHeap(),
               ESP.getMaxAllocHeap());
-      if (launchFromApps) {
-        silentRestartToApps();
-      } else {
-        silentRestartToHome();
-      }
-      // Unreachable: ESP.restart() above resets the CPU.
+      exitWithFastRestart();
+      // Unreachable once the reboot starts; onGoHome() only runs if the plan
+      // was disabled at runtime.
       onGoHome();
     }
     if (mappedInput.isPressed(MappedInputManager::Button::Up)) {
@@ -1545,12 +1542,9 @@ void LibraryActivity::loop() {
       SETTINGS.saveToFile();
       LOG_DBG("LIB", "Back at root: requesting seamless silent restart (free=%d maxA=%d)", ESP.getFreeHeap(),
               ESP.getMaxAllocHeap());
-      if (launchFromApps) {
-        silentRestartToApps();
-      } else {
-        silentRestartToHome();
-      }
-      // Unreachable: ESP.restart() above resets the CPU.
+      exitWithFastRestart();
+      // Unreachable once the reboot starts; onGoHome() only runs if the plan
+      // was disabled at runtime.
       onGoHome();
     }
     return;

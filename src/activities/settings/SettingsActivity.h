@@ -255,6 +255,11 @@ class SettingsActivity final : public UiTabListActivity {
 
  public:
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+
+  // Standardized fast-restart exit: leaving Settings reboots and lands on Home
+  // with a clean heap.
+  ExitRestartPlan exitRestartPlan() const override { return {true, RestartLanding::Home, /*seamless=*/true}; }
+
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&&) override;

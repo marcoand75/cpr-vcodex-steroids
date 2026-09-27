@@ -313,6 +313,31 @@ void silentRestartToPluginBrowser() {
   ESP.restart();
 }
 
+// Generic entry point for the standardized exit-restart policy: encode the
+// landing target in the RTC token and reboot. Seamless keeps the panel's
+// pre-reboot frame (no popup); non-seamless draws the "Loading..." overlay so
+// input fired during the reboot window is absorbed.
+void silentRestartTo(RestartLanding landing, bool seamless) {
+  if (deepSleepInProgress) return;
+  uint32_t target = SILENT_REBOOT_TARGET_HOME;
+  switch (landing) {
+    case RestartLanding::Reader: target = SILENT_REBOOT_TARGET_READER; break;
+    case RestartLanding::Ota: target = SILENT_REBOOT_TARGET_OTA; break;
+    case RestartLanding::PluginBrowser: target = SILENT_REBOOT_TARGET_PLUGIN_BROWSER; break;
+    case RestartLanding::Apps: target = SILENT_REBOOT_TARGET_APPS; break;
+    case RestartLanding::Home:
+    default: target = SILENT_REBOOT_TARGET_HOME; break;
+  }
+  silentRebootTarget = target;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=%u, %s)", static_cast<unsigned>(target), seamless ? "seamless" : "popup");
+  if (!seamless) {
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    delay(50);
+  }
+  ESP.restart();
+}
+
 // Seamless variants: no popup, so the panel holds its frame until the target's
 // first paint. The setup() silent-boot path absorbs held input.
 void silentRestartToHome() {

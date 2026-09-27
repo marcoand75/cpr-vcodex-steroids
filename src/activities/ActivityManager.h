@@ -114,6 +114,11 @@ class ActivityManager {
   // Note: if popActivity() on last activity on the stack, we will goHome()
   void popActivity();
 
+  // Fast-restart exit for the CURRENT activity, driven by its declared
+  // exitRestartPlan(). Never returns once the reboot starts; falls back to a
+  // plain goHome() when the plan is disabled (the legacy exit destination).
+  void exitWithFastRestart();
+
   bool preventAutoSleep() const;
   bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;

@@ -59,6 +59,11 @@ class XtcReaderActivity final : public Activity {
  public:
   explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc,
                              bool allowFastInitialRefresh = false);
+
+  // Standardized fast-restart exit: finishing a book reboots and lands on Home
+  // with a clean heap (see exitReaderToHomeOrStats).
+  ExitRestartPlan exitRestartPlan() const override { return {true, RestartLanding::Home, /*seamless=*/true}; }
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

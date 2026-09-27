@@ -60,6 +60,14 @@ class ReadingStatsDetailActivity final : public Activity, private UiAppHost {
         bookPath(std::move(bookPath)),
         context(std::move(context)) {}
 
+  // Post-reading session summary (opened straight from the reader): the exit
+  // performs the standardized fast restart and lands on Home with a clean
+  // heap. Normal stats navigation keeps the plain exit.
+  ExitRestartPlan exitRestartPlan() const override {
+    if (context.showSessionSummary) return {true, RestartLanding::Home, /*seamless=*/true};
+    return {};
+  }
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

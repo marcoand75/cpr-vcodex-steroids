@@ -12,6 +12,7 @@
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "RenderLock.h"
+#include "SilentRestart.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity {
@@ -70,6 +71,21 @@ class Activity {
   /// background (under a reader or another pushed activity). Default: no-op.
   /// Called by ActivityManager::pushActivity() before the new activity runs.
   virtual void freeBackgroundMemory() {}
+
+  // ---- Fast silent restart on exit (Steroids fork) --------------------------
+  // Declarative exit-restart policy ("simple code parameter"): activities that
+  // fragment the heap heavily (WiFi sessions, big list browsing, the Lua VM)
+  // return to their origin with a fast silent reboot — the boot skips the
+  // splash and lands straight on the declared exit destination. Disabled by
+  // default: an activity behaves exactly as before until it opts in by
+  // overriding exitRestartPlan() and calling exitWithFastRestart() at the exit
+  // points that previously performed the plain activity swap.
+  virtual ExitRestartPlan exitRestartPlan() const { return {}; }
+
+  // Fast-restart exit: reboots landing on exitRestartPlan().landing (seamless
+  // per the plan). Never returns once the reboot starts; returns without any
+  // side effect when the plan is disabled (the caller's plain exit path runs).
+  void exitWithFastRestart();
 
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes
