@@ -713,6 +713,7 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
             });
   LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
   store.invalidateSummaryCache();
+  store.loaded_ = true;
   return true;
 }
 
