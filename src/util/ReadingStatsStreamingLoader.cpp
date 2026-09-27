@@ -6,7 +6,9 @@
 #include <Logging.h>
 
 #include "ReadingStatsStore.h"
+#include "util/CprVcodexLogs.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -493,6 +495,126 @@ bool parseBooksArray(ByteScanner& s, std::vector<ReadingBookStats>& dest) {
 
 } // anonymous namespace
 
+// Directly apply parsed vectors to the store, bypassing JsonDocument entirely.
+// This preserves the upstream loadReadingStatsDocument behavior while avoiding
+// a large heap allocation after the incremental parse.
+bool applyParsedStatsToStore(ReadingStatsStore& store,
+                             uint32_t formatVersion,
+                             std::vector<ReadingDayStats> tempReadingDays,
+                             std::vector<ReadingDayStats> tempLegacyReadingDays,
+                             std::vector<ReadingSessionLogEntry> tempSessionLog,
+                             std::vector<ReadingBookStats> tempBooks) {
+  if (formatVersion == 0 || formatVersion > 6) {
+    LOG_ERR("RST", "Loader unsupported formatVersion: %u", formatVersion);
+    return false;
+  }
+
+  store.books.clear();
+  store.legacyReadingDays.clear();
+  store.readingDays.clear();
+  store.sessionLog.clear();
+  store.dirty = false;
+
+  auto appendReadingDays = [](std::vector<ReadingDayStats>& destination,
+                              std::vector<ReadingDayStats> source) {
+    for (auto& day : source) {
+      if (day.dayOrdinal != 0) {
+        destination.push_back(std::move(day));
+      }
+    }
+  };
+
+  appendReadingDays(store.readingDays, std::move(tempReadingDays));
+  std::vector<ReadingDayStats> declaredReadingDays = store.readingDays;
+  if (formatVersion >= 2) {
+    appendReadingDays(store.legacyReadingDays, std::move(tempLegacyReadingDays));
+    if (formatVersion < 6 && store.legacyReadingDays.empty()) {
+      store.legacyReadingDays = store.readingDays;
+    }
+  } else {
+    store.legacyReadingDays = store.readingDays;
+  }
+
+  if (formatVersion >= 4) {
+    for (auto& entry : tempSessionLog) {
+      if (entry.dayOrdinal == 0 || entry.sessionMs == 0) continue;
+
+      if (store.sessionLog.size() >= ReadingSessionLog::MAX_ENTRIES) {
+        store.dirty = true;
+      }
+      ReadingSessionLog::makeRoomForAppend(store.sessionLog);
+      store.sessionLog.push_back(std::move(entry));
+    }
+  } else {
+    store.dirty = true;
+  }
+
+  for (auto& book : tempBooks) {
+    if (book.path.empty()) {
+      continue;
+    }
+    if (formatVersion < 3 || book.bookId.empty()) {
+      store.dirty = true;
+    }
+    store.books.push_back(std::move(book));
+  }
+
+  if (formatVersion < 6) {
+    store.convertLegacyReadingDaysToUnassigned();
+    store.dirty = true;
+  }
+  store.rebuildAggregatedReadingDays();
+
+  if (formatVersion >= 6) {
+    auto normalizeDays = [](std::vector<ReadingDayStats>& days) {
+      std::sort(days.begin(), days.end(), [](const ReadingDayStats& left, const ReadingDayStats& right) {
+        return left.dayOrdinal < right.dayOrdinal;
+      });
+      size_t writeIndex = 0;
+      for (const auto& day : days) {
+        if (day.dayOrdinal == 0 || day.readingMs == 0) continue;
+        if (writeIndex > 0 && days[writeIndex - 1].dayOrdinal == day.dayOrdinal) {
+          days[writeIndex - 1].readingMs += day.readingMs;
+        } else {
+          days[writeIndex++] = day;
+        }
+      }
+      days.resize(writeIndex);
+    };
+    normalizeDays(declaredReadingDays);
+
+    bool aggregateMismatch = declaredReadingDays.size() != store.readingDays.size();
+    for (const auto& declaredDay : declaredReadingDays) {
+      const auto rebuiltIt =
+          std::lower_bound(store.readingDays.begin(), store.readingDays.end(), declaredDay.dayOrdinal,
+                           [](const ReadingDayStats& day, const uint32_t ordinal) { return day.dayOrdinal < ordinal; });
+      const bool hasRebuiltDay =
+          rebuiltIt != store.readingDays.end() && rebuiltIt->dayOrdinal == declaredDay.dayOrdinal;
+      const uint64_t rebuiltMs = hasRebuiltDay ? rebuiltIt->readingMs : 0;
+      if (rebuiltMs != declaredDay.readingMs) {
+        aggregateMismatch = true;
+      }
+      if (declaredDay.readingMs > rebuiltMs) {
+        store.legacyReadingDays.push_back(ReadingDayStats{declaredDay.dayOrdinal, declaredDay.readingMs - rebuiltMs});
+      }
+    }
+
+    if (aggregateMismatch) {
+      normalizeDays(store.legacyReadingDays);
+      store.rebuildAggregatedReadingDays();
+      store.dirty = true;
+      CPR_VCODEX_LOG_EVENT("RST", "Reconciled reading stats aggregate totals without discarding stored data");
+    }
+  }
+
+  std::stable_sort(store.sessionLog.begin(), store.sessionLog.end(),
+                   [](const ReadingSessionLogEntry& left, const ReadingSessionLogEntry& right) {
+                     return left.dayOrdinal < right.dayOrdinal;
+                   });
+  LOG_DBG("RST", "Reading stats loaded from file (%d books)", static_cast<int>(store.books.size()));
+  return true;
+}
+
 bool loadFromFileStreaming(const char* moduleName, const char* path,
                            ReadingStatsStore& store,
                            bool (*loadDocument)(ReadingStatsStore&, const JsonDocument&)) {
@@ -630,69 +752,14 @@ bool loadFromFileStreaming(const char* moduleName, const char* path,
     return false;
   }
 
-  // Reconstruct synthetic JsonDocument from parsed arrays and delegate.
-  DynamicJsonDocument doc(32768);
-  doc["formatVersion"] = formatVersion;
-
-  JsonArray arrReading = doc.createNestedArray("readingDays");
-  for (const auto& d : tempReadingDays) {
-    JsonObject o = arrReading.createNestedObject();
-    o["dayOrdinal"] = d.dayOrdinal;
-    o["readingMs"] = d.readingMs;
-  }
-
-  JsonArray arrLegacy = doc.createNestedArray("legacyReadingDays");
-  for (const auto& d : tempLegacyDays) {
-    JsonObject o = arrLegacy.createNestedObject();
-    o["dayOrdinal"] = d.dayOrdinal;
-    o["readingMs"] = d.readingMs;
-  }
-
-  JsonArray arrSession = doc.createNestedArray("sessionLog");
-  for (const auto& sEntry : tempSessionLog) {
-    JsonObject o = arrSession.createNestedObject();
-    o["dayOrdinal"] = sEntry.dayOrdinal;
-    o["sessionMs"] = sEntry.sessionMs;
-    if (!sEntry.bookId.empty()) o["bookId"] = sEntry.bookId;
-    if (!sEntry.path.empty()) o["path"] = sEntry.path;
-  }
-
-  JsonArray arrBooks = doc.createNestedArray("books");
-  for (const auto& b : tempBooks) {
-    JsonObject o = arrBooks.createNestedObject();
-    o["bookId"] = b.bookId;
-    o["path"] = b.path;
-
-    JsonArray kp = o.createNestedArray("knownPaths");
-    for (const auto& p : b.knownPaths) kp.add(p);
-
-    o["title"] = b.title;
-    o["author"] = b.author;
-    o["coverBmpPath"] = b.coverBmpPath;
-    o["chapterTitle"] = b.chapterTitle;
-    o["totalReadingMs"] = b.totalReadingMs;
-    o["sessions"] = b.sessions;
-    o["lastSessionMs"] = b.lastSessionMs;
-    o["firstReadAt"] = b.firstReadAt;
-    o["lastReadAt"] = b.lastReadAt;
-    o["completedAt"] = b.completedAt;
-    o["lastProgressPercent"] = b.lastProgressPercent;
-    o["chapterProgressPercent"] = b.chapterProgressPercent;
-    o["completed"] = b.completed;
-
-    JsonArray bDays = o.createNestedArray("readingDays");
-    for (const auto& bd : b.readingDays) {
-      JsonObject bo = bDays.createNestedObject();
-      bo["dayOrdinal"] = bd.dayOrdinal;
-      bo["readingMs"] = bd.readingMs;
-    }
-  }
-
-  bool result = loadDocument(store, doc);
+  const bool result = applyParsedStatsToStore(store, formatVersion,
+                                              std::move(tempReadingDays),
+                                              std::move(tempLegacyDays),
+                                              std::move(tempSessionLog),
+                                              std::move(tempBooks));
   logRam();
-  LOG_DBG("RST", "Loader synthetic doc result=%s free=%u overflow=%d",
-          result ? "OK" : "FAIL", static_cast<unsigned>(ESP.getFreeHeap()),
-          doc.overflowed() ? 1 : 0);
+  LOG_DBG("RST", "Loader apply result=%s free=%u",
+          result ? "OK" : "FAIL", static_cast<unsigned>(ESP.getFreeHeap()));
   return result;
 }
 
