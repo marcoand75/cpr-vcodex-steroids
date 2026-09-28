@@ -8,21 +8,21 @@ struct Rect;
 
 namespace LibraryIndex {
 
-// ---- Fixed-length on-disk record (256 bytes) ----
+// ---- Fixed-length on-disk record (384 bytes) ----
 // Layout:
-//   [0-3]   id          uint32_t  unique, stable, never reassigned
-//   [4-67]  title       char[64]  UTF-8, null-terminated
-//   [68-115] author     char[48]  UTF-8, null-terminated
-//   [116-243] path      char[128] absolute SD path
-//   [244-247] file_size  uint32_t
-//   [248]    flags       uint8_t   bit0=tombstone, bit1=favorite, bit2=opened, bit3=completed
-//   [249-252] mtime      uint32_t  file modification timestamp
-//   [253-255] reserved   uint8_t[3]
+//   [0-3]    id          uint32_t  unique, stable, never reassigned
+//   [4-67]   title       char[64]  UTF-8, null-terminated
+//   [68-115] author      char[48]  UTF-8, null-terminated
+//   [116-371] path       char[256] absolute SD path (supports long + multibyte paths)
+//   [372-375] file_size  uint32_t
+//   [376]    flags       uint8_t   bit0=tombstone, bit1=favorite, bit2=opened, bit3=completed
+//   [377-380] mtime      uint32_t  file modification timestamp
+//   [381-383] reserved   uint8_t[3]
 struct __attribute__((packed)) Record {
   uint32_t id;
   char title[64];
   char author[48];
-  char path[128];
+  char path[256];
   uint32_t file_size;
   uint8_t flags;
   uint32_t mtime;
@@ -59,7 +59,7 @@ struct __attribute__((packed)) Record {
       flags &= ~0x08;
   }
 };
-static_assert(sizeof(Record) == 256, "Record must be 256 bytes");
+static_assert(sizeof(Record) == 384, "Record must be 384 bytes");
 
 // ---- Index record (on-disk) ----
 struct __attribute__((packed)) IndexRec {
@@ -84,7 +84,7 @@ struct __attribute__((packed)) BookRef {
   uint32_t id;
   char title[65];  // +1 for safe null-termination
   char author[49];
-  char path[129];
+  char path[257];
   bool isFavorite;
   bool isOpened;
   bool isCompleted;
@@ -92,7 +92,7 @@ struct __attribute__((packed)) BookRef {
   bool isCollection;    // true if this tile is a user-defined collection
   uint8_t reserved[3];  // padding
 };
-static_assert(sizeof(BookRef) <= 260, "BookRef fits in stack");
+static_assert(sizeof(BookRef) <= 388, "BookRef fits in stack");
 
 // ---- Sort mode (matches CrossPointSettings::LIBRARY_SORT) ----
 enum class SortMode {

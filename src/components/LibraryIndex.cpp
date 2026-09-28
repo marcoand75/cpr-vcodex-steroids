@@ -60,7 +60,7 @@ constexpr const char* kTmpDir = "/.crosspoint/LIBRARY/tmp";
 int kProgressInterval = 10;
 
 // ---- Fixed-length record sizes ----
-constexpr size_t kRecordSize = sizeof(Record);  // 256
+constexpr size_t kRecordSize = sizeof(Record);  // 384
 constexpr size_t kScanRecSize = 16;             // path_hash(4)+mtime(4)+size(4)+id(4)
 constexpr size_t kIndexRecSize = 28;            // key(20)+id(4)+offset(4)
 
@@ -106,9 +106,9 @@ static_assert(sizeof(ScanRec) == 16, "ScanRec must be 16 bytes");
 // The buffer lives in static storage to avoid stack overflow on loopTask.
 // =========================================================================
 namespace {
-constexpr size_t kDatBlockSize = 4096;                                              // must be multiple of record size
-constexpr size_t kDatBlockRecs = kDatBlockSize / static_cast<size_t>(kRecordSize);  // 16
-constexpr size_t kDatCacheBlocks = 4;  // 4 blocks = 16KB total; stays under 32KB RAM budget
+constexpr size_t kDatBlockSize = 3840;                                              // must be multiple of record size (384 * 10)
+constexpr size_t kDatBlockRecs = kDatBlockSize / static_cast<size_t>(kRecordSize);  // 10
+constexpr size_t kDatCacheBlocks = 4;  // 4 blocks = 15KB total; stays under 32KB RAM budget
 static_assert(kDatBlockSize % kRecordSize == 0, "block size must align with record size");
 
 struct DatCacheBlock {
@@ -2973,8 +2973,8 @@ static void recordToBookRef(const Record& rec, BookRef& ref) {
   ref.title[64] = '\0';
   std::strncpy(ref.author, rec.author, 48);
   ref.author[48] = '\0';
-  std::strncpy(ref.path, rec.path, 128);
-  ref.path[128] = '\0';
+  std::strncpy(ref.path, rec.path, sizeof(rec.path) - 1);
+  ref.path[sizeof(ref.path) - 1] = '\0';
   ref.isFavorite = FAVORITES.isFavorite(rec.path);
   const auto* s = READING_STATS.getHomeBookStatsForRender("", rec.path);
   ref.isOpened = s && s->totalReadingMs > 0;
@@ -3289,6 +3289,35 @@ bool init() {
   Storage.mkdir("/.crosspoint");
   Storage.mkdir(kLibDir);
   Storage.mkdir(kTmpDir);
+
+  // Migration: detect old-format library.dat (256-byte records) and invalidate
+  // so the next boot performs a full SD rescan with the new 384-byte format.
+  {
+    HalFile f = Storage.open(kDatFile);
+    if (f) {
+      const size_t sz = f.size();
+      const int oldRecs = static_cast<int>(sz / 256);  // old record size
+      const int newRecs = static_cast<int>(sz / kRecordSize);  // new record size
+      if (oldRecs > 0 && oldRecs != newRecs) {
+        // Old-format file detected — delete it and all indices to force re-scan
+        LOG_INF("LIB", "init: old library.dat format detected (%d records x 256B), invalidating", oldRecs);
+        f.close();
+        Storage.remove(kDatFile);
+        Storage.remove(kIdxTitle);
+        Storage.remove(kIdxAuthor);
+        Storage.remove(kIdxCollections);
+        Storage.remove(kIdxMetadataSeries);
+        Storage.remove(kIdxFolderCollections);
+        Storage.remove(kIdxUserCollections);
+        Storage.remove(kIdxMixed);
+        Storage.remove(kSeriesDat);
+        Storage.remove(kScanFile);
+      } else {
+        f.close();
+      }
+    }
+  }
+
   return true;
 }
 

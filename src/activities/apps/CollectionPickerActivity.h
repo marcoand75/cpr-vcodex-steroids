@@ -27,7 +27,7 @@ class CollectionPickerActivity final : public Activity {
   struct BookEntry {
     uint32_t id;
     char title[64];
-    char path[128];
+    char path[257];
   };
 
   std::vector<CollectionEntry> collections_;
