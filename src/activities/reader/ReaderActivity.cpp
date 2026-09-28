@@ -12,6 +12,7 @@
 #include "Epub.h"
 #include "EpubReaderActivity.h"
 #include "KOReaderCredentialStore.h"
+#include "ReadingStatsStore.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
 #include "Xtc.h"
@@ -21,6 +22,13 @@
 
 std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                        std::string path, const bool allowFastInitialRefresh) {
+  // The ~40KB reading-stats working set cannot coexist with the reader's font
+  // prewarm and page buffers on the ESP32-C3: together they OOM the page
+  // render and abort the device. Reading sessions run detached (binary
+  // journal) while the store is unloaded; the next full load merges the
+  // journal and re-materializes the store.
+  READING_STATS.releaseMemoryForNetwork();
+
   // ActivityManager requires heap ownership; the dispatcher lives only until the
   // format reader replaces it, but a failed allocation must still be reported.
   auto activity = makeUniqueNoThrow<ReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);

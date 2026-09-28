@@ -989,6 +989,14 @@ void HomeActivity::onEnter() {
   carouselFramesReady = false;
   carouselCoverLoadAttemptPath.clear();
 
+  // Ensure summary.json is up-to-date after potential external modifications
+  // (e.g., stats import from Settings). The summary carries per-book progress
+  // used by carousel frame hashes; stale summary = stale cached frames.
+  if (!READING_STATS.isSummaryValid()) {
+    READING_STATS.preloadHomeSummary();
+    LOG_DBG("HOME", "Reloaded summary.json after external update");
+  }
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   reloadHomeBooks(metrics.homeRecentBooksCount);
   LOG_DBG("HOME", "onEnter: recentBooks=%zu carousel=%d", recentBooks.size(), isCarouselNavTheme() ? 1 : 0);
@@ -1717,6 +1725,14 @@ void HomeActivity::loop() {
           break;
         case ShortcutId::Screensaver:
           startActivityForResult(std::make_unique<ScreenSaverActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::QuickCards:
+          startActivityForResult(std::make_unique<QuickCardsActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Wikipedia:
+          startActivityForResult(std::make_unique<WikipediaActivity>(renderer, mappedInput),
                                  [this](const ActivityResult&) { requestFreshHomeRender(true); });
           break;
       }

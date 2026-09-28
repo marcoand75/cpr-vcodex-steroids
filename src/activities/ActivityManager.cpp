@@ -13,6 +13,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
+#include "ReadingStatsStore.h"
 #include "apps/AppsActivity.h"
 #include "apps/BatchCoverGenerationActivity.h"
 #include "apps/LibraryActivity.h"

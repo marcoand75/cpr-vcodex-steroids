@@ -209,6 +209,7 @@ class ReadingStatsStore {
   static ReadingStatsStore& getInstance() { return instance; }
 
   void preloadHomeSummary();
+  bool isSummaryValid() const { return summaryJsonValid_; }
 
   void beginSession(const std::string& path, const std::string& title, const std::string& author,
                     const std::string& coverBmpPath, uint8_t progressPercent = 0, const std::string& chapterTitle = "",

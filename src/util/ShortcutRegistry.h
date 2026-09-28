@@ -44,8 +44,11 @@ struct ShortcutDefinition {
   uint8_t CrossPointSettings::* visiblePtr;
 };
 
-inline const std::array<ShortcutDefinition, 23>& getShortcutDefinitions() {
-  static const std::array<ShortcutDefinition, 23> definitions = {
+inline const auto& getShortcutDefinitions() {
+  // CTAD: the array size always matches the initializer list. A hardcoded size
+  // left phantom default entries behind (id=BrowseFiles, null settings member
+  // pointers) that crashed the shortcut settings screens.
+  static const std::array definitions = {
       ShortcutDefinition{ShortcutId::BrowseFiles, StrId::STR_BROWSE_FILES, StrId::STR_NONE_OPT, UIIcon::Folder,
                          &CrossPointSettings::browseFilesShortcut, &CrossPointSettings::browseFilesShortcutOrder,
                          &CrossPointSettings::browseFilesShortcutVisible},

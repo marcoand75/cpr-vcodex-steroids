@@ -181,6 +181,19 @@ void AppsActivity::openApp(const int index) {
       activity = std::make_unique<BookmarksAppActivity>(renderer, mappedInput);
       break;
     case ShortcutId::Favorites:
+      activity = std::make_unique<FavoritesAppActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Flashcards:
+      activity = std::make_unique<FlashcardsAppActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Dictionary:
+      activity = std::make_unique<DictionaryActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::FileTransfer:
+      activityManager.goToFileTransfer();
+      return;
+    case ShortcutId::Sleep:
+      activity = std::make_unique<SleepAppActivity>(renderer, mappedInput);
       break;
     case ShortcutId::OpdsBrowser:
       activityManager.goToBrowser();
@@ -193,6 +206,12 @@ void AppsActivity::openApp(const int index) {
       return;
     case ShortcutId::Screensaver:
       activity = std::make_unique<ScreenSaverActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::QuickCards:
+      activity = std::make_unique<QuickCardsActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Wikipedia:
+      activity = std::make_unique<WikipediaActivity>(renderer, mappedInput, /*launchFromApps=*/true);
       break;
   }
 

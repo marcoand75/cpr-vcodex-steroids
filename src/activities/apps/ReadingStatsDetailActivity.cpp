@@ -404,6 +404,21 @@ void ReadingStatsDetailActivity::onEnter() {
   maxScrollOffset = 0;
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
   waitForBackRelease = false;
+
+  // Ensure the full stats store is loaded so findBook() works and the detail
+  // page can display per-book metrics (lastSessionMs, totalReadingMs, sessions,
+  // firstReadAt, lastReadAt, chapterTitle, chapterProgressPercent, etc.).
+  // The post-reading summary path (showSessionSummary) already does this.
+  if (!context.showSessionSummary) {
+    READING_STATS.ensureLoaded();
+  } else {
+    // Post-reading summary: the store was released for the reader (the
+    // detached session lives in the binary journal). The reader's heavy
+    // structures are gone now, so re-materialize it here — ensureLoaded() also
+    // merges pending journal sessions so this page shows the fresh data.
+    READING_STATS.ensureLoaded();
+  }
+
   if (const auto* book = findBook(bookPath)) {
     resolvedCoverBmpPath = findFastCoverPath(*book);
     coverLoadPending = resolvedCoverBmpPath.empty();

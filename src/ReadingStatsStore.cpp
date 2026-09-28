@@ -16,6 +16,7 @@
 #include "util/BookIdentity.h"
 #include "util/BootLoadGate.h"
 #include "util/CprVcodexLogs.h"
+#include "util/ReadingStatsImportStreaming.h"
 #include "util/TimeUtils.h"
 
 namespace {
@@ -1465,17 +1466,14 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
     return;
   }
 
-  // Load the store before starting a session so the book's existing stats and
-  // the previous session snapshot are available (lazy-load path when the boot
-  // deferred READING_STATS to free heap on the ESP32-C3).
-  if (!loaded_) {
-    ensureLoaded();
-  }
   if (!loaded_) {
     // Detached session: record to the binary journal without materializing the
-    // ~50 KB store. With the epub and font caches resident there is no heap
-    // headroom for the store inside the reader (an allocation failure aborts
-    // under -fno-exceptions). Records merge at the next full load.
+    // ~40KB store. NEVER lazy-load from here — beginSession runs inside the
+    // reader, where even a successful load (heap looks fine at that instant)
+    // leaves the font prewarm and page buffers without headroom: they OOM and
+    // abort the device a few seconds later. The store is re-materialized on
+    // the next full load outside the reader (stats screen, post-reading
+    // summary, import, web editor), which also merges the journal.
     if (shouldIgnorePath(path)) {
       activeSession = {};
       lastSessionSnapshot = {};
@@ -2111,30 +2109,11 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
     return false;
   }
 
-  auto reloadOriginalStats = [this]() {
-    books.clear();
-    books.shrink_to_fit();
-    legacyReadingDays.clear();
-    legacyReadingDays.shrink_to_fit();
-    readingDays.clear();
-    readingDays.shrink_to_fit();
-    sessionLog.clear();
-    sessionLog.shrink_to_fit();
-    activeSession = {};
-    lastSessionSnapshot = {};
-    sessionSerialCounter = 0;
-    dirty = false;
-    invalidateSummaryCache();
-    return loadFromFile();
-  };
-
   LOG_DBG("RST", "Before stats import: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
 
-  // The import replaces the resident store entirely: flush pending changes and
-  // free its ~50 KB working set first so the streaming parse gets the largest
-  // heap block available (the 40 KB maxAlloc guard in the loader otherwise
-  // rejects the import on a squeezed heap).
+  // Flush + free the resident store: the import replaces the file wholesale.
+  // (endSession inside the release journals a detached session first.)
   if (loaded_ || activeSession.active) {
     if (activeSession.active) {
       endSession();
@@ -2142,59 +2121,32 @@ bool ReadingStatsStore::importFromFile(const std::string& path) {
     releaseMemoryForNetwork();
   }
 
-  const bool loaded = JsonSettingsIO::loadReadingStatsFromFile(*this, path.c_str());
-  if (!loaded) {
+  // Streaming import: validate + copy + regenerate summary.json. The ~40KB fat
+  // store is never materialized, so the import succeeds at any heap state
+  // (peak RAM ≈ stream buffer + compact day vector + summary document).
+  if (!ReadingStatsImportStreaming::importStatsFileStreaming(path.c_str(), READING_STATS_FILE_JSON,
+                                                             READING_STATS_SUMMARY_JSON,
+                                                             getReferenceDayOrdinal(), getDailyReadingGoalMs())) {
     LOG_ERR("RST", "importFromFile: source rejected path=%s", path.c_str());
     CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import source was rejected: ") + path);
-    // The loader cleared and partially repopulated the resident store before
-    // failing; restore the in-memory state from the main file.
-    reloadOriginalStats();
-    return false;
-  }
-  LOG_DBG("RST", "importFromFile: parsed source books=%zu days=%zu sessions=%zu", books.size(), readingDays.size(),
-          sessionLog.size());
-
-  if (!hasAnyStats()) {
-    LOG_ERR("RST", "importFromFile: rejected empty stats after parse");
-    CPR_VCODEX_LOG_EVENT("RST", "Rejected empty reading stats import");
-    reloadOriginalStats();
     return false;
   }
 
-  persistenceSuspended = false;
-  skippedSaveLogged = false;
-  internalBackupPrepared = true;
-  normalizeReadingDays(readingDays);
-  normalizeBooks();
+  // Coherence: any in-memory state is stale vs the new file — drop it. The
+  // next full load (stats screen, post-reading summary, web editor) merges
+  // the journal and normalizes, then re-saves summary.json.
+  loaded_ = false;
+  summaryJsonValid_ = false;
+  invalidateSummaryCache();
   activeSession = {};
   lastSessionSnapshot = {};
   sessionSerialCounter = 0;
-  if (sessionLog.size() > ReadingSessionLog::MAX_ENTRIES) {
-    sessionLog.erase(sessionLog.begin(), sessionLog.begin() + static_cast<std::ptrdiff_t>(
-                                                                  sessionLog.size() - ReadingSessionLog::MAX_ENTRIES));
-  }
-  removeIgnoredBooks();
-  rebuildAggregatedReadingDays();
-  // Merge any reading sessions that accumulated in the binary journal while
-  // the store was unloaded (e.g. a detached reading session right before the
-  // import) into the freshly imported data.
-  mergeSessionJournal();
-  const uint32_t latestKnownTimestamp = getLatestKnownTimestamp();
-  if (!isClockValid(APP_STATE.lastKnownValidTimestamp) && isClockValid(latestKnownTimestamp)) {
-    APP_STATE.lastKnownValidTimestamp = latestKnownTimestamp;
-    APP_STATE.saveToFile();
-  }
-  markDirty();
-  const bool saved = saveToFile();
-  if (!saved) {
-    LOG_ERR("RST", "Reading stats import save failed; restoring previous stats");
-    CPR_VCODEX_LOG_EVENT("RST", "Reading stats import rolled back after save failure");
-    reloadOriginalStats();
-    return false;
-  }
+  dirty = false;
+  persistenceSuspended = false;
+  skippedSaveLogged = false;
+  internalBackupPrepared = true;
 
-  LOG_DBG("RST", "importFromFile: OK books=%zu days=%zu sessions=%zu", books.size(), readingDays.size(),
-          sessionLog.size());
+  LOG_DBG("RST", "importFromFile: OK (streaming)");
   CPR_VCODEX_LOG_EVENT("RST", std::string("Reading stats import completed from: ") + path);
   LOG_DBG("RST", "After stats import: free=%u largest=%u", ESP.getFreeHeap(),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT));
@@ -2320,6 +2272,11 @@ const ReadingBookStats* ReadingStatsStore::getHomeBookStatsForRender(const std::
         synthesized.path = badge.path;
         synthesized.completed = badge.completed;
         synthesized.lastProgressPercent = badge.progressPercent;
+        // Panel data carried by the enriched summary badges (the fat store is
+        // not materialized on the lean Home path).
+        synthesized.totalReadingMs = badge.totalReadingMs;
+        synthesized.sessions = badge.sessions;
+        synthesized.readingDays.resize(badge.readingDaysCount);
         return &synthesized;
       }
     }
@@ -2401,6 +2358,11 @@ bool ReadingStatsStore::saveSummaryJSON() const {
     badge.path = book.path;
     badge.completed = book.completed;
     badge.progressPercent = book.lastProgressPercent;
+    // Panel data for the lean Home path: the book column renders these from
+    // summary.json alone when the fat store is not materialized.
+    badge.totalReadingMs = book.totalReadingMs;
+    badge.sessions = book.sessions;
+    badge.readingDaysCount = static_cast<uint32_t>(book.readingDays.size());
     json.bookBadges.push_back(std::move(badge));
   }
   json.global.totalReadingMs = getTotalReadingMs();
@@ -2432,6 +2394,9 @@ bool ReadingStatsStore::saveSummaryJSON() const {
     obj["path"] = badge.path;
     obj["completed"] = badge.completed;
     obj["progressPercent"] = badge.progressPercent;
+    obj["totalReadingMs"] = badge.totalReadingMs;
+    obj["sessions"] = badge.sessions;
+    obj["readingDaysCount"] = badge.readingDaysCount;
   }
 
   String serialized;
@@ -2474,6 +2439,9 @@ bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
     badge.path = obj["path"] | std::string("");
     badge.completed = obj["completed"] | false;
     badge.progressPercent = obj["progressPercent"] | 0U;
+    badge.totalReadingMs = obj["totalReadingMs"] | 0ULL;
+    badge.sessions = obj["sessions"] | 0U;
+    badge.readingDaysCount = obj["readingDaysCount"] | 0U;
     out.bookBadges.push_back(std::move(badge));
   }
   return true;

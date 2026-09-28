@@ -1119,11 +1119,14 @@ void SettingsActivity::runAction(const SettingInfo& setting) {
                                    }
                                    LOG_DBG("SET", "ImportReadingStats: heap before import free=%u maxA=%u",
                                            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-                                   const bool imported = READING_STATS.importFromFile(path->path);
-                                   LOG_DBG("SET", "ImportReadingStats: import result=%d", imported ? 1 : 0);
-                                   if (imported) {
-                                     ACHIEVEMENTS.rebuildProgressFromCurrentStats();
-                                   }
+                                    const bool imported = READING_STATS.importFromFile(path->path);
+                                    LOG_DBG("SET", "ImportReadingStats: import result=%d", imported ? 1 : 0);
+                                    if (imported && READING_STATS.isLoaded()) {
+                                      // The streaming import leaves the store unloaded: the
+                                      // rebuild runs at the next full load (it bootstraps
+                                      // from the resident books array).
+                                      ACHIEVEMENTS.rebuildProgressFromCurrentStats();
+                                    }
                                    showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
                                                       imported ? 100 : -1, imported ? 350 : 700);
                                  }
