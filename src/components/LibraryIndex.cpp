@@ -47,6 +47,7 @@ namespace {
 constexpr const char* kLibDir = "/.crosspoint/LIBRARY";
 constexpr const char* kDatFile = "/.crosspoint/LIBRARY/library.dat";
 constexpr const char* kScanFile = "/.crosspoint/LIBRARY/scan_state.dat";
+constexpr const char* kDatMetaFile = "/.crosspoint/LIBRARY/library.dat.meta";  // uint32_t record size version marker
 constexpr const char* kIdxTitle = "/.crosspoint/LIBRARY/idx_title.bin";
 constexpr const char* kIdxAuthor = "/.crosspoint/LIBRARY/idx_author.bin";
 constexpr const char* kIdxCollections = "/.crosspoint/LIBRARY/idx_collections.bin";
@@ -1145,6 +1146,15 @@ bool scan(GfxRenderer& renderer, const Rect& popupRect, const char* rootDir, int
       const int datCount = static_cast<int>(datCheck.size() / kRecordSize);
       datCheck.close();
       LOG_DBG("LIB", "Scan: library.dat records=%d", datCount);
+      // Write version meta file so init() can verify format without arithmetic
+      {
+        HalFile meta = Storage.open(kDatMetaFile, O_WRONLY | O_CREAT | O_TRUNC);
+        if (meta) {
+          const uint32_t version = static_cast<uint32_t>(kRecordSize);
+          meta.write(reinterpret_cast<const uint8_t*>(&version), sizeof(version));
+          meta.close();
+        }
+      }
     } else {
       LOG_ERR("LIB", "Scan: library.dat missing after scan!");
     }
@@ -3292,29 +3302,33 @@ bool init() {
 
   // Migration: detect old-format library.dat (256-byte records) and invalidate
   // so the next boot performs a full SD rescan with the new 384-byte format.
+  // Use a version meta file to avoid arithmetic false positives (e.g. N*384
+  // is also divisible by 256 when N is even, causing re-invalidation).
   {
-    HalFile f = Storage.open(kDatFile);
-    if (f) {
-      const size_t sz = f.size();
-      const int oldRecs = static_cast<int>(sz / 256);  // old record size
-      const int newRecs = static_cast<int>(sz / kRecordSize);  // new record size
-      if (oldRecs > 0 && oldRecs != newRecs) {
-        // Old-format file detected — delete it and all indices to force re-scan
-        LOG_INF("LIB", "init: old library.dat format detected (%d records x 256B), invalidating", oldRecs);
-        f.close();
-        Storage.remove(kDatFile);
-        Storage.remove(kIdxTitle);
-        Storage.remove(kIdxAuthor);
-        Storage.remove(kIdxCollections);
-        Storage.remove(kIdxMetadataSeries);
-        Storage.remove(kIdxFolderCollections);
-        Storage.remove(kIdxUserCollections);
-        Storage.remove(kIdxMixed);
-        Storage.remove(kSeriesDat);
-        Storage.remove(kScanFile);
-      } else {
-        f.close();
+    bool hasDat = Storage.exists(kDatFile);
+    bool hasMeta = Storage.exists(kDatMetaFile);
+    uint32_t metaVersion = 0;
+    if (hasMeta) {
+      HalFile mf = Storage.open(kDatMetaFile);
+      if (mf) {
+        mf.read(reinterpret_cast<uint8_t*>(&metaVersion), sizeof(metaVersion));
+        mf.close();
       }
+    }
+    if (hasDat && (!hasMeta || metaVersion != static_cast<uint32_t>(kRecordSize))) {
+      LOG_INF("LIB", "init: old library.dat format detected (meta=%u expect=%u), invalidating",
+              metaVersion, static_cast<uint32_t>(kRecordSize));
+      if (hasDat) Storage.remove(kDatFile);
+      Storage.remove(kIdxTitle);
+      Storage.remove(kIdxAuthor);
+      Storage.remove(kIdxCollections);
+      Storage.remove(kIdxMetadataSeries);
+      Storage.remove(kIdxFolderCollections);
+      Storage.remove(kIdxUserCollections);
+      Storage.remove(kIdxMixed);
+      Storage.remove(kSeriesDat);
+      Storage.remove(kScanFile);
+      Storage.remove(kDatMetaFile);
     }
   }
 

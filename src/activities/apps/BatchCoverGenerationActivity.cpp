@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <esp_task_wdt.h>
 
 #include "../ActivityManager.h"
 #include "../util/ListRenderHelper.h"
@@ -96,7 +97,10 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
   }
 
   if (FsHelpers::hasEpubExtension(path)) {
-    if (ESP.getMaxAllocHeap() < 32 * 1024) {
+    // Require generous contiguous heap: Epub allocates BookMetadataCache +
+    // CssParser on load, and the inflate stream needs a large single block.
+    // Library mode achieves this via yield() between tiles; we replicate that here.
+    if (ESP.getMaxAllocHeap() < 48 * 1024) {
       LOG_DBG(TAG, "Cover SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
       return false;
     }
@@ -105,7 +109,7 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
       LOG_DBG(TAG, "Cover SKIP EPUB load fail: %s", path.c_str());
       return false;
     }
-    if (ESP.getMaxAllocHeap() < 28 * 1024) {
+    if (ESP.getMaxAllocHeap() < 40 * 1024) {
       LOG_DBG(TAG, "Cover SKIP post-load low heap maxA=%u", ESP.getMaxAllocHeap());
       return false;
     }
@@ -221,6 +225,11 @@ void BatchCoverGenerationActivity::loop() {
   }
 
   if (currentIndex_ < totalCount_) {
+    // Yield between books to allow FreeRTOS to defragment the heap.
+    // Without this, repeated Epub construction/destruction leaves the heap
+    // fragmented and inflate stream allocation fails after ~5-10 books.
+    yield();
+    esp_task_wdt_reset();
     const bool ok = generateCoverForBook(missingBooks_[currentIndex_].path);
     if (ok) {
       ++doneCount_;
