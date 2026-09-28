@@ -217,6 +217,33 @@ The `README.md` contains a **"CPR-vCodex Steroids"** section (after the main CPR
 - Documentation links
 - Upstream alignment summary
 
+### 9.2 Historical Note: Branch Rebase on Upstream vcodex 1.6.0.38
+
+**Date:** 2026-09-28  
+**Event:** `master` branch rebased onto upstream CPR-vCodex 1.6.0.38
+
+Prior to this operation, two divergent branches existed:
+- `origin/master` — contained ~670 steroid-specific commits (pre-rebase work)
+- `integration/steroids-vcodex` — contained the latest steroid feature work (660+ commits)
+
+Both branches shared a common ancestor but had diverged in their commit histories. The steroids feature work in `integration/steroids-vcodex` was force-pushed to `origin/master`, effectively making it the new canonical master.
+
+**To preserve the old master history:**
+```bash
+git branch steroids-before-upstream-vcodex-1.6.0.38 8325282b
+```
+
+This branch points to the old master (`8325282b`) and contains all commits that were not part of `integration/steroids-vcodex`. It serves as a historical record of the pre-rebase state.
+
+**Current branch topology:**
+```
+origin/master              → 5dc78a0f (latest steroids + upstream integration)
+origin/integration/steroids-vcodex → 5dc78a0f (same as master)
+steroids-before-upstream-vcodex-1.6.0.38 → 8325282b (old master, preserved)
+```
+
+When performing future upstream merges, always target `master` and use the workflow in §9.3.
+
 ### 9.2 Merge Conflict Resolution for README.md
 ```bash
 # During upstream merge, README.md will conflict heavily.

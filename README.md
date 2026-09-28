@@ -34,7 +34,21 @@
 ## Screenshots
 
 <p align="center">
-  <img src="./docs/images/screenshots.png" alt="CPR-vCodex Steroids overview" width="1000" />
+  <img src="https://github.com/user-attachments/assets/56fffc8e-4fae-40f4-8ed5-9b9755002980" alt="Steroids overview - full dashboard" width="1023" />
+  <br />
+  <sub>Steroids main interface: carousel, stats panels, and library view</sub>
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f93e6962-332f-4c62-9f23-3b51c947ef0b" alt="Steroids library mixed view" width="1684" />
+  <br />
+  <sub>Steroids Library V3: mixed view with series tiles and standalone books</sub>
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/80641a63-ed4a-48d9-af12-69ad6038d76e" alt="Steroids settings page" width="1023" />
+  <br />
+  <sub>Steroids Settings: Library, Sleep, Power Button, and Screensaver configuration</sub>
 </p>
 
 ## Steroids Build
