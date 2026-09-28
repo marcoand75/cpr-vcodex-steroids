@@ -97,33 +97,32 @@ bool BatchCoverGenerationActivity::generateCoverForBook(const std::string& path)
   }
 
   if (FsHelpers::hasEpubExtension(path)) {
-    // Loan the 48 KB framebuffer to buildscratch so InflateStream can use it
-    // instead of malloc'ing ~43 KB from a fragmented heap. This mirrors how
-    // EpubReaderActivity protects its chapter loading with FrameBufferLoan.
-    {
-      GfxRenderer::FrameBufferLoan loan(renderer);
-      // After lending the framebuffer, only the BookMetadataCache + CssParser
-      // heap allocations matter (~20-25 KB). Drop threshold to 24 KB.
-      if (ESP.getMaxAllocHeap() < 24 * 1024) {
-        LOG_DBG(TAG, "Cover SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
-        return false;
-      }
-      Epub epub(path, "/.crosspoint");
-      if (!epub.load(true, true)) {
-        LOG_DBG(TAG, "Cover SKIP EPUB load fail: %s", path.c_str());
-        return false;
-      }
-      if (millis() - startMs > kCoverTimeoutMs) {
-        LOG_DBG(TAG, "Cover TIMEOUT after load: %s", path.c_str());
-        return false;
-      }
-      const bool ok = epub_cover_thumb::generate(epub, path, coverWidth_, coverHeight_);
-      if (millis() - startMs > kCoverTimeoutMs) {
-        LOG_DBG(TAG, "Cover TIMEOUT during generation: %s", path.c_str());
-        return false;
-      }
-      return ok;
+    // Note: FrameBufferLoan is NOT used here. In EpubReaderActivity, the loan
+    // is only taken during section build phases (chapter compilation), NOT
+    // during epub.load(). Borrowing that pattern avoids a render-task race
+    // that corrupts the framebuffer and causes Guru Meditation panics in
+    // batch cover mode. Instead, we rely on yield() between books to
+    // periodically let FreeRTOS defragment the heap, and skip books when
+    // contiguous memory is insufficient.
+    if (ESP.getMaxAllocHeap() < 44 * 1024) {
+      LOG_DBG(TAG, "Cover SKIP low heap maxA=%u", ESP.getMaxAllocHeap());
+      return false;
     }
+    Epub epub(path, "/.crosspoint");
+    if (!epub.load(true, true)) {
+      LOG_DBG(TAG, "Cover SKIP EPUB load fail: %s", path.c_str());
+      return false;
+    }
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT after load: %s", path.c_str());
+      return false;
+    }
+    const bool ok = epub_cover_thumb::generate(epub, path, coverWidth_, coverHeight_);
+    if (millis() - startMs > kCoverTimeoutMs) {
+      LOG_DBG(TAG, "Cover TIMEOUT during generation: %s", path.c_str());
+      return false;
+    }
+    return ok;
   }
 
   if (FsHelpers::hasXtcExtension(path)) {
