@@ -7,8 +7,6 @@
 > The philosophy: **keep the vCodex reading experience intact, extend the device capabilities for power users.**
 
 <p align="center">
-  <img src="./docs/logo.png" alt="CPR-vCodex Steroids logo" width="350" />
-  <br />
   <sub>Steroids branding: "CPR-vCodex Steroids" on boot, sleep, and web UI</sub>
 </p>
 
@@ -37,12 +35,6 @@
   <img src="https://github.com/user-attachments/assets/56fffc8e-4fae-40f4-8ed5-9b9755002980" alt="Steroids overview - full dashboard" width="1023" />
   <br />
   <sub>Steroids main interface: carousel, stats panels, and library view</sub>
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/f93e6962-332f-4c62-9f23-3b51c947ef0b" alt="Steroids library mixed view" width="1684" />
-  <br />
-  <sub>Steroids Library V3: mixed view with series tiles and standalone books</sub>
 </p>
 
 <p align="center">
