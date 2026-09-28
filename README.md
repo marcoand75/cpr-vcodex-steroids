@@ -53,7 +53,7 @@
 .\bin\build-vcodex.ps1 -Environment gh_release
 ```
 
-**Artifacts:** `artifacts/1.6.0.38.dev<N>-<sha>-cpr-vcodex.bin`  
+**Artifacts:** `artifacts/1.6.0.38.dev<N>-<sha>-cpr-vcodex-steroids.bin`  
 **Flash:** [Auto Flash page](https://marcoand75.github.io/cpr-vcodex-steroids/flash.html) (X4 default, X4 Pro blocked)  
 **OTA:** `https://github.com/marcoand75/cpr-vcodex-steroids/releases`
 

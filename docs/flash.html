@@ -602,7 +602,7 @@
         <p class="status" id="status" data-site-i18n="readyStatus">Ready. Clicking Flash will open the browser serial device chooser.</p>
 
         <div class="actions">
-          <a class="button" id="download-link" href="https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex/1.6.0.37-cpr-vcodex.bin" data-site-i18n="downloadBin">Download .bin</a>
+          <a class="button" id="download-link" href="https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex-steroids/1.6.0.37-cpr-vcodex-steroids.bin" data-site-i18n="downloadBin">Download .bin</a>
           <a class="button" href="https://xteink.dve.al/" rel="noopener" data-site-i18n="communityFlasher">Community flasher</a>
         </div>
 
@@ -722,7 +722,7 @@ pio run -e gh_release -t upload</code></pre>
       }
     };
     const FALLBACK_RELEASE = {
-      version: "1.6.0.37-cpr-vcodex",
+      version: "1.6.0.37-cpr-vcodex-steroids",
       firmwareUrl: "firmware/firmware.bin",
       downloadUrl: "https://marcoand75.github.io/cpr-vcodex-steroids/firmware/firmware.bin",
       size: 6103328,
@@ -730,23 +730,23 @@ pio run -e gh_release -t upload</code></pre>
       source: {
         type: "github-release",
         repo: "marcoand75/cpr-vcodex-steroids",
-        tag: "1.6.0.37-cpr-vcodex",
-        asset: "1.6.0.37-cpr-vcodex.bin"
+        tag: "1.6.0.37-cpr-vcodex-steroids",
+        asset: "1.6.0.37-cpr-vcodex-steroids.bin"
       },
       devices: {
         x4: {
           chipFamily: "ESP32-C3",
           path: "firmware/firmware.bin",
-          asset: "1.6.0.37-cpr-vcodex.bin",
-          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex/1.6.0.37-cpr-vcodex.bin",
+          asset: "1.6.0.37-cpr-vcodex-steroids.bin",
+          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex-steroids/1.6.0.37-cpr-vcodex-steroids.bin",
           size: 6103328,
           sha256: "4ce7d7da54dcfcbaec8ad76a33705c5f19425d774763027137788d9cb9fc0c56"
         },
         x3: {
           chipFamily: "ESP32-C3",
           path: "firmware/firmware.bin",
-          asset: "1.6.0.37-cpr-vcodex.bin",
-          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex/1.6.0.37-cpr-vcodex.bin",
+          asset: "1.6.0.37-cpr-vcodex-steroids.bin",
+          downloadUrl: "https://github.com/marcoand75/cpr-vcodex-steroids/releases/download/1.6.0.37-cpr-vcodex-steroids/1.6.0.37-cpr-vcodex-steroids.bin",
           size: 6103328,
           sha256: "4ce7d7da54dcfcbaec8ad76a33705c5f19425d774763027137788d9cb9fc0c56"
         }

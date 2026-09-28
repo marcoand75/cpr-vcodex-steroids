@@ -118,7 +118,7 @@ def package_vcodex_bin(source, target, env):
     board_suffix = ""
     if pio_env.startswith("x4pro") and not safe_version.endswith("-x4pro"):
         board_suffix = "-x4pro"
-    artifact_stem = f"{safe_version}-cpr-vcodex{board_suffix}"
+    artifact_stem = f"{safe_version}-cpr-vcodex-steroids{board_suffix}"
 
     artifact_name = f"{artifact_stem}.bin"
     artifact_path = output_dir / artifact_name
