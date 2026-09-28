@@ -1,8 +1,57 @@
-> **CPR-vCodex is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)**, focused on improving reading consistency, long-term reading habits, and overall reader experience without sacrificing simplicity or performance.
+# CPR-vCodex Steroids
+
+> **CPR-vCodex Steroids** is a personal fork of **CPR-vCodex** that layers additional UI features, experimental subsystems, and distinct branding on top of the stable vCodex baseline. It targets the Xteink X4 (ESP32-C3) and maintains full compatibility with the vCodex reading analytics, highlights, dictionaries, and flashcards while adding a richer launcher, plugin system, and streaming statistics architecture.
 >
-> Instead of only tracking progress, this fork focuses on the full reading journey — consistency, habits, milestones, statistics, customization, and personal reading identity.
+> Unlike the conservative vCodex approach of only carrying forward stable upstream changes, Steroids intentionally integrates larger architectural rewrites (streaming stats loader, Library V3 mixed view, declarative fast restart) and entirely new subsystems (Lua plugin VM, offline Wikipedia, screensaver) that are feature-complete but may carry higher merge risk. The firmware remains fast and stable for daily reading, with RAM/Flash budgets respected.
 >
-> The project adds optional layers such as reading streaks, detailed analytics, achievements, heatmaps, Sync Day tracking, session history, and deeper personalization, while still allowing the interface to remain clean and distraction-free if preferred.
+> The philosophy: **keep the vCodex reading experience intact, extend the device capabilities for power users.**
+
+<p align="center">
+  <img src="./docs/logo.png" alt="CPR-vCodex Steroids logo" width="350" />
+  <br />
+  <sub>Steroids branding: "CPR-vCodex Steroids" on boot, sleep, and web UI</sub>
+</p>
+
+## Steroids Feature Additions
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Steroids Branding** | Custom 350×96 logo on boot/sleep; web UI (HomePage, Flash, Settings, Stats Editor); OTA points to `marcoand75/cpr-vcodex-steroids` | ✅ Complete |
+| **Library V3** | Mixed view (series tiles + standalone books); user collections (manual CRUD); auto series from EPUB `calibre:series` + folder fallback; case-insensitive natural sort; page frame cache | ✅ Complete |
+| **Reading Statistics (Streaming)** | Incremental JSON loader (1 KB buffer); binary journal (`reading_sessions.jrn`, 32 B/record) for detached sessions; `summary.json` fast path (~6 KB) for Home/UI; import/export streaming (~20 KB peak RAM); lazy full-store load | ✅ Complete |
+| **Fast Restart (Standardized)** | Declarative `exitRestartPlan()` per activity; `ActivityManager::exitWithFastRestart()`; RTC silent boot to Home; Reader/Library/Settings/Apps all seamless | ✅ Complete |
+| **Home Theme: Lyra Marcoand75** | Carousel with data panels (progress, time, sessions, reading days); frame cache; cover generation integration; summary.json fast path | ✅ Complete |
+| **Lua Plugin System** | Lua 5.4 VM; plugin browser (`/.crosspoint/plugins/`); sandboxed `cpr` API (display, input, storage, books, stats); separate activity stack | ✅ Complete |
+| **Wikipedia Offline** | ZIM/HTML article cache; full-text search; article rendering with images | ✅ Complete |
+| **Sleep Screen & Power Button** | Modes: Off, Clock, Cover, Clock+Cover, Custom; cover filters (grayscale/inverted/sepia); short-press cycles mode; long-press sleep/power off | ✅ Complete |
+| **Screensaver** | Idle-time animated: clock, bouncing logo, slideshow; separate from sleep screen; any input exits | ✅ Complete |
+| **Quick Cards** | Card viewer for `/cards/` on SD: image display (JPEG/PNG→BMP), QR code rendering (auto version), Code-128 barcode; structured parsing (WiFi, vCard, MeCard, Geo, phone, SMS, OTP/2FA, iCal event, URL) | ✅ Complete |
+| **Cover Generation Fixes** | Corrupt BMP removal + retry; partial BMP protection during gen; cover refresh after delete; frame cache never stores placeholder | ✅ Complete |
+| **Settings Extensions** | Library/Sleep/Power/Screensaver categories; web API batched JSON (<1s vs 50s); ISO code language persistence | ✅ Complete |
+| **i18n (24 Languages)** | `STR_STEROIDS`, `STR_CPR_VCODEX_STEROIDS` added to all 24 language files | ✅ Complete |
+| **Shortcuts Registry (CTAD)** | 15 shortcuts (Library, Settings, Apps, Favorites, Flashcards, Dictionary, File Transfer, Sleep, Quick Cards, Wikipedia, Plugins, Screensaver, Reading Stats, Bookmarks, Recent Books); null guard | ✅ Complete |
+
+## Screenshots
+
+<p align="center">
+  <img src="./docs/images/screenshots.png" alt="CPR-vCodex Steroids overview" width="1000" />
+</p>
+
+## Steroids Build
+
+```powershell
+# Build default (X4/X3 ESP32-C3)
+.\bin\build-vcodex.ps1
+
+# Build release (gh_release)
+.\bin\build-vcodex.ps1 -Environment gh_release
+```
+
+**Artifacts:** `artifacts/1.6.0.38.dev<N>-<sha>-cpr-vcodex.bin`  
+**Flash:** [Auto Flash page](https://marcoand75.github.io/cpr-vcodex-steroids/flash.html) (X4 default, X4 Pro blocked)  
+**OTA:** `https://github.com/marcoand75/cpr-vcodex-steroids/releases`
+
+---
 
 # CPR-vCodex
 
@@ -689,6 +738,27 @@ The incremental `.bNNNN` suffix exists specifically to help distinguish newer fl
 - [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build screens on the FreeInkUI activity bases (UiListActivity and friends) so they work with both buttons and the X4 Pro touchscreen
 - [Web server usage](./docs/webserver.md) and [endpoints](./docs/webserver-endpoints.md)
 - [SD card fonts](./docs/sd-card-fonts.md) and [dictionaries](./docs/dictionary.md)
+
+### Steroids documentation
+
+| Document | Purpose |
+|----------|---------|
+| [STEROIDS-ADDICTIONS.md](./STEROIDS-ADDICTIONS.md) | Main index of all Steroids features |
+| [STEROIDS-ADDICTIONS-LIBRARY.md](./STEROIDS-ADDICTIONS-LIBRARY.md) | Library V3 complete spec |
+| [STEROIDS-ADDICTIONS-READING-STATS.md](./STEROIDS-ADDICTIONS-READING-STATS.md) | Streaming stats + journal + import |
+| [STEROIDS-ADDICTIONS-FAST-RESTART.md](./STEROIDS-ADDICTIONS-FAST-RESTART.md) | Declarative fast restart |
+| [STEROIDS-ADDICTIONS-HOME-THEMES.md](./STEROIDS-ADDICTIONS-HOME-THEMES.md) | Lyra Marcoand75 theme |
+| [STEROIDS-ADDICTIONS-BRANDING.md](./STEROIDS-ADDICTIONS-BRANDING.md) | Logo, web UI, OTA URLs |
+| [STEROIDS-ADDICTIONS-LUA.md](./STEROIDS-ADDICTIONS-LUA.md) | Lua plugin system |
+| [STEROIDS-ADDICTIONS-WIKIPEDIA.md](./STEROIDS-ADDICTIONS-WIKIPEDIA.md) | Wikipedia offline |
+| [STEROIDS-ADDICTIONS-SLEEP.md](./STEROIDS-ADDICTIONS-SLEEP.md) | Sleep screen + power button |
+| [STEROIDS-ADDICTIONS-SCREENSAVER.md](./STEROIDS-ADDICTIONS-SCREENSAVER.md) | Screensaver |
+| [STEROIDS-ADDICTIONS-QUICK-CARDS.md](./STEROIDS-ADDICTIONS-QUICK-CARDS.md) | Flashcard SM-2 |
+| [STEROIDS-ADDICTIONS-COVER-GEN.md](./STEROIDS-ADDICTIONS-COVER-GEN.md) | Cover generation fixes |
+| [STEROIDS-ADDICTIONS-SETTINGS.md](./STEROIDS-ADDICTIONS-SETTINGS.md) | Settings + web API |
+| [STEROIDS-ADDICTIONS-I18N.md](./STEROIDS-ADDICTIONS-I18N.md) | 24 languages |
+| [STEROIDS-ADDICTIONS-SHORTCUTS.md](./STEROIDS-ADDICTIONS-SHORTCUTS.md) | CTAD shortcut registry |
+| [STEROIDS-ALIGN-TO-UPSTREAM.md](./STEROIDS-ALIGN-TO-UPSTREAM.md) | Upstream merge strategy |
 
 ## Build from source
 
