@@ -185,6 +185,9 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
                               READING_STATS.getLastSessionSnapshot().path == bookPath;
 
   if (SETTINGS.showStatsAfterReading && countedSession && !bookPath.empty()) {
+    // Persist the just-ended session into the summary so the stats page has
+    // fresh data even if the full store couldn't be loaded (heap/gate guards).
+    READING_STATS.tryMergePendingSession();
     activityManager.replaceActivity(
         std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));
   } else {

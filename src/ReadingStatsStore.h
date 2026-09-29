@@ -247,6 +247,12 @@ class ReadingStatsStore {
   static constexpr size_t JOURNAL_RECORD_BYTES = 32;
   bool hasPendingJournalSessions() const;
   void mergeSessionJournal();
+  // Lightweight attempt to merge pending journal sessions and update the
+  // summary JSON without requiring the full store to be materialized in RAM.
+  // Returns true if the journal was successfully merged (store was loaded),
+  // false if deferred due to low heap or boot gate. Safe to call from the
+  // reader exit path so the stats detail page always has fresh data.
+  bool tryMergePendingSession();
   // const-safe lazy load for read getters (used when boot deferred the load).
   void ensureLoadedForRead() const {
     if (!loaded_) {

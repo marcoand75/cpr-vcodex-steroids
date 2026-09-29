@@ -111,6 +111,35 @@ const ReadingBookStats* findBook(const std::string& bookPath) {
   return nullptr;
 }
 
+// Synthesize a minimal ReadingBookStats from the session snapshot + summary JSON.
+// Used when the full store isn't loaded (heap/gate deferred) but we still need
+// to display the post-reading summary page with whatever data is available.
+ReadingBookStats synthesizeBookFromSnapshot(const std::string& bookPath,
+                                            const ReadingSessionSnapshot& snap) {
+  ReadingBookStats book{};
+  book.path = bookPath;
+  book.title = bookPath.substr(bookPath.find_last_of("/") + 1);
+
+  // Try to get historical data from summary JSON via public API.
+  SummaryJSON::BookBadge badge{};
+  if (READING_STATS.getBookHomeStats(snap.bookId, bookPath, badge)) {
+    book.completed = badge.completed;
+    book.lastProgressPercent = badge.progressPercent;
+    book.totalReadingMs = badge.totalReadingMs;
+    book.sessions = badge.sessions;
+  }
+
+  // Override with session-specific data from the snapshot (always fresh).
+  if (snap.valid) {
+    book.lastSessionMs = snap.sessionMs;
+    book.chapterProgressPercent = snap.endProgressPercent;
+    book.lastReadAt = TimeUtils::getAuthoritativeTimestamp();
+    if (snap.completedThisSession) book.completed = true;
+  }
+
+  return book;
+}
+
 std::string resolveStoredCoverPath(const std::string& coverBmpPath) {
   if (coverBmpPath.empty()) {
     return "";
@@ -422,6 +451,16 @@ void ReadingStatsDetailActivity::onEnter() {
   if (const auto* book = findBook(bookPath)) {
     resolvedCoverBmpPath = findFastCoverPath(*book);
     coverLoadPending = resolvedCoverBmpPath.empty();
+    syntheticBookValid = false;
+  } else if (context.showSessionSummary && READING_STATS.getLastSessionSnapshot().valid) {
+    // Full store not loaded (heap/gate deferred) — synthesize from snapshot
+    // + summary JSON so the page still renders with available data.
+    syntheticBook = synthesizeBookFromSnapshot(bookPath, READING_STATS.getLastSessionSnapshot());
+    syntheticBookValid = true;
+    resolvedCoverBmpPath = findFastCoverPath(syntheticBook);
+    coverLoadPending = resolvedCoverBmpPath.empty();
+  } else {
+    syntheticBookValid = false;
   }
 
   hitOpenRect = {};
@@ -633,8 +672,10 @@ void ReadingStatsDetailActivity::loop() {
 
   if (coverLoadPending) {
     coverLoadPending = false;
-    if (const auto* book = findBook(bookPath)) {
-      const std::string resolvedCoverPath = ensureCoverPath(*book);
+    const auto* activeBook = findBook(bookPath);
+    if (!activeBook && syntheticBookValid) activeBook = &syntheticBook;
+    if (activeBook) {
+      const std::string resolvedCoverPath = ensureCoverPath(*activeBook);
       if (!resolvedCoverPath.empty() && resolvedCoverPath != resolvedCoverBmpPath) {
         resolvedCoverBmpPath = resolvedCoverPath;
         invalidateBaseScreenBuffer();
@@ -658,6 +699,7 @@ void ReadingStatsDetailActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
   const auto* book = findBook(bookPath);
+  if (!book && syntheticBookValid) book = &syntheticBook;
   const auto& lastSessionSnapshot = READING_STATS.getLastSessionSnapshot();
   const bool showCompletionBanner = context.showSessionSummary && lastSessionSnapshot.valid &&
                                     lastSessionSnapshot.path == bookPath && lastSessionSnapshot.completedThisSession;

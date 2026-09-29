@@ -6,6 +6,7 @@
 #include <string>
 
 #include "../Activity.h"
+#include "ReadingStatsStore.h"
 #include "components/UiAppHost.h"
 #include "util/ButtonNavigator.h"
 
@@ -33,6 +34,10 @@ class ReadingStatsDetailActivity final : public Activity, private UiAppHost {
   int baseScreenScrollOffset = -1;
   int scrollOffset = 0;
   int maxScrollOffset = 0;
+  // Synthesized book data when the full store isn't loaded (heap/gate deferred).
+  // Populated from session snapshot + summary JSON in onEnter().
+  bool syntheticBookValid = false;
+  ReadingBookStats syntheticBook{};
   // Touch targets measured by render() (they follow the scroll offset) and
   // registered by buildDetailScreen() on the same pass. Empty when no book.
   freeink::ui::Rect hitOpenRect{};

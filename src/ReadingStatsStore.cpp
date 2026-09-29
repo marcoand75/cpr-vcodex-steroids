@@ -877,6 +877,34 @@ bool ReadingStatsStore::hasPendingJournalSessions() const {
   return Storage.exists(READING_STATS_JOURNAL_FILE);
 }
 
+bool ReadingStatsStore::tryMergePendingSession() {
+  // Nothing to do if no journal exists and store is already current.
+  if (!hasPendingJournalSessions() && loaded_) return true;
+
+  // Attempt to load + merge. If the store is already loaded, just merge.
+  if (loaded_) {
+    mergeSessionJournal();
+    saveSummaryJSON();
+    return true;
+  }
+
+  // Store not yet loaded: try a full load+merge. This respects the boot gate
+  // and heap guards — callers should handle the false return gracefully.
+  if (ensureLoaded()) {
+    mergeSessionJournal();
+    saveSummaryJSON();
+    return true;
+  }
+
+  // Even without a full store load, reload the summary JSON so the detail
+  // page can at least show historical data (total time, sessions, progress).
+  // The latest session metrics (lastSessionMs, endProgress) come from the
+  // snapshot and will be used as fallback in the detail activity.
+  summaryJsonValid_ = false;
+  loadSummaryJSON(summaryJson);
+  return false;
+}
+
 void ReadingStatsStore::mergeSessionJournal() {
   if (!Storage.exists(READING_STATS_JOURNAL_FILE)) {
     return;
