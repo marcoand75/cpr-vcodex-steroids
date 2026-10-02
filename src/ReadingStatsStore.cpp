@@ -1939,6 +1939,9 @@ void ReadingStatsStore::endSession() {
     const uint32_t sessionTimestamp = TimeUtils::getAuthoritativeTimestamp();
     const uint32_t dayOrdinal =
         isClockValid(sessionTimestamp) ? TimeUtils::getLocalDayOrdinal(sessionTimestamp) : 0;
+    LOG_DBG("RST", "endSession detached: accumulatedMs=%llu counted=%d dayOrdinal=%u bookId=%s path=%s",
+            (unsigned long long)activeSession.accumulatedMs, countedSession, dayOrdinal,
+            activeSession.detachedBookId.c_str(), activeSession.detachedPath.c_str());
     if (countedSession && dayOrdinal != 0) {
       appendSessionToJournal(dayOrdinal, sessionMs, activeSession.detachedBookId, activeSession.detachedProgress,
                              activeSession.detachedCompleted);
