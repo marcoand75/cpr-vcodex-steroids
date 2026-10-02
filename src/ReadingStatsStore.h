@@ -253,6 +253,11 @@ class ReadingStatsStore {
   // false if deferred due to low heap or boot gate. Safe to call from the
   // reader exit path so the stats detail page always has fresh data.
   bool tryMergePendingSession();
+  // Lightweight journal-to-summary update: reads journal records and updates
+  // summary.json directly without materializing the full 50 KB store. This is
+  // called from endSession() (detached path) and preloadHomeSummary() to keep
+  // summary.json current even when the full store was never loaded.
+  void updateSummaryFromJournal();
   // const-safe lazy load for read getters (used when boot deferred the load).
   void ensureLoadedForRead() const {
     if (!loaded_) {

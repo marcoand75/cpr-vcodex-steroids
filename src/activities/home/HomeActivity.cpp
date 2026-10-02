@@ -990,9 +990,12 @@ void HomeActivity::onEnter() {
   carouselCoverLoadAttemptPath.clear();
 
   // Ensure summary.json is up-to-date after potential external modifications
-  // (e.g., stats import from Settings). The summary carries per-book progress
+  // (e.g., stats import from Settings, or a reading session that ended without
+  // showing the stats detail page). The summary carries per-book progress
   // used by carousel frame hashes; stale summary = stale cached frames.
-  if (!READING_STATS.isSummaryValid()) {
+  // Always check for pending journal — even if summaryJsonValid_ is true,
+  // a detached session may have written to the journal without updating summary.
+  if (!READING_STATS.isSummaryValid() || READING_STATS.hasPendingJournalSessions()) {
     READING_STATS.preloadHomeSummary();
     LOG_DBG("HOME", "Reloaded summary.json after external update");
   }

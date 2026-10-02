@@ -905,6 +905,123 @@ bool ReadingStatsStore::tryMergePendingSession() {
   return false;
 }
 
+void ReadingStatsStore::updateSummaryFromJournal() {
+  if (!hasPendingJournalSessions()) return;
+
+  // Load current summary.
+  SummaryJSON summary{};
+  if (!loadSummaryJSON(summary)) return;
+
+  // Read journal and apply each record to the summary.
+  HalFile file;
+  if (!Storage.openFileForRead("RST", READING_STATS_JOURNAL_FILE, file)) return;
+
+  const uint32_t todayOrdinal = TimeUtils::getLocalDayOrdinal(TimeUtils::getAuthoritativeTimestamp());
+  const uint32_t sevenDaysAgo = todayOrdinal > 7 ? todayOrdinal - 7 : 0;
+  const uint32_t thirtyDaysAgo = todayOrdinal > 30 ? todayOrdinal - 30 : 0;
+  bool changed = false;
+
+  uint8_t record[JOURNAL_RECORD_BYTES];
+  for (;;) {
+    const int got = file.read(record, sizeof(record));
+    if (got != static_cast<int>(sizeof(record))) break;
+
+    const uint32_t dayOrdinal =
+        static_cast<uint32_t>(record[0]) | (static_cast<uint32_t>(record[1]) << 8) |
+        (static_cast<uint32_t>(record[2]) << 16) | (static_cast<uint32_t>(record[3]) << 24);
+    const uint32_t sessionMs =
+        static_cast<uint32_t>(record[4]) | (static_cast<uint32_t>(record[5]) << 8) |
+        (static_cast<uint32_t>(record[6]) << 16) | (static_cast<uint32_t>(record[7]) << 24);
+    const uint8_t progressPercent = record[8];
+    const bool completed = record[9] != 0;
+    char idBuf[17] = {0};
+    std::memcpy(idBuf, record + 10, 16);
+    const std::string bookId(idBuf);
+
+    if (dayOrdinal == 0 || sessionMs < MIN_SESSION_READING_MS || bookId.empty()) continue;
+
+    // Find matching badge.
+    SummaryJSON::BookBadge* badge = nullptr;
+    for (auto& b : summary.bookBadges) {
+      if (b.bookId == bookId) { badge = &b; break; }
+    }
+    if (!badge) {
+      // Create stub — will be enriched on next full load via normalizeBooks().
+      SummaryJSON::BookBadge stub{};
+      stub.bookId = bookId;
+      summary.bookBadges.push_back(std::move(stub));
+      badge = &summary.bookBadges.back();
+    }
+
+    badge->totalReadingMs += sessionMs;
+    badge->sessions++;
+    badge->progressPercent = progressPercent;
+    if (completed) badge->completed = true;
+    changed = true;
+
+    // Update global totals.
+    summary.global.totalReadingMs += sessionMs;
+    if (dayOrdinal == todayOrdinal) {
+      summary.global.todayReadingMs += sessionMs;
+    }
+    if (dayOrdinal >= sevenDaysAgo) {
+      summary.global.recent7ReadingMs += sessionMs;
+    }
+    if (dayOrdinal >= thirtyDaysAgo) {
+      summary.global.recent30ReadingMs += sessionMs;
+    }
+    if (completed && !badge->completed) {
+      // Will be corrected on next full load; provisional count here.
+    }
+  }
+  file.close();
+
+  if (!changed) return;
+
+  // Compute derived values.
+  summary.global.referenceDayOrdinal = todayOrdinal;
+  summary.global.goalReadingMs = getDailyReadingGoalMs();
+  summary.global.dailyAverageMs = summary.global.recent30ReadingMs > 0
+                                      ? summary.global.recent30ReadingMs / 30
+                                      : 0;
+
+  // Serialize and write.
+  JsonDocument doc;
+  JsonObject summaryObj = doc["summary"].to<JsonObject>();
+  summaryObj["totalReadingMs"] = summary.global.totalReadingMs;
+  summaryObj["todayReadingMs"] = summary.global.todayReadingMs;
+  summaryObj["recent7ReadingMs"] = summary.global.recent7ReadingMs;
+  summaryObj["recent30ReadingMs"] = summary.global.recent30ReadingMs;
+  summaryObj["currentStreakDays"] = summary.global.currentStreakDays;
+  summaryObj["maxStreakDays"] = summary.global.maxStreakDays;
+  summaryObj["booksFinishedCount"] = summary.global.booksFinishedCount;
+  summaryObj["goalReadingMs"] = summary.global.goalReadingMs;
+  summaryObj["dailyAverageMs"] = summary.global.dailyAverageMs;
+  summaryObj["referenceDayOrdinal"] = summary.global.referenceDayOrdinal;
+
+  JsonArray badges = doc["bookBadges"].to<JsonArray>();
+  for (const auto& b : summary.bookBadges) {
+    JsonObject obj = badges.add<JsonObject>();
+    obj["bookId"] = b.bookId;
+    obj["path"] = b.path;
+    obj["completed"] = b.completed;
+    obj["progressPercent"] = b.progressPercent;
+    obj["totalReadingMs"] = b.totalReadingMs;
+    obj["sessions"] = b.sessions;
+    obj["readingDaysCount"] = b.readingDaysCount;
+  }
+
+  String serialized;
+  serializeJson(doc, serialized);
+  if (Storage.writeFile(READING_STATS_SUMMARY_JSON, serialized)) {
+    summaryJson = std::move(summary);
+    summaryJsonValid_ = true;
+    // Remove journal — its data is now merged into summary.
+    Storage.remove(READING_STATS_JOURNAL_FILE);
+    LOG_DBG("RST", "Updated summary from journal: %u bytes", static_cast<unsigned>(serialized.length()));
+  }
+}
+
 void ReadingStatsStore::mergeSessionJournal() {
   if (!Storage.exists(READING_STATS_JOURNAL_FILE)) {
     return;
@@ -1825,8 +1942,10 @@ void ReadingStatsStore::endSession() {
     if (countedSession && dayOrdinal != 0) {
       appendSessionToJournal(dayOrdinal, sessionMs, activeSession.detachedBookId, activeSession.detachedProgress,
                              activeSession.detachedCompleted);
-      // markDirty()/saveToFile() must NOT run here: the store is not
-      // materialized. The record merges at the next full load.
+      // Update summary.json immediately so Home panels show fresh data
+      // without requiring a full store load. This is safe because
+      // updateSummaryFromJournal() only reads the journal + summary file.
+      updateSummaryFromJournal();
     }
 
     lastSessionSnapshot.valid = true;
@@ -2484,12 +2603,25 @@ const SummaryJSON& ReadingStatsStore::getSummaryJSON() const {
 }
 
 void ReadingStatsStore::preloadHomeSummary() {
+  // If there are pending journal sessions, invalidate the cached summary so
+  // we re-read and merge them before Home renders. Without this, a reading
+  // session that ends without showing the stats detail page leaves summary.json
+  // stale on disk and the in-memory cache never refreshes.
+  if (summaryJsonValid_ && hasPendingJournalSessions()) {
+    summaryJsonValid_ = false;
+    LOG_DBG("RST", "preloadHomeSummary: invalidating due to pending journal");
+  }
   if (summaryJsonValid_) return;
   if (loadSummaryJSON(summaryJson)) {
     summaryJsonValid_ = true;
+    // After loading, check if we need to merge any pending journal records.
+    if (hasPendingJournalSessions()) {
+      updateSummaryFromJournal();
+    }
     return;
   }
   if (Storage.exists(READING_STATS_FILE_JSON) && ensureLoaded()) {
+    mergeSessionJournal();
     saveSummaryJSON();
     releaseMemoryForNetwork();
   }
