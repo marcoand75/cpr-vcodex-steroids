@@ -47,6 +47,11 @@ void drawMetricCard(GfxRenderer& renderer, const Rect& rect, const char* label, 
 void ReadingStatsActivity::onEnter() {
   UiListActivity::onEnter();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+  // Ensure the full store is materialized so getBooks()/getReadingDays()
+  // return actual data rather than empty vectors. If the boot gate is still
+  // closed the call is a cheap no-op; the activity will re-render on the next
+  // loop when the gate opens.
+  READING_STATS.ensureLoaded();
   rebuildRows();
   nav.selected = READING_STATS.getBooks().empty() ? 0 : 1;
   waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);

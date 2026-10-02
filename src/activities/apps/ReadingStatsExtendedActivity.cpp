@@ -282,6 +282,10 @@ void drawReadingChart(GfxRenderer& renderer, const Rect& rect, const std::vector
 
 void ReadingStatsExtendedActivity::onEnter() {
   Activity::onEnter();
+  // Materialize the full store so getReadingDays() / getBooks() return data.
+  // Safe: ensureLoaded() respects the boot gate and returns false cheaply if
+  // the gate is still closed; the activity will refresh once the gate opens.
+  READING_STATS.ensureLoaded();
   scrollOffset = 0;
   requestUpdate();
 }
