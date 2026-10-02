@@ -1297,8 +1297,11 @@ void HomeActivity::pruneCarouselFrameCache() {
   // Frame hashes fold in the per-book reading progress. With the stats store
   // still unloaded (boot-order gate), every progress reads as 0 and the prune
   // would delete frames cached with real progress, forcing a pointless
-  // re-render of every cover on this boot. Skip until the store is materialized.
-  if (!READING_STATS.isLoaded()) {
+  // re-render of every cover on this boot. Skip until the store is materialized
+  // OR until summary.json has been freshly updated (updateSummaryFromJournal
+  // writes a valid summary even when the store stays unloaded).
+  const bool summaryFresh = READING_STATS.isSummaryValid();
+  if (!READING_STATS.isLoaded() && !summaryFresh) {
     return;
   }
 
