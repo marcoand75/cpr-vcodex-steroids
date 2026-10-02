@@ -1936,9 +1936,13 @@ void ReadingStatsStore::endSession() {
     const uint32_t sessionMs = (activeSession.accumulatedMs > static_cast<uint64_t>(UINT32_MAX))
                                    ? UINT32_MAX
                                    : static_cast<uint32_t>(activeSession.accumulatedMs);
-    const uint32_t sessionTimestamp = TimeUtils::getAuthoritativeTimestamp();
-    const uint32_t dayOrdinal =
-        isClockValid(sessionTimestamp) ? TimeUtils::getLocalDayOrdinal(sessionTimestamp) : 0;
+    const uint32_t sessionTimestamp = TimeUtils::getBestEffortFileTimestamp();
+    // getBestEffortFileTimestamp falls back to lastKnownValidTimestamp and
+    // getCurrentValidTimestamp, so it returns a non-zero value even without
+    // RTC/NTP. Still guard against the edge case where all sources are invalid.
+    const uint32_t dayOrdinal = TimeUtils::isClockValid(sessionTimestamp)
+                                    ? TimeUtils::getLocalDayOrdinal(sessionTimestamp)
+                                    : 0;
     LOG_DBG("RST", "endSession detached: accumulatedMs=%llu counted=%d dayOrdinal=%u bookId=%s path=%s",
             (unsigned long long)activeSession.accumulatedMs, countedSession, dayOrdinal,
             activeSession.detachedBookId.c_str(), activeSession.detachedPath.c_str());
