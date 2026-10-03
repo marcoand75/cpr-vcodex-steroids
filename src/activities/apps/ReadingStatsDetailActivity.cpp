@@ -457,6 +457,10 @@ void ReadingStatsDetailActivity::onEnter() {
     // + summary JSON so the page still renders with available data.
     syntheticBook = synthesizeBookFromSnapshot(bookPath, READING_STATS.getLastSessionSnapshot());
     syntheticBookValid = true;
+    LOG_DBG("RST", "Detail synthetic book: path=%s title=%s lastSessionMs=%u progress=%u completed=%d",
+            bookPath.c_str(), syntheticBook.title.c_str(),
+            syntheticBook.lastSessionMs, syntheticBook.chapterProgressPercent,
+            syntheticBook.completed);
     resolvedCoverBmpPath = findFastCoverPath(syntheticBook);
     coverLoadPending = resolvedCoverBmpPath.empty();
   } else {

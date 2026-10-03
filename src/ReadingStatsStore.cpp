@@ -1949,10 +1949,16 @@ void ReadingStatsStore::endSession() {
     if (countedSession && dayOrdinal != 0) {
       appendSessionToJournal(dayOrdinal, sessionMs, activeSession.detachedBookId, activeSession.detachedProgress,
                              activeSession.detachedCompleted);
-      // Update summary.json immediately so Home panels show fresh data
-      // without requiring a full store load. This is safe because
-      // updateSummaryFromJournal() only reads the journal + summary file.
-      updateSummaryFromJournal();
+      // Try to update summary.json immediately so Home panels show fresh data.
+      // Skip if heap is too fragmented (JSON serialization needs ~20 KB).
+      // The journal record is safely persisted regardless; the merge will
+      // happen automatically in preloadHomeSummary() on the next boot.
+      const uint32_t maxAlloc = ESP.getMaxAllocHeap();
+      if (maxAlloc >= 24 * 1024) {
+        updateSummaryFromJournal();
+      } else {
+        LOG_DBG("RST", "Skipping summary update: maxA=%u too low, deferred to boot", maxAlloc);
+      }
     }
 
     lastSessionSnapshot.valid = true;
