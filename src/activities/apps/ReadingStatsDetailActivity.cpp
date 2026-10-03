@@ -121,8 +121,11 @@ ReadingBookStats synthesizeBookFromSnapshot(const std::string& bookPath,
   book.title = bookPath.substr(bookPath.find_last_of("/") + 1);
 
   // Try to get historical data from summary JSON via public API.
+  // NOTE: the journal stores only 16 bytes of bookId, so we must truncate
+  // the full snapshot bookId to match the summary badge key.
+  const std::string shortBookId = snap.bookId.size() > 16 ? snap.bookId.substr(0, 16) : snap.bookId;
   SummaryJSON::BookBadge badge{};
-  if (READING_STATS.getBookHomeStats(snap.bookId, bookPath, badge)) {
+  if (READING_STATS.getBookHomeStats(shortBookId, bookPath, badge)) {
     book.completed = badge.completed;
     book.lastProgressPercent = badge.progressPercent;
     book.totalReadingMs = badge.totalReadingMs;
