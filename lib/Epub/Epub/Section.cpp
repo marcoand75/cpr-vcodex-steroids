@@ -352,6 +352,11 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     }
   }
 
+  // Pre-extract images from the HTML cache so that lazy extraction during
+  // render never needs to allocate a large contiguous ZIP output buffer.
+  // Runs after font release (line 264) when heap is still relatively fresh.
+  epub->prewarmImagesForSpine(spineIndex);
+
   if (!Storage.openFileForWrite("SCT", binTmpPath(), file)) {
     if (!reusedHtml) Storage.remove(tmpHtmlPath.c_str());
     return false;

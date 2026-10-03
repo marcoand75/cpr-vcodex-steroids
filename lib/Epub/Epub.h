@@ -80,4 +80,9 @@ class Epub {
   float calculateProgress(int currentSpineIndex, float currentSpineRead) const;
   CssParser* getCssParser() const { return cssParser.get(); }
   int resolveHrefToSpineIndex(const std::string& href) const;
+  // Pre-extract all images referenced in the HTML of the given spine into the
+  // epub cache directory. Called during section startBuild() when heap is still
+  // fresh (fonts released) so that lazy extraction during render never fails
+  // due to fragmentation. Returns true if at least one image was pre-extracted.
+  bool prewarmImagesForSpine(int spineIndex) const;
 };

@@ -1081,3 +1081,125 @@ int Epub::resolveHrefToSpineIndex(const std::string& href) const {
   }
   return -1;
 }
+
+// Scan cached HTML for <img src="..."> tags and pre-extract each image to the
+// epub cache directory. This runs during section startBuild() when heap is
+// relatively fresh (fonts already released), avoiding the fragmentation that
+// causes lazy extraction to fail during page render.
+bool Epub::prewarmImagesForSpine(int spineIndex) const {
+  // Read the cached HTML file for this spine.
+  const std::string htmlPath = getCachePath() + "/html/" + std::to_string(spineIndex) + ".html";
+  HalFile htmlFile;
+  if (!Storage.openFileForRead("EBP", htmlPath, htmlFile)) {
+    return false;
+  }
+  const size_t htmlSize = htmlFile.size();
+  if (htmlSize == 0) {
+    htmlFile.close();
+    return false;
+  }
+
+  // Read full HTML into a buffer.
+  std::vector<uint8_t> htmlBuf(htmlSize);
+  if (htmlFile.read(htmlBuf.data(), htmlSize) != static_cast<int>(htmlSize)) {
+    htmlFile.close();
+    return false;
+  }
+  htmlFile.close();
+
+  // Find <img src="..."> and <img src='...'  tags.
+  const char* html = reinterpret_cast<const char*>(htmlBuf.data());
+  const char* end = html + htmlSize;
+
+  // Image output path prefix (must match Section::startBuild line 380).
+  const std::string imgPrefix = getCachePath() + "/img_" + std::to_string(spineIndex) + "_";
+  int imgCount = 0;
+  const size_t minHeapForExtract = 32 * 1024;  // ZIP inflate buffer needs ~32 KB contiguous
+
+  for (const char* p = html;;) {
+    // Find next <img tag (case-insensitive).
+    const char* tagStart = nullptr;
+    for (; p < end - 3; ++p) {
+      if (p[0] == '<' && (p[1] == 'i' || p[1] == 'I')) {
+        if ((p[2] == 'm' || p[2] == 'M') && (p[3] == 'g' || p[3] == 'G')) {
+          tagStart = p;
+          break;
+        }
+      }
+    }
+    if (!tagStart) break;
+    p = tagStart + 4;
+
+    // Find closing >.
+    const char* tagEnd = nullptr;
+    for (; p < end; ++p) {
+      if (*p == '>') { tagEnd = p; break; }
+    }
+    if (!tagEnd) break;
+
+    // Extract src attribute value from the tag.
+    const std::string tagStr(tagStart, tagEnd - tagStart + 1);
+    std::string srcPath;
+    // Try double-quoted src first.
+    size_t pos = tagStr.find("src=");
+    if (pos != std::string::npos) {
+      const char* afterSrc = tagStr.c_str() + pos + 4;
+      if (*afterSrc == '"') {
+        ++afterSrc;
+        const char* qEnd = strchr(afterSrc, '"');
+        if (qEnd) srcPath.assign(afterSrc, qEnd - afterSrc);
+      } else if (*afterSrc == '\'') {
+        ++afterSrc;
+        const char* qEnd = strchr(afterSrc, '\'');
+        if (qEnd) srcPath.assign(afterSrc, qEnd - afterSrc);
+      }
+    }
+    if (srcPath.empty()) { p = tagEnd + 1; continue; }
+
+    // Resolve against contentBase: the parser resolves relative hrefs using the
+    // spine item's directory. Reconstruct the same base here.
+    const auto spineItem = getSpineItem(spineIndex);
+    const size_t lastSlash = spineItem.href.find_last_of('/');
+    const std::string contentBase = (lastSlash != std::string::npos)
+                                        ? spineItem.href.substr(0, lastSlash + 1)
+                                        : "";
+    std::string resolvedPath = contentBase + srcPath;
+    // Normalise: remove ./ and handle ../
+    // (simple approach: pass through FsHelpers::normalisePath)
+    resolvedPath = FsHelpers::normalisePath(resolvedPath);
+
+    // Check heap before extracting.
+    const uint32_t maxA = ESP.getMaxAllocHeap();
+    if (maxA < minHeapForExtract) {
+      LOG_DBG("EBP", "prewarm skip image %s: maxA=%u too low", resolvedPath.c_str(), maxA);
+      break;  // stop prewarming; remaining images will lazy-extract on render
+    }
+
+    // Build the cache output path (same scheme as ChapterHtmlSlimParser).
+    std::string ext = ".jpg";
+    if (srcPath.size() >= 4) {
+      const std::string lowerExt = srcPath.substr(srcPath.size() - 4);
+      if (lowerExt == ".png" || lowerExt == ".PNG") ext = ".png";
+      else if (lowerExt == ".gif" || lowerExt == ".GIF") ext = ".gif";
+    }
+    const std::string cachePath = imgPrefix + std::to_string(imgCount++) + ext;
+
+    // Skip if already cached.
+    HalFile check;
+    if (Storage.openFileForRead("EBP", cachePath, check)) {
+      check.close();
+      continue;
+    }
+
+    // Extract.
+    if (extractItemToFile(resolvedPath, cachePath)) {
+      LOG_DBG("EBP", "prewarmed image: %s -> %s", resolvedPath.c_str(), cachePath.c_str());
+    } else {
+      LOG_DBG("EBP", "prewarm failed: %s", resolvedPath.c_str());
+    }
+
+    p = tagEnd + 1;
+  }
+
+  return imgCount > 0;
+}
