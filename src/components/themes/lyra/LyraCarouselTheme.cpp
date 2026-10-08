@@ -11,26 +11,63 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/apps_hub.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/bookshelf.h"
+#include "components/icons/cache_cleaner.h"
+#include "components/icons/calendar_time.h"
+#include "components/icons/calibre.h"
+#include "components/icons/cleanmonitor.h"
 #include "components/icons/cover.h"
+#include "components/icons/delete_file.h"
+#include "components/icons/dictionary.h"
+#include "components/icons/dictionary2.h"
 #include "components/icons/file24.h"
+#include "components/icons/file_transfer.h"
+#include "components/icons/finish_flag.h"
+#include "components/icons/flashcardquiz.h"
 #include "components/icons/folder.h"
 #include "components/icons/folder24.h"
+#include "components/icons/goalsmedal.h"
+#include "components/icons/gps_found.h"
 #include "components/icons/heart.h"
 #include "components/icons/heart24.h"
+#include "components/icons/heatmap.h"
 #include "components/icons/hotspot.h"
+#include "components/icons/image.h"
 #include "components/icons/image24.h"
 #include "components/icons/library.h"
+#include "components/icons/library_book.h"
+#include "components/icons/library_new.h"
+#include "components/icons/lostdevice.h"
+#include "components/icons/medal_alt.h"
+#include "components/icons/notification_unread.h"
+#include "components/icons/opdsbrowser.h"
+#include "components/icons/pageview.h"
+#include "components/icons/quickcards.h"
+#include "components/icons/readingprofile.h"
+#include "components/icons/readingstats.h"
 #include "components/icons/recent.h"
+#include "components/icons/recentbooks.h"
+#include "components/icons/rotation.h"
 #include "components/icons/screensaver.h"
+#include "components/icons/search.h"
+#include "components/icons/search_minus.h"
+#include "components/icons/search_plus.h"
 #include "components/icons/settings.h"
 #include "components/icons/settings2.h"
+#include "components/icons/sleep.h"
+#include "components/icons/sort_asc.h"
+#include "components/icons/sort_desc.h"
 #include "components/icons/text24.h"
+#include "components/icons/time_fast.h"
 #include "components/icons/transfer.h"
 #include "components/icons/trophy.h"
 #include "components/icons/trophy24.h"
 #include "components/icons/wifi.h"
+#include "components/icons/wikipediaicon.h"
 #include "fontIds.h"
 
 namespace {
@@ -95,10 +132,84 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return WifiIcon;
       case UIIcon::Hotspot:
         return HotspotIcon;
+      case UIIcon::Image:
+        return ImageIcon;
       case UIIcon::Heart:
         return HeartIcon;
       case UIIcon::ScreenSaver:
         return ScreenSaverIcon;
+      case UIIcon::Bookshelf:
+        return BookshelfIcon;
+      case UIIcon::SleepMode:
+        return SleepModeIcon32;
+      case UIIcon::CleanMonitor:
+        return CleanMonitorIcon32;
+      case UIIcon::Heatmap:
+        return HeatmapReadingIcon32;
+      case UIIcon::FlashcardQuiz:
+        return FlashcardQuizIcon32;
+      case UIIcon::ReadingProfile:
+        return ReadingProfileIcon32;
+      case UIIcon::LostDevice:
+        return LostDeviceIcon32;
+      case UIIcon::OpdsBrowser:
+        return OPDSBrowserIcon;
+      case UIIcon::Dictionary:
+        return DictionaryIcon;
+      case UIIcon::GoalsMedal:
+        return GoalsMedalIcon;
+      case UIIcon::ReadingStatsIcon:
+        return ReadingStatsIcon32;
+      case UIIcon::RecentBooks:
+        return RecentBooksIcon32;
+      case UIIcon::Bookmark:
+        return BookmarkIcon;
+      case UIIcon::Search:
+        return SearchIcon;
+      case UIIcon::Rotation:
+        return RotationIcon;
+      case UIIcon::Pageview:
+        return PageviewIcon;
+      case UIIcon::SearchPlus:
+        return SearchPlusIcon;
+      case UIIcon::SearchMinus:
+        return SearchMinusIcon;
+      case UIIcon::TimeFast:
+        return TimeFastIcon;
+      case UIIcon::SortAsc:
+        return SortAscIcon;
+      case UIIcon::SortDesc:
+        return SortDescIcon;
+      case UIIcon::LibraryNew:
+        return LibraryNewIcon;
+      case UIIcon::GpsFound:
+        return GpsFoundIcon;
+      case UIIcon::MedalAlt:
+        return MedalAltIcon;
+      case UIIcon::Dictionary2:
+        return Dictionary2Icon;
+      case UIIcon::AppsHub:
+        return AppsHubIcon;
+      case UIIcon::CalendarTime:
+        return CalendarTimeIcon;
+      case UIIcon::LibraryBook:
+        return LibraryBookIcon;
+      case UIIcon::DeleteFile:
+        return DeleteFileIcon;
+      case UIIcon::CacheCleaner:
+        return CacheCleanerIcon;
+      case UIIcon::FinishFlag:
+        return FinishFlagIcon;
+      case UIIcon::NotificationUnread:
+        return NotificationUnreadIcon;
+      case UIIcon::FileTransfer:
+        return FileTransferIcon;
+      case UIIcon::Calibre:
+        return CalibreIcon;
+      case UIIcon::Wikipedia:
+        return WikipediaIcon;
+      case UIIcon::QuickCards:
+        return QuickCardsIcon;
       default:
         return nullptr;
     }
