@@ -516,6 +516,12 @@ void ReadingProfileActivity::rebuildProfileCache() {
 void ReadingProfileActivity::onEnter() {
   Activity::onEnter();
   renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+
+  // Ensure the full stats store is materialized so getReadingDays() and
+  // getSessionLog() return real data. Cheap no-op while the boot gate is
+  // still closed; re-renders on the next loop once the gate opens.
+  READING_STATS.ensureLoaded();
+
   scrollOffset = 0;
   maxScrollOffset = 0;
   lastScrollActionMs = 0;

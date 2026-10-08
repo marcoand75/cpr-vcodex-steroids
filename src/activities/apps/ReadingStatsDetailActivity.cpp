@@ -103,12 +103,9 @@ ReadingBookStats withCoverPath(const ReadingBookStats& book, const std::string& 
 }
 
 const ReadingBookStats* findBook(const std::string& bookPath) {
-  for (const auto& book : READING_STATS.getBooks()) {
-    if (book.path == bookPath) {
-      return &book;
-    }
-  }
-  return nullptr;
+  // Use the store's path resolver which also checks knownPaths and bookId
+  // aliases, so moved/renamed books are still found.
+  return READING_STATS.findMatchingBookForPath(bookPath);
 }
 
 // Synthesize a minimal ReadingBookStats from the session snapshot + summary JSON.
@@ -121,11 +118,8 @@ ReadingBookStats synthesizeBookFromSnapshot(const std::string& bookPath,
   book.title = bookPath.substr(bookPath.find_last_of("/") + 1);
 
   // Try to get historical data from summary JSON via public API.
-  // NOTE: the journal stores only 16 bytes of bookId, so we must truncate
-  // the full snapshot bookId to match the summary badge key.
-  const std::string shortBookId = snap.bookId.size() > 16 ? snap.bookId.substr(0, 16) : snap.bookId;
   SummaryJSON::BookBadge badge{};
-  if (READING_STATS.getBookHomeStats(shortBookId, bookPath, badge)) {
+  if (READING_STATS.getBookHomeStats(snap.bookId, bookPath, badge)) {
     book.completed = badge.completed;
     book.lastProgressPercent = badge.progressPercent;
     book.totalReadingMs = badge.totalReadingMs;

@@ -8,6 +8,7 @@
 #include "AppMetricCard.h"
 #include "MappedInputManager.h"
 #include "ReadingStatsDetailActivity.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "util/HeaderDateUtils.h"
@@ -85,6 +86,9 @@ void ReadingDayDetailActivity::activateIndex(const int index) {
 
 void ReadingDayDetailActivity::onEnter() {
   UiListActivity::onEnter();
+  // Materialize the full stats store so getBooksReadOnDay() can find the
+  // per-book reading days. Cheap no-op while the boot gate is still closed.
+  READING_STATS.ensureLoaded();
   refreshEntries();
 }
 

@@ -186,10 +186,12 @@ void exitReaderToHomeOrStats(GfxRenderer& renderer, MappedInputManager& mappedIn
 
   if (SETTINGS.showStatsAfterReading && countedSession && !bookPath.empty()) {
     // Only show the stats detail page if we can actually render meaningful data.
-    // tryMergePendingSession() returns true when the summary was updated (either
-    // from existing valid summary or by merging the journal). If heap is too
+    // Try to merge the journal into summary first; if the store is already
+    // loaded or the merge succeeds, we have data to show. If heap is too
     // fragmented the merge is deferred and the page would show nothing — skip it.
-    const bool statsReady = READING_STATS.isSummaryValid() || READING_STATS.tryMergePendingSession();
+    const bool summaryValid = READING_STATS.isSummaryValid();
+    const bool merged = READING_STATS.tryMergePendingSession();
+    const bool statsReady = summaryValid || merged;
     if (statsReady) {
       activityManager.replaceActivity(
           std::make_unique<ReadingStatsDetailActivity>(renderer, mappedInput, bookPath, ReadingStatsDetailContext{true}));

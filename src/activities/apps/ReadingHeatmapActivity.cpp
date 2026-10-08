@@ -342,6 +342,12 @@ void drawLegend(GfxRenderer& renderer, const Rect& rect) {
 void ReadingHeatmapActivity::onEnter() {
   Activity::onEnter();
 
+  // Ensure the full stats store is materialized so getReadingDays() and the
+  // streak helpers return real data. If the boot gate is still closed this is
+  // a cheap no-op; the activity re-renders on the next loop when the gate
+  // opens (same pattern as ReadingStatsActivity/Extended).
+  READING_STATS.ensureLoaded();
+
   uint32_t referenceDayOrdinal = 0;
   resolveReferenceMonth(viewedYear, viewedMonth, referenceDayOrdinal);
   if (viewedMonth == 0) {

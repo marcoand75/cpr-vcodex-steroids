@@ -210,6 +210,10 @@ class ReadingStatsStore {
 
   void preloadHomeSummary();
   bool isSummaryValid() const { return summaryJsonValid_; }
+  // Check whether the calendar day has changed since the last summary was
+  // written. Returns true (and invalidates the cache) when a day boundary
+  // was crossed so that todayReadingMs resets for the new day.
+  bool checkDayChange();
 
   void beginSession(const std::string& path, const std::string& title, const std::string& author,
                     const std::string& coverBmpPath, uint8_t progressPercent = 0, const std::string& chapterTitle = "",
@@ -240,11 +244,13 @@ class ReadingStatsStore {
   bool ensureLoaded();
   void resetLoaded() { loaded_ = false; }
 
-  // Binary session journal (fixed 32-byte records, O_APPEND):
-  // [u32 dayOrdinal][u32 sessionMs][u8 progress][u8 flags][u8 bookId[16]][u16 pad]
-  // Detached sessions append here without the store; records merge into the
-  // store and the journal is removed at the next full load.
-  static constexpr size_t JOURNAL_RECORD_BYTES = 32;
+   // Binary session journal (fixed 48-byte records, O_APPEND):
+   // [u32 dayOrdinal][u32 sessionMs][u8 progress][u8 flags][u8 bookId[32]][u16 pad]
+   // The full 32-byte KOReader content hash is stored verbatim — no truncation.
+   // Detached sessions append here without the store; records merge into the
+   // store and the journal is removed at the next full load.
+   static constexpr size_t JOURNAL_RECORD_BYTES = 48;
+   static constexpr uint32_t JOURNAL_MAGIC_V2 = 0x52534A32; // "RSJ2"
   bool hasPendingJournalSessions() const;
   void mergeSessionJournal();
   // Lightweight attempt to merge pending journal sessions and update the
@@ -255,9 +261,11 @@ class ReadingStatsStore {
   bool tryMergePendingSession();
   // Lightweight journal-to-summary update: reads journal records and updates
   // summary.json directly without materializing the full 50 KB store. This is
-  // called from endSession() (detached path) and preloadHomeSummary() to keep
-  // summary.json current even when the full store was never loaded.
-  void updateSummaryFromJournal();
+   // called from endSession() (detached path) and preloadHomeSummary() to keep
+   // summary.json current even when the full store was never loaded.
+   // hintPath: when provided, populates stub badge paths so that lookups with
+   // full 32-byte bookIds can still match via the path fallback.
+   void updateSummaryFromJournal();
   // const-safe lazy load for read getters (used when boot deferred the load).
   void ensureLoadedForRead() const {
     if (!loaded_) {

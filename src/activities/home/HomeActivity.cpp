@@ -430,12 +430,8 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
   // getBookHomeStats resolves from the resident store when loaded and from
   // summary.json badges otherwise — it never forces the 50+ KB store load, so
   // the frame hash stays stable across boots regardless of store state.
-  // NOTE: the journal stores only 16 bytes of the 32-byte KOReader bookId.
-  // Summary badges use this truncated key. We must match the same truncation
-  // here, otherwise getBookHomeStats will never find the badge.
-  const std::string shortBookId = recentBook.bookId.size() > 16 ? recentBook.bookId.substr(0, 16) : recentBook.bookId;
   SummaryJSON::BookBadge badge;
-  if (READING_STATS.getBookHomeStats(shortBookId, recentBook.path, badge)) {
+  if (READING_STATS.getBookHomeStats(recentBook.bookId, recentBook.path, badge)) {
     return std::min<uint8_t>(badge.progressPercent, 100);
   }
   return 0;
