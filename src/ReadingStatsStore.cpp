@@ -858,6 +858,7 @@ void ReadingStatsStore::appendSessionToJournal(const uint32_t dayOrdinal, const 
                                                const std::string& bookId, const uint8_t progressPercent,
                                                const bool completed) const {
   Storage.mkdir("/.crosspoint");
+  const bool existedBefore = Storage.exists(READING_STATS_JOURNAL_FILE);
   // O_APPEND: create if missing, always write at EOF, never truncate.
   HalFile file = Storage.open(READING_STATS_JOURNAL_FILE, O_WRITE | O_CREAT | O_APPEND);
   if (!file) {
@@ -866,9 +867,9 @@ void ReadingStatsStore::appendSessionToJournal(const uint32_t dayOrdinal, const 
   }
 
   // Write version magic on first write so we can distinguish V1 (32-byte)
-  // from V2 (48-byte) records on read.
-  const bool isInit = !Storage.exists(READING_STATS_JOURNAL_FILE);
-  if (isInit) {
+  // from V2 (48-byte) records on read. Check existedBefore / file.size() == 0
+  // because O_CREAT creates the file before Storage.exists() would run.
+  if (!existedBefore || file.size() == 0) {
     const uint32_t magic = JOURNAL_MAGIC_V2;
     file.write(reinterpret_cast<const uint8_t*>(&magic), sizeof(magic));
   }
@@ -921,40 +922,104 @@ bool ReadingStatsStore::tryMergePendingSession() {
   }
 
   // Even without a full store load, try the lightweight journal→summary merge.
-  // This doesn't need the 50 KB store — just the existing summary + journal.
-  summaryJsonValid_ = false;
-  if (loadSummaryJSON(summaryJson)) {
-    summaryJsonValid_ = true;
-    if (hasPendingJournalSessions()) {
-      updateSummaryFromJournal();
-    }
+  // Keep any already-valid in-RAM summaryJson (endSession may have updated it
+  // in RAM while deferring disk write on fragmented heap).
+  if (!summaryJsonValid_ && ESP.getMaxAllocHeap() >= 24 * 1024) {
+    summaryJsonValid_ = loadSummaryJSON(summaryJson);
   }
-  return false;
+  if (hasPendingJournalSessions()) {
+    updateSummaryFromJournal(lastSessionSnapshot.bookId, lastSessionSnapshot.path);
+  }
+  return summaryJsonValid_;
 }
 
-void ReadingStatsStore::updateSummaryFromJournal() {
+namespace {
+struct JournalFormatInfo {
+  bool v2 = false;
+  size_t headerBytes = 0;
+  size_t recSize = 32;
+  size_t idLen = 16;
+};
+
+JournalFormatInfo detectJournalFormat(HalFile& file, const size_t fileSize) {
+  JournalFormatInfo info{};
+  uint32_t magic = 0;
+  if (fileSize >= sizeof(magic)) {
+    file.seek(0);
+    file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic));
+  }
+  if (magic == ReadingStatsStore::JOURNAL_MAGIC_V2) {
+    info.v2 = true;
+    info.headerBytes = sizeof(magic);
+    info.recSize = ReadingStatsStore::JOURNAL_RECORD_BYTES;
+    info.idLen = 32;
+    return info;
+  }
+  // Fallback for headerless V2 files written before the O_CREAT magic check fix:
+  // V2 records are 48 bytes with zero reserved padding at [42..47], whereas in
+  // multi-record V1 files (multiples of lcm(32, 48) = 96) bytes [42..47] hold
+  // the start of record #1's non-empty bookId.
+  if (fileSize >= ReadingStatsStore::JOURNAL_RECORD_BYTES &&
+      (fileSize % ReadingStatsStore::JOURNAL_RECORD_BYTES) == 0) {
+    if ((fileSize % 32u) != 0) {
+      info.v2 = true;
+    } else {
+      uint8_t probe[ReadingStatsStore::JOURNAL_RECORD_BYTES] = {0};
+      file.seek(0);
+      if (file.read(probe, sizeof(probe)) == static_cast<int>(sizeof(probe))) {
+        info.v2 = (probe[42] | probe[43] | probe[44] | probe[45] | probe[46] | probe[47]) == 0;
+      }
+    }
+  }
+  if (info.v2) {
+    info.recSize = ReadingStatsStore::JOURNAL_RECORD_BYTES;
+    info.idLen = 32;
+  }
+  return info;
+}
+}  // namespace
+
+void ReadingStatsStore::updateSummaryFromJournal(const std::string& hintBookId, const std::string& hintPath) {
   if (!hasPendingJournalSessions()) return;
 
-  // Load current summary, or start from empty if the file is missing/corrupt.
+  // Reuse in-memory summary when valid; otherwise guard JSON deserialization
+  // against fragmented reader-exit heap (-fno-exceptions aborts on OOM).
   SummaryJSON summary{};
-  loadSummaryJSON(summary);  // ignore return — we'll build from journal regardless
+  if (summaryJsonValid_) {
+    summary = summaryJson;
+  } else {
+    if (ESP.getMaxAllocHeap() < 24 * 1024) {
+      LOG_DBG("RST", "Deferring summary journal merge: maxA=%u too low",
+              static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      return;
+    }
+    loadSummaryJSON(summary);  // ignore return — we'll build from journal regardless
+  }
 
-  // Read journal and apply each record to the summary.
+  // Read journal and apply only records not yet folded into summary.json.
   HalFile file;
   if (!Storage.openFileForRead("RST", READING_STATS_JOURNAL_FILE, file)) return;
 
-  // Detect format: check for V2 magic at offset 0.
-  const bool isV2 = file.size() >= 4;
-  uint32_t magic = 0;
-  if (isV2) {
-    file.seek(0);
-    file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic));
-    file.seek(0); // rewind to start
-  }
-  const bool v2 = (magic == JOURNAL_MAGIC_V2);
-  const size_t recSize = v2 ? JOURNAL_RECORD_BYTES : 32u;
+  const size_t fileSize = static_cast<size_t>(file.size());
+  const JournalFormatInfo fmt = detectJournalFormat(file, fileSize);
+  const size_t headerBytes = fmt.headerBytes;
+  const size_t recSize = fmt.recSize;
   const size_t idOffset = 10;
-  const size_t idLen = v2 ? 32u : 16u;
+  const size_t idLen = fmt.idLen;
+
+  if (summary.global.journalAppliedBytes == fileSize) {
+    file.close();
+    return;
+  }
+  size_t startOffset = headerBytes;
+  if (summary.global.journalAppliedBytes > headerBytes && summary.global.journalAppliedBytes < fileSize &&
+      ((summary.global.journalAppliedBytes - headerBytes) % recSize) == 0) {
+    startOffset = summary.global.journalAppliedBytes;
+  }
+  if (!file.seek(startOffset)) {
+    file.close();
+    return;
+  }
 
   const uint32_t todayOrdinal = TimeUtils::getLocalDayOrdinal(TimeUtils::getAuthoritativeTimestamp());
   const uint32_t sevenDaysAgo = todayOrdinal > 7 ? todayOrdinal - 7 : 0;
@@ -972,20 +1037,21 @@ void ReadingStatsStore::updateSummaryFromJournal() {
     const uint32_t sessionMs =
         static_cast<uint32_t>(record[4]) | (static_cast<uint32_t>(record[5]) << 8) |
         (static_cast<uint32_t>(record[6]) << 16) | (static_cast<uint32_t>(record[7]) << 24);
-    const uint8_t progressPercent = record[8];
-    const bool completed = record[9] != 0;
+    const uint8_t progressPercent = clampPercent(record[8]);
+    const bool completed = record[9] != 0 || progressPercent >= 100;
     char idBuf[33] = {0};
     std::memcpy(idBuf, record.data() + idOffset, idLen);
     const std::string bookId(idBuf);
 
-    if (dayOrdinal == 0 || sessionMs < MIN_SESSION_READING_MS || bookId.empty()) continue;
+    if (bookId.empty()) continue;
+    const bool isCounted = (dayOrdinal != 0 && sessionMs >= MIN_SESSION_READING_MS);
+    const std::string matchPath = (!hintBookId.empty() && bookId == hintBookId) ? hintPath : std::string();
 
     // Find matching badge. Legacy V1 journal records have 16-byte bookIds that
     // may prefix-match a 32-byte KOReader content hash in the summary.
     SummaryJSON::BookBadge* badge = nullptr;
     for (auto& b : summary.bookBadges) {
-      if (b.bookId == bookId) { badge = &b; break; }
-      if (idLen == 16 && b.bookId.size() >= 16 && b.bookId.substr(0, 16) == bookId) {
+      if (badgeMatchesSummaryBadge(bookId, matchPath, b)) {
         badge = &b;
         break;
       }
@@ -994,43 +1060,69 @@ void ReadingStatsStore::updateSummaryFromJournal() {
       // Create stub — will be enriched on next full load via normalizeBooks().
       SummaryJSON::BookBadge stub{};
       stub.bookId = bookId;
+      stub.path = matchPath;
       summary.bookBadges.push_back(std::move(stub));
       badge = &summary.bookBadges.back();
+    } else {
+      if (badge->bookId.size() == 16 && bookId.size() == 32 && bookId.substr(0, 16) == badge->bookId) {
+        badge->bookId = bookId;
+      }
+      if (badge->path.empty() && !matchPath.empty()) {
+        badge->path = matchPath;
+      }
     }
 
-    badge->totalReadingMs += sessionMs;
-    badge->sessions++;
-    badge->progressPercent = progressPercent;
+    const bool newlyCompleted = completed && !badge->completed;
+    badge->progressPercent = completed ? 100 : progressPercent;
     if (completed) badge->completed = true;
-    changed = true;
+    if (newlyCompleted) {
+      summary.global.booksFinishedCount++;
+    }
 
-    // Update global totals.
-    summary.global.totalReadingMs += sessionMs;
-    if (dayOrdinal == todayOrdinal) {
-      summary.global.todayReadingMs += sessionMs;
+    if (isCounted) {
+      badge->totalReadingMs += sessionMs;
+      badge->sessions++;
+      summary.global.totalReadingMs += sessionMs;
+      if (dayOrdinal == todayOrdinal) {
+        summary.global.todayReadingMs += sessionMs;
+      }
+      if (dayOrdinal >= sevenDaysAgo) {
+        summary.global.recent7ReadingMs += sessionMs;
+      }
+      if (dayOrdinal >= thirtyDaysAgo) {
+        summary.global.recent30ReadingMs += sessionMs;
+      }
     }
-    if (dayOrdinal >= sevenDaysAgo) {
-      summary.global.recent7ReadingMs += sessionMs;
-    }
-    if (dayOrdinal >= thirtyDaysAgo) {
-      summary.global.recent30ReadingMs += sessionMs;
-    }
-    if (completed && !badge->completed) {
-      // Will be corrected on next full load; provisional count here.
-    }
+    changed = true;
   }
   file.close();
 
   if (!changed) return;
 
-  // Compute derived values.
-  summary.global.referenceDayOrdinal = todayOrdinal;
+  // Compute derived values and record how far into the journal summary.json is.
+  if (todayOrdinal != 0) {
+    summary.global.referenceDayOrdinal = todayOrdinal;
+  }
   summary.global.goalReadingMs = getDailyReadingGoalMs();
   summary.global.dailyAverageMs = summary.global.recent30ReadingMs > 0
                                       ? summary.global.recent30ReadingMs / 30
                                       : 0;
+  summary.global.journalAppliedBytes = static_cast<uint32_t>(fileSize);
 
-  // Serialize and write.
+  // Always update in-memory summary first so Home / post-reading views see fresh
+  // data immediately even if disk serialization is skipped for low heap.
+  summaryJson = summary;
+  summaryJsonValid_ = true;
+
+  if (ESP.getMaxAllocHeap() < 24 * 1024) {
+    LOG_DBG("RST", "Updated in-RAM summary from journal; deferring disk write (maxA=%u)",
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return;
+  }
+
+  // Serialize and write summary.json while KEEPING READING_STATS_JOURNAL_FILE
+  // on disk so mergeSessionJournal() merges all records into reading_stats.json
+  // on the next full store load.
   JsonDocument doc;
   JsonObject summaryObj = doc["summary"].to<JsonObject>();
   summaryObj["totalReadingMs"] = summary.global.totalReadingMs;
@@ -1043,6 +1135,7 @@ void ReadingStatsStore::updateSummaryFromJournal() {
   summaryObj["goalReadingMs"] = summary.global.goalReadingMs;
   summaryObj["dailyAverageMs"] = summary.global.dailyAverageMs;
   summaryObj["referenceDayOrdinal"] = summary.global.referenceDayOrdinal;
+  summaryObj["journalAppliedBytes"] = summary.global.journalAppliedBytes;
 
   JsonArray badges = doc["bookBadges"].to<JsonArray>();
   for (const auto& b : summary.bookBadges) {
@@ -1059,11 +1152,9 @@ void ReadingStatsStore::updateSummaryFromJournal() {
   String serialized;
   serializeJson(doc, serialized);
   if (Storage.writeFile(READING_STATS_SUMMARY_JSON, serialized)) {
-    summaryJson = std::move(summary);
-    summaryJsonValid_ = true;
-    // Remove journal — its data is now merged into summary.
-    Storage.remove(READING_STATS_JOURNAL_FILE);
-    LOG_DBG("RST", "Updated summary from journal: %u bytes", static_cast<unsigned>(serialized.length()));
+    LOG_DBG("RST", "Updated summary from journal: %u bytes (applied=%u)",
+            static_cast<unsigned>(serialized.length()),
+            static_cast<unsigned>(summary.global.journalAppliedBytes));
   }
 }
 
@@ -1083,17 +1174,13 @@ void ReadingStatsStore::mergeSessionJournal() {
   }
 
   size_t mergedCount = 0;
-  // Detect journal format: check for V2 magic at offset 0.
-  const bool isV2 = file.size() >= 4;
-  uint32_t magic = 0;
-  if (isV2) {
-    file.seek(0);
-    file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic));
-    file.seek(0);
-  }
-  const bool v2 = (magic == JOURNAL_MAGIC_V2);
-  const size_t recSize = v2 ? JOURNAL_RECORD_BYTES : 32u;
-  const size_t idLen = v2 ? 32u : 16u;
+  bool anyApplied = false;
+  // Detect journal format (4-byte V2 magic, headerless V2, or legacy 32-byte V1).
+  const size_t fileSize = static_cast<size_t>(file.size());
+  const JournalFormatInfo fmt = detectJournalFormat(file, fileSize);
+  const size_t recSize = fmt.recSize;
+  const size_t idLen = fmt.idLen;
+  file.seek(fmt.headerBytes);
 
   std::vector<uint8_t> record(recSize, 0);
   for (;;) {
@@ -1107,25 +1194,28 @@ void ReadingStatsStore::mergeSessionJournal() {
     const uint32_t sessionMs =
         static_cast<uint32_t>(record[4]) | (static_cast<uint32_t>(record[5]) << 8) |
         (static_cast<uint32_t>(record[6]) << 16) | (static_cast<uint32_t>(record[7]) << 24);
-    const uint8_t progressPercent = record[8];
-    const bool completed = record[9] != 0;
+    const uint8_t progressPercent = clampPercent(record[8]);
+    const bool completed = record[9] != 0 || progressPercent >= 100;
     char idBuf[33] = {0};
     std::memcpy(idBuf, record.data() + 10, idLen);
     std::string bookId(idBuf);
 
-    if (dayOrdinal == 0 || sessionMs < MIN_SESSION_READING_MS || bookId.empty()) {
+    if (bookId.empty()) {
       continue;
     }
+    const bool isCounted = (dayOrdinal != 0 && sessionMs >= MIN_SESSION_READING_MS);
 
     size_t index = findBookIndexByBookId(bookId);
-    if (index >= books.size() && idLen == 16) {
-      // V1 journal entries have 16-byte bookIds; try prefix match against
-      // 32-byte store bookIds so old sessions merge into the right books.
+    if (index >= books.size()) {
+      // Match across legacy 16-byte prefixes and 32-byte KOReader hashes in
+      // either direction, upgrading 16-byte stubs when a 32-byte ID arrives.
       for (size_t i = 0; i < books.size(); ++i) {
-        if (books[i].bookId.size() == 32 && books[i].bookId.substr(0, 16) == bookId) {
+        if (books[i].bookId.size() >= 16 && bookId.size() >= 16 &&
+            books[i].bookId.substr(0, 16) == bookId.substr(0, 16)) {
           index = i;
-          // Upgrade the stub's bookId to the full 32-byte version.
-          books[i].bookId = bookId + books[i].bookId.substr(16);
+          if (books[i].bookId.size() == 16 && bookId.size() == 32) {
+            books[i].bookId = bookId;
+          }
           break;
         }
       }
@@ -1140,31 +1230,34 @@ void ReadingStatsStore::mergeSessionJournal() {
     }
 
     ReadingBookStats& book = books[index];
-    book.totalReadingMs += sessionMs;
-    book.sessions++;
-    book.lastSessionMs = sessionMs;
-    if (progressPercent > book.lastProgressPercent) {
-      book.lastProgressPercent = progressPercent;
-    }
+    book.lastProgressPercent = completed ? 100 : progressPercent;
     if (completed && !book.completed) {
       book.completed = true;
     }
-    addReadingToDays(book.readingDays, dayOrdinal, sessionMs);
-    appendSessionLogEntry(dayOrdinal, sessionMs, index);
-    ++mergedCount;
+    if (isCounted) {
+      book.totalReadingMs += sessionMs;
+      book.sessions++;
+      book.lastSessionMs = sessionMs;
+      addReadingToDays(book.readingDays, dayOrdinal, sessionMs);
+      appendSessionLogEntry(dayOrdinal, sessionMs, index);
+      ++mergedCount;
+    }
+    anyApplied = true;
   }
   file.close();
 
-  if (mergedCount == 0) {
-    Storage.remove(READING_STATS_JOURNAL_FILE);
+  Storage.remove(READING_STATS_JOURNAL_FILE);
+  summaryJson.global.journalAppliedBytes = 0;
+  if (!anyApplied) {
     return;
   }
 
-  rebuildAggregatedReadingDays();
-  Storage.remove(READING_STATS_JOURNAL_FILE);
+  if (mergedCount > 0) {
+    rebuildAggregatedReadingDays();
+  }
   markDirty();
   saveToFile();
-  LOG_DBG("RST", "Merged %u journal sessions into the store", static_cast<unsigned>(mergedCount));
+  LOG_DBG("RST", "Merged journal into store (%u counted sessions)", static_cast<unsigned>(mergedCount));
 }
 
 void ReadingStatsStore::resolveSessionIdentity(const ReadingSessionLogEntry& session, std::string& outBookId,
@@ -1815,11 +1908,9 @@ void ReadingStatsStore::updateProgress(const uint8_t progressPercent, const bool
   }
 
   if (activeSession.detached) {
-    // Detached sessions only keep the latest progress for the journal record.
+    // Detached sessions track the current book progress for the journal record.
     const uint8_t clamped = clampPercent(progressPercent);
-    if (clamped >= activeSession.detachedProgress) {
-      activeSession.detachedProgress = clamped;
-    }
+    activeSession.detachedProgress = clamped;
     if (completed || clamped >= 100) {
       activeSession.detachedCompleted = true;
     }
@@ -2018,10 +2109,24 @@ void ReadingStatsStore::endSession() {
     if (countedSession && dayOrdinal != 0) {
       appendSessionToJournal(dayOrdinal, sessionMs, activeSession.detachedBookId, activeSession.detachedProgress,
                              activeSession.detachedCompleted);
-      // Always attempt summary update. If heap is too fragmented the function
-      // returns false gracefully; the journal record is already persisted and
-      // will be merged at next boot's preloadHomeSummary().
-      updateSummaryFromJournal();
+      updateSummaryFromJournal(activeSession.detachedBookId, activeSession.detachedPath);
+    } else if (!activeSession.detachedBookId.empty()) {
+      // Short/unclocked reading session: persist a progress-only journal record
+      // (sessionMs == 0) when the book's progress or completion differs from
+      // summary.json so Home/Carousel badges stay accurate after quick page turns.
+      SummaryJSON::BookBadge existingBadge{};
+      const bool hasExisting =
+          getBookHomeStats(activeSession.detachedBookId, activeSession.detachedPath, existingBadge);
+      const uint8_t targetProgress = activeSession.detachedCompleted ? 100 : activeSession.detachedProgress;
+      const bool progressNeedsSync =
+          (targetProgress > 0 || activeSession.detachedCompleted || hasExisting) &&
+          (!hasExisting || existingBadge.progressPercent != targetProgress ||
+           (activeSession.detachedCompleted && !existingBadge.completed));
+      if (progressNeedsSync) {
+        appendSessionToJournal(dayOrdinal, /*sessionMs=*/0, activeSession.detachedBookId, targetProgress,
+                               activeSession.detachedCompleted);
+        updateSummaryFromJournal(activeSession.detachedBookId, activeSession.detachedPath);
+      }
     }
 
     lastSessionSnapshot.valid = true;
@@ -2156,6 +2261,13 @@ bool ReadingStatsStore::setBookFirstReadDate(const std::string& path, const uint
   book.firstReadAt = timestamp;
   markDirty();
   return saveToFile();
+}
+
+uint32_t ReadingStatsStore::getBooksStartedCount() const {
+  if (!loaded_) {
+    return static_cast<uint32_t>(getSummaryJSON().bookBadges.size());
+  }
+  return static_cast<uint32_t>(books.size());
 }
 
 uint32_t ReadingStatsStore::getBooksFinishedCount() const {
@@ -2399,7 +2511,10 @@ bool ReadingStatsStore::loadFromFile() {
   // main-load-failure path trigger the internal-backup restore cascade on a
   // transient low-heap skip. The deferred boot loader (or a later lazy read once the gate opens) will
   // materialize the store.
-  if (!boot_load_gate::ready() || ESP.getMaxAllocHeap() < 80 * 1024) {
+  // Match JsonSettingsIO::loadReadingStatsFromFile's streaming-loader threshold
+  // (~40 KB peak); keeping 80 KB here refused loads on C3 X4 when maxAlloc sat
+  // between 40 KB and 80 KB after UI/font initialization.
+  if (!boot_load_gate::ready() || ESP.getMaxAllocHeap() < 40 * 1024) {
     LOG_DBG("RST", "Reading stats load deferred (gate closed or low heap maxA=%u)",
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
     return false;
@@ -2464,8 +2579,9 @@ bool ReadingStatsStore::loadFromFile() {
     loaded = loadMainFile();
   }
   if (loaded) {
-    // Merge detached journal sessions first so the regenerated summary and
-    // the persisted JSON include them.
+    // Mark loaded_ BEFORE merging the journal and saving summary.json: both
+    // helpers guard on `if (!loaded_)` and would otherwise early-return!
+    loaded_ = true;
     mergeSessionJournal();
     saveSummaryJSON();
     createDueAutoBackup();
@@ -2473,13 +2589,19 @@ bool ReadingStatsStore::loadFromFile() {
   if (!loaded) {
     markLoadSkippedForRecovery();
     CPR_VCODEX_LOG_EVENT("RST", "Reading stats persistence suspended after load failure");
+    loaded_ = false;
   }
-  loaded_ = loaded;
   return loaded;
 }
 
 bool ReadingStatsStore::ensureLoaded() {
-  if (loaded_) return true;
+  if (loaded_) {
+    if (hasPendingJournalSessions()) {
+      mergeSessionJournal();
+      saveSummaryJSON();
+    }
+    return true;
+  }
   // Boot ordering gate: while the foreground activity is doing memory-heavy
   // boot work (Home cover generation) keep the big stats JSON out of the heap.
   // The deferred boot loader (or a later lazy read once the gate opens) will
@@ -2548,21 +2670,19 @@ bool ReadingStatsStore::getBookHomeStats(const std::string& bookId, const std::s
   }
   const auto* s = getHomeBookStatsForRender(bookId, path);
   if (!s) return false;
+  // Fill every badge field: callers (carousel progress, stats detail) read
+  // progressPercent/totalReadingMs too, not only `completed`.
+  badge.bookId = s->bookId;
+  badge.path = s->path;
   badge.completed = s->completed;
+  badge.progressPercent = s->completed ? 100 : std::min<uint8_t>(s->lastProgressPercent, 100);
+  badge.totalReadingMs = s->totalReadingMs;
+  badge.sessions = s->sessions;
+  badge.readingDaysCount = static_cast<uint32_t>(s->readingDays.size());
   return true;
 }
 
 GlobalSummary ReadingStatsStore::getGlobalSummary() const {
-  if (!loaded_) {
-    const auto& summary = getSummaryJSON();
-    GlobalSummary g;
-    g.todayMs = summary.global.todayReadingMs;
-    g.booksFinished = summary.global.booksFinishedCount;
-    g.streakDays = summary.global.currentStreakDays;
-    const uint64_t recent30 = summary.global.recent30ReadingMs;
-    g.dailyAverageMs = recent30 > 0 ? recent30 / 30 : 0;
-    return g;
-  }
   GlobalSummary g;
   g.todayMs = getTodayReadingMs();
   g.booksFinished = getBooksFinishedCount();
@@ -2577,13 +2697,14 @@ bool ReadingStatsStore::saveSummaryJSON() const {
   SummaryJSON json;
   json.global.referenceDayOrdinal = getReferenceDayOrdinal();
   json.global.goalReadingMs = getDailyReadingGoalMs();
+  json.global.journalAppliedBytes = 0;
   for (const auto& book : books) {
-    if (book.totalReadingMs == 0 && !book.completed) continue;
+    if (book.totalReadingMs == 0 && !book.completed && book.lastProgressPercent == 0) continue;
     SummaryJSON::BookBadge badge;
     badge.bookId = book.bookId;
     badge.path = book.path;
     badge.completed = book.completed;
-    badge.progressPercent = book.lastProgressPercent;
+    badge.progressPercent = book.completed ? 100 : std::min<uint8_t>(book.lastProgressPercent, 100);
     // Panel data for the lean Home path: the book column renders these from
     // summary.json alone when the fat store is not materialized.
     badge.totalReadingMs = book.totalReadingMs;
@@ -2612,6 +2733,7 @@ bool ReadingStatsStore::saveSummaryJSON() const {
   summary["goalReadingMs"] = json.global.goalReadingMs;
   summary["dailyAverageMs"] = json.global.dailyAverageMs;
   summary["referenceDayOrdinal"] = json.global.referenceDayOrdinal;
+  summary["journalAppliedBytes"] = json.global.journalAppliedBytes;
 
   JsonArray badges = doc["bookBadges"].to<JsonArray>();
   for (const auto& badge : json.bookBadges) {
@@ -2656,6 +2778,7 @@ bool ReadingStatsStore::loadSummaryJSON(SummaryJSON& out) const {
     out.global.goalReadingMs = summary["goalReadingMs"] | 0ULL;
     out.global.dailyAverageMs = summary["dailyAverageMs"] | 0ULL;
     out.global.referenceDayOrdinal = summary["referenceDayOrdinal"] | 0U;
+    out.global.journalAppliedBytes = summary["journalAppliedBytes"] | 0U;
   }
 
   JsonArray badges = doc["bookBadges"];
@@ -2682,27 +2805,24 @@ const SummaryJSON& ReadingStatsStore::getSummaryJSON() const {
 }
 
 void ReadingStatsStore::preloadHomeSummary() {
-  // 1. Check whether the calendar day changed since last boot. If so,
-  // invalidate the summary so it will be rebuilt with a fresh todayReadingMs.
+  // 1. Load summary from disk if not already in RAM.
+  if (!summaryJsonValid_) {
+    summaryJsonValid_ = loadSummaryJSON(summaryJson);
+  }
+
+  // 2. Reset daily counters if the calendar day changed since the summary was written.
   checkDayChange();
 
-  // 2. If summary is valid and no journal pending, we're done.
-  if (summaryJsonValid_ && !hasPendingJournalSessions()) return;
-
-  // 3. Load summary from disk.
-  if (loadSummaryJSON(summaryJson)) {
-    summaryJsonValid_ = true;
-    // 4. Merge any pending journal records (handles both V1 16-byte and V2 32-byte).
+  // 3. If summary is valid, fold in any unapplied journal records and finish.
+  if (summaryJsonValid_) {
     if (hasPendingJournalSessions()) {
       updateSummaryFromJournal();
     }
     return;
   }
 
-  // 5. No summary on disk — try full store load as fallback.
+  // 4. No summary on disk — try full store load as fallback.
   if (Storage.exists(READING_STATS_FILE_JSON) && ensureLoaded()) {
-    mergeSessionJournal();
-    saveSummaryJSON();
     releaseMemoryForNetwork();
   }
 }
@@ -2710,19 +2830,18 @@ void ReadingStatsStore::preloadHomeSummary() {
 bool ReadingStatsStore::checkDayChange() {
   const uint32_t today = TimeUtils::getLocalDayOrdinal(TimeUtils::getAuthoritativeTimestamp());
   if (today == 0) return false;  // clock not available yet
-  if (!summaryJsonValid_) return false;  // will be loaded by the caller
-  if (summaryJson.global.referenceDayOrdinal != today) {
-    LOG_INF("RST", "Day change detected: %u -> %u, invalidating summary",
+  if (!summaryJsonValid_) return false;
+  if (summaryJson.global.referenceDayOrdinal != 0 && summaryJson.global.referenceDayOrdinal != today) {
+    LOG_INF("RST", "Day change detected: %u -> %u, resetting daily summary counter",
             summaryJson.global.referenceDayOrdinal, today);
-    summaryJsonValid_ = false;
-    // Reset daily counters for the new day.
+    // Reset daily counter for the new day while keeping summaryJsonValid_ true
+    // and preserving READING_STATS_JOURNAL_FILE so prior unmerged sessions are
+    // not lost before mergeSessionJournal() folds them into reading_stats.json.
+    if (summaryJson.global.referenceDayOrdinal + 1 < today) {
+      summaryJson.global.currentStreakDays = 0;
+    }
     summaryJson.global.todayReadingMs = 0;
     summaryJson.global.referenceDayOrdinal = today;
-    // Clear any pending journal — sessions from the previous day should have
-    // been merged already; leftover records belong to a stale day.
-    if (hasPendingJournalSessions()) {
-      Storage.remove(READING_STATS_JOURNAL_FILE);
-    }
     return true;
   }
   return false;

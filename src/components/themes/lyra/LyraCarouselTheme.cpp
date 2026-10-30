@@ -225,17 +225,7 @@ void drawCoverPlaceholder(GfxRenderer& renderer, int x, int y, int maxW, int max
 }
 
 uint8_t getBookProgressPercent(const RecentBook& recentBook) {
-  const ReadingBookStats* stats = nullptr;
-  if (!recentBook.bookId.empty()) {
-    stats = READING_STATS.findBook(recentBook.bookId);
-  }
-  if (stats == nullptr) {
-    stats = READING_STATS.findBook(recentBook.path);
-  }
-  if (stats == nullptr) {
-    return 0;
-  }
-  return std::min<uint8_t>(stats->lastProgressPercent, 100);
+  return READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path);
 }
 
 void drawProgressBadge(GfxRenderer& renderer, const RecentBook& book, const int coverX, const int coverY,
