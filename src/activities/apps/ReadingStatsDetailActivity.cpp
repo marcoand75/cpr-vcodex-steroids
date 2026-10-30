@@ -129,6 +129,7 @@ ReadingBookStats synthesizeBookFromSnapshot(const std::string& bookPath,
   // Override with session-specific data from the snapshot (always fresh).
   if (snap.valid) {
     book.lastSessionMs = snap.sessionMs;
+    book.lastProgressPercent = snap.endProgressPercent;
     book.chapterProgressPercent = snap.endProgressPercent;
     book.lastReadAt = TimeUtils::getAuthoritativeTimestamp();
     if (snap.completedThisSession) book.completed = true;

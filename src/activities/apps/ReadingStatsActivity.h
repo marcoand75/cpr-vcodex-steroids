@@ -13,6 +13,8 @@ class ReadingStatsActivity final : public UiListActivity {
   bool waitForConfirmRelease = false;
   bool waitForBackRelease = false;
   int bookCount = 0;
+  static constexpr unsigned long LOAD_RETRY_INTERVAL_MS = 750;
+  unsigned long lastLoadRetryMs = 0;
   // Row caches: row 0 is "More details", rows 1..N mirror READING_STATS.getBooks().
   std::vector<std::string> rowValues;
   std::vector<freeink::ui::ListItem> rowItems;
