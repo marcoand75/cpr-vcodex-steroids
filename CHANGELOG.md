@@ -1,52 +1,52 @@
 # Changelog
 
-## 1.6.0.38-fix (Fork BrunoYDev) — Correções de Estatísticas de Leitura, Tema Carrossel, Ícone Library e Ghosting de Capa no X4
+## 1.6.0.38-fix (BrunoYDev Fork) — Reading Stats, Carousel Theme, Library Icon, and Sleep Cover Ghosting Fixes on X4
 
-Correções detalhadas para quatro regressões identificadas no **Xteink X4 (ESP32-C3)** após a release `1.6.0.38-dev1-cpr-vcodex-steroids`, além da estabilização do submódulo `freeink-sdk`:
+Detailed fixes for four regressions identified on the **Xteink X4 (ESP32-C3)** after the `1.6.0.38-dev1-cpr-vcodex-steroids` release, alongside stabilization of the `freeink-sdk` submodule:
 
-### 1. Estatísticas de Leitura (Carregamento Adiado e Journal Binário V2)
-- **Correção da ordem de inicialização em `ReadingStatsStore::loadFromFile()` (`src/ReadingStatsStore.cpp`):**
-  - Anteriormente, `mergeSessionJournal()` e `saveSummaryJSON()` eram chamadas *antes* de `loaded_ = true`. Como ambas possuem guarda `if (!loaded_) return;`, o merge do journal para `reading_stats.json` e a regeneração de `summary.json` retornavam imediatamente sem efeito. Agora `loaded_ = true` é definido antes do merge e revertido para `false` apenas em falha real.
-- **Redução do guarda externo de heap de `80 KB` para `40 KB` (`src/ReadingStatsStore.cpp`):**
-  - Alinhado `ReadingStatsStore::loadFromFile()` ao requisito real do leitor *streaming* (`JsonSettingsIO::loadReadingStatsFromFile()`, pico ~40 KB). No ESP32-C3 (sem PSRAM), após inicializar fontes e UI, o maior bloco contíguo (`ESP.getMaxAllocHeap()`) frequentemente fica entre `40 KB` e `79 KB`, o que impedia permanentemente a materialização da lista de livros na aba de estatísticas.
-- **Preservação de sessões entre `summary.json` e `reading_stats.json` (`src/ReadingStatsStore.h`, `src/ReadingStatsStore.cpp`):**
-  - Removida a exclusão prematura de `/.crosspoint/reading_sessions.jrn` dentro de `updateSummaryFromJournal()` e `checkDayChange()`, que descartava sessões antes de serem gravadas no `reading_stats.json` principal.
-  - Adicionado o campo `journalAppliedBytes` em `SummaryJSON::Global` (`summary.json`) para aplicar ao resumo apenas os bytes ainda não processados do journal, mantendo o arquivo `.jrn` intacto até que `mergeSessionJournal()` consolide todos os registros no `reading_stats.json` e zere o offset.
-  - Em `checkDayChange()`, a virada de dia agora zera `todayReadingMs` (e `currentStreakDays` caso haja lacuna superior a 1 dia) mantendo `summaryJsonValid_ = true` e preservando o journal pendente.
-- **Correção do cabeçalho e detecção de formato do Journal V2 (`src/ReadingStatsStore.cpp`):**
-  - Em `appendSessionToJournal()`, `Storage.exists(READING_STATS_JOURNAL_FILE)` agora é verificado *antes* de abrir o arquivo com `O_CREAT` (antes o arquivo já existia no momento do teste, impedindo a escrita do magic `JOURNAL_MAGIC_V2` / `"RSJ2"`).
-  - Adicionado `detectJournalFormat()` usado por `updateSummaryFromJournal()` e `mergeSessionJournal()`: avança corretamente os 4 bytes do cabeçalho `JOURNAL_MAGIC_V2` (antes o ponteiro voltava para `seek(0)` e lia o magic como parte do primeiro registro) e detecta com segurança tanto arquivos V2 sem cabeçalho gerados pela `1.6.0.38-dev1` (48 bytes, padding zero em `[42..47]`, inclusive múltiplos de 96 bytes) quanto registros legados V1 (32 bytes).
-- **Retentativa automática e consistência nas telas de Estatísticas (`src/activities/apps/ReadingStatsActivity.h`, `src/activities/apps/ReadingStatsActivity.cpp`, `src/activities/apps/ReadingStatsDetailActivity.cpp`):**
-  - Adicionada retentativa com *throttle* (`LOAD_RETRY_INTERVAL_MS = 750`) em `ReadingStatsActivity::handleCustomInput()` para reconstruir e redesenhar a lista de livros assim que `READING_STATS.ensureLoaded()` concluir caso `onEnter()` tenha ocorrido com *boot gate* fechado ou heap temporariamente apertado.
-  - `ReadingStatsStore::ensureLoaded()` passa a mesclar journals pendentes mesmo quando `loaded_` já é `true`.
-  - `ReadingStatsStore::getBooksStartedCount()` faz fallback para `getSummaryJSON().bookBadges.size()` quando o store completo não está em RAM, e `getGlobalSummary()` delega para os getters com validação de dia atual.
-  - `synthesizeBookFromSnapshot()` em `ReadingStatsDetailActivity.cpp` agora propaga `book.lastProgressPercent = snap.endProgressPercent`.
+### 1. Reading Statistics (Deferred Loading and Binary Journal V2)
+- **Initialization order fix in `ReadingStatsStore::loadFromFile()` (`src/ReadingStatsStore.cpp`):**
+  - Previously, `mergeSessionJournal()` and `saveSummaryJSON()` were called *before* `loaded_ = true`. Because both functions have an `if (!loaded_) return;` guard, the journal merge into `reading_stats.json` and the regeneration of `summary.json` returned immediately without effect. Now `loaded_ = true` is set before the merge and reverted to `false` only upon an actual failure.
+- **Heap allocation guard reduced from `80 KB` to `40 KB` (`src/ReadingStatsStore.cpp`):**
+  - Aligned `ReadingStatsStore::loadFromFile()` with the actual streaming parser requirement (`JsonSettingsIO::loadReadingStatsFromFile()`, peak ~40 KB). On the ESP32-C3 (no PSRAM), after initializing fonts and UI, the largest contiguous free heap block (`ESP.getMaxAllocHeap()`) often sits between `40 KB` and `79 KB`, which permanently blocked the book list from materializing in the statistics tab.
+- **Session preservation between `summary.json` and `reading_stats.json` (`src/ReadingStatsStore.h`, `src/ReadingStatsStore.cpp`):**
+  - Removed the premature deletion of `/.crosspoint/reading_sessions.jrn` inside `updateSummaryFromJournal()` and `checkDayChange()`, which previously discarded sessions before they were committed to the primary `reading_stats.json`.
+  - Added the `journalAppliedBytes` field to `SummaryJSON::Global` (`summary.json`) so the summary only applies unprocessed journal bytes, keeping `.jrn` intact until `mergeSessionJournal()` consolidates all records into `reading_stats.json` and resets the offset.
+  - In `checkDayChange()`, day rollover now resets `todayReadingMs` (and `currentStreakDays` when there is a gap greater than 1 day) while keeping `summaryJsonValid_ = true` and preserving pending journal entries.
+- **V2 Journal header and format detection fix (`src/ReadingStatsStore.cpp`):**
+  - In `appendSessionToJournal()`, `Storage.exists(READING_STATS_JOURNAL_FILE)` is now checked *before* opening the file with `O_CREAT` (previously the file already existed by the time of testing, preventing the `JOURNAL_MAGIC_V2` / `"RSJ2"` magic from being written).
+  - Added `detectJournalFormat()` used by `updateSummaryFromJournal()` and `mergeSessionJournal()`: properly skips the 4-byte `JOURNAL_MAGIC_V2` header (previously the file pointer was reset to `seek(0)`, reading the magic as part of the first record) and safely detects headerless 48-byte V2 files generated by `1.6.0.38-dev1` (padding zeros at `[42..47]`, including multiples of 96 bytes) as well as legacy 32-byte V1 records.
+- **Automatic retry and consistency on Reading Stats screens (`src/activities/apps/ReadingStatsActivity.h`, `src/activities/apps/ReadingStatsActivity.cpp`, `src/activities/apps/ReadingStatsDetailActivity.cpp`):**
+  - Added throttled retry (`LOAD_RETRY_INTERVAL_MS = 750`) in `ReadingStatsActivity::handleCustomInput()` to rebuild and redraw the book list as soon as `READING_STATS.ensureLoaded()` succeeds if `onEnter()` occurred while the boot gate was closed or heap was temporarily constrained.
+  - `ReadingStatsStore::ensureLoaded()` now merges pending journals even when `loaded_` is already `true`.
+  - `ReadingStatsStore::getBooksStartedCount()` falls back to `getSummaryJSON().bookBadges.size()` when the full store is not in RAM, and `getGlobalSummary()` delegates to getters with current-day validation.
+  - `synthesizeBookFromSnapshot()` in `ReadingStatsDetailActivity.cpp` now propagates `book.lastProgressPercent = snap.endProgressPercent`.
 
-### 2. Progresso dos Livros no Tema Carrossel (`0%` fixo e cache de frames)
-- **Resolução unificada via `getBookProgressForHome()` (`src/components/themes/lyra/LyraCarouselTheme.cpp`, `src/activities/home/HomeActivity.cpp`):**
-  - `getBookProgressPercent()` em `LyraCarouselTheme.cpp` chamava `READING_STATS.findBook(...)`, que só busca no vetor `books` em RAM e retornava sempre `nullptr` (`0%`) com o carregamento adiado ativo na Home. Substituído por `READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path)` tanto no desenho do badge quanto no cálculo de hash em `HomeActivity.cpp`.
-- **Preenchimento completo de `SummaryJSON::BookBadge` com store carregado (`src/ReadingStatsStore.cpp`):**
-  - `ReadingStatsStore::getBookHomeStats()` no caminho `loaded_ == true` antes preenchia apenas `badge.completed`, deixando `badge.progressPercent = 0`. Agora preenche `bookId`, `path`, `completed`, `progressPercent`, `totalReadingMs`, `sessions` e `readingDaysCount`.
-- **Sincronização de progresso em sessões curtas (`< 120s`) e proteção contra OOM (`src/ReadingStatsStore.cpp`):**
-  - No modo *detached*, `updateProgress()` agora reflete o percentual exato atual (inclusive ao voltar páginas, não apenas o máximo histórico).
-  - Ao fechar um livro após leitura rápida (`< MIN_SESSION_READING_MS`) ou sem relógio sincronizado, `endSession()` grava um registro de journal apenas de progresso (`sessionMs = 0`) caso a porcentagem/conclusão tenha mudado em relação ao `summary.json`, atualizando os badges da Home/Carrossel imediatamente sem inflar tempo de leitura, contagem de sessões ou `sessionLog`.
-  - `saveSummaryJSON()` passa a incluir livros iniciados com `lastProgressPercent > 0` mesmo quando `totalReadingMs == 0`.
-  - Desserialização/serialização `JsonDocument` na saída do leitor protegida com `ESP.getMaxAllocHeap() >= 24 * 1024` (atualizando `summaryJson` em RAM imediatamente e adiando a escrita em disco se o heap estiver fragmentado, evitando `abort()` sob `-fno-exceptions`).
-- **Invalidação automática dos frames `.bin` antigos com `0%` (`src/activities/home/HomeActivity.cpp`):**
-  - Salt do hash de cache do Carrossel incrementado de `"lyra-carousel-frame-v7-progress-badge"` para `"lyra-carousel-frame-v8-progress-badge"`, forçando a regeneração dos frames cacheados no cartão SD que tinham `"0%"` gravado nos pixels.
+### 2. Carousel Theme Book Progress (Fixed `0%` and Frame Cache)
+- **Unified resolution via `getBookProgressForHome()` (`src/components/themes/lyra/LyraCarouselTheme.cpp`, `src/activities/home/HomeActivity.cpp`):**
+  - `getBookProgressPercent()` in `LyraCarouselTheme.cpp` called `READING_STATS.findBook(...)`, which only searches the in-RAM `books` vector and returned `nullptr` (`0%`) under deferred loading on Home. Replaced with `READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path)` for both badge rendering and hash calculation in `HomeActivity.cpp`.
+- **Full population of `SummaryJSON::BookBadge` when store is loaded (`src/ReadingStatsStore.cpp`):**
+  - In `ReadingStatsStore::getBookHomeStats()`, the `loaded_ == true` path previously only set `badge.completed`, leaving `badge.progressPercent = 0`. It now populates `bookId`, `path`, `completed`, `progressPercent`, `totalReadingMs`, `sessions`, and `readingDaysCount`.
+- **Progress synchronization for short sessions (`< 120s`) and OOM protection (`src/ReadingStatsStore.cpp`):**
+  - In detached mode, `updateProgress()` now reflects the exact current percentage (including when turning back pages, not just historical maximum).
+  - When closing a book after a quick read (`< MIN_SESSION_READING_MS`) or without a synchronized RTC, `endSession()` writes a progress-only journal record (`sessionMs = 0`) if progress or completion status changed compared to `summary.json`, updating Home/Carousel badges immediately without inflating reading time, session counts, or `sessionLog`.
+  - `saveSummaryJSON()` now includes started books with `lastProgressPercent > 0` even when `totalReadingMs == 0`.
+  - `JsonDocument` deserialization and serialization on reader exit are guarded by `ESP.getMaxAllocHeap() >= 24 * 1024` (updating in-RAM `summaryJson` immediately and deferring disk write if heap is fragmented, preventing `abort()` under `-fno-exceptions`).
+- **Automatic invalidation of stale `.bin` frames with `0%` (`src/activities/home/HomeActivity.cpp`):**
+  - Bumped the Carousel frame cache salt from `"lyra-carousel-frame-v7-progress-badge"` to `"lyra-carousel-frame-v8-progress-badge"`, forcing regeneration of cached SD card frames that had `"0%"` baked into the pixels.
 
-### 3. Ícone `"Library"` na Barra de Atalhos do Tema Carrossel
-- **Mapeamento de `UIIcon::LibraryNew` (`src/components/themes/lyra/LyraCarouselTheme.cpp`, `src/components/icons/library_new.h`):**
-  - Validada a inclusão de `case UIIcon::LibraryNew: return LibraryNewIcon;` (e demais ícones 32×32 de atalhos do `ShortcutRegistry`) em `LyraCarouselTheme::iconForName()`, corrigindo o retorno `nullptr` presente na tag `1.6.0.38-dev1` que deixava o slot da Biblioteca invisível no rodapé do Carrossel.
+### 3. `"Library"` Shortcut Icon in Carousel Theme
+- **Mapping for `UIIcon::LibraryNew` (`src/components/themes/lyra/LyraCarouselTheme.cpp`, `src/components/icons/library_new.h`):**
+  - Confirmed and restored `case UIIcon::LibraryNew: return LibraryNewIcon;` (along with other 32x32 shortcut icons from `ShortcutRegistry`) in `LyraCarouselTheme::iconForName()`, resolving the `nullptr` return in tag `1.6.0.38-dev1` that left the Library shortcut slot invisible in the Carousel footer.
 
-### 4. Ghosting do Menu Inicial na Capa ao Desligar/Suspender (Xteink X4)
-- **Restauração da base `HALF_REFRESH` antes da passada de 4 tons de cinza (`src/activities/boot_sleep/SleepActivity.cpp`):**
-  - Revertida em `displaySleepGrayscaleBase()` a troca para `displayBuffer(HalDisplay::FULL_REFRESH); preconditionGrayscale();`, restaurando `renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);`.
-  - Nos painéis X4 UltraChip (`UC8179`/`UC8279`), `FULL_REFRESH` preenche o plano antigo (`CMD_DTM1`) com `0xFF` (branco), mantendo cargas residuais da interface Home estacionadas em transições `WW` nas áreas claras da capa que a passada subsequente de escala de cinza (`displayGrayBuffer`) expunha como *ghosting*; `HALF_REFRESH` executa a *waveform* GC com `DTM1 = ~fb` (*charge scrub*), limpando a carga anterior em todos os pixels. Nos painéis X4 `SSD1677`, a LUT de cinza também é calibrada para o estado deixado por `HALF_REFRESH` (`0xD7`).
+### 4. Sleep Cover Menu Ghosting on Standby / Sleep (Xteink X4)
+- **Restored `HALF_REFRESH` base prior to the 4-level grayscale pass (`src/activities/boot_sleep/SleepActivity.cpp`):**
+  - Reverted `displaySleepGrayscaleBase()` from `displayBuffer(HalDisplay::FULL_REFRESH); preconditionGrayscale();` back to `renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);`.
+  - On X4 UltraChip panels (`UC8179`/`UC8279`), `FULL_REFRESH` seeds the old plane (`CMD_DTM1`) with `0xFF` (white), parking residual Home UI charges in `WW` transitions across white areas that the subsequent grayscale pass (`displayGrayBuffer`) exposes as ghosting; `HALF_REFRESH` runs the GC waveform with `DTM1 = ~fb` (charge scrub), clearing prior charge across all pixels. On X4 `SSD1677` panels, the grayscale LUT is also calibrated for the state left by `HALF_REFRESH` (`0xD7`).
 
-### 5. Submódulo `freeink-sdk`
-- **Fixação em commit público compatível (`freeink-sdk` → `e57b1202`):**
-  - O commit `8824fdf665` referenciado anteriormente não existia no repositório público `Free-Ink/freeink-sdk`, quebrando `git submodule update --init`. O submódulo foi fixado em `e57b120221432b20a7848b55cdf4969665e5f7e3` (revisão exata da API `FreeInkDisplay` + `FreeInkUI` compatível com o firmware e com CI).
+### 5. `freeink-sdk` Submodule
+- **Pinned to compatible public commit (`freeink-sdk` → `e57b1202`):**
+  - Commit `8824fdf665` previously referenced did not exist in the public `Free-Ink/freeink-sdk` repository, breaking `git submodule update --init`. Pinned the submodule to `e57b120221432b20a7848b55cdf4969665e5f7e3` (exact compatible revision of `FreeInkDisplay` + `FreeInkUI` APIs for both firmware and CI).
 
 ## 1.6.0.38 — OTA and EPUB image fixes
 
