@@ -279,9 +279,9 @@ When performing future upstream merges, always target `master` and use the workf
 |---------|-------------|--------|
 | **Steroids Branding** | Custom 350×96 logo on boot/sleep; web UI (HomePage, Flash, Settings, Stats Editor); OTA points to `marcoand75/cpr-vcodex-steroids` | ✅ Complete |
 | **Library V3** | Mixed view (series tiles + standalone books); user collections (manual CRUD); auto series from EPUB `calibre:series` + folder fallback; case-insensitive natural sort; page frame cache | ✅ Complete |
-| **Reading Statistics (Streaming)** | Incremental JSON loader (1 KB buffer); binary journal (`reading_sessions.jrn`, 32 B/record) for detached sessions; `summary.json` fast path (~6 KB) for Home/UI; import/export streaming (~20 KB peak RAM); lazy full-store load | ✅ Complete |
+| **Reading Statistics (Streaming)** | Incremental JSON loader (1 KB buffer); binary journal (`reading_sessions.jrn`, 48 B V2 records behind a 4-byte `RSJ2` header, V1 32 B records still read) for detached sessions; `reading_stats_summary.json` fast path (~6 KB) for Home/UI; import/export streaming (~20 KB peak RAM); lazy full-store load | ✅ Complete |
 | **Fast Restart (Standardized)** | Declarative `exitRestartPlan()` per activity; `ActivityManager::exitWithFastRestart()`; RTC silent boot to Home; Reader/Library/Settings/Apps all seamless | ✅ Complete |
-| **Home Theme: Lyra Marcoand75** | Carousel with data panels (progress, time, sessions, reading days); frame cache; cover generation integration; summary.json fast path | ✅ Complete |
+| **Home Theme: Lyra Marcoand75** | Carousel with data panels (progress, time, sessions, reading days); frame cache; cover generation integration; `reading_stats_summary.json` fast path | ✅ Complete |
 | **Lua Plugin System** | Lua 5.4 VM; plugin browser (`/.crosspoint/plugins/`); sandboxed `cpr` API (display, input, storage, books, stats); separate activity stack | ✅ Complete |
 | **Wikipedia Offline** | ZIM/HTML article cache; full-text search; article rendering with images | ✅ Complete |
 | **Sleep Screen & Power Button** | Modes: Off, Clock, Cover, Clock+Cover, Custom; cover filters (grayscale/inverted/sepia); short-press cycles mode; long-press sleep/power off | ✅ Complete |
@@ -308,7 +308,7 @@ When performing future upstream merges, always target `master` and use the workf
 .\bin\build-vcodex.ps1 -Environment gh_release
 ```
 
-**Artifacts:** `artifacts/1.6.0.38.dev<N>-<sha>-cpr-vcodex.bin`  
+**Artifacts:** `artifacts/1.6.0.38.dev<N>-<sha>-cpr-vcodex-steroids.bin`  
 **Flash:** [Auto Flash page](https://marcoand75.github.io/cpr-vcodex-steroids/flash.html) (X4 default, X4 Pro blocked)  
 **OTA:** `https://github.com/marcoand75/cpr-vcodex-steroids/releases`
 

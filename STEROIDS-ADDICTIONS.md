@@ -67,4 +67,4 @@
 
 ---
 
-*Generated: 2026-09-28 | Branch: integration/steroids-vcodex | Base: upstream vcodex 1.6.0.37*
+*Generated: 2026-09-28 | Branch: integration/steroids-vcodex | Base: upstream vcodex 1.6.0.38*

@@ -1,6 +1,6 @@
 # CPR-vCodex Steroids — Reading Statistics (Streaming Architecture)
 
-> **SCOPE:** Complete technical reference for the streaming reading stats system: incremental JSON loader, binary journal for detached sessions, summary.json fast path, import/export streaming, lazy loading integration.
+> **SCOPE:** Complete technical reference for the streaming reading stats system: incremental JSON loader, binary journal for detached sessions, `reading_stats_summary.json` fast path, import/export streaming, lazy loading integration.
 
 ---
 
@@ -25,7 +25,7 @@
 ~/.crosspoint/
 ├── reading_stats.json        (51 KB — canonical JSON, formatVersion 6)
 ├── reading_stats_summary.json (~6 KB — compact index for Home/UI)
-└── reading_sessions.jrn       (32 B/record — binary journal for detached sessions)
+└── reading_sessions.jrn       (48 B V2 records, 4-byte "RSJ2" header — binary journal for detached sessions)
 ```
 
 **No binary `.pack` file** — removed (didn't reduce RAM; bottleneck was resident store ~50 KB).
@@ -84,7 +84,7 @@ struct GlobalSummary {
 
 | State | Free Heap | Max Alloc | Notes |
 |-------|-----------|-----------|-------|
-| Boot (no store) | ~112 KB | ~90 KB | Only summary.json loaded |
+| Boot (no store) | ~112 KB | ~90 KB | Only reading_stats_summary.json loaded |
 | Store loaded | ~68 KB | ~50 KB | Full vectors materialized |
 | Import streaming | ~78 KB | ~61 KB | 1 KB buffer + compact day vector |
 | Network release | ~107 KB | ~86 KB | Store cleared, summary kept |
@@ -97,11 +97,11 @@ struct GlobalSummary {
 ```cpp
 // main.cpp:1322
 READING_STATS.preloadHomeSummary();
-// → loadSummaryJSON() reads summary.json (6 KB)
+// → loadSummaryJSON() reads reading_stats_summary.json (6 KB)
 // → summaryJsonValid_ = true
 // → loaded_ = false (fat store NOT materialized)
 ```
-**Gate:** `boot_load_gate::ready() && ESP.getMaxAllocHeap() >= 80 KB`
+**Gate:** `preloadHomeSummary()` runs at boot (`main.cpp`); the summary read itself is small, while the full store load is deferred below 40 KB of largest free block (see 3.2).
 
 ### 3.2 Lazy Full Load (`ensureLoaded()`)
 Triggered by:
@@ -112,9 +112,9 @@ Triggered by:
 
 ```cpp
 bool ReadingStatsStore::ensureLoaded() {
-    if (loaded_) return true;
-    if (!boot_load_gate::ready() || ESP.getMaxAllocHeap() < 80 KB) return false;
-    return loadFromFile();  // streaming two-pass loader
+    if (loaded_) { /* merge pending journal, save summary */ return true; }
+    if (!boot_load_gate::ready()) return false;
+    return loadFromFile();  // streaming two-pass loader; defers below 40 KB maxA
 }
 ```
 
@@ -140,24 +140,21 @@ sessionsEstimate = min(160, max(16, size/400));
 4. On book removal: remap orphans, materialize strings
 ```
 
-### 3.5 Binary Journal (`reading_sessions.jrn`, 32 B/record)
-```cpp
-struct JournalRecord {
-    uint32_t dayOrdinal;
-    uint64_t sessionMs;
-    uint32_t bookId;        // 0 = orphan
-    char path[12];          // truncated for orphans
-    uint8_t progressPercent;
-    bool completed;
-};
+### 3.5 Binary Journal (`reading_sessions.jrn`, 48 B V2 records)
+```text
+File: [u32 magic "RSJ2" (0x52534A32)] + N × 48-byte records
+Rec:  [u32 dayOrdinal][u32 sessionMs][u8 progressPercent][u8 completed]
+      [u8 bookId[32]][u8 reserved[6]]
 ```
+The full 32-byte KOReader bookId hash is stored verbatim (no truncation).
+`detectJournalFormat()` also accepts legacy headerless V1 records (32 B, 16-byte id)
+and V2 files written before the `O_CREAT` magic fix (48 B records, zero padding at [42..47]).
 **Flow:**
 1. `beginSession()` with `!loaded_` → detached session (no `ensureLoaded()`)
 2. `noteActivity()` / `tickActiveSession()` / `endSession()` → append to journal
-3. `mergeSessionJournal()` called at:
-   - Tail of `loadFromFile()`
-   - After import parse
-   - Merges into books + sessionLog + days, removes journal file
+3. `updateSummaryFromJournal()` folds only unapplied bytes (`journalAppliedBytes`) into the summary
+4. `mergeSessionJournal()` (full load, import, next `ensureLoaded()`) folds records into
+   books + sessionLog + days, then removes the journal file
 
 ### 3.6 Summary Regeneration (`saveSummaryJSON()`)
 Called on every store modification (`markDirty()`):
@@ -184,7 +181,7 @@ validateStatsStreaming(sourcePath, counters);
 // 3. Copy source → target (byte-count verified)
 copyWithVerification(source, target, sourceSize);
 
-// 4. Regenerate summary.json from copied file (streaming)
+// 4. Regenerate reading_stats_summary.json from copied file (streaming)
 parseReadingDayArray() + parseBooksSummaryLite() + aggregate
 
 // 5. Invalidate in-memory state
@@ -203,7 +200,7 @@ invalidateSummaryCache();
 ```cpp
 // ReadingStatsStore::getHomeBookStatsForRender()
 if (!loaded_) {
-    const auto& summary = getSummaryJSON();  // loads summary.json if needed
+    const auto& summary = getSummaryJSON();  // loads reading_stats_summary.json if needed
     for (badge : summary.bookBadges) match by bookId/path
     return synthesized ReadingBookStats from badge;
 }
@@ -213,7 +210,7 @@ if (!loaded_) {
 ```cpp
 // HomeActivity::onEnter()
 if (!READING_STATS.isSummaryValid()) {
-    READING_STATS.preloadHomeSummary();  // reloads summary.json after import
+    READING_STATS.preloadHomeSummary();  // reloads reading_stats_summary.json after import
 }
 ```
 

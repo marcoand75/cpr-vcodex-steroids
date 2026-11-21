@@ -1099,51 +1099,41 @@ bool Epub::prewarmImagesForSpine(int spineIndex) const {
     return false;
   }
 
-  // Read full HTML into a buffer.
-  std::vector<uint8_t> htmlBuf(htmlSize);
-  if (htmlFile.read(htmlBuf.data(), htmlSize) != static_cast<int>(htmlSize)) {
+  const uint32_t minHeapForExtract = 32 * 1024;  // ZIP inflate buffer needs ~32 KB contiguous
+  const uint32_t minHeapToScan = 8 * 1024;       // room for the small per-tag strings below
+
+  // Bail out before further allocations when the heap cannot support the scan.
+  // (The firmware is built with -fno-exceptions, so a failed allocation here would
+  // terminate the device instead of unwinding.)
+  const uint32_t maxAStart = ESP.getMaxAllocHeap();
+  if (maxAStart < minHeapToScan) {
+    LOG_DBG("EBP", "prewarm skip spine %d: maxA=%u too low", spineIndex, maxAStart);
     htmlFile.close();
     return false;
   }
-  htmlFile.close();
+  LOG_DBG("EBP", "prewarm spine %d: html=%u bytes maxA=%u", spineIndex,
+          static_cast<unsigned>(htmlSize), maxAStart);
 
-  // Find <img src="..."> and <img src='...'  tags.
-  const char* html = reinterpret_cast<const char*>(htmlBuf.data());
-  const char* end = html + htmlSize;
-
-  // Image output path prefix (must match Section::startBuild line 380).
+  // Image output path prefix (must match Section::startBuild's ctx->imageBasePath).
   const std::string imgPrefix = getCachePath() + "/img_" + std::to_string(spineIndex) + "_";
   int imgCount = 0;
-  const size_t minHeapForExtract = 32 * 1024;  // ZIP inflate buffer needs ~32 KB contiguous
 
-  for (const char* p = html;;) {
-    // Find next <img tag (case-insensitive).
-    const char* tagStart = nullptr;
-    for (; p < end - 3; ++p) {
-      if (p[0] == '<' && (p[1] == 'i' || p[1] == 'I')) {
-        if ((p[2] == 'm' || p[2] == 'M') && (p[3] == 'g' || p[3] == 'G')) {
-          tagStart = p;
-          break;
-        }
-      }
-    }
-    if (!tagStart) break;
-    p = tagStart + 4;
+  // The parser resolves relative image hrefs against the spine item's directory;
+  // reconstruct the same base once instead of per image.
+  const auto spineItem = getSpineItem(spineIndex);
+  const size_t lastSlash = spineItem.href.find_last_of('/');
+  const std::string contentBase =
+      (lastSlash != std::string::npos) ? spineItem.href.substr(0, lastSlash + 1) : "";
 
-    // Find closing >.
-    const char* tagEnd = nullptr;
-    for (; p < end; ++p) {
-      if (*p == '>') { tagEnd = p; break; }
-    }
-    if (!tagEnd) break;
-
-    // Extract src attribute value from the tag.
-    const std::string tagStr(tagStart, tagEnd - tagStart + 1);
+  // Extract the src attribute from one complete <img ...> tag.
+  // Returns false when prewarming should stop (heap too low).
+  const auto handleImgTag = [&](const char* tag, const size_t tagLen) -> bool {
+    const std::string tagStr(tag, tagLen);
     std::string srcPath;
     // Try double-quoted src first.
-    size_t pos = tagStr.find("src=");
-    if (pos != std::string::npos) {
-      const char* afterSrc = tagStr.c_str() + pos + 4;
+    const size_t srcPos = tagStr.find("src=");
+    if (srcPos != std::string::npos) {
+      const char* afterSrc = tagStr.c_str() + srcPos + 4;
       if (*afterSrc == '"') {
         ++afterSrc;
         const char* qEnd = strchr(afterSrc, '"');
@@ -1154,25 +1144,17 @@ bool Epub::prewarmImagesForSpine(int spineIndex) const {
         if (qEnd) srcPath.assign(afterSrc, qEnd - afterSrc);
       }
     }
-    if (srcPath.empty()) { p = tagEnd + 1; continue; }
+    if (srcPath.empty()) {
+      return true;  // no src attribute: keep scanning
+    }
 
-    // Resolve against contentBase: the parser resolves relative hrefs using the
-    // spine item's directory. Reconstruct the same base here.
-    const auto spineItem = getSpineItem(spineIndex);
-    const size_t lastSlash = spineItem.href.find_last_of('/');
-    const std::string contentBase = (lastSlash != std::string::npos)
-                                        ? spineItem.href.substr(0, lastSlash + 1)
-                                        : "";
-    std::string resolvedPath = contentBase + srcPath;
-    // Normalise: remove ./ and handle ../
-    // (simple approach: pass through FsHelpers::normalisePath)
-    resolvedPath = FsHelpers::normalisePath(resolvedPath);
+    std::string resolvedPath = FsHelpers::normalisePath(contentBase + srcPath);
 
     // Check heap before extracting.
     const uint32_t maxA = ESP.getMaxAllocHeap();
     if (maxA < minHeapForExtract) {
       LOG_DBG("EBP", "prewarm skip image %s: maxA=%u too low", resolvedPath.c_str(), maxA);
-      break;  // stop prewarming; remaining images will lazy-extract on render
+      return false;  // stop prewarming; remaining images will lazy-extract on render
     }
 
     // Build the cache output path (same scheme as ChapterHtmlSlimParser).
@@ -1187,8 +1169,7 @@ bool Epub::prewarmImagesForSpine(int spineIndex) const {
     // Skip if already cached.
     HalFile check;
     if (Storage.openFileForRead("EBP", cachePath, check)) {
-      check.close();
-      continue;
+      return true;  // already extracted
     }
 
     // Extract.
@@ -1197,9 +1178,68 @@ bool Epub::prewarmImagesForSpine(int spineIndex) const {
     } else {
       LOG_DBG("EBP", "prewarm failed: %s", resolvedPath.c_str());
     }
+    return true;
+  };
 
-    p = tagEnd + 1;
+  // Scan the cached HTML incrementally. Indexing runs with a tight, fragmented heap:
+  // materialising the whole document needed one contiguous block the size of the
+  // chapter (hundreds of KB on single-spine books), and the resulting std::bad_alloc
+  // aborted the device mid-index. Images are a best-effort cache, so the scan keeps
+  // only a small carry buffer and stops cleanly whenever the heap runs out.
+  constexpr size_t kChunkSize = 1024;
+  constexpr size_t kMaxTagBytes = 1024;  // an <img> tag longer than this is pathological
+  std::string carry;
+  carry.reserve(kChunkSize + kMaxTagBytes);
+  char chunk[kChunkSize];
+  bool keepScanning = true;
+
+  while (keepScanning) {
+    const int n = htmlFile.read(reinterpret_cast<uint8_t*>(chunk), sizeof(chunk));
+    if (n <= 0) {
+      break;
+    }
+    carry.append(chunk, static_cast<size_t>(n));
+
+    size_t pos = 0;
+    for (;;) {
+      const size_t tagStart = carry.find('<', pos);
+      if (tagStart == std::string::npos) {
+        pos = carry.size();
+        break;
+      }
+      // Wait for the next chunk when "<img" itself is split across the boundary.
+      if (carry.size() - tagStart < 4) {
+        pos = tagStart;
+        break;
+      }
+      const bool isImgTag = (carry[tagStart + 1] == 'i' || carry[tagStart + 1] == 'I') &&
+                            (carry[tagStart + 2] == 'm' || carry[tagStart + 2] == 'M') &&
+                            (carry[tagStart + 3] == 'g' || carry[tagStart + 3] == 'G');
+      if (!isImgTag) {
+        pos = tagStart + 1;
+        continue;
+      }
+      const size_t tagEnd = carry.find('>', tagStart + 4);
+      if (tagEnd == std::string::npos) {
+        if (carry.size() - tagStart > kMaxTagBytes) {
+          pos = tagStart + 4;  // runaway tag: drop its "<img" and keep scanning
+          continue;
+        }
+        pos = tagStart;  // the tag continues in the next chunk
+        break;
+      }
+      if (!handleImgTag(carry.data() + tagStart, tagEnd - tagStart + 1)) {
+        keepScanning = false;
+        break;
+      }
+      pos = tagEnd + 1;
+    }
+
+    if (pos > 0) {
+      carry.erase(0, pos);
+    }
   }
 
+  htmlFile.close();
   return imgCount > 0;
 }

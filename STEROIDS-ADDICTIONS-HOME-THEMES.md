@@ -43,7 +43,7 @@ class LyraMarcoand75Theme : public LyraCarouselTheme {
 // ALWAYS redrawn over cached frames (geometry lifted out of !coverRendered)
 void drawDataPanel(int bookIndex) {
     // 1. Clear panel region
-    // 2. Get badge via getBookHomeStats() → reads summary.json (fast path)
+    // 2. Get badge via getBookHomeStats() → reads reading_stats_summary.json (fast path)
     // 3. Draw: progress bar, total time, sessions, reading days count
     // 4. Draw: streak badge if applicable
 }
@@ -83,7 +83,7 @@ constexpr const char* CAROUSEL_FRAME_CACHE_DIR = "/.crosspoint/home-carousel-cac
 
 ### 2.5 Reading Stats Integration (Lazy)
 ```cpp
-// HomeActivity uses summary.json fast path:
+// HomeActivity uses reading_stats_summary.json fast path:
 // - getCarouselBookProgressPercent() → getBookHomeStats() → summary badges
 // - LyraMarcoand75Theme::drawDataPanel() → getBookHomeStats() → summary badges
 // - No full store load unless RECENT/PROGRESS sort selected
@@ -150,7 +150,7 @@ BookBadge {
 - Cover generation retry logic (delete partial BMP, verify generated)
 - Frame cache invalidation on scan/rebuild
 - Data panel always-redraw pattern (fix for stale panels)
-- Lazy stats loading pattern (summary.json fast path)
+- Lazy stats loading pattern (reading_stats_summary.json fast path)
 
 ### Conflicts Likely
 - `HomeActivity` state persistence fields

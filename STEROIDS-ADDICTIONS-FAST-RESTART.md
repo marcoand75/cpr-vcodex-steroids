@@ -140,7 +140,7 @@ READING_STATS.releaseMemoryForNetwork();  // clears fat store, keeps summary
 ```
 
 ### 5.2 Post-Restart State
-- `summary.json` valid (preloaded at boot)
+- `reading_stats_summary.json` valid (preloaded at boot)
 - Fat store NOT loaded until needed
 - Heap defragmented (deep sleep + fresh boot)
 - `maxA` typically > 90 KB vs ~10 KB pre-restart
@@ -198,7 +198,7 @@ READING_STATS.releaseMemoryForNetwork();  // clears fat store, keeps summary
 - [ ] ReadingStatsDetail (session summary) → Home: seamless
 - [ ] ReadingStatsDetail (regular) → normal pop
 - [ ] Lua Plugin Browser → Home: seamless
-- [ ] Post-restart: summary.json valid, store lazy-load works
+- [ ] Post-restart: reading_stats_summary.json valid, store lazy-load works
 
 ---
 

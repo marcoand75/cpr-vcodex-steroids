@@ -459,8 +459,8 @@ totalPages_ = ...;
 
 ### 16.1 Before V3: Full store loaded on library entry (~41 KB, fragmented heap)
 ### 16.2 V3: Lazy Loading
-- **Home/Carousel badges:** `summary.json` fast path (`getHomeBookStatsForRender`)
-- **Grid filters:** `summary.json` (completed/unread flags)
+- **Home/Carousel badges:** `reading_stats_summary.json` fast path (`getHomeBookStatsForRender`)
+- **Grid filters:** `reading_stats_summary.json` (completed/unread flags)
 - **Full store (`ReadingStatsStore`):** Only materialized for:
   - `RECENT` / `PROGRESS` sorts
   - Mark read/unread actions

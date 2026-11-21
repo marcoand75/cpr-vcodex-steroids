@@ -16,9 +16,9 @@
 |---------|-------------|--------|
 | **Steroids Branding** | Custom 350×96 logo on boot/sleep; web UI (HomePage, Flash, Settings, Stats Editor); OTA points to `marcoand75/cpr-vcodex-steroids` | ✅ Complete |
 | **Library V3** | Mixed view (series tiles + standalone books); user collections (manual CRUD); auto series from EPUB `calibre:series` + folder fallback; case-insensitive natural sort; page frame cache | ✅ Complete |
-| **Reading Statistics (Streaming)** | Incremental JSON loader (1 KB buffer); binary journal (`reading_sessions.jrn`, 32 B/record) for detached sessions; `summary.json` fast path (~6 KB) for Home/UI; import/export streaming (~20 KB peak RAM); lazy full-store load | ✅ Complete |
+| **Reading Statistics (Streaming)** | Incremental JSON loader (1 KB buffer); binary journal (`reading_sessions.jrn`, 48 B V2 records behind a 4-byte `RSJ2` header, V1 32 B records still read) for detached sessions; `reading_stats_summary.json` fast path (~6 KB) for Home/UI; import/export streaming (~20 KB peak RAM); lazy full-store load | ✅ Complete |
 | **Fast Restart (Standardized)** | Declarative `exitRestartPlan()` per activity; `ActivityManager::exitWithFastRestart()`; RTC silent boot to Home; Reader/Library/Settings/Apps all seamless | ✅ Complete |
-| **Home Theme: Lyra Marcoand75** | Carousel with data panels (progress, time, sessions, reading days); frame cache; cover generation integration; summary.json fast path | ✅ Complete |
+| **Home Theme: Lyra Marcoand75** | Carousel with data panels (progress, time, sessions, reading days); frame cache; cover generation integration; `reading_stats_summary.json` fast path | ✅ Complete |
 | **Lua Plugin System** | Lua 5.4 VM; plugin browser (`/.crosspoint/plugins/`); sandboxed `cpr` API (display, input, storage, books, stats); separate activity stack | ✅ Complete |
 | **Wikipedia Offline** | ZIM/HTML article cache; full-text search; article rendering with images | ✅ Complete |
 | **Sleep Screen & Power Button** | Modes: Off, Clock, Cover, Clock+Cover, Custom; cover filters (grayscale/inverted/sepia); short-press cycles mode; long-press sleep/power off | ✅ Complete |
@@ -107,7 +107,7 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex` |
 | Device | `Xteink X4` (personally tested); `Xteink X3` UC8253/UC8279d runtime support, with broader physical feedback requested. **X4 Pro firmware distribution is withdrawn** because locked devices do not have a confirmed recovery path. |
-| Current release (CPR-vCodex) build | [`1.6.0.37-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.6.0.37-cpr-vcodex) |
+| Current release (CPR-vCodex) build | [`1.6.0.38-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.6.0.38-cpr-vcodex) |
 | Release hardware stack | `freeink-sdk` [`cb9167d5`](https://github.com/Free-Ink/freeink-sdk/commit/cb9167d541c0f6e9d57cf8eae1f564a939883ecc), with runtime X3/X4 panel detection. |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
@@ -175,8 +175,8 @@ Affected users have successfully recovered devices running CPR-vCodex `1.5.0.3` 
 
 ## Web tools
 
-- [Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html) installs the latest CPR-vCodex firmware on the Xteink X4 and X3 from Chrome or Edge using Web Serial. X4 is always the default. X4 Pro remains visibly marked as withdrawn, but the page cannot select, download, or flash it—even if an obsolete manifest is cached.
-- [Reading Stats Editor](https://franssjz.github.io/cpr-vcodex/reading-stats-editor/) edits exported reading stats locally in the browser. No upload, no server.
+- [Auto Flash](https://marcoand75.github.io/cpr-vcodex-steroids/flash.html) installs the latest CPR-vCodex Steroids firmware on the Xteink X4 and X3 from Chrome or Edge using Web Serial. X4 is always the default. X4 Pro remains visibly marked as withdrawn, but the page cannot select, download, or flash it—even if an obsolete manifest is cached.
+- [Reading Stats Editor](https://marcoand75.github.io/cpr-vcodex-steroids/reading-stats-editor/) edits exported reading stats locally in the browser. No upload, no server.
 - Device web settings treat the KOReader password as write-only: the stored value is never returned to the browser, which only indicates that a password is already configured.
 
 ## SD card DICTIONARIES
@@ -372,13 +372,13 @@ This project is **not affiliated with Xteink**.
 - Slovenian
 - Vietnamese
 
-The translation set is maintained from `english.yaml` as the source of truth. Current shipped UI keys are synchronized across all 23 languages; safe English fallback remains available for future keys that have not been translated yet.
+The translation set is maintained from `english.yaml` as the source of truth. Current shipped UI keys are synchronized across all 24 languages; safe English fallback remains available for future keys that have not been translated yet.
 
 ## Easy installation
 
 For most users, this is the easiest way to install the firmware:
 
-1. Download the latest `*-cpr-vcodex.bin` release file.
+1. Download the latest `*-cpr-vcodex-steroids.bin` release file.
 2. Turn on and unlock your Xteink X4.
 3. Open [xteink.dve.al](https://xteink.dve.al/).
 4. In `OTA fast flash controls`, select the firmware file.
@@ -709,6 +709,8 @@ Important artifacts include:
 
 - `/.crosspoint/state.json`
 - `/.crosspoint/reading_stats.json`
+- `/.crosspoint/reading_stats_summary.json`
+- `/.crosspoint/reading_sessions.jrn` (binary session journal, merged into `reading_stats.json`)
 - `/.crosspoint/achievements.json`
 - `/.crosspoint/recent.json`
 - per-book `bookmarks.bin`, now a versioned Highlights store that retains legacy page bookmarks
@@ -717,7 +719,7 @@ Important artifacts include:
 
 ### Recovering Reading Stats after 1.5.0.1 or 1.5.0.2
 
-Update to `1.6.0.37-cpr-vcodex` before resetting or deleting any data. In most cases the existing `/.crosspoint/reading_stats.json` will load automatically after the update because the affected releases rejected the file without overwriting it.
+Update to `1.6.0.38-cpr-vcodex` before resetting or deleting any data. In most cases the existing `/.crosspoint/reading_stats.json` will load automatically after the update because the affected releases rejected the file without overwriting it.
 
 If the displayed totals are still incomplete or incorrect, open `Settings > Apps > Reading Stats > Import Reading Stats` and select the newest suitable dated backup under `/exports/stats_backup_YYYY-MM-DD`. Those weekly backups appear directly in the import list and do not need to be renamed. If the only copy is on a computer, place it on the SD card as exactly `/exports/stats_exported` (without a `.json` extension), then import it. Try older dated backups newest-first if necessary, and preserve a copy of the SD card before cleaning or resetting statistics.
 
@@ -730,10 +732,10 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.6.0`
-- current release build style: `1.6.0.37-cpr-vcodex`
-- packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
+- current release build style: `1.6.0.38-cpr-vcodex`
+- packaged artifact style: `artifacts/<version>-cpr-vcodex-steroids.bin`
 
-The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
+The incremental `.dev<N>` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
 
 ## Main docs
 
@@ -819,13 +821,13 @@ Remove-Item Env:\VCODEX_RELEASE_DRY_RUN
 This generates a packaged firmware artifact under:
 
 ```text
-artifacts/<version>-cpr-vcodex.bin
+artifacts/<version>-cpr-vcodex-steroids.bin
 ```
 
 Versioning rules:
 
-- release builds: `1.6.0.<release>-cpr-vcodex.bin`
-- dev builds: `1.6.0.<release>.dev<build>-<sha>-cpr-vcodex.bin`
+- release builds: `1.6.0.<release>-cpr-vcodex-steroids.bin`
+- dev builds: `1.6.0.<release>.dev<build>-<sha>-cpr-vcodex-steroids.bin`
 - internal maintainer-only X4 Pro builds carry `-x4pro`; these artifacts must
   not be distributed while the safety withdrawal remains active
 
@@ -834,10 +836,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.6.0.37-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.6.0.38-cpr-vcodex
 ```
 
-- push a stable tag named like `1.6.0.37-cpr-vcodex`
+- push a stable tag named like `1.6.0.38-cpr-vcodex`
 - `pre_release_check.py` dry-runs `gh_release`, checks it against the 6,553,600
   byte X4 OTA slot, validates the artifact pair, and rejects any X4 Pro entry
   or stale X4 Pro browser binary

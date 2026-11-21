@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.0.38-fix (BrunoYDev Fork) — Reading Stats, Carousel Theme, Library Icon, and Sleep Cover Ghosting Fixes on X4
+## 1.6.0.38-fix (BrunoYDev Fork) — Reading Stats, Carousel Theme, Library Icon, Sleep Cover Ghosting, and EPUB Indexing Reboot Fixes on X4
 
 Detailed fixes for four regressions identified on the **Xteink X4 (ESP32-C3)** after the `1.6.0.38-dev1-cpr-vcodex-steroids` release, alongside stabilization of the `freeink-sdk` submodule:
 
@@ -44,9 +44,17 @@ Detailed fixes for four regressions identified on the **Xteink X4 (ESP32-C3)** a
   - Reverted `displaySleepGrayscaleBase()` from `displayBuffer(HalDisplay::FULL_REFRESH); preconditionGrayscale();` back to `renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);`.
   - On X4 UltraChip panels (`UC8179`/`UC8279`), `FULL_REFRESH` seeds the old plane (`CMD_DTM1`) with `0xFF` (white), parking residual Home UI charges in `WW` transitions across white areas that the subsequent grayscale pass (`displayGrayBuffer`) exposes as ghosting; `HALF_REFRESH` runs the GC waveform with `DTM1 = ~fb` (charge scrub), clearing prior charge across all pixels. On X4 `SSD1677` panels, the grayscale LUT is also calibrated for the state left by `HALF_REFRESH` (`0xD7`).
 
-### 5. `freeink-sdk` Submodule
-- **Pinned to compatible public commit (`freeink-sdk` → `e57b1202`):**
-  - Commit `8824fdf665` previously referenced did not exist in the public `Free-Ink/freeink-sdk` repository, breaking `git submodule update --init`. Pinned the submodule to `e57b120221432b20a7848b55cdf4969665e5f7e3` (exact compatible revision of `FreeInkDisplay` + `FreeInkUI` APIs for both firmware and CI).
+### 5. `freeink-sdk` Submodule (X3 I2C fix on the fork)
+- **Submodule source moved to the fork (`freeink-sdk` → `marcoand75/freeink-sdk`, pin `bccc745`):**
+  - `.gitmodules` now points at `https://github.com/marcoand75/freeink-sdk.git` (branch `fix/xteink-i2c-probe`), and the pin is `bccc7453b02f04fe98d571848499c35bc6440eb3`: the previous `e57b1202` revision plus one commit that keeps the XteinkDetect I2C bus installed after the X3 fingerprint probe.
+  - Without that commit, `runProbePass()` calls `Wire.end()` and the next `Wire.begin()` from another library returns `ESP_ERR_INVALID_STATE`. On X3 this leaves the RTC (DS3231), IMU (QMI8658) and fuel gauge (BQ27220) unavailable; X4 is unaffected because those peripherals are not part of its board profile.
+  - The branch `fix/xteink-i2c-probe` is published on the fork, so `git submodule update --init` resolves the pin without access to the public `Free-Ink/freeink-sdk` repository.
+
+### 6. EPUB Indexing Reboot (`std::bad_alloc` in image prewarm)
+- **Bounded, streaming HTML scan in `Epub::prewarmImagesForSpine()` (`lib/Epub/Epub.cpp`):**
+  - `prewarmImagesForSpine()` loaded the whole cached chapter HTML into `std::vector<uint8_t> htmlBuf(htmlSize)`. On a single-spine book that cache can be hundreds of KB, and while indexing the largest contiguous heap block is often smaller, so `operator new` threw `std::bad_alloc`. The firmware is built with `-fno-exceptions`, so the exception reached `std::terminate()` and aborted the device mid-index (panic `abort() was called at PC 0x4229a1e3`, decoded to `Epub.cpp:1103`).
+  - The scan now streams the cached HTML through a 1 KB stack buffer with a carry buffer for tags split across chunk boundaries, so it never needs a chapter-sized allocation. Tag matching, cache naming (`img_<spine>_<n>_<ext>`), the 32 KB pre-extraction heap guard, and the "skip already cached" behavior are unchanged.
+  - Added an early bail-out when `ESP.getMaxAllocHeap()` is below 8 KB, plus an `[EBP] prewarm spine N: html=… bytes maxA=…` debug line. When the scan cannot run, image extraction simply stays lazy at render time (the previous fallback).
 
 ## 1.6.0.38 — OTA and EPUB image fixes
 
