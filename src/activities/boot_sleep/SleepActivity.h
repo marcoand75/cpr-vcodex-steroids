@@ -12,6 +12,9 @@ class SleepActivity final : public Activity {
   explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool fromTimeout = false)
       : Activity("Sleep", renderer, mappedInput), fromTimeout(fromTimeout) {}
   void onEnter() override;
+  // The sleep screen owns the panel until deep sleep: a power-button
+  // FORCE_REFRESH would repaint the retained image right after the render.
+  bool handleForcedRefresh() override { return true; }
 
   // Pick a fresh image from the configured sleep directory and draw it without
   // any popup or text. Used by the deep-sleep tap-to-cycle path: APP_STATE must

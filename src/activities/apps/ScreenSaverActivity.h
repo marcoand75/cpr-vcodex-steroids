@@ -41,6 +41,10 @@ class ScreenSaverActivity final : public Activity {
   void onExit() override;
   void render(RenderLock&&) override;
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_NONE; }
+  // The screensaver owns the panel: a power-button FORCE_REFRESH right after
+  // the image render would repaint the framebuffer while the grayscale planes
+  // are still loaded. The short press already advances/closes the screensaver.
+  bool handleForcedRefresh() override { return true; }
   bool preventAutoSleep() override { return true; }
   bool isScreenSaverActivity() const override { return true; }
 };

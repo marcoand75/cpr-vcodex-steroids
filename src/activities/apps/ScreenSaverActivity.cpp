@@ -574,6 +574,16 @@ void ScreenSaverActivity::render(RenderLock&&) {
 
     renderer.displayGrayBuffer();
     renderer.setRenderMode(GfxRenderer::BW);
+
+    // The LSB/MSB passes replaced the framebuffer with the grayscale planes.
+    // Re-render the BW image in place (no refresh, no 48 KB store that can fail
+    // on the fragmented post-reader heap): the panel keeps the grayscale image,
+    // while any later refresh sees a valid B/W frame instead of the MSB plane.
+    bitmap.rewindToData();
+    renderer.clearScreen();
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    text_overlay::draw(renderer, overlayText, overlayCfg);
+    renderer.cleanupGrayscaleWithFrameBuffer();
   }
 
   file.close();

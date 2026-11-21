@@ -97,6 +97,15 @@ void displaySleepGrayscaleBase(const GfxRenderer& renderer) {
 
 template <typename RenderFn>
 void renderSleepGrayscaleOverlay(GfxRenderer& renderer, RenderFn&& renderFn) {
+  // The LSB/MSB passes overwrite the framebuffer with the grayscale planes; keep
+  // the BW image so a later refresh (activity transition, forced refresh) cannot
+  // repaint the MSB plane as a B/W page and invert the sleep screen. A failed
+  // store must not disable the grayscale pass: the image is shown regardless.
+  const bool bwStored = renderer.storeBwBuffer();
+  if (!bwStored) {
+    LOG_ERR("SLP", "grayscale overlay: BW buffer store failed (framebuffer left as MSB plane)");
+  }
+
   displaySleepGrayscaleBase(renderer);
 
   renderer.clearScreen(0x00);
@@ -111,6 +120,9 @@ void renderSleepGrayscaleOverlay(GfxRenderer& renderer, RenderFn&& renderFn) {
 
   renderer.displayGrayBuffer();
   renderer.setRenderMode(GfxRenderer::BW);
+  if (bwStored) {
+    renderer.restoreBwBuffer();
+  }
 }
 
 int percentOf(const uint64_t value, const uint64_t target) {
@@ -770,14 +782,21 @@ AlphaOverlayResult tryRenderTransparentOverlayBmp(HalFile& file, GfxRenderer& re
 
   if (!renderTransparentOverlayPass(file, info, placement, renderer, row.get(), TransparentOverlayPass::BW))
     return AlphaOverlayResult::Error;
+
+  // The LSB/MSB passes replace the framebuffer with the grayscale planes. Keep
+  // the BW composite when possible; a failed store must not disable grayscale.
+  const bool bwStored = renderer.storeBwBuffer();
+  if (!bwStored) {
+    LOG_ERR("SLP", "transparent overlay: BW buffer store failed (framebuffer left as MSB plane)");
+  }
+
   displaySleepGrayscaleBase(renderer);
 
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
   if (!renderTransparentOverlayPass(file, info, placement, renderer, row.get(), TransparentOverlayPass::GrayscaleLsb)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    // The BW composite is already on the panel. Keep it instead of falling
-    // through to another overlay with this grayscale work buffer cleared.
+    if (bwStored) renderer.restoreBwBuffer();
     return AlphaOverlayResult::Rendered;
   }
   renderer.copyGrayscaleLsbBuffers();
@@ -786,12 +805,14 @@ AlphaOverlayResult tryRenderTransparentOverlayBmp(HalFile& file, GfxRenderer& re
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
   if (!renderTransparentOverlayPass(file, info, placement, renderer, row.get(), TransparentOverlayPass::GrayscaleMsb)) {
     renderer.setRenderMode(GfxRenderer::BW);
+    if (bwStored) renderer.restoreBwBuffer();
     return AlphaOverlayResult::Rendered;
   }
   renderer.copyGrayscaleMsbBuffers();
 
   renderer.displayGrayBuffer();
   renderer.setRenderMode(GfxRenderer::BW);
+  if (bwStored) renderer.restoreBwBuffer();
   return AlphaOverlayResult::Rendered;
 }
 
@@ -1483,12 +1504,22 @@ bool SleepActivity::renderTransparentOverlayPng(const std::string& path) const {
   LOG_DBG("SLP", "Rendering transparent PNG overlay: %s (%dx%d)", path.c_str(), dimensions.width, dimensions.height);
 
   if (!converter.decodeToFramebuffer(path, renderer, config)) return false;
+
+  // Keep the BW composite for the same reason as the transparent BMP path: the
+  // LSB/MSB passes below leave the framebuffer holding the MSB plane. A failed
+  // store must not disable the grayscale pass.
+  const bool bwStored = renderer.storeBwBuffer();
+  if (!bwStored) {
+    LOG_ERR("SLP", "transparent PNG overlay: BW buffer store failed (framebuffer left as MSB plane)");
+  }
+
   displaySleepGrayscaleBase(renderer);
 
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
   if (!converter.decodeToFramebuffer(path, renderer, config)) {
     renderer.setRenderMode(GfxRenderer::BW);
+    if (bwStored) renderer.restoreBwBuffer();
     return true;
   }
   renderer.copyGrayscaleLsbBuffers();
@@ -1497,12 +1528,14 @@ bool SleepActivity::renderTransparentOverlayPng(const std::string& path) const {
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
   if (!converter.decodeToFramebuffer(path, renderer, config)) {
     renderer.setRenderMode(GfxRenderer::BW);
+    if (bwStored) renderer.restoreBwBuffer();
     return true;
   }
   renderer.copyGrayscaleMsbBuffers();
 
   renderer.displayGrayBuffer();
   renderer.setRenderMode(GfxRenderer::BW);
+  if (bwStored) renderer.restoreBwBuffer();
   return true;
 }
 
