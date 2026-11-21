@@ -63,6 +63,7 @@ struct SummaryJSON {
     uint64_t goalReadingMs = 0;
     uint64_t dailyAverageMs = 0;
     uint32_t referenceDayOrdinal = 0;
+    uint32_t journalAppliedBytes = 0;
   };
 
   struct BookBadge {
@@ -259,13 +260,11 @@ class ReadingStatsStore {
   // false if deferred due to low heap or boot gate. Safe to call from the
   // reader exit path so the stats detail page always has fresh data.
   bool tryMergePendingSession();
-  // Lightweight journal-to-summary update: reads journal records and updates
-  // summary.json directly without materializing the full 50 KB store. This is
-   // called from endSession() (detached path) and preloadHomeSummary() to keep
-   // summary.json current even when the full store was never loaded.
-   // hintPath: when provided, populates stub badge paths so that lookups with
-   // full 32-byte bookIds can still match via the path fallback.
-   void updateSummaryFromJournal();
+  // Lightweight journal-to-summary update: reads unapplied journal records and
+  // updates summary.json directly without materializing the full 50 KB store,
+  // while preserving the journal file so mergeSessionJournal() can fold every
+  // session into reading_stats.json on the next full load.
+  void updateSummaryFromJournal(const std::string& hintBookId = "", const std::string& hintPath = "");
   // const-safe lazy load for read getters (used when boot deferred the load).
   void ensureLoadedForRead() const {
     if (!loaded_) {
@@ -290,7 +289,7 @@ class ReadingStatsStore {
   const std::vector<ReadingSessionLogEntry>& getSessionLog() const { return sessionLog; }
   static bool shouldIgnorePath(const std::string& path);
 
-  uint32_t getBooksStartedCount() const { return static_cast<uint32_t>(books.size()); }
+  uint32_t getBooksStartedCount() const;
   uint32_t getBooksFinishedCount() const;
   uint64_t getTotalReadingMs() const;
   uint64_t getTodayReadingMs() const;

@@ -106,6 +106,23 @@ int ReadingStatsActivity::listTop() const {
 }
 
 bool ReadingStatsActivity::handleCustomInput() {
+  // onEnter() may have run while the boot gate was closed or the heap was too
+  // tight for the store JSON: the summary cards still render from summary.json
+  // but the per-book rows stay empty. Retry the load (throttled) and rebuild
+  // the rows once the store is materialized.
+  if (!READING_STATS.isLoaded() && millis() - lastLoadRetryMs >= LOAD_RETRY_INTERVAL_MS) {
+    lastLoadRetryMs = millis();
+    if (READING_STATS.ensureLoaded()) {
+      {
+        RenderLock lock(*this);
+        rebuildRows();
+        nav.selected = READING_STATS.getBooks().empty() ? 0 : 1;
+        nav.follow(listCount());
+      }
+      requestUpdate();
+    }
+  }
+
   if (waitForBackRelease) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
         !mappedInput.wasReleased(MappedInputManager::Button::Back)) {

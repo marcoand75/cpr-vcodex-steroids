@@ -84,14 +84,15 @@ void displaySleepBuffer(const GfxRenderer& renderer) {
 }
 
 void displaySleepGrayscaleBase(const GfxRenderer& renderer) {
+  // The grayscale base MUST stay HALF: on SSD1677 X4 the gray nudge LUT is
+  // calibrated against the pixel state left by the single-pass HALF waveform
+  // (a FULL base parks pixels in a charge state that makes the gray pass leave
+  // blotchy artefacts), and on UltraChip X4 (UC8179/UC8279) HALF runs the
+  // complement-seeded GC charge scrub whereas FULL white-seeds DTM1 (leaving
+  // prior Home/UI ghosting parked in WW that the gray pass exposes). On X3,
+  // HalDisplay::displayGrayscaleBase(HALF_REFRESH) requests a resync clear.
   renderer.clearNextRefreshOverride();
-  const auto mode = sleepRefreshMode();
-  if (mode == HalDisplay::FULL_REFRESH) {
-    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
-    renderer.preconditionGrayscale();
-    return;
-  }
-  renderer.displayGrayscaleBase(mode);
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 }
 
 template <typename RenderFn>

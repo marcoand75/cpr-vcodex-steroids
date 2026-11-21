@@ -427,14 +427,10 @@ uint32_t hashCarouselThumbState(uint32_t hash, const RecentBook& book) {
 }
 
 uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
-  // getBookHomeStats resolves from the resident store when loaded and from
-  // summary.json badges otherwise — it never forces the 50+ KB store load, so
-  // the frame hash stays stable across boots regardless of store state.
-  SummaryJSON::BookBadge badge;
-  if (READING_STATS.getBookHomeStats(recentBook.bookId, recentBook.path, badge)) {
-    return std::min<uint8_t>(badge.progressPercent, 100);
-  }
-  return 0;
+  // getBookProgressForHome resolves from the resident store when loaded and
+  // from summary.json badges otherwise — matching LyraCarouselTheme's badge
+  // renderer without forcing the 50+ KB store load.
+  return READING_STATS.getBookProgressForHome(recentBook.bookId, recentBook.path);
 }
 
 // The portion of the frame hash shared by every book index: params plus the
@@ -445,7 +441,7 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
 uint32_t getCarouselFramePrefixHash(const std::vector<RecentBook>& books, const int screenWidth,
                                     const int screenHeight, const size_t bufferSize, const bool darkMode) {
   uint32_t hash = FNV1A_OFFSET;
-  hash = fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
+  hash = fnv1aString(hash, "lyra-carousel-frame-v8-progress-badge");
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenHeight));
   hash = fnv1aU32(hash, static_cast<uint32_t>(bufferSize));
